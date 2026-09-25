@@ -20,6 +20,8 @@ use crate::ui::sidebar::FleetFilter;
 pub const ACTION_REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long a close may take: its steps run one after another.
 pub const CLOSE_REPLY_TIMEOUT: Duration = Duration::from_secs(180);
+/// How long a manual whip may take: each nudge is an orca call on the whip thread.
+pub const WHIP_REPLY_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long the app may take to apply a dashboard change.
 pub const UI_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -118,6 +120,12 @@ pub enum ControlCommand {
         agents: Vec<String>,
         whole_tab: bool,
         dry_run: bool,
+    },
+    /// Nudge `agents` now (live, bypassing threshold and cooldown), or with `stalled` run an
+    /// immediate whip tick under the normal rules.
+    Whip {
+        agents: Vec<String>,
+        stalled: bool,
     },
 }
 
@@ -227,6 +235,23 @@ impl ControlCommand {
                     dry_run: p.bool("dry_run")?.unwrap_or(false),
                 })
             })(),
+            "whip" if ["id", "ids", "stalled"].iter().any(|k| p.has(k)) => (|| {
+                let mut agents = p.strings("ids")?.unwrap_or_default();
+                if let Some(id) = p.str("id")? {
+                    agents.insert(0, id.to_owned());
+                }
+                agents.retain(|a| !a.trim().is_empty());
+                let stalled = p.bool("stalled")?.unwrap_or(false);
+                match (stalled, agents.is_empty()) {
+                    (true, false) => Err(ControlError::invalid_params(
+                        "give either \"ids\" or \"stalled\": true, not both",
+                    )),
+                    (false, true) => Err(ControlError::invalid_params(
+                        "\"ids\" (agent ids) or \"stalled\": true is required",
+                    )),
+                    _ => Ok(Self::Whip { agents, stalled }),
+                }
+            })(),
             _ => return None,
         };
         Some(result)
@@ -237,6 +262,7 @@ impl ControlCommand {
         match self {
             Self::Send { .. } | Self::Key { .. } | Self::Broadcast { .. } => ACTION_REPLY_TIMEOUT,
             Self::Close { dry_run: false, .. } => CLOSE_REPLY_TIMEOUT,
+            Self::Whip { .. } => WHIP_REPLY_TIMEOUT,
             _ => UI_REPLY_TIMEOUT,
         }
     }

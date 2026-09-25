@@ -9,6 +9,10 @@ use std::process::Command;
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 
+pub mod fetches;
+pub mod fill;
+pub mod source;
+
 /// Overrides where the playbook files are read from.
 pub const ENV_DIR: &str = "MYRSTACK_PLAYBOOK_DIR";
 
@@ -342,6 +346,28 @@ impl Playbook {
 
     /// The docs for `target`, or just its `section`.
     pub fn get(&self, target: &Target, section: Option<&str>) -> Result<Served> {
+        let (body, section, files) = self.assemble(target, section)?;
+        let version = self.version(&body);
+        Ok(Served {
+            target: target.clone(),
+            section,
+            files,
+            body,
+            version,
+        })
+    }
+
+    /// The hash [`Playbook::get`] would stamp on `target`/`section` now, without running git.
+    pub fn current_hash(&self, target: &Target, section: Option<&str>) -> Result<String> {
+        Ok(short_hash(&self.assemble(target, section)?.0))
+    }
+
+    /// The served body, the matched section title and the files it came from.
+    fn assemble(
+        &self,
+        target: &Target,
+        section: Option<&str>,
+    ) -> Result<(String, Option<String>, Vec<String>)> {
         let parts: Vec<(String, Option<&[&str]>)> = match target {
             Target::Role(role) => role
                 .parts()
@@ -417,14 +443,7 @@ impl Playbook {
                 (body, None, files)
             }
         };
-        let version = self.version(&body);
-        Ok(Served {
-            target: target.clone(),
-            section,
-            files,
-            body,
-            version,
-        })
+        Ok((body, section, files))
     }
 
     /// The version stamp for `served` text from this dir.
@@ -646,10 +665,15 @@ pub fn run_cli(args: &[String]) -> Option<Result<()>> {
 }
 
 const USAGE: &str = "usage: myrstack playbook [coordinator|attendant|worker|<file>] \
-                     [--section <title>] [--list]";
+                     [--section <title>] [--list]\n       \
+                     myrstack playbook attendant-brief <run_id>\n       \
+                     myrstack playbook kickoff <task_id>";
 
 /// What `myrstack playbook <args>` prints.
 pub fn cli_text(args: &[String]) -> Result<String> {
+    if let Some(template) = args.first().and_then(|a| source::Template::parse(a)) {
+        return template_cli_text(template, &args[1..]);
+    }
     let mut target = None;
     let mut section = None;
     let mut list = false;
@@ -677,9 +701,42 @@ pub fn cli_text(args: &[String]) -> Result<String> {
         (Some(t), true) => target_sections_text(&playbook, &t),
         (target, false) => {
             let target = target.unwrap_or(Target::Role(Role::Coordinator));
-            Ok(playbook.get(&target, section)?.text())
+            let served = playbook.get(&target, section)?;
+            fetches::record(
+                fetches::default_path().as_deref(),
+                "cli",
+                &served.target,
+                served.section.as_deref(),
+                &served.version,
+            );
+            Ok(served.text())
         }
     }
+}
+
+/// `myrstack playbook attendant-brief <run_id>` / `kickoff <task_id>`: the template filled from
+/// the running app's data, else from one Orca poll.
+fn template_cli_text(template: source::Template, args: &[String]) -> Result<String> {
+    let id = match args {
+        [id] if !id.starts_with('-') => id,
+        [flag] if flag == "--help" || flag == "-h" => return Ok(USAGE.to_owned()),
+        _ => bail!(
+            "usage: myrstack playbook {} <{}>",
+            template.name(),
+            template.arg()
+        ),
+    };
+    let playbook = Playbook::locate()?;
+    let mut control = crate::mcp::SocketControl::new(crate::control::socket_path());
+    let filled = source::render(&playbook, &mut control, template, id).map_err(|e| anyhow!(e))?;
+    fetches::record(
+        fetches::default_path().as_deref(),
+        &format!("cli:{}", template.name()),
+        &Target::File(template.file().to_owned()),
+        None,
+        &filled.context.version,
+    );
+    Ok(filled.text())
 }
 
 #[cfg(test)]

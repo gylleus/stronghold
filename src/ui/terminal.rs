@@ -30,6 +30,8 @@ pub struct TerminalPanelResponse {
     pub close: bool,
     /// "Close…" was clicked: ask to kill the node's session.
     pub close_session: bool,
+    /// "Whip" was clicked: nudge the node now.
+    pub whip: bool,
     /// Actions to run; the caller submits each and reports the id via
     /// [`InputPanelState::submitted`].
     pub requests: Vec<ActionRequest>,
@@ -313,6 +315,19 @@ pub fn terminal_panel(
                     .clicked()
             {
                 response.close_session = true;
+            }
+            let whippable = handle.is_some()
+                && matches!(
+                    node.kind,
+                    NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal
+                );
+            if ui
+                .add_enabled(whippable, egui::Button::new("Whip"))
+                .on_hover_text("Send this agent a Myrstack nudge now — w")
+                .on_disabled_hover_text("No live terminal to nudge.")
+                .clicked()
+            {
+                response.whip = true;
             }
             let open = ui
                 .add_enabled(handle.is_some(), egui::Button::new("Open in Orca"))
@@ -703,6 +718,30 @@ mod tests {
             worker_terminal_state: None,
             released_at_ms: None,
         }
+    }
+
+    fn click_in_panel(node: &Node, label: &str) -> TerminalPanelResponse {
+        let mut state = InputPanelState::default();
+        crate::ui::test_util::click_label(label, |ui| {
+            let input = PanelInput {
+                state: &mut state,
+                terminal: None,
+                usage: None,
+            };
+            terminal_panel(ui, node, None, input, 0)
+        })
+    }
+
+    #[test]
+    fn whip_button_asks_to_whip_a_live_agent() {
+        for kind in [NodeKind::Worker, NodeKind::Coordinator, NodeKind::Terminal] {
+            let response = click_in_panel(&node(kind, true, Some("t1")), "Whip");
+            assert!(response.whip, "{kind:?}");
+            assert!(response.requests.is_empty());
+        }
+        // Disabled without a live terminal: the click does nothing.
+        let response = click_in_panel(&node(NodeKind::Worker, false, Some("t1")), "Whip");
+        assert!(!response.whip);
     }
 
     #[test]

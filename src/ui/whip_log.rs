@@ -24,6 +24,8 @@ pub enum Badge {
     Nudge,
     Escalate,
     NeedsInput,
+    /// Sent because Karl asked ("Whip"), not by a tick.
+    Manual,
     DryRun,
     Failed,
 }
@@ -34,6 +36,7 @@ impl Badge {
             Self::Nudge => "NUDGE",
             Self::Escalate => "ESCALATE",
             Self::NeedsInput => "NEEDS INPUT",
+            Self::Manual => "MANUAL",
             Self::DryRun => "DRY-RUN",
             Self::Failed => "FAILED",
         }
@@ -53,6 +56,10 @@ impl Badge {
                 Color32::from_rgb(235, 180, 60),
                 Color32::from_rgb(170, 110, 0),
             ),
+            Self::Manual => (
+                Color32::from_rgb(170, 120, 230),
+                Color32::from_rgb(110, 60, 170),
+            ),
             Self::DryRun => (Color32::GRAY, Color32::DARK_GRAY),
             Self::Failed => (
                 Color32::from_rgb(235, 90, 80),
@@ -63,16 +70,20 @@ impl Badge {
     }
 }
 
-/// The action badge of an entry, then DRY-RUN or FAILED when that applies.
+/// The action badge of an entry, MANUAL for a manual whip, then DRY-RUN or FAILED when that
+/// applies.
 pub fn badges(item: &WhipLogItem) -> Vec<Badge> {
     let entry = &item.entry;
-    let mut badges = Vec::with_capacity(2);
+    let mut badges = Vec::with_capacity(3);
     if entry.action.starts_with("nudge") {
         badges.push(Badge::Nudge);
     } else if entry.action.starts_with("escalate") {
         badges.push(Badge::Escalate);
     } else if entry.action.contains("needs-input") {
         badges.push(Badge::NeedsInput);
+    }
+    if entry.manual {
+        badges.push(Badge::Manual);
     }
     if is_failure(item) {
         badges.push(Badge::Failed);
@@ -420,6 +431,7 @@ mod tests {
                 reason: "Myrstack: no progress\nsecond line".into(),
                 dry_run: true,
                 outcome: "dry-run".into(),
+                manual: false,
             },
             handle: Some("term_w".into()),
             run_id: Some("r1".into()),
@@ -546,6 +558,11 @@ mod tests {
         i.entry.action = "notify needs-input".into();
         i.entry.outcome = "notifications off".into();
         assert_eq!(badges(&i), vec![Badge::NeedsInput]);
+        let mut manual = item(9);
+        manual.entry.action = "nudge via terminal input".into();
+        manual.entry.dry_run = false;
+        manual.entry.manual = true;
+        assert_eq!(badges(&manual), vec![Badge::Nudge, Badge::Manual]);
     }
 
     #[test]

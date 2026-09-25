@@ -7,6 +7,7 @@ use eframe::egui::{self, RichText, Ui};
 
 use crate::broadcast::BroadcastSender;
 use crate::model::{FleetSnapshot, NodeId, NodeKind, NodeState};
+use crate::playbook::fetches::PlaybookStatus;
 use crate::quota::Quotas;
 use crate::ui::broadcast::BroadcastComposer;
 use crate::ui::graph::{ALL_STATES, hexagon, kind_label, queen_color, state_color, state_label};
@@ -87,6 +88,8 @@ pub struct QueenInputs<'a> {
     pub whip: &'a WhipStatus,
     pub quotas: &'a Quotas,
     pub now_ms: i64,
+    /// Who runs which playbook version; `None` hides it.
+    pub playbook: Option<&'a PlaybookStatus>,
 }
 
 /// What the user did in the panel this frame.
@@ -96,6 +99,8 @@ pub struct QueenResponse {
     pub select: Option<NodeId>,
     /// The close button was clicked.
     pub close: bool,
+    /// "Whip all stalled now" was clicked.
+    pub whip_stalled: bool,
 }
 
 /// Draws the queen panel: the Queen's header with the fleet counts, the fleet summary and
@@ -125,6 +130,7 @@ pub fn queen_panel(
             {
                 response.close = true;
             }
+            response.whip_stalled |= crate::ui::whip_now::whip_stalled_button(ui);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 queen_badge(ui, fleet, dark);
                 ui.label(RichText::new("Queen").strong());
@@ -151,6 +157,9 @@ pub fn queen_panel(
             }
         }
     });
+    if let Some(status) = inputs.playbook {
+        crate::ui::playbook::playbook_line(ui, status, inputs.now_ms);
+    }
 
     egui::CollapsingHeader::new(RichText::new("Fleet summary").strong())
         .id_salt("queen_summary")
@@ -170,6 +179,11 @@ pub fn queen_panel(
                         ui.horizontal_wrapped(|ui| {
                             crate::ui::quota::quota_chips(ui, inputs.quotas, inputs.now_ms);
                         });
+                    }
+                    if let Some(status) = inputs.playbook
+                        && let Some(id) = crate::ui::playbook::stale_list(ui, status, inputs.now_ms)
+                    {
+                        response.select = Some(id);
                     }
                 });
         });
@@ -311,6 +325,24 @@ mod tests {
         assert_eq!(summary.runs[0].coordinator, Some(NodeId::terminal("c1")));
     }
 
+    #[test]
+    fn whip_all_stalled_button_is_reported() {
+        let snapshot = FleetSnapshot::build(&data(), 0);
+        let mut panel = QueenPanel::default();
+        let (whip, quotas) = (WhipStatus::default(), Quotas::default());
+        let response = crate::ui::test_util::click_label("Whip all stalled now", |ui| {
+            let inputs = QueenInputs {
+                snapshot: Some(&snapshot),
+                whip: &whip,
+                quotas: &quotas,
+                now_ms: 0,
+                playbook: None,
+            };
+            queen_panel(ui, &mut panel, inputs, || Box::new(NeverSender), |_| {})
+        });
+        assert!(response.whip_stalled);
+    }
+
     /// Draws the panel headlessly for a few frames with a sender that must never be used.
     #[test]
     fn panel_draws_headless_without_sending() {
@@ -330,6 +362,7 @@ mod tests {
                         whip: &whip,
                         quotas: &quotas,
                         now_ms: 0,
+                        playbook: None,
                     },
                     || Box::new(NeverSender),
                     |ui| {

@@ -333,6 +333,7 @@ fn long_whip_item(seq: u64) -> crate::whip::WhipLogItem {
             reason: long.clone(),
             dry_run: seq.is_multiple_of(2),
             outcome: format!("failed: {long}"),
+            manual: false,
         },
         handle: Some(long),
         run_id: Some("alpha".into()),

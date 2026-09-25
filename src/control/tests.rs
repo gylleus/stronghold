@@ -821,3 +821,88 @@ fn cli_params_accept_json_or_a_bare_id() {
     assert!(client::cli_params(&args(&["{broken"])).is_err());
     assert!(client::cli_params(&args(&["a", "b"])).is_err());
 }
+
+#[test]
+fn whip_with_targets_is_an_action_and_without_them_a_read() {
+    let h = Harness::new();
+    h.ok("whip", json!({"ids": ["a", "b"]}));
+    h.ok("whip", json!({"id": "a"}));
+    h.ok("whip", json!({"stalled": true}));
+    assert_eq!(
+        h.commands(),
+        vec![
+            ControlCommand::Whip {
+                agents: vec!["a".into(), "b".into()],
+                stalled: false,
+            },
+            ControlCommand::Whip {
+                agents: vec!["a".into()],
+                stalled: false,
+            },
+            ControlCommand::Whip {
+                agents: vec![],
+                stalled: true,
+            },
+        ]
+    );
+    assert_eq!(
+        ControlCommand::Whip {
+            agents: vec![],
+            stalled: true
+        }
+        .reply_timeout(),
+        crate::control::commands::WHIP_REPLY_TIMEOUT
+    );
+    // The log read is unchanged.
+    let read = h.ok("whip", json!({"limit": 5}));
+    assert!(read.get("log").is_some());
+    assert_eq!(h.commands().len(), 3);
+    for bad in [
+        json!({"ids": []}),
+        json!({"stalled": false}),
+        json!({"ids": ["a"], "stalled": true}),
+        json!({"stalled": "yes"}),
+    ] {
+        assert_eq!(
+            h.err("whip", bad.clone()),
+            ErrorCode::InvalidParams,
+            "{bad}"
+        );
+    }
+    assert_eq!(h.commands().len(), 3);
+}
+
+#[test]
+fn fleet_data_serves_the_raw_poll_and_status_carries_the_playbook() {
+    let h = Harness::new();
+    let r = h.ok("fleet_data", Value::Null);
+    let facts: crate::playbook::fill::FleetFacts = serde_json::from_value(r).unwrap();
+    assert_eq!(facts.runs[0].id, RUN);
+    assert!(!facts.terminals.is_empty());
+    assert!(facts.terminals.iter().all(|t| t.preview.is_none()));
+    assert!(
+        h.ok("ping", Value::Null)["methods"]["read"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("fleet_data"))
+    );
+
+    let mut view = status_view();
+    view.playbook = crate::playbook::fetches::PlaybookView {
+        current: Some("1b0b685".into()),
+        current_hash: Some("abcdef0".into()),
+        nodes: vec![crate::playbook::fetches::PlaybookNodeView {
+            node: "term:c".into(),
+            version: "1809c8a".into(),
+            stale: true,
+            ..Default::default()
+        }],
+    };
+    h.status.publish(view);
+    let status = h.ok("status", Value::Null);
+    assert_eq!(status["playbook"]["current"], "1b0b685");
+    assert_eq!(status["playbook"]["nodes"][0]["stale"], true);
+
+    h.status.publish(StatusView::default());
+    assert_eq!(h.err("fleet_data", Value::Null), ErrorCode::Unavailable);
+}

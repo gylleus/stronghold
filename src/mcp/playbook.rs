@@ -1,10 +1,15 @@
 //! The fleet playbook over MCP: prompts per role, a resource per file, and the `get_playbook` /
 //! `list_playbook` tools. Read from disk on every request; the app need not be running.
 
+use std::path::Path;
+
 use serde_json::{Value, json};
 
+use crate::mcp::backend::Control;
 use crate::mcp::server::INVALID_PARAMS;
 use crate::mcp::tools::ToolOutput;
+use crate::playbook::fetches;
+use crate::playbook::source::{self, Template};
 use crate::playbook::{Playbook, Role, STANDING_RULES, Target};
 
 pub const URI_PREFIX: &str = "myrstack://playbook/";
@@ -12,7 +17,15 @@ pub const INTERNAL_ERROR: i64 = -32603;
 /// MCP's "resource not found".
 pub const RESOURCE_NOT_FOUND: i64 = -32002;
 
-pub const TOOLS: [&str; 2] = ["get_playbook", "list_playbook"];
+pub const TOOLS: [&str; 4] = [
+    "get_playbook",
+    "list_playbook",
+    "attendant_brief",
+    "kickoff",
+];
+
+/// The templates Myrstack fills, as prompts and tools.
+pub const TEMPLATES: [Template; 2] = [Template::AttendantBrief, Template::Kickoff];
 
 type RpcResult = Result<Value, (i64, String)>;
 
@@ -35,19 +48,70 @@ pub fn prompts_list() -> Value {
                 "arguments": [section_arg()],
             })
         })
+        .chain(TEMPLATES.iter().map(|t| {
+            json!({
+                "name": t.name(),
+                "title": template_title(*t),
+                "description": template_description(*t),
+                "arguments": [{
+                    "name": t.arg(),
+                    "description": template_arg_description(*t),
+                    "required": true,
+                }],
+            })
+        }))
         .collect();
     json!({ "prompts": prompts })
 }
 
-pub fn prompts_get(playbook: Result<Playbook, String>, params: &Value) -> RpcResult {
+fn template_title(t: Template) -> &'static str {
+    match t {
+        Template::AttendantBrief => "Attendant brief for a run",
+        Template::Kickoff => "Kickoff for a task",
+    }
+}
+
+fn template_description(t: Template) -> &'static str {
+    match t {
+        Template::AttendantBrief => {
+            "The attendant brief template filled from live fleet data for a run: objective, \
+             coordinator terminal, scratchpad when known; dispatches and bus event types in the \
+             header. Unknown placeholders are marked FILL IN."
+        }
+        Template::Kickoff => {
+            "The kickoff template filled from live fleet data for a task: title, spec, repo, \
+             ticket, blockers from deps; run, worktree and branch in the header. Unknown \
+             placeholders are marked FILL IN."
+        }
+    }
+}
+
+fn template_arg_description(t: Template) -> &'static str {
+    match t {
+        Template::AttendantBrief => "The Orca run id, e.g. run_7c25cdcf46e0.",
+        Template::Kickoff => "The Orca task id (of an active run).",
+    }
+}
+
+pub fn prompts_get(
+    playbook: Result<Playbook, String>,
+    control: &mut dyn Control,
+    params: &Value,
+    log: Option<&Path>,
+) -> RpcResult {
     let name = params
         .get("name")
         .and_then(Value::as_str)
         .ok_or((INVALID_PARAMS, "missing prompt name".to_owned()))?;
+    if let Some(template) = TEMPLATES.into_iter().find(|t| t.name() == name) {
+        return template_prompt(playbook, control, template, params, log);
+    }
     let role = Role::parse(name).ok_or_else(|| {
         (
             INVALID_PARAMS,
-            format!("unknown prompt: {name} (coordinator, attendant, worker)"),
+            format!(
+                "unknown prompt: {name} (coordinator, attendant, worker, attendant-brief, kickoff)"
+            ),
         )
     })?;
     let section = params
@@ -59,6 +123,13 @@ pub fn prompts_get(playbook: Result<Playbook, String>, params: &Value) -> RpcRes
     let served = playbook
         .get(&Target::Role(role), section)
         .map_err(|e| (INVALID_PARAMS, format!("{e:#}")))?;
+    fetches::record(
+        log,
+        &format!("prompt:{name}"),
+        &served.target,
+        served.section.as_deref(),
+        &served.version,
+    );
     Ok(json!({
         "description": format!("{} · {}", role.title(), served.version.header()),
         "messages": [{
@@ -104,7 +175,72 @@ fn resource_description(file: &str) -> String {
     }
 }
 
-pub fn resources_read(playbook: Result<Playbook, String>, params: &Value) -> RpcResult {
+/// `attendant-brief {run_id}` / `kickoff {task_id}`: the filled template as a user message.
+fn template_prompt(
+    playbook: Result<Playbook, String>,
+    control: &mut dyn Control,
+    template: Template,
+    params: &Value,
+    log: Option<&Path>,
+) -> RpcResult {
+    let id = params
+        .get("arguments")
+        .and_then(|a| a.get(template.arg()))
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            (
+                INVALID_PARAMS,
+                format!(
+                    "missing argument {} for prompt {}",
+                    template.arg(),
+                    template.name()
+                ),
+            )
+        })?;
+    let playbook = playbook.map_err(|e| (INTERNAL_ERROR, e))?;
+    let filled =
+        source::render(&playbook, control, template, id).map_err(|e| (INVALID_PARAMS, e))?;
+    record_template(
+        log,
+        &format!("prompt:{}", template.name()),
+        template,
+        &filled,
+    );
+    Ok(json!({
+        "description": format!(
+            "{} · {}",
+            template_title(template),
+            filled.context.version.header()
+        ),
+        "messages": [{
+            "role": "user",
+            "content": { "type": "text", "text": filled.text() },
+        }],
+        "_meta": { "myrstack/template": filled.to_json() },
+    }))
+}
+
+fn record_template(
+    log: Option<&Path>,
+    via: &str,
+    template: Template,
+    filled: &crate::playbook::fill::Filled,
+) {
+    fetches::record(
+        log,
+        via,
+        &Target::File(template.file().to_owned()),
+        None,
+        &filled.context.version,
+    );
+}
+
+pub fn resources_read(
+    playbook: Result<Playbook, String>,
+    params: &Value,
+    log: Option<&Path>,
+) -> RpcResult {
     let uri = params
         .get("uri")
         .and_then(Value::as_str)
@@ -122,6 +258,7 @@ pub fn resources_read(playbook: Result<Playbook, String>, params: &Value) -> Rpc
     let served = playbook
         .get(&Target::File(file.to_owned()), None)
         .map_err(|e| (INTERNAL_ERROR, format!("{e:#}")))?;
+    fetches::record(log, "resource", &served.target, None, &served.version);
     Ok(json!({
         "contents": [{
             "uri": uri,
@@ -168,7 +305,77 @@ pub fn tool_definitions() -> Vec<Value> {
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": annotations("List playbook"),
         }),
+        json!({
+            "name": "attendant_brief",
+            "title": "Attendant brief for a run",
+            "description": "The attendant brief template pre-filled for a run from live fleet \
+                data (the running app, else one direct Orca poll): campaign and objective, the \
+                effective coordinator's terminal handle, its scratchpad when known, the run id. \
+                A header lists what was filled from where, what is left (marked FILL IN), the \
+                run's dispatches (id, worker, task) and bus event types. Read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "run_id": { "type": "string", "description": "The Orca run id, e.g. run_7c25cdcf46e0." },
+                },
+                "required": ["run_id"],
+            },
+            "annotations": annotations("Attendant brief for a run"),
+        }),
+        json!({
+            "name": "kickoff",
+            "title": "Kickoff for a task",
+            "description": "The kickoff template pre-filled for a task from live fleet data: \
+                track name and title, scope from the task spec, repo, ticket key, blocked-by \
+                from its deps and what it blocks. A header lists what was filled from where, \
+                what is left (marked FILL IN), and the task's run, dispatch, worktree and \
+                branch. Read-only; the task must be in an active run.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": { "type": "string", "description": "The Orca task id." },
+                },
+                "required": ["task_id"],
+            },
+            "annotations": annotations("Kickoff for a task"),
+        }),
     ]
+}
+
+/// Runs `attendant_brief` or `kickoff`; `None` if `name` is neither.
+pub fn call_template_tool(
+    control: &mut dyn Control,
+    playbook: impl FnOnce() -> Result<Playbook, String>,
+    name: &str,
+    args: &Value,
+    log: Option<&Path>,
+) -> Option<ToolOutput> {
+    let template = TEMPLATES.into_iter().find(|t| t.tool() == name)?;
+    let id = args
+        .get(template.arg())
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty());
+    let Some(id) = id else {
+        return Some(tool_error(format!(
+            "Invalid arguments: {} is required",
+            template.arg()
+        )));
+    };
+    let playbook = match playbook() {
+        Ok(p) => p,
+        Err(e) => return Some(tool_error(e)),
+    };
+    Some(match source::render(&playbook, control, template, id) {
+        Ok(filled) => {
+            record_template(log, &format!("tool:{name}"), template, &filled);
+            ToolOutput {
+                text: filled.text(),
+                structured: Some(filled.to_json()),
+                is_error: false,
+            }
+        }
+        Err(e) => tool_error(e),
+    })
 }
 
 /// Runs a playbook tool; `None` if `name` is not one.
@@ -176,6 +383,7 @@ pub fn call_tool(
     playbook: impl FnOnce() -> Result<Playbook, String>,
     name: &str,
     args: &Value,
+    log: Option<&Path>,
 ) -> Option<ToolOutput> {
     let run = match name {
         "get_playbook" => get_playbook,
@@ -183,7 +391,7 @@ pub fn call_tool(
         _ => return None,
     };
     Some(match playbook() {
-        Ok(p) => run(&p, args).unwrap_or_else(tool_error),
+        Ok(p) => run(&p, args, log).unwrap_or_else(tool_error),
         Err(e) => tool_error(e),
     })
 }
@@ -196,7 +404,11 @@ fn tool_error(text: String) -> ToolOutput {
     }
 }
 
-fn get_playbook(playbook: &Playbook, args: &Value) -> Result<ToolOutput, String> {
+fn get_playbook(
+    playbook: &Playbook,
+    args: &Value,
+    log: Option<&Path>,
+) -> Result<ToolOutput, String> {
     let arg = |k: &str| {
         args.get(k)
             .and_then(Value::as_str)
@@ -214,6 +426,13 @@ fn get_playbook(playbook: &Playbook, args: &Value) -> Result<ToolOutput, String>
     let served = playbook
         .get(&target, arg("section"))
         .map_err(|e| format!("{e:#}"))?;
+    fetches::record(
+        log,
+        "tool:get_playbook",
+        &served.target,
+        served.section.as_deref(),
+        &served.version,
+    );
     Ok(ToolOutput {
         text: served.text(),
         structured: Some(served.to_json()),
@@ -221,7 +440,7 @@ fn get_playbook(playbook: &Playbook, args: &Value) -> Result<ToolOutput, String>
     })
 }
 
-fn list_playbook(playbook: &Playbook, _: &Value) -> Result<ToolOutput, String> {
+fn list_playbook(playbook: &Playbook, _: &Value, _: Option<&Path>) -> Result<ToolOutput, String> {
     let listing = playbook.listing().map_err(|e| format!("{e:#}"))?;
     Ok(ToolOutput {
         text: listing.text(),

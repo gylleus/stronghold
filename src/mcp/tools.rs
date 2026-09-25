@@ -298,6 +298,26 @@ pub fn definitions() -> Vec<Value> {
             SETTINGS,
         ),
         tool(
+            "whip_agents",
+            "Whip agents now",
+            "Sends Myrstack nudges now: with ids, each agent gets the nudge the whip would send \
+             when it stalls (a worker about its task on the bus, a coordinator about its run, a \
+             loose terminal typed into), live even when the automatic whip is in dry-run and \
+             ignoring threshold and cooldown. The Queen, subagents, released workers and dead \
+             terminals are skipped with a reason; agents waiting on Karl's input are nudged with \
+             a warning (a nudge won't answer their prompt). With stalled=true, runs an \
+             immediate whip pass instead, under the normal rules (threshold, cooldown, \
+             dry-run). Give exactly one of ids or stalled.",
+            object(
+                json!({
+                    "ids": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Agent ids to nudge now." },
+                    "stalled": { "type": "boolean", "description": "Run a whip pass over the stalled agents now." },
+                }),
+                &[],
+            ),
+            ACTS,
+        ),
+        tool(
             "focus_agent",
             "Focus an agent",
             "Switches the dashboard to the graph, selects the node and zooms onto it. Pass \
@@ -390,6 +410,7 @@ pub fn call(control: &mut dyn Control, name: &str, args: &Value) -> Option<ToolO
         "broadcast_to_coordinators" => broadcast(control, &p),
         "whip_status" => whip_status(control, &p),
         "set_whip" => set_whip(control, &p),
+        "whip_agents" => whip_agents(control, &p),
         "focus_agent" => focus_agent(control, &p),
         "set_filter" => set_filter(control, args),
         "set_view" => set_view(control, &p),
@@ -1130,8 +1151,9 @@ fn whip_status(control: &mut dyn Control, p: &Params) -> ToolResult {
 
 fn whip_entry(e: &WhipLogView, now: i64) -> String {
     format!(
-        "{}{}: {} → {} ({}) = {}",
+        "{}{}{}: {} → {} ({}) = {}",
         since(now, e.at_ms),
+        if e.manual { " [manual]" } else { "" },
         if e.dry_run { " [dry-run]" } else { "" },
         e.action,
         e.target,
@@ -1172,6 +1194,107 @@ fn set_whip(control: &mut dyn Control, p: &Params) -> ToolResult {
         flag("notify"),
     );
     Ok(ToolOutput::ok(text, result))
+}
+
+fn whip_agents(control: &mut dyn Control, p: &Params) -> ToolResult {
+    let ids = p.strings("ids")?.filter(|ids| !ids.is_empty());
+    let stalled = p.bool("stalled")?.unwrap_or(false);
+    let params = match (ids, stalled) {
+        (Some(_), true) => return Err(Error::Args("give either ids or stalled, not both".into())),
+        (None, false) => return Err(Error::Args("give ids (agent ids) or stalled=true".into())),
+        (Some(ids), false) => json!({ "ids": ids }),
+        (None, true) => json!({ "stalled": true }),
+    };
+    let result = control.call("whip", params)?;
+    let text = if stalled {
+        whip_pass_text(&result)
+    } else {
+        manual_whip_text(&result)
+    };
+    Ok(ToolOutput::ok(text, result))
+}
+
+fn manual_whip_text(result: &Value) -> String {
+    let n = |k: &str| result.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("?").to_owned();
+    let mut out = vec![format!(
+        "Sent {} Myrstack nudge{} ({} failed).",
+        n("sent"),
+        if n("sent") == 1 { "" } else { "s" },
+        n("failed")
+    )];
+    for nudge in result
+        .get("nudges")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let via = nudge.get("via").cloned().unwrap_or_default();
+        let via = match (via.get("bus"), via.get("terminal")) {
+            (Some(to), _) => format!("bus to {}", to.as_str().unwrap_or("?")),
+            (None, Some(_)) => "typed into its terminal".into(),
+            _ => "?".into(),
+        };
+        out.push(format!(
+            "- {} `{}` via {via}: {}",
+            s(nudge, "label"),
+            s(nudge, "id"),
+            s(nudge, "outcome")
+        ));
+        if let Some(warning) = nudge.get("warning").and_then(Value::as_str) {
+            out.push(format!("  Warning: {warning}"));
+        }
+    }
+    let skipped = result.get("skipped").and_then(Value::as_array);
+    if let Some(skipped) = skipped.filter(|s| !s.is_empty()) {
+        out.push("Skipped:".into());
+        for skip in skipped {
+            out.push(format!(
+                "- {} `{}`: {}",
+                s(skip, "label"),
+                s(skip, "id"),
+                s(skip, "reason")
+            ));
+        }
+    }
+    if result.get("automatic_dry_run").and_then(Value::as_bool) == Some(true) && n("sent") > 0 {
+        out.push("Manual nudges are live even though the automatic whip is in dry-run.".into());
+    }
+    out.join("\n")
+}
+
+fn whip_pass_text(result: &Value) -> String {
+    if result.get("ran").and_then(Value::as_bool) == Some(false) {
+        return "The whip pass did not run: Myrstack has no fleet data yet.".into();
+    }
+    let dry_run = result.get("dry_run").and_then(Value::as_bool) == Some(true);
+    let actions = result
+        .get("actions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mode = if dry_run {
+        " (dry-run: nothing sent)"
+    } else {
+        ""
+    };
+    let mut out = vec![if actions.is_empty() {
+        format!(
+            "Whip pass ran{mode}: nothing to do (no stall due, or all in cooldown or escalated)."
+        )
+    } else {
+        format!("Whip pass ran{mode}: {} action(s):", actions.len())
+    }];
+    for a in &actions {
+        let s = |k: &str| a.get(k).and_then(Value::as_str).unwrap_or("?");
+        out.push(format!(
+            "- {} → {} = {}",
+            s("action"),
+            s("target"),
+            s("outcome")
+        ));
+    }
+    out.join("\n")
 }
 
 fn focus_agent(control: &mut dyn Control, p: &Params) -> ToolResult {
