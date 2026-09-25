@@ -111,6 +111,27 @@ NeedsInput terminal is never nudged. It is waiting on Karl, so Myrstack
 sends a notification instead. Escalation goes: nudge, then a second nudge
 after the 10-min cooldown, then a macOS notification and a red node.
 
+An **abandoned** Run is never nudged: nothing has happened in it (Run
+`updated_at`, coordinator output or messages, bus messages for the Run,
+task creation, completion or status changes, worker heartbeats or output)
+for longer than `whip.abandon_after_ms` (default 24 h). Myrstack's own
+messages don't count. A worker silent that long in an abandoned Run is left
+alone too.
+
+## Myrstack senders
+
+Without `--from` or `ORCA_TERMINAL_HANDLE`, `orca orchestration send`
+attributes a message to whichever terminal has focus. Orca's runtime takes
+any string as `--from`, so Myrstack always passes one:
+
+- `myrstack-whip`: whip nudges.
+- `myrstack-karl`: messages Karl broadcasts from Myrstack.
+
+These are not mailboxes. `orca orchestration reply` to them fails with
+`terminal_not_found`; act on the nudge or message the coordinator/Run
+instead. The whip's terminal-input fallback carries no sender; its text
+starts with `Myrstack:`.
+
 ## Open points for the whip (M4)
 
 - A worker blocked in `ask` stops heartbeating legitimately. Myrstack should

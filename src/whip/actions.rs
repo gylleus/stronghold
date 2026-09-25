@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::notify::{Notifier, whip_request};
-use crate::orca::{OrcaClient, OutgoingMessage, TerminalInput};
+use crate::orca::{OrcaClient, OutgoingMessage, TerminalInput, WHIP_SENDER};
 use crate::whip::rules::{StallReason, StallTarget};
 
 /// Prefix of every nudge.
@@ -229,8 +229,8 @@ pub struct OrcaExecutor {
     notifier: Option<Arc<Notifier>>,
 }
 
-/// A client that runs `orca` without the launching terminal's identity, so nudges are not
-/// attributed to the Orca terminal Myrstack was started from.
+/// A client that runs `orca` without the launching terminal's identity. Bus nudges carry an
+/// explicit `--from` ([`WHIP_SENDER`]) anyway; this keeps any other call from borrowing it.
 impl Default for OrcaExecutor {
     fn default() -> Self {
         Self::new(OrcaClient::new().without_sender_identity())
@@ -318,8 +318,9 @@ impl WhipExecutor for DryRunExecutor {
     }
 }
 
-/// The bus message for a nudge sent via [`NudgeVia::Bus`]. The whole text goes in the subject,
-/// which is what agents see first; a single worker task also goes in `--task-id`.
+/// The bus message for a nudge sent via [`NudgeVia::Bus`], from [`WHIP_SENDER`]. The whole text
+/// goes in the subject, which is what agents see first; a single worker task also goes in
+/// `--task-id`.
 pub fn nudge_message(
     to: &str,
     run_id: Option<&str>,
@@ -334,6 +335,7 @@ pub fn nudge_message(
         subject: text.to_string(),
         to: Some(to.to_string()),
         run: run_id.map(str::to_string),
+        from: Some(WHIP_SENDER.to_string()),
         task_id,
         ..Default::default()
     }
@@ -409,7 +411,11 @@ mod tests {
         assert_eq!(msg.to.as_deref(), Some("dispatch:ctx_1"));
         assert_eq!(msg.task_id.as_deref(), Some("t1"));
         assert_eq!(msg.subject, "Myrstack: hi");
-        assert_eq!(msg.from, None);
+        assert_eq!(msg.from.as_deref(), Some("myrstack-whip"));
+        assert!(
+            crate::orca::commands::orchestration_send_args(&msg)
+                .contains(&"--from=myrstack-whip".to_string())
+        );
         let two = nudge_message("term_w", Some("run_1"), &[worker.clone(), worker], "x");
         assert_eq!(two.task_id, None);
         assert_eq!(two.run.as_deref(), Some("run_1"));

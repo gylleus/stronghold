@@ -12,14 +12,16 @@ use crate::whip::progress::{ProgressReport, ProgressSource, RunProgress, TaskPro
 
 /// Default stall threshold: 15 minutes.
 pub const DEFAULT_THRESHOLD_MS: i64 = 15 * 60_000;
-/// A taskless Run not updated for this long is treated as finished.
-const TASKLESS_MAX_AGE_MS: i64 = 24 * 60 * 60_000;
+/// Default abandon window: a Run with no activity for 24 h is left alone.
+pub const DEFAULT_ABANDON_AFTER_MS: i64 = 24 * 60 * 60_000;
 
 /// Inputs to [`evaluate`] besides the report and the fleet data.
 #[derive(Debug, Clone, Copy)]
 pub struct RuleContext<'a> {
     /// Silence longer than this is a stall.
     pub threshold_ms: i64,
+    /// A Run with no activity for longer than this is abandoned; see [`is_abandoned`].
+    pub abandon_after_ms: i64,
     /// Terminal handles currently waiting on Karl (NeedsInput). They are never flagged.
     pub needs_input: &'a BTreeSet<String>,
 }
@@ -29,6 +31,7 @@ impl<'a> RuleContext<'a> {
     pub fn new(needs_input: &'a BTreeSet<String>) -> Self {
         Self {
             threshold_ms: DEFAULT_THRESHOLD_MS,
+            abandon_after_ms: DEFAULT_ABANDON_AFTER_MS,
             needs_input,
         }
     }
@@ -114,10 +117,23 @@ pub fn evaluate(
     now_ms: i64,
 ) -> Vec<StallFinding> {
     let mut findings = Vec::new();
+    let abandoned = |run_id: &str| {
+        report
+            .runs
+            .iter()
+            .find(|r| r.run_id == run_id)
+            .is_some_and(|r| is_abandoned(r, ctx, now_ms))
+    };
     for task in &report.tasks {
-        findings.extend(worker_stalled(task, data, ctx, now_ms));
+        findings.extend(
+            worker_stalled(task, data, ctx, now_ms)
+                .filter(|f| !(f.idle_for_ms > ctx.abandon_after_ms && abandoned(&task.run_id))),
+        );
     }
     for run in &report.runs {
+        if is_abandoned(run, ctx, now_ms) {
+            continue;
+        }
         let Some(coordinator) = effective_coordinator(&run.run_id, data) else {
             continue;
         };
@@ -136,6 +152,14 @@ pub fn evaluate(
         findings.extend(quiet_taskless_run(run, &coordinator, data, ctx, now_ms));
     }
     dedupe(findings)
+}
+
+/// A Run is abandoned when nothing has happened in it (see [`RunProgress::last_activity_ms`])
+/// for longer than the abandon window. Its coordinator is never nudged, nor a worker of it
+/// that has been silent that long too. A Run with no known activity time is not abandoned.
+pub fn is_abandoned(run: &RunProgress, ctx: &RuleContext<'_>, now_ms: i64) -> bool {
+    run.last_activity_ms
+        .is_some_and(|a| now_ms - a > ctx.abandon_after_ms)
 }
 
 /// The terminal actually coordinating a Run; see [`FleetData::effective_coordinator`].
@@ -308,8 +332,9 @@ fn unanswered_asks(
 }
 
 /// Rule 4: a Run with no tasks whose coordinator has been quiet longer than the threshold.
-/// Skipped when the Run looks finished: not updated in 24 h, or its coordinator has since
-/// started a newer Run. Runs whose tasks were not fetched are skipped too.
+/// Skipped when the Run looks finished: abandoned (checked by the caller), its record not
+/// updated within the abandon window (a taskless Run has no other Run-specific signal), or its
+/// coordinator has since started a newer Run. Runs whose tasks were not fetched are skipped too.
 fn quiet_taskless_run(
     run: &RunProgress,
     coordinator: &str,
@@ -323,7 +348,7 @@ fn quiet_taskless_run(
     let meta = data.run(&run.run_id);
     let created = meta.and_then(|r| ts_ms(&r.created_at));
     let updated = meta.and_then(|r| ts_ms(&r.updated_at)).or(created);
-    if updated.is_some_and(|u| now_ms - u > TASKLESS_MAX_AGE_MS) {
+    if updated.is_some_and(|u| now_ms - u > ctx.abandon_after_ms) {
         return None;
     }
     let superseded = data.runs.iter().any(|other| {
@@ -491,6 +516,7 @@ mod tests {
         data: FleetData,
         report: ProgressReport,
         needs_input: BTreeSet<String>,
+        abandon_after_ms: i64,
     }
 
     impl Scenario {
@@ -516,22 +542,23 @@ mod tests {
                     open_ready_tasks: vec![],
                     unanswered_asks: vec![],
                     holding: None,
+                    last_activity_ms: Some(NOW - MIN),
                 }],
             };
             Self {
                 data,
                 report,
                 needs_input: BTreeSet::new(),
+                abandon_after_ms: DEFAULT_ABANDON_AFTER_MS,
             }
         }
 
         fn eval(&self) -> Vec<StallFinding> {
-            evaluate(
-                &self.report,
-                &self.data,
-                &RuleContext::new(&self.needs_input),
-                NOW,
-            )
+            let ctx = RuleContext {
+                abandon_after_ms: self.abandon_after_ms,
+                ..RuleContext::new(&self.needs_input)
+            };
+            evaluate(&self.report, &self.data, &ctx, NOW)
         }
 
         fn t1(&mut self) -> &mut TaskProgress {
@@ -897,6 +924,152 @@ mod tests {
                 vec![],
             ),
         ]);
+    }
+
+    #[test]
+    fn abandoned_runs_are_skipped() {
+        const HOUR: i64 = 60 * MIN;
+        /// Everything in the Run last happened `hours` ago.
+        fn quiet_for(s: &mut Scenario, hours: i64) {
+            let at = NOW - hours * HOUR;
+            s.data.runs[0] = run(RUN, COORD, at - HOUR, at);
+            s.run().last_coordinator_activity_ms = Some(at);
+            s.run().last_activity_ms = Some(at);
+        }
+        let idle = |finished: bool, mins| {
+            vec![(
+                coord_target(),
+                StallReason::CoordinatorIdle {
+                    ready_tasks: if finished { vec![] } else { vec!["t2".into()] },
+                    finished_tasks: if finished { vec!["t1".into()] } else { vec![] },
+                },
+                mins,
+            )]
+        };
+        run_cases(vec![
+            (
+                "finished task with no follow-up, run idle 719h",
+                |s| {
+                    s.complete_t1(NOW - 719 * HOUR);
+                    quiet_for(s, 719);
+                },
+                vec![],
+            ),
+            (
+                "finished task with no follow-up, run idle 23h",
+                |s| {
+                    s.complete_t1(NOW - 22 * HOUR);
+                    quiet_for(s, 23);
+                },
+                idle(true, 23 * 60),
+            ),
+            (
+                "ready task in an abandoned run",
+                |s| {
+                    s.add_ready("t2", NOW - 30 * HOUR);
+                    quiet_for(s, 25);
+                },
+                vec![],
+            ),
+            (
+                "ready task, coordinator quiet 25h but the run is active",
+                |s| {
+                    s.add_ready("t2", NOW - 30 * HOUR);
+                    quiet_for(s, 25);
+                    s.run().last_activity_ms = Some(NOW - HOUR);
+                },
+                idle(false, 25 * 60),
+            ),
+            (
+                "unanswered ask in an abandoned run",
+                |s| {
+                    s.ask("q1", NOW - 30 * HOUR);
+                    quiet_for(s, 25);
+                },
+                vec![],
+            ),
+            (
+                "worker silent past the window in an abandoned run",
+                |s| {
+                    s.t1().last_progress_ms = Some(NOW - 25 * HOUR);
+                    quiet_for(s, 25);
+                },
+                vec![],
+            ),
+            (
+                "worker silent past the window, run still active",
+                |s| {
+                    s.t1().last_progress_ms = Some(NOW - 25 * HOUR);
+                    s.run().last_activity_ms = Some(NOW - HOUR);
+                },
+                vec![(worker_target(), StallReason::WorkerNoProgress, 25 * 60)],
+            ),
+            (
+                "quiet taskless run, abandoned",
+                |s| {
+                    s.make_taskless();
+                    quiet_for(s, 25);
+                },
+                vec![],
+            ),
+            (
+                "shorter abandon window",
+                |s| {
+                    s.add_ready("t2", NOW - 3 * HOUR);
+                    quiet_for(s, 2);
+                    s.abandon_after_ms = HOUR;
+                },
+                vec![],
+            ),
+            (
+                "no known activity time is not abandoned",
+                |s| {
+                    s.add_ready("t2", NOW - 30 * HOUR);
+                    quiet_for(s, 25);
+                    s.run().last_activity_ms = None;
+                },
+                idle(false, 25 * 60),
+            ),
+        ]);
+    }
+
+    /// The live case that prompted the abandon window: a finished task nobody followed up,
+    /// its coordinator's terminal still open but silent for 719 h.
+    #[test]
+    fn abandoned_run_end_to_end() {
+        let quiet = 719 * 60 * MIN;
+        let mut data = Scenario::new().data;
+        data.runs = vec![run(RUN, COORD, NOW - quiet - 2 * MIN, NOW - quiet)];
+        data.terminals = vec![Terminal {
+            handle: COORD.into(),
+            last_output_at: Some(Timestamp::Millis(NOW - quiet - MIN)),
+            ..Default::default()
+        }];
+        data.workers.clear();
+        let t1 = &mut data.tasks.get_mut(RUN).unwrap()[0];
+        t1.status = TaskStatus::Completed;
+        t1.created_at = Some(Timestamp::Millis(NOW - quiet - 2 * MIN));
+        t1.completed_at = Some(Timestamp::Millis(NOW - quiet));
+        // A whip nudge sent since does not revive it.
+        data.inbox = vec![msg(
+            "m1",
+            crate::orca::WHIP_SENDER,
+            "status",
+            NOW - MIN,
+            json!({}),
+        )];
+        let needs_input = BTreeSet::new();
+        let ctx = RuleContext::new(&needs_input);
+        let report = ProgressTracker::new().update(&data, NOW);
+        assert!(is_abandoned(&report.runs[0], &ctx, NOW));
+        assert_eq!(evaluate(&report, &data, &ctx, NOW), vec![]);
+
+        // A message in the Run an hour ago makes it live again, and its coordinator is nudged.
+        data.inbox
+            .push(msg("m2", "term_other", "status", NOW - 60 * MIN, json!({})));
+        let report = ProgressTracker::new().update(&data, NOW);
+        assert!(!is_abandoned(&report.runs[0], &ctx, NOW));
+        assert_eq!(evaluate(&report, &data, &ctx, NOW).len(), 1);
     }
 
     #[test]

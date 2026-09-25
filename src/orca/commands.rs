@@ -551,6 +551,20 @@ mod tests {
                 "--files-modified=a.rs,b.rs",
             ]
         );
+        let from_whip = OutgoingMessage {
+            subject: "s".into(),
+            from: Some(crate::orca::WHIP_SENDER.into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            orchestration_send_args(&from_whip),
+            vec![
+                "orchestration",
+                "send",
+                "--subject=s",
+                "--from=myrstack-whip"
+            ]
+        );
         let result = parse_orchestration_send(
             br#"{"id":"1","ok":true,"result":{"message":{"id":"msg_1"},"warnings":[]}}"#,
         )

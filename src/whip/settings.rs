@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::whip::rules::DEFAULT_THRESHOLD_MS;
+use crate::whip::rules::{DEFAULT_ABANDON_AFTER_MS, DEFAULT_THRESHOLD_MS};
 
 const MIN: i64 = 60_000;
 /// File name inside the config dir.
@@ -43,6 +43,8 @@ pub struct WhipSettings {
     pub tick_ms: i64,
     /// Send notifications for escalations and long NeedsInput waits.
     pub notify: bool,
+    /// A Run with no activity at all for longer than this is abandoned and never nudged.
+    pub abandon_after_ms: i64,
 }
 
 impl Default for WhipSettings {
@@ -55,6 +57,7 @@ impl Default for WhipSettings {
             max_nudges: 2,
             tick_ms: MIN,
             notify: true,
+            abandon_after_ms: DEFAULT_ABANDON_AFTER_MS,
         }
     }
 }
@@ -66,6 +69,7 @@ impl WhipSettings {
             ("threshold_ms", self.threshold_ms),
             ("cooldown_ms", self.cooldown_ms),
             ("tick_ms", self.tick_ms),
+            ("abandon_after_ms", self.abandon_after_ms),
         ];
         let bad: Vec<String> = positive
             .iter()
@@ -200,6 +204,7 @@ mod tests {
         assert_eq!(s.max_nudges, 2);
         assert_eq!(s.tick_ms, MIN);
         assert!(s.notify);
+        assert_eq!(s.abandon_after_ms, 24 * 60 * MIN);
         assert_eq!(s.validate(), Ok(()));
     }
 
@@ -284,6 +289,7 @@ mod tests {
             r#"{"whip": {"max_nudges": "two"}}"#,
             r#"{"whip": {"threshold_ms": 0}}"#,
             r#"{"whip": {"tick_ms": -5}}"#,
+            r#"{"whip": {"abandon_after_ms": 0}}"#,
         ] {
             fs::write(&path, bad).unwrap();
             let loaded = Settings::load_from(&path);
