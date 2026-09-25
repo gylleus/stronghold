@@ -12,6 +12,7 @@ pub mod fleet;
 pub mod hotkey;
 pub mod model;
 pub mod orca;
+pub mod persist;
 pub mod poller;
 pub mod ui;
 pub mod whip;

@@ -14,7 +14,7 @@ name = "myrstack"
 path = "src/main.rs"
 
 [dependencies]
-eframe = "0.36"
+eframe = { version = "0.36", features = ["persistence"] }
 egui_graphs = "0.32"
 petgraph = "0.8"
 serde = { version = "1", features = ["derive"] }

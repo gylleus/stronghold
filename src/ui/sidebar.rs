@@ -28,7 +28,8 @@ const ALL_KINDS: [NodeKind; 4] = [
 const DOT_RADIUS: f32 = 5.0;
 
 /// Which nodes the graph shows. Empty sets mean "all".
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct FleetFilter {
     pub repos: BTreeSet<String>,
     pub states: BTreeSet<NodeState>,

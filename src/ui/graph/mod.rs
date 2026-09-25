@@ -2,6 +2,9 @@
 
 mod edge;
 mod layout;
+mod saved;
+#[cfg(test)]
+mod saved_tests;
 mod shape;
 #[cfg(test)]
 mod tests;
@@ -29,6 +32,7 @@ pub use layout::{
     ClusterNode, Extras, FleetLayout, FleetLayoutState, Membership, RunClusters, RunClustersParams,
     SettleTracker, memberships,
 };
+pub use saved::{MAX_SAVED_POSITIONS, SavedLayout, SavedView};
 pub use shape::{
     ALL_STATES, FleetNodeShape, NodePayload, StateGlyph, agent_marker, contrast_ratio, fade_alpha,
     legend, node_radius, state_color, state_glyph,
@@ -97,6 +101,8 @@ pub struct GraphView {
     last_snapshot: Option<FleetSnapshot>,
     /// Nodes to pan/zoom onto on the next frame.
     focus_requested: Option<Vec<NodeId>>,
+    /// Layout restored from a previous launch; see [`GraphView::import_layout`].
+    restore: saved::Restore,
 }
 
 impl Default for GraphView {
@@ -130,6 +136,7 @@ impl GraphView {
             stashed: HashMap::new(),
             last_snapshot: None,
             focus_requested: None,
+            restore: saved::Restore::default(),
         }
     }
 
@@ -191,8 +198,11 @@ impl GraphView {
         }
         // Coordinators first so their workers can spawn next to them.
         added.sort_by_key(|n| n.kind != NodeKind::Coordinator);
+        let mut restored = 0;
         for node in added {
-            let location = match self.stashed.remove(&node.id) {
+            let saved = self.take_saved_position(&node.id);
+            restored += usize::from(saved.is_some());
+            let location = match self.stashed.remove(&node.id).or(saved) {
                 Some(pos) => pos,
                 None => self.spawn_position(node, snapshot),
             };
@@ -237,9 +247,13 @@ impl GraphView {
         if topology_changed {
             self.wake_layout = true;
         }
-        if was_empty && !self.index.is_empty() {
+        if was_empty && !self.index.is_empty() && !self.take_keep_view() {
             self.auto_fit = true;
         }
+        if restored > 0 {
+            log::debug!("graph: placed {restored} nodes at saved positions");
+        }
+        self.apply_saved_selection();
         self.last_snapshot = Some(snapshot.clone());
     }
 
@@ -322,6 +336,7 @@ impl GraphView {
         let id = Some(self.id.clone());
         self.anchor = ui.ctx().content_rect().center();
         self.prepare_layout(ui);
+        self.sync_saved_view(ui, true);
 
         let fit = std::mem::take(&mut self.fit_requested) || self.auto_fit;
         // egui_graphs would otherwise repaint every frame even with the layout paused.
@@ -373,6 +388,13 @@ impl GraphView {
         if user_navigated || dragging || !running {
             self.auto_fit = false;
         }
+        if user_navigated || dragging {
+            self.mark_manual_view();
+        }
+        if clicked.is_some() {
+            self.drop_saved_selection();
+        }
+        self.sync_saved_view(ui, false);
         if running && !animating {
             ui.ctx().request_repaint();
         }
@@ -414,6 +436,7 @@ impl GraphView {
 
     /// Selects `id` (or clears the selection), e.g. to mirror a selection made elsewhere.
     pub fn set_selected(&mut self, id: Option<&NodeId>) {
+        self.drop_saved_selection();
         let target = id.and_then(|id| self.index.get(id)).copied();
         let indices: Vec<NodeIndex> = self.index.values().copied().collect();
         for idx in indices {
