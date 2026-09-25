@@ -279,6 +279,15 @@ fn sidebar_panel_width_is_stable() {
     let ctx = egui::Context::default();
     let s = snapshot();
     let mut filter = FleetFilter::default();
+    let mut whip_log = crate::ui::whip_log::WhipLog::default();
+    whip_log.extend((1..=40).map(long_whip_item));
+    let whip_status = crate::whip::WhipStatus {
+        enabled: true,
+        dry_run: true,
+        findings: 12,
+        last_tick_ms: Some(0),
+        ..Default::default()
+    };
     let input = || egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,
@@ -293,7 +302,9 @@ fn sidebar_panel_width_is_stable() {
                 .resizable(true)
                 .default_size(260.0)
                 .show(ui, |ui| {
-                    sidebar(ui, &s, &mut filter);
+                    sidebar_with(ui, &s, &mut filter, |ui| {
+                        whip_log.section(ui, &whip_status, &s, 5_000);
+                    });
                 })
                 .response
                 .rect
@@ -308,4 +319,23 @@ fn sidebar_panel_width_is_stable() {
         "sidebar width drifted: {widths:?}"
     );
     assert!(settled < 400.0, "sidebar grew to {settled}");
+}
+
+/// A whip log entry with long texts on a node of [`snapshot`].
+fn long_whip_item(seq: u64) -> crate::whip::WhipLogItem {
+    let long = "a very long piece of text without any natural break ".repeat(8);
+    crate::whip::WhipLogItem {
+        seq,
+        entry: crate::whip::WhipLogEntry {
+            at_ms: 1_000,
+            action: "nudge #1 via bus to dispatch:d1".into(),
+            target: long.clone(),
+            reason: long.clone(),
+            dry_run: seq.is_multiple_of(2),
+            outcome: format!("failed: {long}"),
+        },
+        handle: Some(long),
+        run_id: Some("alpha".into()),
+        task_id: None,
+    }
 }

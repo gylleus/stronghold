@@ -68,6 +68,8 @@ pub struct MyrstackApp {
     /// Runs the whip on its own thread against the newest data.
     whip: WhipRunner,
     whip_status: WhipStatus,
+    /// Whip action history for the sidebar.
+    whip_log: ui::whip_log::WhipLog,
     whip_window: ui::settings::WhipSettingsWindow,
 }
 
@@ -115,6 +117,7 @@ impl MyrstackApp {
             input: ui::terminal::InputPanelState::default(),
             whip,
             whip_status: WhipStatus::default(),
+            whip_log: ui::whip_log::WhipLog::default(),
             whip_window,
             search: ui::search::SearchPalette::default(),
             help_open: false,
@@ -125,9 +128,17 @@ impl MyrstackApp {
 
     /// Takes the whip's newest status; true when the escalated set changed (nodes to redraw).
     fn poll_whip(&mut self) -> bool {
-        let Some(status) = self.whip.latest() else {
+        let Some(mut status) = self.whip.latest() else {
             return false;
         };
+        if !status.new_log.is_empty() {
+            let new = status.new_log.len();
+            self.whip_log.extend(status.new_log.drain(..));
+            log::debug!(
+                "whip log: {new} new entries, {} in history",
+                self.whip_log.entries().len()
+            );
+        }
         let changed = status.escalated != self.whip_status.escalated;
         self.whip_status = status;
         changed
@@ -574,14 +585,20 @@ impl eframe::App for MyrstackApp {
         self.keyboard(ui.ctx());
         egui::Panel::top("top_bar").show(ui, |ui| self.top_bar(ui, now_ms));
         self.hidden_selection_notice(ui);
+        let mut whip_pick = None;
         if self.view == View::Graph
             && let Some(snapshot) = &self.snapshot
         {
             let filter = &mut self.filter;
+            let (whip_log, whip_status) = (&mut self.whip_log, &self.whip_status);
             let response = egui::Panel::left("sidebar")
                 .resizable(true)
                 .default_size(260.0)
-                .show(ui, |ui| ui::sidebar::sidebar(ui, snapshot, filter))
+                .show(ui, |ui| {
+                    ui::sidebar::sidebar_with(ui, snapshot, filter, |ui| {
+                        whip_pick = whip_log.section(ui, whip_status, snapshot, now_ms);
+                    })
+                })
                 .inner;
             if response.filter_changed {
                 self.graph.set_hidden(&self.filter.hidden(snapshot));
@@ -593,6 +610,9 @@ impl eframe::App for MyrstackApp {
                 self.graph.set_selected(Some(&id));
                 self.selected = Some(id);
             }
+        }
+        if let Some(id) = whip_pick {
+            self.select_and_focus(id);
         }
         if self.view == View::Graph {
             egui::Panel::bottom("legend").show(ui, ui::graph::legend);
