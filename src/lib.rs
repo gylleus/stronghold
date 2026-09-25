@@ -8,6 +8,7 @@ pub mod app;
 pub mod broadcast;
 pub mod claude;
 pub mod codex;
+pub mod control;
 pub mod detect;
 pub mod fleet;
 pub mod hotkey;

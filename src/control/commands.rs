@@ -1,0 +1,341 @@
+//! Action methods: parsed into [`ControlCommand`]s and carried out by a [`CommandHandler`].
+//!
+//! In the app the handler is [`AppCommands`]: it queues the command for the UI thread (polled in
+//! `logic()`), wakes the UI and blocks the connection's thread until the app replies.
+
+use std::collections::BTreeSet;
+use std::time::Duration;
+
+use crossbeam_channel::{Receiver, Sender};
+use serde_json::{Value, json};
+
+use crate::app::View;
+use crate::broadcast::{BroadcastPlan, BroadcastSender};
+use crate::control::protocol::{ControlError, ErrorCode, Params};
+use crate::control::view::{kinds_of, parse_view, states_of};
+use crate::model::{NodeKind, NodeState};
+use crate::ui::sidebar::FleetFilter;
+
+/// How long a terminal send may take: Orca waits up to 30 s for the agent, the runner 45 s.
+pub const ACTION_REPLY_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long the app may take to apply a dashboard change.
+pub const UI_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// A single key sent to an agent's terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalKey {
+    Enter,
+    Escape,
+    /// Ctrl-C.
+    Interrupt,
+}
+
+/// Changes to the dashboard filter; `None` fields are left as they are.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FilterChange {
+    /// Start from the default (show everything) before applying the other fields.
+    pub clear: bool,
+    pub repos: Option<BTreeSet<String>>,
+    pub states: Option<BTreeSet<NodeState>>,
+    pub kinds: Option<BTreeSet<NodeKind>>,
+    pub text: Option<String>,
+    pub show_loose: Option<bool>,
+    pub show_released: Option<bool>,
+}
+
+impl FilterChange {
+    pub fn apply(&self, filter: &mut FleetFilter) {
+        if self.clear {
+            *filter = FleetFilter::default();
+        }
+        if let Some(repos) = &self.repos {
+            filter.repos = repos.clone();
+        }
+        if let Some(states) = &self.states {
+            filter.states = states.clone();
+        }
+        if let Some(kinds) = &self.kinds {
+            filter.kinds = kinds.clone();
+        }
+        if let Some(text) = &self.text {
+            filter.text = text.clone();
+        }
+        if let Some(v) = self.show_loose {
+            filter.show_loose = v;
+        }
+        if let Some(v) = self.show_released {
+            filter.show_released = v;
+        }
+    }
+}
+
+/// Something the API asks the app to do. `agent` fields are node ids, terminal handles or
+/// labels, resolved by the app against its current snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlCommand {
+    /// Type `text` into the agent's terminal, then Enter when `enter`.
+    Send {
+        agent: String,
+        text: String,
+        enter: bool,
+    },
+    Key {
+        agent: String,
+        key: TerminalKey,
+    },
+    /// A bus message to the coordinators of `runs` (`None`: every run).
+    Broadcast {
+        text: String,
+        runs: Option<Vec<String>>,
+    },
+    WhipSettings {
+        enabled: Option<bool>,
+        dry_run: Option<bool>,
+        notify: Option<bool>,
+    },
+    /// Select a node (`None` clears the selection) without moving the graph.
+    Select {
+        agent: Option<String>,
+    },
+    /// Select a node and pan/zoom the graph onto it; `raise` also brings the window forward.
+    Focus {
+        agent: String,
+        raise: bool,
+    },
+    Filter(FilterChange),
+    SetView(View),
+    Fit,
+    OpenWhipSettings,
+    /// Close the agent's terminal. TODO(next bead): wire to the close/kill session action.
+    Close {
+        agent: String,
+    },
+}
+
+impl ControlCommand {
+    /// The command for an action method; `None` when `method` is not an action.
+    pub fn parse(method: &str, params: &Value) -> Option<Result<Self, ControlError>> {
+        let p = Params::new(params);
+        let agent = || p.required_str("id").map(str::to_owned);
+        let key = |key| {
+            Ok(Self::Key {
+                agent: agent()?,
+                key,
+            })
+        };
+        let result = match method {
+            "send" => (|| {
+                let text = p
+                    .str("text")?
+                    .ok_or_else(|| ControlError::invalid_params("missing \"text\""))?;
+                let enter = p.bool("enter")?.unwrap_or(true);
+                if text.is_empty() && !enter {
+                    return Err(ControlError::invalid_params(
+                        "empty \"text\" without enter sends nothing",
+                    ));
+                }
+                Ok(Self::Send {
+                    agent: agent()?,
+                    text: text.to_owned(),
+                    enter,
+                })
+            })(),
+            "enter" => key(TerminalKey::Enter),
+            "esc" | "escape" => key(TerminalKey::Escape),
+            "interrupt" => key(TerminalKey::Interrupt),
+            "broadcast" => (|| {
+                let text = p.required_str("text")?.to_owned();
+                let all = p.bool("all")?.unwrap_or(false);
+                let runs = p.strings("runs")?;
+                let runs = match (all, runs) {
+                    (true, None) => None,
+                    (false, Some(runs)) if !runs.is_empty() => Some(runs),
+                    (true, Some(_)) => {
+                        return Err(ControlError::invalid_params(
+                            "give either \"runs\" or \"all\": true, not both",
+                        ));
+                    }
+                    (false, _) => {
+                        return Err(ControlError::invalid_params(
+                            "\"runs\" (run ids) or \"all\": true is required",
+                        ));
+                    }
+                };
+                Ok(Self::Broadcast { text, runs })
+            })(),
+            "whip_settings" => (|| {
+                let command = Self::WhipSettings {
+                    enabled: p.bool("enabled")?,
+                    dry_run: p.bool("dry_run")?,
+                    notify: p.bool("notify")?,
+                };
+                Ok(command)
+            })(),
+            "select" => (|| {
+                Ok(Self::Select {
+                    agent: p.str("id")?.map(str::to_owned),
+                })
+            })(),
+            "focus" => (|| {
+                Ok(Self::Focus {
+                    agent: agent()?,
+                    raise: p.bool("raise")?.unwrap_or(false),
+                })
+            })(),
+            "filter" => parse_filter(&p).map(Self::Filter),
+            "view" => (|| {
+                let name = p.required_str("view")?;
+                parse_view(name).map(Self::SetView).ok_or_else(|| {
+                    ControlError::invalid_params(format!(
+                        "unknown view {name:?}; use \"graph\" or \"table\""
+                    ))
+                })
+            })(),
+            "fit" => Ok(Self::Fit),
+            "open_whip_settings" => Ok(Self::OpenWhipSettings),
+            "close" => (|| Ok(Self::Close { agent: agent()? }))(),
+            _ => return None,
+        };
+        Some(result)
+    }
+
+    /// How long the connection waits for the app's reply.
+    pub fn reply_timeout(&self) -> Duration {
+        match self {
+            Self::Send { .. } | Self::Key { .. } | Self::Broadcast { .. } => ACTION_REPLY_TIMEOUT,
+            _ => UI_REPLY_TIMEOUT,
+        }
+    }
+}
+
+fn parse_filter(p: &Params<'_>) -> Result<FilterChange, ControlError> {
+    let invalid = ControlError::invalid_params;
+    let change = FilterChange {
+        clear: p.bool("clear")?.unwrap_or(false),
+        repos: p.strings("repos")?.map(|r| r.into_iter().collect()),
+        states: p
+            .strings("states")?
+            .map(|s| states_of(&s))
+            .transpose()
+            .map_err(invalid)?,
+        kinds: p
+            .strings("kinds")?
+            .map(|k| kinds_of(&k))
+            .transpose()
+            .map_err(invalid)?,
+        text: p.str("text")?.map(str::to_owned),
+        show_loose: p.bool("show_loose")?,
+        show_released: p.bool("show_released")?,
+    };
+    if change == FilterChange::default() {
+        return Err(invalid(
+            "nothing to change; give clear, repos, states, kinds, text, show_loose or show_released"
+                .into(),
+        ));
+    }
+    Ok(change)
+}
+
+/// Carries out action commands; called on a connection's thread.
+pub trait CommandHandler: Send + Sync {
+    fn execute(&self, command: ControlCommand) -> Result<Value, ControlError>;
+}
+
+/// Where the app sends a command's outcome.
+#[derive(Debug)]
+pub struct Reply(Sender<Result<Value, ControlError>>);
+
+impl Reply {
+    /// Sends the outcome; a caller that timed out and left is ignored.
+    pub fn send(self, result: Result<Value, ControlError>) {
+        let _ = self.0.send(result);
+    }
+}
+
+/// A command waiting for the app, with where to send its outcome.
+#[derive(Debug)]
+pub struct PendingCommand {
+    pub command: ControlCommand,
+    pub reply: Reply,
+}
+
+/// Wakes the UI so `logic()` runs and picks up queued commands.
+pub type Wake = Box<dyn Fn() + Send + Sync>;
+
+/// [`CommandHandler`] that hands commands to the app over a channel.
+pub struct AppCommands {
+    tx: Sender<PendingCommand>,
+    wake: Option<Wake>,
+}
+
+impl AppCommands {
+    /// The handler and the receiver the app polls.
+    pub fn channel(wake: Option<Wake>) -> (Self, Receiver<PendingCommand>) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        (Self { tx, wake }, rx)
+    }
+}
+
+impl CommandHandler for AppCommands {
+    fn execute(&self, command: ControlCommand) -> Result<Value, ControlError> {
+        let timeout = command.reply_timeout();
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.tx
+            .send(PendingCommand {
+                command,
+                reply: Reply(reply_tx),
+            })
+            .map_err(|_| ControlError::new(ErrorCode::Unavailable, "the app is shutting down"))?;
+        if let Some(wake) = &self.wake {
+            wake();
+        }
+        match reply_rx.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(ControlError::new(
+                ErrorCode::Timeout,
+                format!("no reply from the app within {} s", timeout.as_secs()),
+            )),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => Err(ControlError::new(
+                ErrorCode::Unavailable,
+                "the app dropped the command",
+            )),
+        }
+    }
+}
+
+/// Sends a broadcast plan's deliveries one by one and reports each outcome.
+pub fn deliver_broadcast(sender: &mut dyn BroadcastSender, plan: &BroadcastPlan) -> Value {
+    let mut sent = 0;
+    let deliveries: Vec<Value> = plan
+        .deliveries
+        .iter()
+        .map(|d| match sender.send(&d.message) {
+            Ok(message_id) => {
+                sent += 1;
+                json!({
+                    "coordinator": d.coordinator_handle,
+                    "runs": d.run_ids,
+                    "ok": true,
+                    "message_id": message_id,
+                })
+            }
+            Err(error) => json!({
+                "coordinator": d.coordinator_handle,
+                "runs": d.run_ids,
+                "ok": false,
+                "error": error,
+            }),
+        })
+        .collect();
+    let skipped: Vec<Value> = plan
+        .skipped
+        .iter()
+        .map(|s| json!({"run_id": s.run_id, "reason": s.reason.describe()}))
+        .collect();
+    json!({
+        "sent": sent,
+        "failed": plan.deliveries.len() - sent,
+        "deliveries": deliveries,
+        "skipped": skipped,
+    })
+}

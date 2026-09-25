@@ -4,7 +4,9 @@ use myrstack::{APP_NAME, MyrstackApp};
 
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(result) = myrstack::claude::hook::run_cli(&args) {
+    let cli = myrstack::claude::hook::run_cli(&args)
+        .or_else(|| myrstack::control::client::run_cli(&args));
+    if let Some(result) = cli {
         if let Err(e) = result {
             eprintln!("myrstack: {e:#}");
             std::process::exit(1);
