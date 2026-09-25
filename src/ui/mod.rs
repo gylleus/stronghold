@@ -14,4 +14,7 @@ pub mod sidebar;
 pub mod subagent;
 pub mod table;
 pub mod terminal;
+#[cfg(test)]
+pub(crate) mod test_util;
 pub mod whip_log;
+pub mod whip_now;

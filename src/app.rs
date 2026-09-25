@@ -8,6 +8,7 @@ use eframe::egui;
 use crate::APP_NAME;
 
 mod control;
+mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
 use crate::detect::detect_prompt;
@@ -95,6 +96,8 @@ pub struct MyrstackApp {
     control: control::AppControl,
     /// "Close session" confirmation dialog and the log of closes.
     close: ui::close::CloseDialog,
+    /// Manual whips in flight, their confirmation popover and result toast.
+    whip_now: whip_now::WhipNowState,
 }
 
 /// How many posted notifications the alerts menu keeps.
@@ -160,6 +163,7 @@ impl MyrstackApp {
             help_open: false,
             frame_stats: ui::frame_stats::FrameStats::default(),
             close: ui::close::CloseDialog::default(),
+            whip_now: whip_now::WhipNowState::default(),
         };
         app.restore_state(cc.storage);
         app
@@ -305,8 +309,12 @@ impl MyrstackApp {
             let id = self.actions.submit(request.action.clone());
             self.input.submitted(id, request);
         }
+        let id = node.id.clone();
         if response.close_session {
-            self.request_close(vec![node.id.clone()]);
+            self.request_close(vec![id.clone()]);
+        }
+        if response.whip {
+            self.request_whip(vec![id]);
         }
         if response.close {
             self.selected = None;
@@ -338,6 +346,9 @@ impl MyrstackApp {
                 ui::queen::queen_panel(ui, queen, inputs, || Box::new(OrcaClient::new()))
             })
             .inner;
+        if response.whip_stalled {
+            self.request_whip_stalled(None);
+        }
         if let Some(id) = response.select {
             self.select_and_focus(id);
         } else if response.close {
@@ -484,6 +495,13 @@ impl MyrstackApp {
                 }
                 None
             }
+            KeyCommand::Whip => {
+                let ids = ui::selection::whip_targets(current, &self.graph.selection());
+                if !ids.is_empty() {
+                    self.request_whip(ids);
+                }
+                None
+            }
         };
         if let Some(id) = target {
             self.graph.set_selected(Some(&id));
@@ -605,6 +623,9 @@ impl MyrstackApp {
             }
             Some(ui::selection::SelectionAction::Close) => {
                 self.request_close(selection.into_iter().collect());
+            }
+            Some(ui::selection::SelectionAction::Whip) => {
+                self.request_whip(selection.into_iter().collect());
             }
             Some(ui::selection::SelectionAction::Clear) => {
                 self.graph.set_selected(None);
@@ -829,6 +850,7 @@ impl eframe::App for MyrstackApp {
         }
         self.take_alerts();
         self.poll_control(ctx);
+        self.poll_whip_now();
         for result in self.actions.poll() {
             self.control_action_done(&result);
             if self.input.on_result(&result, now_ms()) {
@@ -911,6 +933,9 @@ impl eframe::App for MyrstackApp {
                         self.close
                             .request(ui::close::CloseRequest::Nodes(response.close_requested));
                     }
+                    if !response.whip_requested.is_empty() {
+                        self.request_whip(response.whip_requested);
+                    }
                 }
                 View::Table => ui::table::terminal_table(ui, data, now_ms),
             },
@@ -919,6 +944,10 @@ impl eframe::App for MyrstackApp {
         if let Some(settings) = self.whip_window.show(ui.ctx(), &self.whip_status, now_ms) {
             self.whip.update_settings(settings);
         }
+        if self.whip_window.take_whip_stalled() {
+            self.request_whip_stalled(None);
+        }
+        self.whip_now_dialogs(ui.ctx(), now_ms);
         self.sync_screen_watch();
     }
 }

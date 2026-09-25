@@ -57,7 +57,7 @@ Error codes:
 | `refused` | the app will not do it (e.g. closing a subagent or the Queen) |
 | `not_supported` | a known method this build cannot do |
 | `unavailable` | no fleet data yet (before the first poll), or the app is shutting down |
-| `timeout` | the app did not reply in time (5 s for dashboard changes, 60 s for sends, 180 s for closes) |
+| `timeout` | the app did not reply in time (5 s for dashboard changes, 60 s for sends, 120 s for manual whips, 180 s for closes) |
 | `failed` | the action ran and failed (e.g. Orca refused the input) |
 
 ### Agent ids
@@ -184,7 +184,8 @@ If the read fails, `screen` is `{"handle":…,"error":"…"}`.
 
 Returns the whip settings, its state, and the newest log entries (the newest entry is last).
 The optional `limit` param sets how many log entries to return (default 20; the view keeps
-the last 200).
+the last 200). Each entry has `manual: true` when it was a manual whip (see the `whip` action
+below). With `ids`, `id` or `stalled` in the params, `whip` is the action instead.
 
 ```json
 {"v":1,"method":"whip","params":{"limit":1}}
@@ -192,7 +193,7 @@ the last 200).
    "cooldown_ms":600000,"max_nudges":2,"tick_ms":60000,"abandon_after_ms":…,
    "last_tick_ms":…,"findings":1,"actions_logged":3,"escalated":[],
    "log":[{"seq":3,"at_ms":…,"action":"nudge #1 via bus to dispatch:ctx_…","target":"worker …",
-           "reason":"…","dry_run":true,"outcome":"dry-run","handle":"term_…",
+           "reason":"…","dry_run":true,"outcome":"dry-run","manual":false,"handle":"term_…",
            "run_id":"run_…","task_id":"task_…"}]}}
 ```
 
@@ -387,6 +388,61 @@ When the close runs, the reply comes after every step has finished:
 A plan that is refused (for a subagent, the Queen, or a node with nothing to close) returns a
 `refused` error.
 
+### `whip` (action)
+
+Nudges agents now, or runs a whip pass now. `whip` without `id`, `ids` or `stalled` is the
+read method above.
+
+| param | type | meaning |
+|---|---|---|
+| `id` / `ids` | string / string list | agents to nudge now (a manual whip) |
+| `stalled` | bool | `true`: run an immediate whip tick instead |
+
+Give either agents or `stalled: true`, not both.
+
+**Manual whip** (`ids`): each agent gets the nudge the automatic whip sends when it stalls,
+with the same texts and sender (`myrstack-whip`):
+
+- a worker with a live dispatched task: a bus message to `dispatch:<id>` about the task;
+- a coordinator: a bus message to its terminal handle with `--run`;
+- a loose terminal, or a worker without a live dispatch: a status check typed into its
+  terminal (or, when it waits on input, sent on the bus to its handle, since typing could
+  answer its prompt).
+
+Threshold and cooldown do not apply, and the nudges are **sent live even when the automatic
+whip is in dry-run** (an explicit request). They are logged with `manual: true` and recorded
+by the whip, so their echo is not taken for progress and a stalled target climbs the
+escalation ladder (and starts a new cooldown). The Queen, subagents, released workers and
+dead terminals are skipped with a reason. An agent waiting on Karl's input is nudged, with a
+`warning`. The API does not ask for confirmation; the app's "Whip" button does for
+NeedsInput targets and for 5 or more targets.
+
+```json
+{"v":1,"method":"whip","params":{"ids":["term:term_12…","queen"]}}
+→ {"ok":true,"result":{"mode":"manual","sent":1,"failed":0,"automatic_dry_run":true,
+   "nudges":[{"id":"term:term_12…","label":"Fix login","handle":"term_12…",
+              "via":{"bus":"dispatch:ctx_…","run":"run_…"},"target":"worker term_12… task t1",
+              "text":"Myrstack: no progress on task …","ok":true,"outcome":"sent",
+              "warning":null,"seq":14}],
+   "skipped":[{"id":"queen","label":"Queen","reason":"the Queen is Myrstack itself"}]}}
+```
+
+`via` is `{"bus": <to>, "run": <run id>}` or `{"terminal": <handle>}`. An unknown agent is a
+`not_found` error; when every agent is skipped the result has `sent: 0` and the skips.
+
+**Whip all stalled now** (`stalled: true`): runs a full whip tick on the whip thread now
+instead of at the next period, under the normal rules (threshold, cooldown, escalation) and
+the automatic whip's dry-run setting. The next periodic tick comes one period later.
+
+```json
+{"v":1,"method":"whip","params":{"stalled":true}}
+→ {"ok":true,"result":{"mode":"stalled","ran":true,"dry_run":true,"actions":[
+    {"seq":15,"action":"nudge #1 via bus to dispatch:ctx_…","target":"worker …",
+     "handle":"term_…","outcome":"dry-run","dry_run":true}]}}
+```
+
+`ran` is `false` before the first poll.
+
 ## `myrstack ctl`
 
 ```
@@ -402,6 +458,7 @@ myrstack ctl agents '{"state":"needs_input"}'
 myrstack ctl agent term:term_2574…
 myrstack ctl focus term:term_2574…
 myrstack ctl close '{"id":"term:term_2574…","dry_run":true}'
+myrstack ctl whip '{"stalled":true}'
 ```
 
 The command honours `MYRSTACK_DATA_DIR` and `MYRSTACK_CONTROL_SOCKET`, just as the app does.

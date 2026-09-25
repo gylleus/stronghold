@@ -25,6 +25,8 @@ pub enum KeyCommand {
     ToggleHelp,
     /// Ask to close (kill) the selected nodes' sessions.
     CloseSession,
+    /// Nudge the selected agents now (manual whip).
+    Whip,
 }
 
 /// Shortcuts listed in the help overlay.
@@ -41,6 +43,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("o", "Open the terminal in Orca"),
     ("f", "Fit the graph to the screen"),
     ("x  ⌫  ⌦", "Close (kill) the selected sessions…"),
+    ("w", "Whip: nudge the selected agents now"),
     ("drag", "Select the nodes in a box (⇧/⌘ adds)"),
     ("⇧/⌘ click", "Add or remove a node from the selection"),
     ("right-drag", "Pan the graph"),
@@ -86,6 +89,7 @@ fn command_for_text(text: &str) -> Option<KeyCommand> {
         "f" => KeyCommand::Fit,
         "?" => KeyCommand::ToggleHelp,
         "x" => KeyCommand::CloseSession,
+        "w" => KeyCommand::Whip,
         _ => return None,
     })
 }
@@ -313,11 +317,13 @@ mod tests {
             ("f", Fit),
             ("?", ToggleHelp),
             ("x", CloseSession),
+            ("w", Whip),
         ];
         for (s, command) in cases {
             assert_eq!(command_for_event(&text(s), false), Some(command), "{s}");
             assert_eq!(command_for_event(&text(s), true), None, "{s}");
         }
+        assert!(SHORTCUTS.iter().any(|(k, _)| *k == "w"), "w is in the help");
         assert_eq!(command_for_event(&text("X"), false), None);
         assert_eq!(command_for_event(&text("jj"), false), None);
         assert_eq!(

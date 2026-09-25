@@ -21,6 +21,8 @@ pub struct WhipSettingsWindow {
     path: Option<PathBuf>,
     /// Result of the last load or save: `(is_error, text)`.
     message: Option<(bool, String)>,
+    /// "Whip all stalled now" was clicked; see [`WhipSettingsWindow::take_whip_stalled`].
+    whip_stalled: bool,
 }
 
 impl WhipSettingsWindow {
@@ -42,7 +44,13 @@ impl WhipSettingsWindow {
             applied,
             path,
             message,
+            whip_stalled: false,
         }
+    }
+
+    /// Whether "Whip all stalled now" was clicked since the last call.
+    pub fn take_whip_stalled(&mut self) -> bool {
+        std::mem::take(&mut self.whip_stalled)
     }
 
     /// The whip settings in effect.
@@ -117,6 +125,7 @@ impl WhipSettingsWindow {
                 saved = self.form(ui);
                 ui.separator();
                 status_view(ui, status, now_ms);
+                self.whip_stalled |= crate::ui::whip_now::whip_stalled_button(ui);
             });
         self.open = open;
         saved
@@ -278,6 +287,18 @@ fn status_view(ui: &mut egui::Ui, status: &WhipStatus, now_ms: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whip_all_stalled_now_is_taken_once() {
+        let mut window = WhipSettingsWindow::load(None);
+        window.open_window();
+        let status = WhipStatus::default();
+        crate::ui::test_util::click_label("Whip all stalled now", |ui| {
+            window.show(ui.ctx(), &status, 0)
+        });
+        assert!(window.take_whip_stalled());
+        assert!(!window.take_whip_stalled());
+    }
 
     #[test]
     fn save_writes_the_file_and_applies() {

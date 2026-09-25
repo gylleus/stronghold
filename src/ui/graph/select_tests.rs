@@ -421,3 +421,51 @@ fn set_selection_keeps_visible_nodes_and_picks_a_primary() {
     assert!(h.view.selection().is_empty());
     assert_eq!(h.view.selected(), None);
 }
+
+/// Screen centre of the text `label` drawn in one more frame, if any.
+fn find_text(h: &mut Harness, label: &str) -> Option<Pos2> {
+    fn walk(shape: &egui::Shape, label: &str) -> Option<Pos2> {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == label => {
+                Some(t.pos + t.galley.rect.center().to_vec2())
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| walk(s, label)),
+            _ => None,
+        }
+    }
+    let input = h.input(vec![]);
+    let view = &mut h.view;
+    let mut output = h.ctx.run_ui(input, |ui| {
+        view.show(ui);
+    });
+    output.textures_delta.clear();
+    output.shapes.iter().find_map(|c| walk(&c.shape, label))
+}
+
+/// Clicks the open menu's item `label`; returns the graph response of the release frame.
+fn click_menu_item(h: &mut Harness, label: &str) -> GraphResponse {
+    let at = find_text(h, label).unwrap_or_else(|| panic!("no {label:?} item"));
+    h.move_to(at);
+    h.button(at, PointerButton::Primary, true);
+    h.button(at, PointerButton::Primary, false);
+    h.last.clone()
+}
+
+#[test]
+fn context_menu_whip_requests_the_node() {
+    let mut h = Harness::new();
+    h.click(PointerButton::Secondary, h.node_screen("w1"));
+    let last = click_menu_item(&mut h, "Whip");
+    assert_eq!(last.whip_requested, vec![id("w1")]);
+    assert!(last.close_requested.is_empty());
+}
+
+#[test]
+fn context_menu_on_a_multi_selection_whips_all_of_it() {
+    let mut h = Harness::new();
+    let ids = BTreeSet::from([id("w1"), id("w2"), id("coord")]);
+    h.view.set_selection(&ids, Some(&id("w1")));
+    h.click(PointerButton::Secondary, h.node_screen("w2"));
+    let last = click_menu_item(&mut h, "Whip 3 selected");
+    assert_eq!(last.whip_requested, ids.into_iter().collect::<Vec<_>>());
+}
