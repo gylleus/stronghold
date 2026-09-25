@@ -1,0 +1,41 @@
+# Vendored egui_graphs 0.32.0 (crates.io, MIT, https://github.com/blitzarx1/egui_graphs).
+# Local patch: `GraphView::show` no longer calls `request_repaint` every frame; see
+# `with_continuous_repaint` in src/graph_view.rs. Examples, benches and dev-dependencies dropped.
+
+[package]
+edition = "2021"
+name = "egui_graphs"
+version = "0.32.0"
+authors = ["Dmitrii Samsonov <blitzar90@gmail.com>, <blitzarx1@gmail.com>"]
+description = "Interactive graph visualization widget for rust powered by egui"
+license = "MIT"
+repository = "https://github.com/blitzarx1/egui_graphs"
+publish = false
+
+[lib]
+name = "egui_graphs"
+path = "src/lib.rs"
+
+[dependencies.egui]
+version = "0.36"
+features = ["persistence"]
+default-features = false
+
+[dependencies.petgraph]
+version = "0.8"
+features = ["graphmap", "stable_graph", "matrix_graph", "serde-1"]
+default-features = false
+
+[dependencies.rand]
+version = "0.9"
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
+[dependencies.web-time]
+version = "1.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.getrandom]
+version = "0.3"
+features = ["wasm_js"]

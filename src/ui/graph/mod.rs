@@ -22,9 +22,13 @@ use petgraph::Directed;
 use petgraph::stable_graph::{DefaultIx, EdgeIndex, NodeIndex};
 
 use crate::model::{EdgeKind, FleetSnapshot, Node, NodeId, NodeKind};
+use layout::centroid;
 
 pub use edge::FleetEdgeShape;
-pub use layout::{Extras, FleetLayout, FleetLayoutState, SettleTracker};
+pub use layout::{
+    ClusterNode, Extras, FleetLayout, FleetLayoutState, Membership, RunClusters, RunClustersParams,
+    SettleTracker, memberships,
+};
 pub use shape::{
     ALL_STATES, FleetNodeShape, NodePayload, StateGlyph, agent_marker, contrast_ratio, fade_alpha,
     legend, node_radius, state_color, state_glyph,
@@ -320,6 +324,10 @@ impl GraphView {
         self.prepare_layout(ui);
 
         let fit = std::mem::take(&mut self.fit_requested) || self.auto_fit;
+        // egui_graphs would otherwise repaint every frame even with the layout paused.
+        let animating = fit
+            || self.graph.dragged_node().is_some()
+            || get_layout_state::<FleetLayoutState>(ui, id.clone()).is_running();
 
         let interaction = SettingsInteraction::new()
             .with_dragging_enabled(true)
@@ -337,6 +345,7 @@ impl GraphView {
             .with_interactions(&interaction)
             .with_navigations(&navigation)
             .with_styles(&style)
+            .with_continuous_repaint(animating)
             .show(ui, &mut self.graph);
 
         let mut clicked = None;
@@ -363,6 +372,9 @@ impl GraphView {
         let running = self.track_settling(ui, dragging);
         if user_navigated || dragging || !running {
             self.auto_fit = false;
+        }
+        if running && !animating {
+            ui.ctx().request_repaint();
         }
 
         let hovered = self.graph.hovered_node().and_then(|idx| self.node_id(idx));
@@ -490,21 +502,66 @@ impl GraphView {
                 return Some(center);
             }
         }
-        snapshot
+        let parent = snapshot
             .edges
             .iter()
             .filter(|e| e.to == node.id)
-            .find_map(|e| placed(&e.from))
+            .find_map(|e| placed(&e.from));
+        if parent.is_some() || node.run_id.is_some() {
+            return parent;
+        }
+        // Loose terminals join the other loose terminals, or start their group left of the runs.
+        let loose: Vec<Pos2> = self
+            .nodes
+            .values()
+            .filter(|n| n.run_id.is_none() && n.kind == NodeKind::Terminal && n.id != node.id)
+            .filter_map(|n| placed(&n.id))
+            .collect();
+        centroid(&loose).or_else(|| {
+            let placed: Vec<Pos2> = self.nodes.keys().filter_map(placed).collect();
+            let left = placed.iter().map(|p| p.x).reduce(f32::min)?;
+            Some(Pos2::new(left - SPAWN_CENTER, centroid(&placed)?.y))
+        })
+    }
+
+    /// Run-cluster membership of every node, by graph index.
+    fn memberships(&self) -> Vec<Option<Membership>> {
+        let parents: HashMap<&NodeId, usize> = self
+            .edges
+            .keys()
+            .filter(|(_, _, kind)| *kind == EdgeKind::Subagent)
+            .filter_map(|(from, to, _)| Some((to, self.index.get(from)?.index())))
+            .collect();
+        let nodes: Vec<ClusterNode> = self
+            .index
+            .iter()
+            .filter_map(|(id, idx)| {
+                let node = self.nodes.get(id)?;
+                Some(ClusterNode {
+                    index: idx.index(),
+                    run: node.run_id.as_deref(),
+                    kind: node.kind,
+                    parent: parents.get(id).copied(),
+                })
+            })
+            .collect();
+        memberships(&nodes)
+    }
+
+    /// A fresh layout state for the current graph.
+    fn layout_state(&self) -> FleetLayoutState {
+        layout::state_with(self.memberships())
     }
 
     fn prepare_layout(&mut self, ui: &mut Ui) {
         let id = Some(self.id.clone());
         if !self.layout_initialized {
-            set_layout_state(ui, layout::initial_state(), id.clone());
+            set_layout_state(ui, self.layout_state(), id.clone());
             self.layout_initialized = true;
         }
         if std::mem::take(&mut self.wake_layout) {
             let mut state = get_layout_state::<FleetLayoutState>(ui, id.clone());
+            state.extras.0.params.members = self.memberships();
             state.set_running(true);
             set_layout_state(ui, state, id);
             self.settle.reset();
@@ -583,14 +640,6 @@ pub fn focus_transform(bounds: Rect, view_size: Vec2, padding: f32, max_zoom: f3
         .clamp(MIN_ZOOM, max_zoom.max(MIN_ZOOM));
     let pan = view_size / 2.0 - bounds.center().to_vec2() * zoom;
     (zoom, pan)
-}
-
-fn centroid(points: &[Pos2]) -> Option<Pos2> {
-    if points.is_empty() {
-        return None;
-    }
-    let sum = points.iter().fold(Vec2::ZERO, |acc, p| acc + p.to_vec2());
-    Some((sum / points.len() as f32).to_pos2())
 }
 
 fn now_ms() -> i64 {

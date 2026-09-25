@@ -1,7 +1,8 @@
 //! Standalone graph view on a synthetic fleet that changes every 2 s like the real poller:
 //! states rotate, workers come and go, and a run appears after a while.
 //!
-//! `cargo run --example graph_demo [runs] [workers per run]` (default 6 × 8).
+//! `cargo run --example graph_demo [runs] [workers per run] [tick seconds]` (default 12 × 8,
+//! ticking every 2 s; a tick of 0 freezes the fleet, e.g. to check idle CPU use).
 
 use std::time::{Duration, Instant};
 
@@ -12,7 +13,7 @@ use myrstack::model::{
 use myrstack::orca::AgentIdentity;
 use myrstack::ui::graph::{GraphView, legend, state_label};
 
-const TICK: Duration = Duration::from_secs(2);
+const DEFAULT_TICK_SECS: u64 = 2;
 const STATES: [NodeState; 6] = [
     NodeState::Working,
     NodeState::Idle,
@@ -24,8 +25,13 @@ const STATES: [NodeState; 6] = [
 
 fn main() -> eframe::Result {
     let mut args = std::env::args().skip(1).map(|a| a.parse::<usize>());
-    let runs = args.next().and_then(Result::ok).unwrap_or(6);
+    let runs = args.next().and_then(Result::ok).unwrap_or(12);
     let workers = args.next().and_then(Result::ok).unwrap_or(8);
+    let tick_secs = args
+        .next()
+        .and_then(Result::ok)
+        .unwrap_or(DEFAULT_TICK_SECS as usize);
+    let tick = (tick_secs > 0).then(|| Duration::from_secs(tick_secs as u64));
 
     eframe::run_native(
         "graph demo",
@@ -33,13 +39,15 @@ fn main() -> eframe::Result {
             viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]),
             ..Default::default()
         },
-        Box::new(move |_| Ok(Box::new(Demo::new(runs, workers)))),
+        Box::new(move |_| Ok(Box::new(Demo::new(runs, workers, tick)))),
     )
 }
 
 struct Demo {
     runs: usize,
     workers: usize,
+    /// Time between fleet changes; `None` keeps the fleet still.
+    tick_every: Option<Duration>,
     tick: u64,
     last_tick: Instant,
     started_ms: i64,
@@ -49,7 +57,7 @@ struct Demo {
 }
 
 impl Demo {
-    fn new(runs: usize, workers: usize) -> Self {
+    fn new(runs: usize, workers: usize, tick_every: Option<Duration>) -> Self {
         let started_ms = now_ms();
         let snapshot = fleet(runs, workers, 0, started_ms);
         let mut view = GraphView::new();
@@ -57,6 +65,7 @@ impl Demo {
         Self {
             runs,
             workers,
+            tick_every,
             tick: 0,
             last_tick: Instant::now(),
             started_ms,
@@ -69,11 +78,16 @@ impl Demo {
 
 impl eframe::App for Demo {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        if self.last_tick.elapsed() >= TICK {
-            self.last_tick = Instant::now();
-            self.tick += 1;
-            self.snapshot = fleet(self.runs, self.workers, self.tick, self.started_ms);
-            self.view.sync(&self.snapshot);
+        if let Some(every) = self.tick_every {
+            if self.last_tick.elapsed() >= every {
+                self.last_tick = Instant::now();
+                self.tick += 1;
+                self.snapshot = fleet(self.runs, self.workers, self.tick, self.started_ms);
+                self.view.sync(&self.snapshot);
+            }
+            // The graph stops repainting once settled; wake up for the next tick.
+            ui.ctx()
+                .request_repaint_after(every.saturating_sub(self.last_tick.elapsed()));
         }
 
         egui::Panel::top("controls").show(ui, |ui| {
@@ -114,7 +128,7 @@ impl eframe::App for Demo {
 /// The fleet at `tick`: `runs` runs with up to `workers` workers each, a few loose terminals,
 /// one released worker per run, an extra run from tick 5 and a rotating missing worker.
 fn fleet(runs: usize, workers: usize, tick: u64, started_ms: i64) -> FleetSnapshot {
-    let now = started_ms + tick as i64 * TICK.as_millis() as i64;
+    let now = started_ms + tick as i64 * DEFAULT_TICK_SECS as i64 * 1_000;
     let mut snapshot = FleetSnapshot::default();
     let run_count = if tick >= 5 { runs + 1 } else { runs };
     for r in 0..run_count {

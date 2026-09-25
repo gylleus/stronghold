@@ -31,3 +31,7 @@ egui_extras = "0.36"
 
 [dev-dependencies]
 tempfile = "3"
+
+# Vendored with a local patch that lets an idle graph view stop repainting every frame.
+[patch.crates-io]
+egui_graphs = { path = "vendor/egui_graphs" }
