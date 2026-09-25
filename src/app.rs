@@ -9,7 +9,7 @@ use crate::fleet::FleetData;
 use crate::hotkey::Hotkey;
 use crate::model::{FleetSnapshot, NodeId};
 use crate::orca::OrcaClient;
-use crate::poller::{Poller, PollerCommand, PollerConfig};
+use crate::poller::{Poller, PollerCommand, PollerConfig, ScreenUpdate};
 use crate::ui;
 use crate::ui::graph::GraphView;
 
@@ -37,6 +37,10 @@ pub struct MyrstackApp {
     /// Node selected in the graph, shared by all views and side panels.
     selected: Option<NodeId>,
     view: View,
+    /// Terminal whose screen the poller is reading (the selected node's, if live).
+    watched_screen: Option<String>,
+    /// Newest screen of `watched_screen`.
+    screen: Option<ScreenUpdate>,
 }
 
 impl MyrstackApp {
@@ -58,6 +62,47 @@ impl MyrstackApp {
             graph: GraphView::new(),
             selected: None,
             view: View::default(),
+            watched_screen: None,
+            screen: None,
+        }
+    }
+
+    /// Points the poller's screen watch at the selected node's terminal, if it changed.
+    fn sync_screen_watch(&mut self) {
+        let handle = self
+            .selected
+            .as_ref()
+            .and_then(|id| self.snapshot.as_ref()?.node(id))
+            .and_then(ui::terminal::watch_handle)
+            .map(str::to_owned);
+        if handle != self.watched_screen {
+            self.poller.send(PollerCommand::WatchScreen(handle.clone()));
+            self.watched_screen = handle;
+            self.screen = None;
+        }
+    }
+
+    /// Right-hand panel for the selected node.
+    fn terminal_panel(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+        let Some(node) = self
+            .selected
+            .as_ref()
+            .and_then(|id| self.snapshot.as_ref()?.node(id))
+        else {
+            return;
+        };
+        let default_width = ui.ctx().content_rect().width() * 0.45;
+        let response = egui::Panel::right("terminal")
+            .resizable(true)
+            .default_size(default_width)
+            .min_size(240.0)
+            .show(ui, |ui| {
+                ui::terminal::terminal_panel(ui, node, self.screen.as_ref(), now_ms)
+            })
+            .inner;
+        if response.close {
+            self.selected = None;
+            self.graph.set_selected(None);
         }
     }
 
@@ -124,12 +169,19 @@ impl eframe::App for MyrstackApp {
             self.snapshot = Some(snapshot);
             self.data = Some(data);
         }
+        self.sync_screen_watch();
+        if let Some(update) = self.poller.latest_screen()
+            && Some(&update.handle) == self.watched_screen.as_ref()
+        {
+            self.screen = Some(update);
+        }
         ctx.request_repaint_after(TICK);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let now_ms = now_ms();
         egui::Panel::top("top_bar").show(ui, |ui| self.top_bar(ui, now_ms));
+        self.terminal_panel(ui, now_ms);
         egui::CentralPanel::default().show(ui, |ui| match &self.data {
             None => {
                 ui.centered_and_justified(|ui| {
@@ -147,6 +199,7 @@ impl eframe::App for MyrstackApp {
                 View::Table => ui::table::terminal_table(ui, data, now_ms),
             },
         });
+        self.sync_screen_watch();
     }
 }
 
