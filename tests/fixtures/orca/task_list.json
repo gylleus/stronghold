@@ -1,0 +1,67 @@
+{
+  "id": "73b4d250-df29-4a45-822c-3ea0260285b1",
+  "ok": true,
+  "result": {
+    "runId": "run_7c25cdcf46e0",
+    "legacyReadOnly": false,
+    "tasks": [
+      {
+        "id": "task_65485013f22c",
+        "run_id": "run_7c25cdcf46e0",
+        "parent_id": null,
+        "created_by_terminal_handle": "term_440d4d78-c3f1-4d37-afe8-4740cb67179d",
+        "created_by_pane_key": "5aa2f57d-80e4-4354-a950-dd7a1c54e728:5b2ec0ec-1e00-41ba-9fcf-160887d65e98",
+        "created_by_process_incarnation": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/repo/hackathon/commerce-platform@@e735b34f:ad4a2fd8-e473-48f2-b226-b54d2ce28939",
+        "created_by_run_generation": 2,
+        "task_title": "hack-76-generated-looks: read /Users/gylleus/Documents/agents/tracks/hack-76-...",
+        "display_name": "hack-76-generated-looks: read /Users/gylleus/Documents/agents/tracks/hack-76-...",
+        "spec": "hack-76-generated-looks: read /Users/gylleus/Documents/agents/tracks/hack-76-generated-looks-KICKOFF.md in full and follow it. It points at /Users/gylleus/Documents/agents/_AGENT_PROTOCOL.md, read tha",
+        "status": "completed",
+        "deps": "[]",
+        "result": "{\"provenance\":\"worker_report\",\"outcome\":\"succeeded\",\"messageId\":\"msg_072fcdc79dba\",\"reportedBy\":\"term_78c66089-07d3-484f-a814-cf177f604e46\",\"subject\":\"HACK-76 PR 196 open, gates green\",\"body\":\"I built generated looks: the onboarding reader writes a look (seed colour, mode, any Google family, radius, name), cp-platform serves fonts from R2 behind a store-origin proxy, and suggest_designs takes an optional look. That is PR 196 at 0b325e9, CI green, with live evidence of three real reader looks, zero Google requests at 1440 and 390, an R2 miss then hit, and a clean console. The browser pass also caught a real content-encoding bug in the proxy, now fixed. What's left: Ankra does not run on this repo (skipping on 190 to 192 too), so the review gate is the local lanes in the PLAN file, and merging is Karl's.\",\"completedBy\":\"term_78c66089-07d3-484f-a814-cf177f604e46\",\"filesModified\":[\"apps/platform/README.md\",\"apps/platform/src/agents/onboard.ts\",\"apps/platform/src/fonts.ts\",\"apps/platform/src/index.ts\",\"apps/platform/src/mcp.ts\",\"apps/platform/test/fonts.test.ts\",\"apps/platform/test/onboard.test.ts\",\"packages/core-client/src/schemas.ts\",\"packages/core-client/src/types.ts\",\"packages/design/.prettierignore\",\"packages/design/package.json\",\"packages/design/scripts/fonts.ts\",\"packages/design/src/css.test.ts\",\"packages/design/src/css.ts\",\"packages/design/src/fonts.json\",\"packages/design/src/look.test.ts\",\"packages/design/src/look.ts\",\"packages/design/src/palette.test.ts\",\"packages/design/src/palette.ts\",\"packages/design/src/presets.test.ts\",\"packages/design/src/presets.ts\",\"pnpm-lock.yaml\",\"templates/store/src/app.html\",\"templates/store/src/hooks.server.ts\",\"templates/store/src/lib/components/PlatformPage.svelte\",\"templates/store/src/lib/onboarding.test.ts\",\"templates/store/src/lib/onboarding.ts\",\"templates/store/src/lib/platform.ts\",\"templates/store/src/lib/server/fonts.test.ts\",\"templates/store/src/lib/server/fonts.ts\",\"templates/store/src/routes/(backoffice)/admin/+layout.svelte\"],\"reportPath\":\"/Users/gylleus/Documents/agents/tracks/hack-76-generated-looks-PLAN.md\",\"completedAt\":\"2026-09-23T13:00:56.697Z\"}",
+        "created_at": "2026-09-23 08:37:19",
+        "completed_at": "2026-09-23 13:00:56"
+      },
+      {
+        "id": "task_e02460f3b723",
+        "run_id": "run_7c25cdcf46e0",
+        "parent_id": null,
+        "created_by_terminal_handle": "term_440d4d78-c3f1-4d37-afe8-4740cb67179d",
+        "created_by_pane_key": "5aa2f57d-80e4-4354-a950-dd7a1c54e728:5b2ec0ec-1e00-41ba-9fcf-160887d65e98",
+        "created_by_process_incarnation": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/repo/hackathon/commerce-platform@@e735b34f:ad4a2fd8-e473-48f2-b226-b54d2ce28939",
+        "created_by_run_generation": 102,
+        "task_title": "hack-77-parallel-recipes (cp-twfn.20)",
+        "display_name": "hack-77-parallel-recipes",
+        "spec": "Read and follow /Users/gylleus/Documents/agents/tracks/hack-77-parallel-recipes-KICKOFF.md (bead cp-twfn.20). Plan first; build only after the coordinator's go.",
+        "status": "dispatched",
+        "deps": "[]",
+        "result": null,
+        "created_at": "2026-09-24 07:39:17",
+        "completed_at": null,
+        "assignee_handle": "term_a6c4f600-9ec0-4529-84ee-19857c2fc7c0",
+        "dispatch_id": "ctx_ad41e5edf34a"
+      },
+      {
+        "id": "task_1803b842d880",
+        "run_id": "run_7c25cdcf46e0",
+        "parent_id": null,
+        "created_by_terminal_handle": "term_440d4d78-c3f1-4d37-afe8-4740cb67179d",
+        "created_by_pane_key": "5aa2f57d-80e4-4354-a950-dd7a1c54e728:5b2ec0ec-1e00-41ba-9fcf-160887d65e98",
+        "created_by_process_incarnation": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/repo/hackathon/commerce-platform@@e735b34f:ad4a2fd8-e473-48f2-b226-b54d2ce28939",
+        "created_by_run_generation": 28,
+        "task_title": "hack-77-merchandising-recipe: read /Users/gylleus/Documents/agents/tracks/hac...",
+        "display_name": "hack-77-merchandising-recipe: read /Users/gylleus/Documents/agents/tracks/hac...",
+        "spec": "hack-77-merchandising-recipe: read /Users/gylleus/Documents/agents/tracks/hack-77-merchandising-recipe-KICKOFF.md in full and follow it.",
+        "status": "failed",
+        "deps": "[]",
+        "result": null,
+        "created_at": "2026-09-23 13:54:46",
+        "completed_at": "2026-09-23 13:55:46"
+      }
+    ],
+    "count": 3
+  },
+  "_meta": {
+    "runtimeId": "fecc11aa-dfe9-4566-93aa-50a944d817cb"
+  }
+}

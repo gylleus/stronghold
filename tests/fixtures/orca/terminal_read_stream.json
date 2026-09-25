@@ -1,0 +1,27 @@
+{
+  "id": "bdd8a1db-604e-4358-acba-c315778bc076",
+  "ok": true,
+  "result": {
+    "terminal": {
+      "handle": "term_08fe0725-96a1-4355-a4fd-6c8a07aa6c72",
+      "status": "running",
+      "tail": [
+        "workspaces/depict/tinybird-replay-sessions  gylleus/tinybird-replay-sessions ✔",
+        "",
+        "workspaces/depict/tinybird-replay-sessions  gylleus/tinybird-replay-sessions ✔",
+        "",
+        "workspaces/depict/tinybird-replay-sessions  gylleus/tinybird-replay-sessions ✔"
+      ],
+      "truncated": false,
+      "limited": false,
+      "oldestCursor": "0",
+      "nextCursor": "8",
+      "latestCursor": "8",
+      "returnedLineCount": 5,
+      "source": "stream"
+    }
+  },
+  "_meta": {
+    "runtimeId": "fecc11aa-dfe9-4566-93aa-50a944d817cb"
+  }
+}

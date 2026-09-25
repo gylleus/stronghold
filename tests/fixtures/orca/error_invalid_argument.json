@@ -1,0 +1,11 @@
+{
+  "id": "local",
+  "ok": false,
+  "error": {
+    "code": "invalid_argument",
+    "message": "--cursor must be a non-negative integer"
+  },
+  "_meta": {
+    "runtimeId": null
+  }
+}

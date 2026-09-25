@@ -1,0 +1,24 @@
+{
+  "id": "91a6e830-6343-4d3e-a0a4-b074ed71627f",
+  "ok": true,
+  "result": {
+    "terminal": {
+      "handle": "term_08fe0725-96a1-4355-a4fd-6c8a07aa6c72",
+      "status": "running",
+      "tail": [
+        "workspaces/depict/tinybird-replay-sessions  gylleus/tinybird-replay-sessions ✔                                                                                                 1h35m",
+        "▶"
+      ],
+      "truncated": false,
+      "limited": false,
+      "oldestCursor": "0",
+      "nextCursor": "8",
+      "latestCursor": "8",
+      "returnedLineCount": 2,
+      "source": "screen"
+    }
+  },
+  "_meta": {
+    "runtimeId": "fecc11aa-dfe9-4566-93aa-50a944d817cb"
+  }
+}
