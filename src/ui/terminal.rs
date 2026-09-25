@@ -351,6 +351,11 @@ pub fn terminal_panel(
     response
 }
 
+/// Widget id of `handle`'s input box, so other code can focus it.
+pub fn input_id(handle: &str) -> egui::Id {
+    egui::Id::new(("terminal_input", handle))
+}
+
 /// The input box, key buttons and last-action status for `handle`.
 fn input_area(
     ui: &mut egui::Ui,
@@ -363,7 +368,7 @@ fn input_area(
 ) {
     let enabled = blocked.is_none();
     let disabled_text = blocked.unwrap_or_default();
-    let edit_id = egui::Id::new(("terminal_input", handle));
+    let edit_id = input_id(handle);
     let text_pending = state.text_pending(handle);
     let can_send = enabled && !text_pending && !state.draft(handle).trim().is_empty();
 

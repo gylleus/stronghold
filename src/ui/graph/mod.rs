@@ -97,6 +97,8 @@ pub struct GraphView {
     last_snapshot: Option<FleetSnapshot>,
     /// Nodes to pan/zoom onto on the next frame.
     focus_requested: Option<Vec<NodeId>>,
+    /// Node to pan onto, keeping the zoom, on the next frame.
+    center_requested: Option<NodeId>,
 }
 
 impl Default for GraphView {
@@ -130,6 +132,7 @@ impl GraphView {
             stashed: HashMap::new(),
             last_snapshot: None,
             focus_requested: None,
+            center_requested: None,
         }
     }
 
@@ -273,6 +276,27 @@ impl GraphView {
         self.focus_requested = Some(ids.to_vec());
     }
 
+    /// Pans onto `id`, if visible, on the next frame, keeping the zoom.
+    pub fn center_on(&mut self, id: &NodeId) {
+        self.center_requested = Some(id.clone());
+    }
+
+    /// Applies a pending [`GraphView::center_on`] to the pan of a graph widget of `view_size`.
+    fn apply_center(&mut self, ui: &mut Ui, view_size: Vec2) -> bool {
+        let Some(id) = self.center_requested.take() else {
+            return false;
+        };
+        let Some(bounds) = self.nodes_bounds(std::slice::from_ref(&id)) else {
+            return false;
+        };
+        let mut meta = MetadataFrame::new(Some(self.id.clone())).load(ui);
+        meta.pan = center_pan(bounds.center(), view_size, meta.zoom);
+        meta.save(ui);
+        self.auto_fit = false;
+        ui.ctx().request_repaint();
+        true
+    }
+
     /// Pans and zooms onto a run's visible coordinator and workers on the next frame.
     pub fn focus_run(&mut self, run_id: &str) {
         let mut ids: Vec<NodeId> = self
@@ -367,6 +391,9 @@ impl GraphView {
             user_navigated = true;
         }
         if self.apply_focus(ui, response.response.rect.size()) {
+            user_navigated = true;
+        }
+        if self.apply_center(ui, response.response.rect.size()) {
             user_navigated = true;
         }
         let running = self.track_settling(ui, dragging);
@@ -640,6 +667,12 @@ pub fn focus_transform(bounds: Rect, view_size: Vec2, padding: f32, max_zoom: f3
         .clamp(MIN_ZOOM, max_zoom.max(MIN_ZOOM));
     let pan = view_size / 2.0 - bounds.center().to_vec2() * zoom;
     (zoom, pan)
+}
+
+/// Widget-local pan that puts canvas point `point` in the middle of a view of `view_size` at
+/// `zoom`.
+pub fn center_pan(point: Pos2, view_size: Vec2, zoom: f32) -> Vec2 {
+    view_size / 2.0 - point.to_vec2() * zoom
 }
 
 fn now_ms() -> i64 {

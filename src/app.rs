@@ -59,6 +59,8 @@ pub struct MyrstackApp {
     input: ui::terminal::InputPanelState,
     /// Cmd+K node search.
     search: ui::search::SearchPalette,
+    /// Keyboard shortcut overlay.
+    help_open: bool,
 }
 
 impl MyrstackApp {
@@ -97,6 +99,7 @@ impl MyrstackApp {
             actions,
             input: ui::terminal::InputPanelState::default(),
             search: ui::search::SearchPalette::default(),
+            help_open: false,
         }
     }
 
@@ -225,6 +228,97 @@ impl MyrstackApp {
                 self.select_and_focus(id);
             }
             None => {}
+        }
+    }
+
+    /// Runs this frame's keyboard commands (j/k navigation etc.) unless the palette is open.
+    fn keyboard(&mut self, ctx: &egui::Context) {
+        if self.search.is_open() {
+            return;
+        }
+        for command in ui::keys::take_commands(ctx) {
+            self.run_key_command(ctx, command);
+        }
+        ui::keys::help_window(ctx, &mut self.help_open);
+    }
+
+    fn run_key_command(&mut self, ctx: &egui::Context, command: ui::keys::KeyCommand) {
+        use ui::keys::KeyCommand;
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
+        let hidden = self.graph.hidden();
+        let current = self.selected.as_ref();
+        let target = match command {
+            KeyCommand::NextNode | KeyCommand::PrevNode => {
+                let delta = if command == KeyCommand::NextNode {
+                    1
+                } else {
+                    -1
+                };
+                ui::keys::step_node(&ui::keys::nav_order(snapshot, hidden), current, delta)
+            }
+            KeyCommand::NextRun | KeyCommand::PrevRun => {
+                let delta = if command == KeyCommand::NextRun {
+                    1
+                } else {
+                    -1
+                };
+                ui::keys::step_run(&ui::keys::nav_groups(snapshot, hidden), current, delta)
+            }
+            KeyCommand::OpenPanel => {
+                if let Some(id) = current.cloned() {
+                    self.select_and_focus(id);
+                    return;
+                }
+                ui::keys::nav_order(snapshot, hidden).into_iter().next()
+            }
+            KeyCommand::FocusInput => {
+                if let Some(handle) = current
+                    .and_then(|id| snapshot.node(id))
+                    .and_then(ui::terminal::watch_handle)
+                {
+                    let id = ui::terminal::input_id(handle);
+                    ctx.memory_mut(|m| m.request_focus(id));
+                }
+                None
+            }
+            KeyCommand::Escape => {
+                if let Some(focused) = ctx.memory(|m| m.focused()) {
+                    ctx.memory_mut(|m| m.surrender_focus(focused));
+                } else if self.help_open {
+                    self.help_open = false;
+                } else {
+                    self.selected = None;
+                    self.graph.set_selected(None);
+                }
+                None
+            }
+            KeyCommand::OpenInOrca => {
+                if let Some(handle) = current
+                    .and_then(|id| snapshot.node(id))
+                    .and_then(ui::terminal::watch_handle)
+                {
+                    let request = ui::terminal::ActionRequest::open(handle);
+                    let id = self.actions.submit(request.action.clone());
+                    self.input.submitted(id, &request);
+                }
+                None
+            }
+            KeyCommand::Fit => {
+                self.view = View::Graph;
+                self.graph.fit_to_screen();
+                None
+            }
+            KeyCommand::ToggleHelp => {
+                self.help_open = !self.help_open;
+                None
+            }
+        };
+        if let Some(id) = target {
+            self.graph.set_selected(Some(&id));
+            self.graph.center_on(&id);
+            self.selected = Some(id);
         }
     }
 
@@ -375,6 +469,7 @@ impl eframe::App for MyrstackApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let now_ms = now_ms();
         self.search_palette(ui.ctx());
+        self.keyboard(ui.ctx());
         egui::Panel::top("top_bar").show(ui, |ui| self.top_bar(ui, now_ms));
         self.hidden_selection_notice(ui);
         if self.view == View::Graph
