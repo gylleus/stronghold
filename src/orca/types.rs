@@ -128,6 +128,7 @@ lenient_enum!(
         Question => "question",
         Status => "status",
         Escalation => "escalation",
+        Dispatch => "dispatch",
     }
 );
 
