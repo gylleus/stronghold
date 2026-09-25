@@ -3,6 +3,7 @@
 pub mod broadcast;
 pub mod graph;
 pub mod keys;
+pub mod quota;
 pub mod search;
 pub mod settings;
 pub mod sidebar;

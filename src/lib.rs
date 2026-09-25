@@ -7,6 +7,7 @@ pub mod actions;
 pub mod app;
 pub mod broadcast;
 pub mod claude;
+pub mod codex;
 pub mod detect;
 pub mod fleet;
 pub mod hotkey;
@@ -14,6 +15,7 @@ pub mod model;
 pub mod orca;
 pub mod persist;
 pub mod poller;
+pub mod quota;
 pub mod ui;
 pub mod whip;
 
