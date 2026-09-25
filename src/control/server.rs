@@ -37,7 +37,14 @@ pub const DEFAULT_WHIP_LOG: usize = 20;
 
 /// Read methods, in the order `ping` lists them.
 pub const READ_METHODS: &[&str] = &[
-    "ping", "status", "agents", "agent", "whip", "quotas", "alerts",
+    "ping",
+    "status",
+    "agents",
+    "agent",
+    "whip",
+    "quotas",
+    "alerts",
+    "fleet_data",
 ];
 /// Action methods, in the order `ping` lists them.
 pub const ACTION_METHODS: &[&str] = &[
@@ -118,6 +125,7 @@ fn dispatch(backend: &Backend, method: &str, params: &Value) -> Result<Value, Co
         "whip" => whip(&view, params),
         "quotas" => to_value(&view.quotas),
         "alerts" => Ok(json!({ "alerts": view.alerts })),
+        "fleet_data" => fleet_data(&view),
         other => Err(ControlError::new(
             ErrorCode::UnknownMethod,
             format!("unknown method {other:?}; call \"ping\" for the list"),
@@ -155,7 +163,20 @@ fn status(view: &StatusView) -> Value {
         },
         "alerts": view.alerts.len(),
         "dashboard": view.dashboard,
+        "playbook": view.playbook,
     })
+}
+
+/// The last poll's raw runs, workers, tasks, terminals and inbox (no previews or bodies).
+fn fleet_data(view: &StatusView) -> Result<Value, ControlError> {
+    require_data(view)?;
+    match &view.fleet_data {
+        Some(facts) => to_value(&**facts),
+        None => Err(ControlError::new(
+            ErrorCode::Unavailable,
+            "the app has not polled Orca yet",
+        )),
+    }
 }
 
 fn agents(view: &StatusView, params: &Value, now: i64) -> Result<Value, ControlError> {

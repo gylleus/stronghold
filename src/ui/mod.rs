@@ -5,6 +5,7 @@ pub mod close;
 pub mod frame_stats;
 pub mod graph;
 pub mod keys;
+pub mod playbook;
 pub mod queen;
 pub mod quota;
 pub mod search;

@@ -7,6 +7,7 @@ use eframe::egui::{self, RichText, Ui};
 
 use crate::broadcast::BroadcastSender;
 use crate::model::{FleetSnapshot, NodeId, NodeKind, NodeState};
+use crate::playbook::fetches::PlaybookStatus;
 use crate::quota::Quotas;
 use crate::ui::broadcast::BroadcastComposer;
 use crate::ui::graph::{ALL_STATES, kind_label, state_color, state_label};
@@ -86,6 +87,8 @@ pub struct QueenInputs<'a> {
     pub whip: &'a WhipStatus,
     pub quotas: &'a Quotas,
     pub now_ms: i64,
+    /// Who runs which playbook version; `None` hides the line.
+    pub playbook: Option<&'a PlaybookStatus>,
 }
 
 /// What the user did in the panel this frame.
@@ -161,6 +164,11 @@ pub fn queen_panel(
                 ui.horizontal_wrapped(|ui| {
                     crate::ui::quota::quota_chips(ui, inputs.quotas, inputs.now_ms);
                 });
+            }
+            if let Some(status) = inputs.playbook
+                && let Some(id) = crate::ui::playbook::playbook_line(ui, status, inputs.now_ms)
+            {
+                response.select = Some(id);
             }
             ui.separator();
 
@@ -302,6 +310,7 @@ mod tests {
                         whip: &whip,
                         quotas: &quotas,
                         now_ms: 0,
+                        playbook: None,
                     },
                     || Box::new(NeverSender),
                 );
