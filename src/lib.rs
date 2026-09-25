@@ -11,6 +11,7 @@ pub mod detect;
 pub mod fleet;
 pub mod hotkey;
 pub mod model;
+pub mod notify;
 pub mod orca;
 pub mod persist;
 pub mod poller;
