@@ -50,6 +50,7 @@ pub struct MyrstackApp {
     claude_data: Option<ClaudeData>,
     /// Tail of the selected subagent's transcript.
     transcript: Option<TranscriptTail>,
+    broadcast: ui::broadcast::BroadcastWindow,
 }
 
 impl MyrstackApp {
@@ -79,6 +80,7 @@ impl MyrstackApp {
             claude,
             claude_data: None,
             transcript: None,
+            broadcast: ui::broadcast::BroadcastWindow::new(),
         }
     }
 
@@ -181,6 +183,9 @@ impl MyrstackApp {
             }
             if ui.button("Refresh").clicked() {
                 self.poller.send(PollerCommand::RefreshNow);
+            }
+            if ui.button("Broadcast…").clicked() {
+                self.broadcast.open = true;
             }
             if let Some(data) = &self.data
                 && let Some(first) = data.errors.first()
@@ -294,6 +299,9 @@ impl eframe::App for MyrstackApp {
                 }
                 View::Table => ui::table::terminal_table(ui, data, now_ms),
             },
+        });
+        self.broadcast.show(ui.ctx(), self.snapshot.as_ref(), || {
+            Box::new(OrcaClient::new())
         });
         self.sync_screen_watch();
     }

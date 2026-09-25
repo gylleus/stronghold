@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 
 pub mod app;
+pub mod broadcast;
 pub mod claude;
 pub mod fleet;
 pub mod hotkey;
