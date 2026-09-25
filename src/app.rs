@@ -57,6 +57,8 @@ pub struct MyrstackApp {
     actions: ActionRunner,
     /// Input box drafts and send statuses, per terminal.
     input: ui::terminal::InputPanelState,
+    /// Debug-logged frames per second and repaint causes.
+    frame_stats: ui::frame_stats::FrameStats,
 }
 
 impl MyrstackApp {
@@ -94,6 +96,7 @@ impl MyrstackApp {
             broadcast: ui::broadcast::BroadcastWindow::new(),
             actions,
             input: ui::terminal::InputPanelState::default(),
+            frame_stats: ui::frame_stats::FrameStats::default(),
         }
     }
 
@@ -233,6 +236,7 @@ impl MyrstackApp {
 
 impl eframe::App for MyrstackApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.frame_stats.tick(ctx);
         if let Some(hotkey) = &mut self.hotkey {
             hotkey.poll(ctx);
         }
