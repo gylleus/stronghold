@@ -8,8 +8,8 @@ use serde::Deserialize;
 
 use super::client::{OrcaClient, OrcaError, parse_result};
 use super::types::{
-    InboxMessage, OutgoingMessage, Run, SendResult, Task, TerminalFocus, TerminalInput,
-    TerminalList, TerminalRead, TerminalSend, WorkerList,
+    InboxMessage, OutgoingMessage, Run, SendResult, Task, TerminalClose, TerminalFocus,
+    TerminalInput, TerminalList, TerminalRead, TerminalSend, WorkerList, WorkerStopResult,
 };
 
 /// Formats a value flag as `--name=value`. Orca's parser treats a separate
@@ -44,6 +44,12 @@ struct TerminalSendResult {
 struct TerminalFocusResult {
     #[serde(default)]
     focus: TerminalFocus,
+}
+
+#[derive(Deserialize)]
+struct TerminalCloseResult {
+    #[serde(default)]
+    close: TerminalClose,
 }
 
 #[derive(Deserialize)]
@@ -102,6 +108,21 @@ pub fn terminal_send_args(handle: &str, input: &TerminalInput) -> Vec<String> {
 pub fn terminal_switch_args(handle: &str) -> Vec<String> {
     let mut args = base(&["terminal", "switch"]);
     args.push(flag("terminal", handle));
+    args
+}
+
+pub fn terminal_close_args(handle: &str, tab: bool) -> Vec<String> {
+    let mut args = base(&["terminal", "close"]);
+    args.push(flag("terminal", handle));
+    if tab {
+        args.push("--tab".into());
+    }
+    args
+}
+
+pub fn worker_stop_args(dispatch_id: &str) -> Vec<String> {
+    let mut args = base(&["orchestration", "worker-stop"]);
+    args.push(flag("dispatch", dispatch_id));
     args
 }
 
@@ -170,6 +191,14 @@ pub fn parse_terminal_switch(stdout: &[u8]) -> Result<TerminalFocus, OrcaError> 
     parse_result::<TerminalFocusResult>(stdout).map(|r| r.focus)
 }
 
+pub fn parse_terminal_close(stdout: &[u8]) -> Result<TerminalClose, OrcaError> {
+    parse_result::<TerminalCloseResult>(stdout).map(|r| r.close)
+}
+
+pub fn parse_worker_stop(stdout: &[u8]) -> Result<WorkerStopResult, OrcaError> {
+    parse_result(stdout)
+}
+
 pub fn parse_run_list(stdout: &[u8]) -> Result<Vec<Run>, OrcaError> {
     parse_result::<RunListResult>(stdout).map(|r| r.runs.unwrap_or_default())
 }
@@ -230,6 +259,18 @@ impl OrcaClient {
     pub fn terminal_switch(&self, handle: &str) -> Result<TerminalFocus, OrcaError> {
         self.call::<TerminalFocusResult, _>(&terminal_switch_args(handle))
             .map(|r| r.focus)
+    }
+
+    /// `orca terminal close`, or `--tab` to close the terminal's whole tab.
+    pub fn terminal_close(&self, handle: &str, tab: bool) -> Result<TerminalClose, OrcaError> {
+        self.call::<TerminalCloseResult, _>(&terminal_close_args(handle, tab))
+            .map(|r| r.close)
+    }
+
+    /// `orca orchestration worker-stop`: fences the dispatch and closes its supervised agent
+    /// terminal (an unsupervised dispatch's terminal is left running).
+    pub fn worker_stop(&self, dispatch_id: &str) -> Result<WorkerStopResult, OrcaError> {
+        self.call(&worker_stop_args(dispatch_id))
     }
 
     /// `orca orchestration run-list`.
@@ -364,6 +405,65 @@ mod tests {
         .unwrap();
         assert_eq!(focus.tab_id.as_deref(), Some("tab"));
         assert_eq!(focus.navigated, Some(false));
+    }
+
+    #[test]
+    fn terminal_close_fixtures() {
+        // Shapes from Orca's `terminal.close`/`closeTab` handlers; not captured live, since
+        // closing a terminal is destructive.
+        let close = parse_terminal_close(fixture!("terminal_close.json")).unwrap();
+        assert_eq!(close.handle.as_deref(), Some("term_1"));
+        assert_eq!(close.tab_id.as_deref(), Some("tab_1"));
+        assert!(close.pty_killed);
+        assert_eq!(close.summary(), "closed term_1, PTY killed");
+
+        let live = parse_terminal_close(fixture!("terminal_close_pty_live.json")).unwrap();
+        assert!(!live.pty_killed);
+        assert_eq!(live.pty_stop_verdict.as_deref(), Some("live"));
+        assert_eq!(live.summary(), "closed term_1, PTY may still be running");
+
+        let tab = parse_terminal_close(fixture!("terminal_close_tab.json")).unwrap();
+        assert_eq!(tab.close_mode.as_deref(), Some("tab"));
+        assert_eq!(tab.summary(), "closed tab tab_1 (term_1)");
+    }
+
+    #[test]
+    fn worker_stop_fixtures() {
+        // Shapes from Orca's `orchestration.workerStop` handler; not captured live.
+        let stopped = parse_worker_stop(fixture!("worker_stop.json")).unwrap();
+        assert_eq!(stopped.dispatch_id.as_deref(), Some("dispatch_1"));
+        assert_eq!(stopped.state, Some(WorkerState::Stopped));
+        assert!(stopped.closed_terminal() && !stopped.outcome_unknown());
+        assert!(stopped.close.as_ref().unwrap().pty_killed);
+        assert_eq!(stopped.summary(), "dispatch stopped, closed its terminal");
+
+        let settled = parse_worker_stop(fixture!("worker_stop_settled.json")).unwrap();
+        assert!(settled.already_settled && !settled.closed_terminal());
+        assert_eq!(settled.summary(), "dispatch already succeeded");
+
+        let context = parse_worker_stop(fixture!("worker_stop_unsupervised.json")).unwrap();
+        assert!(!context.closed_terminal());
+        assert!(context.summary().contains("without closing"));
+
+        let unknown = parse_worker_stop(fixture!("worker_stop_unknown.json")).unwrap();
+        assert!(unknown.outcome_unknown() && unknown.closed_terminal());
+        assert!(unknown.summary().ends_with("PTY may still be live."));
+    }
+
+    #[test]
+    fn close_and_stop_args() {
+        assert_eq!(
+            terminal_close_args("term_1", false),
+            vec!["terminal", "close", "--terminal=term_1"]
+        );
+        assert_eq!(
+            terminal_close_args("term_1", true),
+            vec!["terminal", "close", "--terminal=term_1", "--tab"]
+        );
+        assert_eq!(
+            worker_stop_args("dispatch_1"),
+            vec!["orchestration", "worker-stop", "--dispatch=dispatch_1"]
+        );
     }
 
     #[test]

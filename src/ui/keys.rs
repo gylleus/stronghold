@@ -23,6 +23,8 @@ pub enum KeyCommand {
     OpenInOrca,
     Fit,
     ToggleHelp,
+    /// Ask to close (kill) the selected node's session.
+    CloseSession,
 }
 
 /// Shortcuts listed in the help overlay.
@@ -35,6 +37,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Esc", "Leave the input box, then clear the selection"),
     ("o", "Open the terminal in Orca"),
     ("f", "Fit the graph to the screen"),
+    ("x", "Close (kill) the selected session…"),
     ("?", "Toggle this help"),
 ];
 
@@ -70,6 +73,7 @@ fn command_for_text(text: &str) -> Option<KeyCommand> {
         "o" => KeyCommand::OpenInOrca,
         "f" => KeyCommand::Fit,
         "?" => KeyCommand::ToggleHelp,
+        "x" => KeyCommand::CloseSession,
         _ => return None,
     })
 }
@@ -287,12 +291,13 @@ mod tests {
             ("o", OpenInOrca),
             ("f", Fit),
             ("?", ToggleHelp),
+            ("x", CloseSession),
         ];
         for (s, command) in cases {
             assert_eq!(command_for_event(&text(s), false), Some(command), "{s}");
             assert_eq!(command_for_event(&text(s), true), None, "{s}");
         }
-        assert_eq!(command_for_event(&text("x"), false), None);
+        assert_eq!(command_for_event(&text("X"), false), None);
         assert_eq!(command_for_event(&text("jj"), false), None);
         assert_eq!(
             command_for_event(&key(Key::Enter, Modifiers::NONE), false),

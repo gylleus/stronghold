@@ -391,6 +391,103 @@ pub struct TerminalFocus {
     pub navigated: Option<bool>,
 }
 
+/// `result.close` of `orca terminal close` (also embedded in a `worker-stop` receipt).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TerminalClose {
+    pub handle: Option<String>,
+    pub tab_id: Option<String>,
+    /// `"tab"` for `--tab`.
+    pub close_mode: Option<String>,
+    /// Whether Orca saw the PTY die. `terminal close --tab` always reports `false`.
+    #[serde(deserialize_with = "boolish")]
+    pub pty_killed: bool,
+    /// `"live"` or `"unverifiable"` when the kill was not confirmed.
+    pub pty_stop_verdict: Option<String>,
+    pub pty_stop_reason: Option<String>,
+}
+
+impl TerminalClose {
+    /// One line in the words of Orca's CLI formatter.
+    pub fn summary(&self) -> String {
+        let handle = self.handle.as_deref().unwrap_or("terminal");
+        if self.close_mode.as_deref() == Some("tab") {
+            return format!(
+                "closed tab {} ({handle})",
+                self.tab_id.as_deref().unwrap_or("?")
+            );
+        }
+        let pty = if self.pty_killed {
+            ", PTY killed".to_string()
+        } else {
+            match self.pty_stop_verdict.as_deref() {
+                Some("live") => ", PTY may still be running".to_string(),
+                Some("unverifiable") => format!(
+                    ", PTY stop unconfirmed ({})",
+                    self.pty_stop_reason
+                        .as_deref()
+                        .unwrap_or("host unreachable")
+                ),
+                _ => String::new(),
+            }
+        };
+        format!("closed {handle}{pty}")
+    }
+}
+
+/// `result` of `orca orchestration worker-stop`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WorkerStopResult {
+    pub dispatch_id: Option<String>,
+    /// Worker state after the call: `stopped`, `stop_unknown`, or the settled state.
+    pub state: Option<WorkerState>,
+    #[serde(deserialize_with = "boolish")]
+    pub already_settled: bool,
+    /// `none`, `closed_agent_terminal`, `closed_exited_terminal` or `unknown`.
+    pub process_action: Option<String>,
+    /// The terminal close worker-stop did, when it closed the agent's pane.
+    pub close: Option<TerminalClose>,
+    pub warning: Option<String>,
+    pub last_error: Option<String>,
+}
+
+impl WorkerStopResult {
+    /// Whether worker-stop closed the agent terminal's pane itself.
+    pub fn closed_terminal(&self) -> bool {
+        matches!(
+            self.process_action.as_deref(),
+            Some("closed_agent_terminal" | "closed_exited_terminal")
+        )
+    }
+
+    /// `stop_unknown`: Orca could not prove the process stopped (the CLI exits 1).
+    pub fn outcome_unknown(&self) -> bool {
+        self.state == Some(WorkerState::StopUnknown)
+    }
+
+    /// One line like the CLI's: state, what happened to the process, warning or error.
+    pub fn summary(&self) -> String {
+        let state = self.state.as_ref().map_or("?", WorkerState::as_str);
+        let mut text = if self.already_settled {
+            format!("dispatch already {state}")
+        } else {
+            format!("dispatch {state}")
+        };
+        match self.process_action.as_deref() {
+            Some("closed_agent_terminal") => text.push_str(", closed its terminal"),
+            Some("closed_exited_terminal") => text.push_str(", closed its exited terminal"),
+            Some("unknown") => text.push_str(", terminal state unknown"),
+            _ => {}
+        }
+        if let Some(extra) = self.last_error.as_deref().or(self.warning.as_deref()) {
+            text.push_str(": ");
+            text.push_str(extra);
+        }
+        text
+    }
+}
+
 /// Input for `orca terminal send`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TerminalInput {
