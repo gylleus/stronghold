@@ -25,6 +25,13 @@ pub type FleetLayout = LayoutForceDirected<FruchtermanReingoldWithExtras<Extras>
 pub const SETTLE_EPSILON: f32 = 0.2;
 /// Consecutive calm frames before the simulation pauses.
 pub const SETTLE_FRAMES: u32 = 30;
+/// Average per-node step below which a layout that stops improving also pauses: it is caught
+/// in a small oscillation (a limit cycle just above [`SETTLE_EPSILON`]) that never calms down.
+pub const STALL_EPSILON: f32 = 1.0;
+/// Frames without the step shrinking by [`STALL_PROGRESS`] before a stalled layout pauses.
+pub const STALL_FRAMES: u32 = 120;
+/// Fraction the smallest step so far must shrink to by to count as progress.
+pub const STALL_PROGRESS: f32 = 0.9;
 
 /// Space around the outermost node of a cluster that counts as part of the cluster.
 pub const CLUSTER_PADDING: f32 = 24.0;
@@ -379,15 +386,30 @@ pub(super) fn centroid(points: &[Pos2]) -> Option<Pos2> {
     Some((sum / points.len() as f32).to_pos2())
 }
 
-/// Counts calm frames and says when the simulation has settled.
-#[derive(Debug, Default, Clone)]
+/// Counts calm frames and says when the simulation has settled: either it is calm, or its
+/// steps are small and have stopped shrinking.
+#[derive(Debug, Clone)]
 pub struct SettleTracker {
     calm_frames: u32,
+    /// Smallest step since the steps dropped below [`STALL_EPSILON`].
+    best: f32,
+    /// Frames since `best` last improved by [`STALL_PROGRESS`].
+    stalled_frames: u32,
+}
+
+impl Default for SettleTracker {
+    fn default() -> Self {
+        Self {
+            calm_frames: 0,
+            best: f32::INFINITY,
+            stalled_frames: 0,
+        }
+    }
 }
 
 impl SettleTracker {
     pub fn reset(&mut self) {
-        self.calm_frames = 0;
+        *self = Self::default();
     }
 
     /// Feeds one step's average displacement; `true` once the layout should pause.
@@ -396,7 +418,21 @@ impl SettleTracker {
             Some(avg) if avg < SETTLE_EPSILON => self.calm_frames += 1,
             _ => self.calm_frames = 0,
         }
-        self.calm_frames >= SETTLE_FRAMES
+        match avg_displacement {
+            Some(avg) if avg < STALL_EPSILON => {
+                if avg < self.best * STALL_PROGRESS {
+                    self.best = avg;
+                    self.stalled_frames = 0;
+                } else {
+                    self.stalled_frames += 1;
+                }
+            }
+            _ => {
+                self.best = f32::INFINITY;
+                self.stalled_frames = 0;
+            }
+        }
+        self.calm_frames >= SETTLE_FRAMES || self.stalled_frames >= STALL_FRAMES
     }
 }
 

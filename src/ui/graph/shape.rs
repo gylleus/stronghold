@@ -1,5 +1,5 @@
-//! Node rendering: per-kind shape and size, color and glyph by state, pulse animation for
-//! active states, agent badge, fade-out of released workers, label under the node.
+//! Node rendering: per-kind shape and size, color and glyph by state, a static ring around
+//! working nodes and a pulse for nodes waiting for input, agent badge, fade-out of released workers, label under the node.
 
 use std::time::Duration;
 
@@ -42,12 +42,13 @@ pub const FADE_START_ALPHA: f32 = 0.6;
 pub const FADE_END_ALPHA: f32 = 0.1;
 /// Screen scale of a hovered node.
 const HOVER_SCALE: f32 = 1.15;
-/// Pulse period of working nodes, in seconds.
-const WORKING_PULSE_S: f64 = 1.6;
-/// Pulse period of nodes waiting for input: slower but larger and stronger.
+/// Pulse period of nodes waiting for input.
 const NEEDS_INPUT_PULSE_S: f64 = 2.4;
-/// Repaint interval while pulsing nodes are visible (~30 fps).
-const ANIMATION_FRAME: Duration = Duration::from_millis(33);
+/// Point of the pulse wave at which the static ring of working nodes is drawn.
+const WORKING_RING_WAVE: f32 = 0.3;
+/// Repaint interval while pulsing nodes are visible (10 fps): the pulse is slow, so a low
+/// rate looks smooth enough and keeps idle CPU low.
+const ANIMATION_FRAME: Duration = Duration::from_millis(100);
 /// Repaint interval while fading nodes are visible; the fade is slow.
 const FADE_FRAME: Duration = Duration::from_secs(1);
 /// Minimum on-screen node radius for drawing the state glyph and agent badge.
@@ -130,9 +131,11 @@ pub fn pulse(time: f64, period_s: f64) -> f32 {
     (0.5 - 0.5 * (phase * std::f64::consts::TAU).cos()) as f32
 }
 
-/// Whether nodes in this state are animated.
+/// Whether nodes in this state are animated. Working nodes get a static ring instead: many
+/// terminals count as working (e.g. an idle spinner keeps their output fresh), and pulsing
+/// them all would keep the UI redrawing.
 pub fn is_animated(state: NodeState) -> bool {
-    matches!(state, NodeState::Working | NodeState::NeedsInput)
+    state == NodeState::NeedsInput
 }
 
 /// Badge letter for an agent: "C" for Claude, "X" for Codex, else the name's first letter.
@@ -299,12 +302,11 @@ impl FleetNodeShape {
     }
 
     fn pulse_ring(&self, time: f64, center: Pos2, outer: f32, fill: Color32) -> Option<Shape> {
-        let (period, spread, max_alpha, width) = match self.state {
-            NodeState::Working => (WORKING_PULSE_S, 0.35, 0.45, 0.10),
-            NodeState::NeedsInput => (NEEDS_INPUT_PULSE_S, 0.7, 0.8, 0.16),
+        let (wave, spread, max_alpha, width) = match self.state {
+            NodeState::Working => (WORKING_RING_WAVE, 0.35, 0.45, 0.10),
+            NodeState::NeedsInput => (pulse(time, NEEDS_INPUT_PULSE_S), 0.7, 0.8, 0.16),
             _ => return None,
         };
-        let wave = pulse(time, period);
         let radius = outer * (1.12 + spread * wave);
         let alpha = max_alpha * (1.0 - 0.6 * wave);
         Some(Shape::circle_stroke(
@@ -534,7 +536,7 @@ mod tests {
     #[test]
     fn only_active_states_animate() {
         let animated: Vec<_> = ALL_STATES.into_iter().filter(|s| is_animated(*s)).collect();
-        assert_eq!(animated, [NodeState::Working, NodeState::NeedsInput]);
+        assert_eq!(animated, [NodeState::NeedsInput]);
     }
 
     #[test]

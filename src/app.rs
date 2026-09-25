@@ -76,6 +76,8 @@ pub struct MyrstackApp {
     needs_input_detector: NeedsInputDetector,
     /// Posted notifications, newest last; the top bar lists them so they can select their node.
     alerts: Vec<Delivered>,
+    /// Debug-logged frames per second and repaint causes.
+    frame_stats: ui::frame_stats::FrameStats,
 }
 
 /// How many posted notifications the alerts menu keeps.
@@ -138,6 +140,7 @@ impl MyrstackApp {
             alerts: Vec::new(),
             search: ui::search::SearchPalette::default(),
             help_open: false,
+            frame_stats: ui::frame_stats::FrameStats::default(),
         };
         app.restore_state(cc.storage);
         app
@@ -577,6 +580,7 @@ impl eframe::App for MyrstackApp {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.frame_stats.tick(ctx);
         if let Some(hotkey) = &mut self.hotkey {
             hotkey.poll(ctx);
         }

@@ -313,6 +313,36 @@ fn settle_tracker_needs_consecutive_calm_frames() {
     assert!(t.observe(Some(0.0)));
 }
 
+/// A layout oscillating just above the calm threshold (seen live: ~0.22 per step) pauses.
+#[test]
+fn settle_tracker_pauses_a_stalled_oscillation() {
+    let mut t = SettleTracker::default();
+    let mut paused_at = None;
+    for frame in 0..1_000 {
+        let step = if frame % 2 == 0 { 0.2198 } else { 0.2217 };
+        if t.observe(Some(step)) {
+            paused_at = Some(frame);
+            break;
+        }
+    }
+    assert_eq!(paused_at, Some(layout::STALL_FRAMES));
+}
+
+/// A layout that keeps converging, or still moves a lot, keeps running.
+#[test]
+fn settle_tracker_keeps_running_while_improving_or_moving() {
+    let mut t = SettleTracker::default();
+    let mut step = 0.99_f32;
+    for _ in 0..300 {
+        assert!(!t.observe(Some(step)));
+        step *= 0.995;
+    }
+    let mut t = SettleTracker::default();
+    for _ in 0..1_000 {
+        assert!(!t.observe(Some(3.0)));
+    }
+}
+
 #[test]
 fn formats_ago() {
     let now = 10_000_000;
