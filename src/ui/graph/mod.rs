@@ -43,7 +43,7 @@ pub use saved::{MAX_SAVED_POSITIONS, SavedLayout, SavedView};
 pub use select::{circle_intersects_rect, is_additive};
 pub use shape::{
     ALL_STATES, FleetNodeShape, NodePayload, StateGlyph, agent_marker, contrast_ratio, fade_alpha,
-    legend, node_radius, state_color, state_glyph,
+    hexagon, legend, node_radius, queen_color, state_color, state_glyph,
 };
 pub use tooltip::{format_ago, kind_label, preview_line, state_label};
 

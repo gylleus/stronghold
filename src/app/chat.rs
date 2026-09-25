@@ -1,0 +1,73 @@
+//! The app side of the Queen's chat: owns the chat session and draws it in the Queen's panel.
+
+use eframe::egui;
+
+use super::{MyrstackApp, repaint_once};
+use crate::chat::{ChatConfig, ChatSession};
+use crate::model::{FleetSnapshot, NodeId};
+use crate::ui::chat::{ChatAction, ChatPanelState, ChatView, chat_ui};
+
+pub(super) struct AppChat {
+    session: ChatSession,
+    panel: ChatPanelState,
+}
+
+impl AppChat {
+    /// Spawns the chat's `claude` process (or notes that it is missing).
+    pub(super) fn start(ctx: &egui::Context) -> Self {
+        Self {
+            session: ChatSession::spawn(ChatConfig::from_env(), Some(repaint_once(ctx))),
+            panel: ChatPanelState::default(),
+        }
+    }
+
+    /// Draws the chat and runs what the user did; returns a node whose link was clicked.
+    pub(super) fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: Option<&FleetSnapshot>,
+    ) -> Option<NodeId> {
+        let is_node = |id: &NodeId| snapshot.is_some_and(|s| s.node(id).is_some());
+        let view = ChatView {
+            transcript: &self.session.transcript,
+            state: &self.session.state,
+            is_node: &is_node,
+        };
+        let mut select = None;
+        for action in chat_ui(ui, &mut self.panel, view) {
+            match action {
+                ChatAction::Send(text) => {
+                    self.session.send(&text);
+                }
+                ChatAction::Interrupt => self.session.interrupt(),
+                ChatAction::Decide {
+                    request_id,
+                    decision,
+                } => self.session.decide(&request_id, decision),
+                ChatAction::NewChat => self.session.new_chat(),
+                ChatAction::Retry => self.session.retry(),
+                ChatAction::SelectNode(id) => select = Some(id),
+            }
+        }
+        select
+    }
+}
+
+impl MyrstackApp {
+    pub(super) fn poll_chat(&mut self) {
+        self.chat.session.poll();
+    }
+
+    /// The top bar's Chat button and Cmd+J: select the Queen and focus the chat's input, or
+    /// close her panel when it is open.
+    pub(super) fn toggle_chat(&mut self) {
+        let queen = NodeId::queen();
+        if self.selected.as_ref() == Some(&queen) && self.graph.selection().len() <= 1 {
+            self.selected = None;
+            self.graph.set_selected(None);
+        } else {
+            self.select_queen();
+            self.chat.panel.focus_input = true;
+        }
+    }
+}
