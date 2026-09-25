@@ -8,6 +8,9 @@ use crate::ui::table::format_age;
 use crate::whip::{Settings, WhipSettings, WhipStatus};
 
 const SEC: i64 = 1_000;
+const HOUR: i64 = 60 * 60 * SEC;
+/// Longest abandon window the form offers: 30 days.
+const MAX_ABANDON_HOURS: i64 = 30 * 24;
 
 /// Settings window state: the applied settings, the edited draft and the file they live in.
 pub struct WhipSettingsWindow {
@@ -113,6 +116,10 @@ impl WhipSettingsWindow {
                 ui.add(egui::DragValue::new(&mut d.max_nudges).range(0..=20));
                 ui.end_row();
                 secs_row(ui, "Tick every", &mut d.tick_ms);
+                hours_row(ui, "Leave runs alone after", &mut d.abandon_after_ms).on_hover_text(
+                    "A Run with no activity (bus messages, task changes, worker progress) \
+                         for this long is abandoned and never nudged",
+                );
             });
         ui.checkbox(
             &mut d.notify,
@@ -148,7 +155,7 @@ impl WhipSettingsWindow {
 
     /// Validates and writes the draft, then makes it the applied settings.
     fn save(&mut self) -> Option<WhipSettings> {
-        if let Err(e) = self.draft.validate() {
+        if let Err(e) = validate_draft(&self.draft) {
             self.message = Some((true, e));
             return None;
         }
@@ -184,6 +191,42 @@ fn secs_row(ui: &mut egui::Ui, label: &str, ms: &mut i64) {
         *ms = secs * SEC;
     }
     ui.end_row();
+}
+
+/// A duration setting edited in whole hours. A value that is not a whole number of hours (set
+/// in the file) is kept until the field is edited.
+fn hours_row(ui: &mut egui::Ui, label: &str, ms: &mut i64) -> egui::Response {
+    ui.label(label);
+    let mut hours = (*ms + HOUR - 1) / HOUR;
+    let response = ui.add(
+        egui::DragValue::new(&mut hours)
+            .range(1..=MAX_ABANDON_HOURS)
+            .suffix(" h"),
+    );
+    if response.changed() {
+        *ms = hours * HOUR;
+    }
+    ui.end_row();
+    response
+}
+
+/// The settings file's own checks plus the form's: the abandon window must be longer than the
+/// stall threshold, or nothing could ever stall before being abandoned.
+fn validate_draft(draft: &WhipSettings) -> Result<(), String> {
+    draft.validate()?;
+    if draft.abandon_after_ms <= draft.threshold_ms {
+        return Err(format!(
+            "abandon window ({}) must be longer than the stall threshold ({})",
+            format_age(draft.abandon_after_ms),
+            format_age(draft.threshold_ms)
+        ));
+    }
+    if draft.abandon_after_ms > MAX_ABANDON_HOURS * HOUR {
+        return Err(format!(
+            "abandon window must be at most {MAX_ABANDON_HOURS} h"
+        ));
+    }
+    Ok(())
 }
 
 fn status_view(ui: &mut egui::Ui, status: &WhipStatus, now_ms: i64) {
@@ -225,6 +268,67 @@ mod tests {
         assert!(!saved.dry_run);
         assert_eq!(window.whip(), &saved);
         assert_eq!(Settings::load_from(&path).settings.whip, saved);
+    }
+
+    #[test]
+    fn abandon_window_validation() {
+        let ok = WhipSettings::default();
+        let cases: Vec<(&str, WhipSettings, bool)> = vec![
+            ("defaults", ok.clone(), true),
+            (
+                "one hour",
+                WhipSettings {
+                    abandon_after_ms: HOUR,
+                    ..ok.clone()
+                },
+                true,
+            ),
+            (
+                "zero",
+                WhipSettings {
+                    abandon_after_ms: 0,
+                    ..ok.clone()
+                },
+                false,
+            ),
+            (
+                "not longer than the threshold",
+                WhipSettings {
+                    abandon_after_ms: HOUR,
+                    threshold_ms: HOUR,
+                    ..ok.clone()
+                },
+                false,
+            ),
+            (
+                "over 30 days",
+                WhipSettings {
+                    abandon_after_ms: (MAX_ABANDON_HOURS + 1) * HOUR,
+                    ..ok.clone()
+                },
+                false,
+            ),
+        ];
+        for (name, draft, valid) in cases {
+            assert_eq!(validate_draft(&draft).is_ok(), valid, "case: {name}");
+        }
+    }
+
+    #[test]
+    fn saved_abandon_window_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut window = WhipSettingsWindow::load(Some(path.clone()));
+        window.draft.abandon_after_ms = 6 * HOUR;
+        assert_eq!(window.save().unwrap().abandon_after_ms, 6 * HOUR);
+        assert_eq!(
+            Settings::load_from(&path).settings.whip.abandon_after_ms,
+            6 * HOUR
+        );
+
+        window.draft.abandon_after_ms = window.draft.threshold_ms;
+        assert_eq!(window.save(), None);
+        assert_eq!(window.whip().abandon_after_ms, 6 * HOUR);
     }
 
     #[test]

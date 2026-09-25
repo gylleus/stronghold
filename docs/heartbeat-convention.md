@@ -104,7 +104,9 @@ Every 60 s, for each task, Myrstack takes the newest of these three signals:
   than the threshold (default 15 min), and the terminal isn't NeedsInput.
 - **Coordinator stalled:** the Run has `ready` unassigned tasks or finished
   tasks with no follow-up, and the coordinator has had no output or bus
-  activity within the threshold.
+  activity within the threshold. Coordinator terminal output only counts
+  while the Run has open work (a `ready`, `dispatched` or `blocked` task, or
+  an unanswered ask); bus messages and task changes always count.
 
 A repeated heartbeat with an unchanged phase still counts as progress. A
 NeedsInput terminal is never nudged. It is waiting on Karl, so Myrstack
@@ -112,11 +114,16 @@ sends a notification instead. Escalation goes: nudge, then a second nudge
 after the 10-min cooldown, then a macOS notification and a red node.
 
 An **abandoned** Run is never nudged: nothing has happened in it (Run
-`updated_at`, coordinator output or messages, bus messages for the Run,
+`updated_at`, coordinator messages (not its terminal output), bus messages for the Run,
 task creation, completion or status changes, worker heartbeats or output)
 for longer than `whip.abandon_after_ms` (default 24 h). Myrstack's own
 messages don't count. A worker silent that long in an abandoned Run is left
 alone too.
+
+A **superseded** Run is one whose coordinator terminal also coordinates a
+newer Run (by `created_at`): the terminal has moved on. Its coordinator is
+never nudged, and a worker of it is left alone once the worker's terminal
+has been silent for longer than the abandon window.
 
 ## Myrstack senders
 
