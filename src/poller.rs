@@ -1,1 +1,811 @@
 //! Background thread that polls Orca and sends snapshots to the UI over a channel.
+//!
+//! Each call type runs on its own cadence ([`PollerConfig`]). Every cycle that polled anything
+//! sends a complete [`FleetData`] holding the latest value of everything; a failed call keeps
+//! its previous value and reports a message in `errors` until the call next succeeds.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError};
+
+use crate::fleet::FleetData;
+use crate::orca::{InboxMessage, OrcaClient, OrcaError, Run, Task, Terminal, Worker};
+
+/// How long after its last update a run stays active without any live terminal.
+pub const ACTIVE_RUN_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Snapshots buffered for the UI; when full, a cycle's snapshot is dropped (the next one is
+/// complete anyway).
+const SNAPSHOT_BUFFER: usize = 4;
+
+/// Poll intervals per call type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PollerConfig {
+    pub terminals: Duration,
+    /// `run-list` and `worker-list`.
+    pub runs_workers: Duration,
+    /// `task-list` for each active run.
+    pub tasks: Duration,
+    pub inbox: Duration,
+    pub inbox_limit: u64,
+}
+
+impl Default for PollerConfig {
+    fn default() -> Self {
+        Self {
+            terminals: Duration::from_secs(2),
+            runs_workers: Duration::from_secs(10),
+            tasks: Duration::from_secs(10),
+            inbox: Duration::from_secs(5),
+            inbox_limit: 300,
+        }
+    }
+}
+
+/// Messages from the UI to the poller thread.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PollerCommand {
+    /// Poll everything now, regardless of cadence.
+    RefreshNow,
+    /// Stop the thread.
+    Shutdown,
+}
+
+/// The Orca calls the poller makes, abstracted for tests.
+pub trait FleetSource: Send + 'static {
+    fn terminals(&self) -> Result<Vec<Terminal>, OrcaError>;
+    fn runs(&self) -> Result<Vec<Run>, OrcaError>;
+    fn workers(&self) -> Result<Vec<Worker>, OrcaError>;
+    fn tasks(&self, run_id: &str) -> Result<Vec<Task>, OrcaError>;
+    fn inbox(&self, limit: u64) -> Result<Vec<InboxMessage>, OrcaError>;
+}
+
+impl FleetSource for OrcaClient {
+    fn terminals(&self) -> Result<Vec<Terminal>, OrcaError> {
+        self.terminal_list().map(|l| l.terminals)
+    }
+
+    fn runs(&self) -> Result<Vec<Run>, OrcaError> {
+        self.run_list()
+    }
+
+    fn workers(&self) -> Result<Vec<Worker>, OrcaError> {
+        self.worker_list(None).map(|l| l.workers)
+    }
+
+    fn tasks(&self, run_id: &str) -> Result<Vec<Task>, OrcaError> {
+        self.task_list(run_id)
+    }
+
+    fn inbox(&self, limit: u64) -> Result<Vec<InboxMessage>, OrcaError> {
+        self.inbox(Some(limit), None)
+    }
+}
+
+/// Runs worth fetching tasks for: the coordinator terminal is live, a worker's terminal is live,
+/// or the run was updated within `window` of `now_ms`.
+pub fn active_run_ids(
+    runs: &[Run],
+    workers: &[Worker],
+    terminals: &[Terminal],
+    now_ms: i64,
+    window: Duration,
+) -> BTreeSet<String> {
+    let live: BTreeSet<&str> = terminals.iter().map(|t| t.handle.as_str()).collect();
+    let is_live = |handle: Option<&str>| handle.is_some_and(|h| live.contains(h));
+    let runs_with_live_worker: BTreeSet<&str> = workers
+        .iter()
+        .filter(|w| {
+            is_live(w.agent_terminal_handle.as_deref())
+                || is_live(
+                    w.resource
+                        .as_ref()
+                        .and_then(|r| r.terminal_handle.as_deref()),
+                )
+        })
+        .filter_map(|w| w.run_id.as_deref())
+        .collect();
+    let cutoff = now_ms.saturating_sub(i64::try_from(window.as_millis()).unwrap_or(i64::MAX));
+    runs.iter()
+        .filter(|run| {
+            is_live(run.coordinator_handle.as_deref())
+                || runs_with_live_worker.contains(run.id.as_str())
+                || run
+                    .updated_at
+                    .as_ref()
+                    .and_then(|t| t.epoch_ms())
+                    .is_some_and(|ms| ms >= cutoff)
+        })
+        .map(|run| run.id.clone())
+        .collect()
+}
+
+/// A readable one-line description of a failed call.
+pub fn describe_error(call: &str, err: &OrcaError) -> String {
+    match err {
+        OrcaError::Spawn { .. } => format!("{call}: orca CLI not found ({err})"),
+        OrcaError::Timeout { after, .. } => format!("{call}: Orca timed out after {after:?}"),
+        OrcaError::Exit { stderr, .. } => {
+            let detail = stderr.trim();
+            if detail.is_empty() {
+                format!("{call}: Orca runtime not reachable")
+            } else {
+                format!("{call}: Orca runtime not reachable ({detail})")
+            }
+        }
+        OrcaError::Api(api) => format!("{call}: {} ({})", api.message, api.code),
+        OrcaError::Json { .. } | OrcaError::Io(_) => format!("{call}: {err}"),
+    }
+}
+
+/// Which call groups are due in a cycle.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Due {
+    pub terminals: bool,
+    pub runs_workers: bool,
+    pub tasks: bool,
+    pub inbox: bool,
+}
+
+impl Due {
+    pub const ALL: Due = Due {
+        terminals: true,
+        runs_workers: true,
+        tasks: true,
+        inbox: true,
+    };
+
+    pub fn any(&self) -> bool {
+        self.terminals || self.runs_workers || self.tasks || self.inbox
+    }
+}
+
+/// Next-due times per call group, on a monotonic clock measured from poller start.
+#[derive(Debug, Clone)]
+pub struct Schedule {
+    config: PollerConfig,
+    next_terminals: Duration,
+    next_runs_workers: Duration,
+    next_tasks: Duration,
+    next_inbox: Duration,
+}
+
+impl Schedule {
+    /// Everything is due at time zero.
+    pub fn new(config: PollerConfig) -> Self {
+        Self {
+            config,
+            next_terminals: Duration::ZERO,
+            next_runs_workers: Duration::ZERO,
+            next_tasks: Duration::ZERO,
+            next_inbox: Duration::ZERO,
+        }
+    }
+
+    pub fn config(&self) -> &PollerConfig {
+        &self.config
+    }
+
+    /// Groups due at `now`; each returned group is rescheduled one interval after `now`.
+    pub fn take_due(&mut self, now: Duration) -> Due {
+        let c = &self.config;
+        Due {
+            terminals: take(&mut self.next_terminals, now, c.terminals),
+            runs_workers: take(&mut self.next_runs_workers, now, c.runs_workers),
+            tasks: take(&mut self.next_tasks, now, c.tasks),
+            inbox: take(&mut self.next_inbox, now, c.inbox),
+        }
+    }
+
+    /// Makes every group due immediately.
+    pub fn force_all(&mut self) {
+        self.next_terminals = Duration::ZERO;
+        self.next_runs_workers = Duration::ZERO;
+        self.next_tasks = Duration::ZERO;
+        self.next_inbox = Duration::ZERO;
+    }
+
+    /// The earliest time any group is due.
+    pub fn next_due(&self) -> Duration {
+        self.next_terminals
+            .min(self.next_runs_workers)
+            .min(self.next_tasks)
+            .min(self.next_inbox)
+    }
+}
+
+fn take(next: &mut Duration, now: Duration, interval: Duration) -> bool {
+    if now >= *next {
+        *next = now + interval;
+        true
+    } else {
+        false
+    }
+}
+
+/// Key for a retained error, so a failure is reported until that call next succeeds.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum CallKey {
+    Terminals,
+    Runs,
+    Workers,
+    Tasks(String),
+    Inbox,
+}
+
+/// The poller's merge state: latest values plus outstanding errors. Pure apart from the calls
+/// into the [`FleetSource`], so tests can drive it with a fake source and clock.
+pub struct PollState {
+    schedule: Schedule,
+    data: FleetData,
+    errors: BTreeMap<CallKey, String>,
+}
+
+impl PollState {
+    pub fn new(config: PollerConfig) -> Self {
+        Self {
+            schedule: Schedule::new(config),
+            data: FleetData::default(),
+            errors: BTreeMap::new(),
+        }
+    }
+
+    pub fn schedule(&self) -> &Schedule {
+        &self.schedule
+    }
+
+    pub fn force_all(&mut self) {
+        self.schedule.force_all();
+    }
+
+    /// Polls whatever is due at monotonic time `now`; returns a snapshot if anything was polled.
+    pub fn tick(
+        &mut self,
+        source: &dyn FleetSource,
+        now: Duration,
+        wall_ms: i64,
+    ) -> Option<FleetData> {
+        let due = self.schedule.take_due(now);
+        if !due.any() {
+            return None;
+        }
+        if due.terminals {
+            let result = source.terminals();
+            self.apply(CallKey::Terminals, "terminal list", result, |d, v| {
+                d.terminals = v
+            });
+        }
+        if due.runs_workers {
+            let result = source.runs();
+            self.apply(CallKey::Runs, "run list", result, |d, v| d.runs = v);
+            let result = source.workers();
+            self.apply(CallKey::Workers, "worker list", result, |d, v| {
+                d.workers = v
+            });
+        }
+        if due.tasks {
+            self.poll_tasks(source, wall_ms);
+        }
+        if due.inbox {
+            let result = source.inbox(self.schedule.config().inbox_limit);
+            self.apply(CallKey::Inbox, "inbox", result, |d, v| d.inbox = v);
+        }
+        self.data.polled_at_ms = wall_ms;
+        self.data.errors = self.errors.values().cloned().collect();
+        Some(self.data.clone())
+    }
+
+    fn poll_tasks(&mut self, source: &dyn FleetSource, wall_ms: i64) {
+        let active = active_run_ids(
+            &self.data.runs,
+            &self.data.workers,
+            &self.data.terminals,
+            wall_ms,
+            ACTIVE_RUN_WINDOW,
+        );
+        self.data.tasks.retain(|id, _| active.contains(id));
+        self.errors
+            .retain(|key, _| !matches!(key, CallKey::Tasks(id) if !active.contains(id)));
+        for run_id in active {
+            match source.tasks(&run_id) {
+                Ok(tasks) => {
+                    self.errors.remove(&CallKey::Tasks(run_id.clone()));
+                    self.data.tasks.insert(run_id, tasks);
+                }
+                Err(err) => {
+                    let msg = describe_error(&format!("task list for {run_id}"), &err);
+                    self.errors.insert(CallKey::Tasks(run_id), msg);
+                }
+            }
+        }
+    }
+
+    fn apply<T>(
+        &mut self,
+        key: CallKey,
+        call: &str,
+        result: Result<T, OrcaError>,
+        store: impl FnOnce(&mut FleetData, T),
+    ) {
+        match result {
+            Ok(value) => {
+                store(&mut self.data, value);
+                self.errors.remove(&key);
+            }
+            Err(err) => {
+                self.errors.insert(key, describe_error(call, &err));
+            }
+        }
+    }
+}
+
+/// Callback that wakes the UI after a snapshot is sent.
+pub type Repaint = Box<dyn Fn() + Send>;
+
+/// Handle to the poller thread. Dropping it shuts the thread down and joins it.
+pub struct Poller {
+    snapshots: Receiver<FleetData>,
+    commands: Sender<PollerCommand>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Poller {
+    pub fn spawn(
+        source: impl FleetSource,
+        config: PollerConfig,
+        repaint: Option<Repaint>,
+    ) -> Poller {
+        let (snap_tx, snap_rx) = crossbeam_channel::bounded(SNAPSHOT_BUFFER);
+        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+        let thread = std::thread::Builder::new()
+            .name("orca-poller".into())
+            .spawn(move || run_loop(&source, config, repaint, &snap_tx, &cmd_rx))
+            .expect("spawn poller thread");
+        Poller {
+            snapshots: snap_rx,
+            commands: cmd_tx,
+            thread: Some(thread),
+        }
+    }
+
+    /// Snapshots from the poller, oldest first.
+    pub fn rx(&self) -> &Receiver<FleetData> {
+        &self.snapshots
+    }
+
+    /// The newest pending snapshot, discarding older ones; `None` if nothing new arrived.
+    pub fn latest(&self) -> Option<FleetData> {
+        self.snapshots.try_iter().last()
+    }
+
+    pub fn send(&self, cmd: PollerCommand) {
+        // The thread only exits on Shutdown or a dropped handle, so a failed send is moot.
+        let _ = self.commands.send(cmd);
+    }
+}
+
+impl Drop for Poller {
+    fn drop(&mut self) {
+        self.send(PollerCommand::Shutdown);
+        if let Some(thread) = self.thread.take()
+            && thread.join().is_err()
+        {
+            log::error!("poller thread panicked");
+        }
+    }
+}
+
+fn run_loop(
+    source: &dyn FleetSource,
+    config: PollerConfig,
+    repaint: Option<Repaint>,
+    snapshots: &Sender<FleetData>,
+    commands: &Receiver<PollerCommand>,
+) {
+    let start = Instant::now();
+    let mut state = PollState::new(config);
+    loop {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            state.tick(source, start.elapsed(), wall_clock_ms())
+        }));
+        match result {
+            Ok(Some(snapshot)) => match snapshots.try_send(snapshot) {
+                Ok(()) => {
+                    if let Some(repaint) = &repaint {
+                        repaint();
+                    }
+                }
+                Err(TrySendError::Full(_)) => log::debug!("UI behind; dropped a fleet snapshot"),
+                Err(TrySendError::Disconnected(_)) => return,
+            },
+            Ok(None) => {}
+            Err(_) => log::error!("poll cycle panicked; continuing"),
+        }
+        let wait = state.schedule().next_due().saturating_sub(start.elapsed());
+        match commands.recv_timeout(wait) {
+            Ok(PollerCommand::RefreshNow) => state.force_all(),
+            Ok(PollerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+    }
+}
+
+fn wall_clock_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use crate::orca::{ApiError, Timestamp, WorkerResource};
+
+    const NOW_MS: i64 = 1_790_000_000_000;
+    const HOUR_MS: i64 = 60 * 60 * 1000;
+
+    fn terminal(handle: &str) -> Terminal {
+        Terminal {
+            handle: handle.into(),
+            connected: true,
+            ..Default::default()
+        }
+    }
+
+    fn run(id: &str, coordinator: Option<&str>, updated_ms: Option<i64>) -> Run {
+        Run {
+            id: id.into(),
+            coordinator_handle: coordinator.map(Into::into),
+            updated_at: updated_ms.map(Timestamp::Millis),
+            ..Default::default()
+        }
+    }
+
+    fn worker(run_id: &str, handle: Option<&str>, resource_handle: Option<&str>) -> Worker {
+        Worker {
+            dispatch_id: format!("d-{run_id}"),
+            task_id: None,
+            run_id: Some(run_id.into()),
+            worker_state: None,
+            dispatch_status: None,
+            agent_terminal_handle: handle.map(Into::into),
+            terminal_state: None,
+            resource: resource_handle.map(|h| WorkerResource {
+                terminal_handle: Some(h.into()),
+                ..Default::default()
+            }),
+        }
+    }
+
+    fn api_error(msg: &str) -> OrcaError {
+        OrcaError::Api(ApiError {
+            code: "runtime_unavailable".into(),
+            message: msg.into(),
+            data: serde_json::Value::Null,
+        })
+    }
+
+    #[derive(Default)]
+    struct Calls {
+        terminals: usize,
+        runs: usize,
+        workers: usize,
+        tasks: Vec<String>,
+        inbox: usize,
+    }
+
+    /// Scripted source: returns the configured data, failing calls whose flag is set.
+    #[derive(Default, Clone)]
+    struct Fake {
+        inner: Arc<Mutex<FakeInner>>,
+    }
+
+    #[derive(Default)]
+    struct FakeInner {
+        terminals: Vec<Terminal>,
+        runs: Vec<Run>,
+        workers: Vec<Worker>,
+        fail_terminals: bool,
+        fail_runs: bool,
+        fail_tasks_for: Option<String>,
+        calls: Calls,
+    }
+
+    impl Fake {
+        fn with<R>(&self, f: impl FnOnce(&mut FakeInner) -> R) -> R {
+            f(&mut self.inner.lock().unwrap())
+        }
+    }
+
+    impl FleetSource for Fake {
+        fn terminals(&self) -> Result<Vec<Terminal>, OrcaError> {
+            self.with(|s| {
+                s.calls.terminals += 1;
+                if s.fail_terminals {
+                    Err(api_error("Orca runtime not reachable"))
+                } else {
+                    Ok(s.terminals.clone())
+                }
+            })
+        }
+
+        fn runs(&self) -> Result<Vec<Run>, OrcaError> {
+            self.with(|s| {
+                s.calls.runs += 1;
+                if s.fail_runs {
+                    Err(OrcaError::Exit {
+                        status: Some(1),
+                        stderr: "connect ECONNREFUSED".into(),
+                        stdout: String::new(),
+                    })
+                } else {
+                    Ok(s.runs.clone())
+                }
+            })
+        }
+
+        fn workers(&self) -> Result<Vec<Worker>, OrcaError> {
+            self.with(|s| {
+                s.calls.workers += 1;
+                Ok(s.workers.clone())
+            })
+        }
+
+        fn tasks(&self, run_id: &str) -> Result<Vec<Task>, OrcaError> {
+            self.with(|s| {
+                s.calls.tasks.push(run_id.into());
+                if s.fail_tasks_for.as_deref() == Some(run_id) {
+                    Err(api_error("run gone"))
+                } else {
+                    Ok(Vec::new())
+                }
+            })
+        }
+
+        fn inbox(&self, _limit: u64) -> Result<Vec<InboxMessage>, OrcaError> {
+            self.with(|s| {
+                s.calls.inbox += 1;
+                Ok(Vec::new())
+            })
+        }
+    }
+
+    fn secs(s: u64) -> Duration {
+        Duration::from_secs(s)
+    }
+
+    #[test]
+    fn default_config_matches_spec() {
+        let c = PollerConfig::default();
+        assert_eq!(c.terminals, secs(2));
+        assert_eq!(c.runs_workers, secs(10));
+        assert_eq!(c.tasks, secs(10));
+        assert_eq!(c.inbox, secs(5));
+        assert_eq!(c.inbox_limit, 300);
+    }
+
+    #[test]
+    fn schedule_follows_cadence() {
+        let mut s = Schedule::new(PollerConfig::default());
+        assert_eq!(s.take_due(secs(0)), Due::ALL);
+        assert!(!s.take_due(secs(1)).any());
+        assert_eq!(s.next_due(), secs(2));
+        let d = s.take_due(secs(2));
+        assert!(d.terminals && !d.inbox && !d.runs_workers && !d.tasks);
+        let d = s.take_due(secs(5));
+        assert!(d.terminals && d.inbox && !d.runs_workers);
+        let d = s.take_due(secs(10));
+        assert_eq!(d, Due::ALL);
+    }
+
+    #[test]
+    fn schedule_force_all_makes_everything_due() {
+        let mut s = Schedule::new(PollerConfig::default());
+        s.take_due(secs(0));
+        s.force_all();
+        assert_eq!(s.next_due(), Duration::ZERO);
+        assert_eq!(s.take_due(secs(1)), Due::ALL);
+        // Rescheduled relative to the forced poll.
+        assert_eq!(s.next_due(), secs(3));
+    }
+
+    #[test]
+    fn call_counts_over_twenty_seconds() {
+        let fake = Fake::default();
+        fake.with(|s| s.runs = vec![run("r1", None, Some(NOW_MS))]);
+        let mut state = PollState::new(PollerConfig::default());
+        let mut snapshots = 0;
+        for ms in (0..20_000).step_by(100) {
+            if state
+                .tick(&fake, Duration::from_millis(ms), NOW_MS)
+                .is_some()
+            {
+                snapshots += 1;
+            }
+        }
+        fake.with(|s| {
+            assert_eq!(s.calls.terminals, 10);
+            assert_eq!(s.calls.runs, 2);
+            assert_eq!(s.calls.workers, 2);
+            assert_eq!(s.calls.tasks, vec!["r1", "r1"]);
+            assert_eq!(s.calls.inbox, 4);
+        });
+        assert_eq!(snapshots, 12);
+    }
+
+    #[test]
+    fn active_runs_by_coordinator_worker_or_recency() {
+        let runs = vec![
+            run("coord-live", Some("t1"), Some(NOW_MS - 48 * HOUR_MS)),
+            run("worker-live", Some("gone"), None),
+            run("resource-live", None, None),
+            run("recent", Some("gone"), Some(NOW_MS - 23 * HOUR_MS)),
+            run("stale", Some("gone"), Some(NOW_MS - 25 * HOUR_MS)),
+            run("stale-worker-dead", None, Some(NOW_MS - 25 * HOUR_MS)),
+        ];
+        let workers = vec![
+            worker("worker-live", Some("t2"), None),
+            worker("resource-live", None, Some("t3")),
+            worker("stale-worker-dead", Some("gone"), Some("gone")),
+        ];
+        let terminals = vec![terminal("t1"), terminal("t2"), terminal("t3")];
+        let active = active_run_ids(&runs, &workers, &terminals, NOW_MS, ACTIVE_RUN_WINDOW);
+        let active: Vec<_> = active.iter().map(String::as_str).collect();
+        assert_eq!(
+            active,
+            vec!["coord-live", "recent", "resource-live", "worker-live"]
+        );
+    }
+
+    #[test]
+    fn active_runs_accepts_text_timestamps() {
+        let mut r = run("r", None, None);
+        r.updated_at = Some(Timestamp::Text("2026-09-25 08:00:00".into()));
+        let now = crate::orca::parse_timestamp_ms("2026-09-25T10:00:00Z").unwrap();
+        assert!(active_run_ids(&[r.clone()], &[], &[], now, ACTIVE_RUN_WINDOW).contains("r"));
+        let later = now + 30 * HOUR_MS;
+        assert!(active_run_ids(&[r], &[], &[], later, ACTIVE_RUN_WINDOW).is_empty());
+    }
+
+    #[test]
+    fn failed_call_keeps_previous_value_and_reports_until_success() {
+        let fake = Fake::default();
+        fake.with(|s| {
+            s.terminals = vec![terminal("t1")];
+            s.runs = vec![run("r1", Some("t1"), None)];
+        });
+        let mut state = PollState::new(PollerConfig::default());
+        let first = state.tick(&fake, secs(0), NOW_MS).unwrap();
+        assert_eq!(first.terminals.len(), 1);
+        assert!(first.errors.is_empty());
+
+        fake.with(|s| {
+            s.fail_terminals = true;
+            s.fail_runs = true;
+            s.terminals.clear();
+        });
+        let snap = state.tick(&fake, secs(2), NOW_MS + 2000).unwrap();
+        assert_eq!(snap.terminals.len(), 1, "previous terminals retained");
+        assert_eq!(snap.errors.len(), 1);
+        assert!(snap.errors[0].contains("Orca runtime not reachable"));
+        assert_eq!(snap.polled_at_ms, NOW_MS + 2000);
+
+        // Runs fail on their tick; the terminal error is still outstanding.
+        let snap = state.tick(&fake, secs(10), NOW_MS).unwrap();
+        assert_eq!(snap.runs.len(), 1, "previous runs retained");
+        assert_eq!(snap.errors.len(), 2);
+        assert!(
+            snap.errors
+                .iter()
+                .any(|e| e.starts_with("run list: Orca runtime not reachable"))
+        );
+
+        // Terminals recover; the run error stays until runs are next polled.
+        fake.with(|s| s.fail_terminals = false);
+        let snap = state.tick(&fake, secs(12), NOW_MS).unwrap();
+        assert!(snap.terminals.is_empty());
+        assert_eq!(snap.errors.len(), 1);
+        assert!(snap.errors[0].starts_with("run list"));
+
+        fake.with(|s| s.fail_runs = false);
+        let snap = state.tick(&fake, secs(20), NOW_MS).unwrap();
+        assert!(snap.errors.is_empty());
+    }
+
+    #[test]
+    fn tasks_follow_active_runs() {
+        let fake = Fake::default();
+        fake.with(|s| {
+            s.terminals = vec![terminal("t1")];
+            s.runs = vec![run("r1", Some("t1"), None), run("r2", Some("t2"), None)];
+            s.fail_tasks_for = Some("r1".into());
+        });
+        let mut state = PollState::new(PollerConfig::default());
+        let snap = state.tick(&fake, secs(0), NOW_MS).unwrap();
+        assert!(snap.tasks.is_empty());
+        assert_eq!(snap.errors.len(), 1);
+        assert!(snap.errors[0].contains("r1"));
+
+        // r1's coordinator goes away and r2's appears: r1's tasks and error are dropped.
+        fake.with(|s| s.terminals = vec![terminal("t2")]);
+        let snap = state.tick(&fake, secs(10), NOW_MS).unwrap();
+        assert_eq!(snap.tasks.keys().collect::<Vec<_>>(), vec!["r2"]);
+        assert!(snap.errors.is_empty());
+        fake.with(|s| assert_eq!(s.calls.tasks, vec!["r1", "r2"]));
+    }
+
+    #[test]
+    fn spawned_poller_sends_repaints_and_shuts_down() {
+        let fake = Fake::default();
+        fake.with(|s| s.terminals = vec![terminal("t1")]);
+        let repaints = Arc::new(AtomicUsize::new(0));
+        let counter = repaints.clone();
+        let poller = Poller::spawn(
+            fake.clone(),
+            PollerConfig::default(),
+            Some(Box::new(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+            })),
+        );
+        let snap = poller.rx().recv_timeout(secs(2)).unwrap();
+        assert_eq!(snap.terminals.len(), 1);
+
+        poller.send(PollerCommand::RefreshNow);
+        poller.rx().recv_timeout(secs(2)).unwrap();
+        fake.with(|s| assert_eq!(s.calls.runs, 2));
+        assert_eq!(repaints.load(Ordering::SeqCst), 2);
+
+        let started = Instant::now();
+        drop(poller);
+        assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn shutdown_command_stops_thread() {
+        let poller = Poller::spawn(Fake::default(), PollerConfig::default(), None);
+        poller.rx().recv_timeout(secs(2)).unwrap();
+        poller.send(PollerCommand::Shutdown);
+        // The thread exits and drops its sender.
+        assert!(matches!(
+            poller.rx().recv_timeout(secs(2)),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn describe_error_is_readable() {
+        let spawn = OrcaError::Spawn {
+            binary: "orca".into(),
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        };
+        assert!(describe_error("terminal list", &spawn).contains("orca CLI not found"));
+        let api = api_error("no runtime");
+        assert_eq!(
+            describe_error("inbox", &api),
+            "inbox: no runtime (runtime_unavailable)"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a running Orca"]
+    fn live_poller_receives_terminals() {
+        let poller = Poller::spawn(OrcaClient::new(), PollerConfig::default(), None);
+        let snap = poller.rx().recv_timeout(secs(30)).unwrap();
+        assert!(snap.errors.is_empty(), "errors: {:?}", snap.errors);
+        assert!(!snap.terminals.is_empty());
+        eprintln!(
+            "terminals={} runs={} workers={} tasks={} inbox={}",
+            snap.terminals.len(),
+            snap.runs.len(),
+            snap.workers.len(),
+            snap.tasks.len(),
+            snap.inbox.len()
+        );
+    }
+}
