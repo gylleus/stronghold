@@ -286,3 +286,143 @@ fn empty_data_gives_empty_snapshot() {
     let snap = FleetSnapshot::build(&FleetData::default(), NOW);
     assert!(snap.runs.is_empty() && snap.nodes.is_empty() && snap.edges.is_empty());
 }
+
+mod subagents {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::claude::{
+        ClaudeData, SessionInfo, SessionMatch, SubagentInfo, SubagentParent, SubagentState,
+    };
+
+    const SESSION: &str = "s1";
+
+    fn session() -> SessionInfo {
+        SessionInfo {
+            session_id: SESSION.into(),
+            transcript_path: PathBuf::from("/p/s1.jsonl"),
+            dir: None,
+            modified_ms: NOW,
+            cwd_from_transcript: None,
+        }
+    }
+
+    fn agent(
+        id: &str,
+        parent: Option<&str>,
+        state: SubagentState,
+        finished_ago: i64,
+    ) -> SubagentInfo {
+        SubagentInfo {
+            agent_id: id.into(),
+            session_id: SESSION.into(),
+            agent_type: "general-purpose".into(),
+            description: format!("Review {id}"),
+            model: Some("opus".into()),
+            spawn_depth: if parent.is_some() { 2 } else { 1 },
+            tool_use_id: Some(format!("toolu_{id}")),
+            parent: parent.map_or(SubagentParent::Session, |p| SubagentParent::Agent(p.into())),
+            background: true,
+            started_ms: NOW - 30 * MINUTE,
+            last_activity_ms: NOW - finished_ago,
+            state,
+            finished_ms: state.is_finished().then_some(NOW - finished_ago),
+            transcript_path: PathBuf::from(format!("/p/s1/subagents/agent-{id}.jsonl")),
+        }
+    }
+
+    fn claude(agents: Vec<SubagentInfo>) -> ClaudeData {
+        ClaudeData {
+            session_by_handle: [
+                (COORDINATOR.to_string(), SessionMatch::Unique(session())),
+                ("term_gone".to_string(), SessionMatch::Unique(session())),
+            ]
+            .into_iter()
+            .collect(),
+            subagents: [(SESSION.to_string(), agents)].into_iter().collect(),
+            at_ms: NOW,
+        }
+    }
+
+    fn sub(id: &str) -> NodeId {
+        NodeId::subagent(SESSION, id)
+    }
+
+    #[test]
+    fn subagents_hang_off_their_terminal_and_parent() {
+        let mut described = agent("a1", None, SubagentState::Running, 0);
+        described.description = "A very long description that goes past the label limit".into();
+        let mut untitled = agent("a3", None, SubagentState::Stale, 0);
+        untitled.description = String::new();
+        untitled.finished_ms = None;
+        let data = claude(vec![
+            described,
+            agent("a2", Some("a1"), SubagentState::Running, 0),
+            untitled,
+            agent("a4", Some("gone"), SubagentState::Failed, MINUTE),
+        ]);
+        let snap = FleetSnapshot::build_with_claude(&scenario(), Some(&data), NOW);
+        let plain = FleetSnapshot::build(&scenario(), NOW);
+        assert_eq!(snap.nodes.len(), plain.nodes.len() + 4);
+
+        let a1 = snap.node(&sub("a1")).unwrap();
+        assert_eq!(a1.kind, NodeKind::Subagent);
+        assert_eq!(a1.state, NodeState::Working);
+        assert!(a1.label.ends_with('…') && a1.label.starts_with("A very long"));
+        assert_eq!(a1.run_id.as_deref(), Some(RUN));
+        assert_eq!(a1.terminal_handle, None);
+        assert_eq!(a1.released_at_ms, None);
+        assert_eq!(sub("a1").subagent_parts(), Some((SESSION, "a1")));
+        assert_eq!(term(COORDINATOR).subagent_parts(), None);
+
+        let a3 = snap.node(&sub("a3")).unwrap();
+        assert_eq!(
+            (a3.label.as_str(), a3.state),
+            ("general-purpose", NodeState::Idle)
+        );
+        let a4 = snap.node(&sub("a4")).unwrap();
+        assert_eq!(a4.state, NodeState::Failed);
+        assert_eq!(a4.released_at_ms, Some(NOW - MINUTE));
+
+        let edge_from = |id: &str| {
+            let edges: Vec<&Edge> = snap.edges.iter().filter(|e| e.to == sub(id)).collect();
+            assert_eq!(edges.len(), 1);
+            assert_eq!(edges[0].kind, EdgeKind::Subagent);
+            edges[0].from.clone()
+        };
+        assert_eq!(edge_from("a1"), term(COORDINATOR));
+        assert_eq!(edge_from("a2"), sub("a1"));
+        assert_eq!(
+            edge_from("a4"),
+            term(COORDINATOR),
+            "missing parent falls back"
+        );
+    }
+
+    #[test]
+    fn finished_subagents_fade_then_drop() {
+        let data = claude(vec![
+            agent("done", None, SubagentState::Done, 5 * MINUTE),
+            agent("old", None, SubagentState::Done, RELEASED_FADE_MS + 1),
+            agent("child", Some("old"), SubagentState::Running, 0),
+        ]);
+        let snap = FleetSnapshot::build_with_claude(&scenario(), Some(&data), NOW);
+        let done = snap.node(&sub("done")).unwrap();
+        assert_eq!(done.state, NodeState::Done);
+        assert_eq!(done.released_at_ms, Some(NOW - 5 * MINUTE));
+        assert!(snap.node(&sub("old")).is_none());
+        let child = snap.edges.iter().find(|e| e.to == sub("child")).unwrap();
+        assert_eq!(child.from, term(COORDINATOR));
+    }
+
+    #[test]
+    fn sessions_without_a_terminal_node_are_ignored() {
+        let mut data = claude(vec![agent("a1", None, SubagentState::Running, 0)]);
+        data.session_by_handle.remove(COORDINATOR);
+        let snap = FleetSnapshot::build_with_claude(&scenario(), Some(&data), NOW);
+        assert!(snap.nodes.iter().all(|n| n.kind != NodeKind::Subagent));
+        assert!(snap.edges.iter().all(|e| e.kind != EdgeKind::Subagent));
+        let none = FleetSnapshot::build_with_claude(&scenario(), None, NOW);
+        assert_eq!(none.nodes, FleetSnapshot::build(&scenario(), NOW).nodes);
+    }
+}

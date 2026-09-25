@@ -5,9 +5,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use eframe::egui;
 
 use crate::APP_NAME;
+use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
 use crate::fleet::FleetData;
 use crate::hotkey::Hotkey;
-use crate::model::{FleetSnapshot, NodeId};
+use crate::model::{FleetSnapshot, Node, NodeId, NodeKind};
 use crate::orca::OrcaClient;
 use crate::poller::{Poller, PollerCommand, PollerConfig, ScreenUpdate};
 use crate::ui;
@@ -44,6 +45,11 @@ pub struct MyrstackApp {
     screen: Option<ScreenUpdate>,
     /// Which nodes the graph shows; edited in the sidebar.
     filter: FleetFilter,
+    /// Maps terminals to Claude sessions and scans subagents off the UI thread.
+    claude: ClaudeWorker,
+    claude_data: Option<ClaudeData>,
+    /// Tail of the selected subagent's transcript.
+    transcript: Option<TranscriptTail>,
 }
 
 impl MyrstackApp {
@@ -51,6 +57,8 @@ impl MyrstackApp {
         let hotkey = Hotkey::register(&cc.egui_ctx)
             .inspect_err(|err| log::warn!("global hotkey unavailable: {err:#}"))
             .ok();
+        let repaint_ctx = cc.egui_ctx.clone();
+        let claude = ClaudeWorker::spawn(Some(Box::new(move || repaint_ctx.request_repaint())));
         let repaint_ctx = cc.egui_ctx.clone();
         let poller = Poller::spawn(
             OrcaClient::new(),
@@ -68,6 +76,37 @@ impl MyrstackApp {
             watched_screen: None,
             screen: None,
             filter: FleetFilter::default(),
+            claude,
+            claude_data: None,
+            transcript: None,
+        }
+    }
+
+    /// The selected node and its info when it is a subagent in the latest Claude scan.
+    fn selected_subagent(&self) -> Option<(&Node, &SubagentInfo)> {
+        let id = self.selected.as_ref()?;
+        let node = self.snapshot.as_ref()?.node(id)?;
+        if node.kind != NodeKind::Subagent {
+            return None;
+        }
+        let (session_id, agent_id) = id.subagent_parts()?;
+        let info = self.claude_data.as_ref()?.subagent(session_id, agent_id)?;
+        Some((node, info))
+    }
+
+    /// Points the worker's transcript tail at the selected subagent and takes new tails.
+    fn sync_transcript(&mut self) {
+        let path = self
+            .selected_subagent()
+            .map(|(_, info)| info.transcript_path.clone());
+        if self.transcript.as_ref().map(|t| &t.path) != path.as_ref() {
+            self.transcript = None;
+            self.claude.watch_transcript(path.clone());
+        }
+        if let Some(tail) = self.claude.latest_transcript()
+            && Some(&tail.path) == path.as_ref()
+        {
+            self.transcript = Some(tail);
         }
     }
 
@@ -86,8 +125,20 @@ impl MyrstackApp {
         }
     }
 
-    /// Right-hand panel for the selected node.
+    /// Right-hand panel for the selected node: its screen, or its transcript for a subagent.
     fn terminal_panel(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+        if let Some((node, info)) = self.selected_subagent() {
+            let tail = self.transcript.as_ref().map_or(&[][..], |t| &t.lines[..]);
+            let default_width = ui.ctx().content_rect().width() * 0.45;
+            egui::Panel::right("terminal")
+                .resizable(true)
+                .default_size(default_width)
+                .min_size(240.0)
+                .show(ui, |ui| {
+                    ui::subagent::subagent_panel(ui, node, info, tail, now_ms)
+                });
+            return;
+        }
         let Some(node) = self
             .selected
             .as_ref()
@@ -155,6 +206,7 @@ impl eframe::App for MyrstackApp {
         if let Some(hotkey) = &mut self.hotkey {
             hotkey.poll(ctx);
         }
+        let mut rebuild = false;
         if let Some(data) = self.poller.latest() {
             log::debug!(
                 "snapshot: {} terminals, {} runs, {} workers, {} errors",
@@ -163,7 +215,23 @@ impl eframe::App for MyrstackApp {
                 data.workers.len(),
                 data.errors.len()
             );
-            let snapshot = FleetSnapshot::build(&data, now_ms());
+            self.claude.send_terminals(data.terminals.clone());
+            self.data = Some(data);
+            rebuild = true;
+        }
+        if let Some(claude) = self.claude.latest() {
+            log::debug!(
+                "claude: {} mapped terminals, {} sessions with subagents, {} subagents",
+                claude.session_by_handle.len(),
+                claude.subagents.values().filter(|a| !a.is_empty()).count(),
+                claude.subagent_count()
+            );
+            self.claude_data = Some(claude);
+            rebuild = true;
+        }
+        if rebuild && let Some(data) = &self.data {
+            let snapshot =
+                FleetSnapshot::build_with_claude(data, self.claude_data.as_ref(), now_ms());
             self.graph.set_hidden(&self.filter.hidden(&snapshot));
             self.graph.sync(&snapshot);
             if let Some(id) = &self.selected
@@ -172,9 +240,9 @@ impl eframe::App for MyrstackApp {
                 self.selected = None;
             }
             self.snapshot = Some(snapshot);
-            self.data = Some(data);
         }
         self.sync_screen_watch();
+        self.sync_transcript();
         if let Some(update) = self.poller.latest_screen()
             && Some(&update.handle) == self.watched_screen.as_ref()
         {
