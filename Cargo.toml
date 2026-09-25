@@ -1,0 +1,31 @@
+[package]
+name = "myrstack"
+version = "0.1.0"
+edition = "2024"
+description = "Native desktop view of the agent fleet running in Orca"
+publish = false
+
+[lib]
+name = "myrstack"
+path = "src/lib.rs"
+
+[[bin]]
+name = "myrstack"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.36"
+egui_graphs = "0.32"
+petgraph = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+crossbeam-channel = "0.5"
+notify = "8.2"
+thiserror = "2"
+anyhow = "1"
+directories = "6"
+log = "0.4"
+env_logger = "0.11"
+
+[dev-dependencies]
+tempfile = "3"
