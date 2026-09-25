@@ -127,7 +127,8 @@ fn run_has_coordinator_workers_and_task_counts() {
     assert_eq!(worker.dispatch_id.as_deref(), Some("ctx_a4a62d1e6146"));
     assert_eq!(worker.task_id.as_deref(), Some("task_e02460f3b723"));
     assert_eq!(worker.label, "hack-77-parallel-recipes");
-    assert_eq!(worker.state, NodeState::Idle);
+    // Its preview shows Codex's "Press enter to confirm" model-switch menu.
+    assert_eq!(worker.state, NodeState::NeedsInput);
 
     let mut in_run: Vec<_> = snap.nodes_in_run(RUN).map(|n| n.id.as_str()).collect();
     in_run.sort();
@@ -254,18 +255,14 @@ fn terminal_label_falls_back_to_branch_then_handle() {
 }
 
 #[test]
-fn derive_state_placeholder_rules() {
+fn derive_state_on_fixture_workers() {
     let terminal = Terminal {
+        connected: true,
         last_output_at: Some(Timestamp::Millis(NOW - 29_000)),
         ..Default::default()
     };
-    let state = |terminal, worker, now_ms| {
-        derive_state(&StateInputs {
-            terminal,
-            worker,
-            now_ms,
-        })
-    };
+    let state =
+        |terminal, worker, now_ms| derive_state(&StateInputs::new(terminal, worker, now_ms));
     assert_eq!(state(Some(&terminal), None, NOW), NodeState::Working);
     assert_eq!(state(Some(&terminal), None, NOW + 2_000), NodeState::Idle);
     assert_eq!(state(None, None, NOW), NodeState::Idle);
