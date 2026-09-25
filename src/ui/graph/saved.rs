@@ -108,7 +108,7 @@ impl GraphView {
 
     /// Forgets saved and current positions and lays the graph out from scratch, then fits it.
     pub fn reset_layout(&mut self) {
-        let selected = self.selected();
+        let (selection, selected) = (self.selection(), self.selected());
         self.restore = Restore::default();
         self.graph = FleetGraph::new();
         self.index.clear();
@@ -120,7 +120,7 @@ impl GraphView {
         if let Some(snapshot) = self.last_snapshot.take() {
             self.sync(&snapshot);
         }
-        self.set_selected(selected.as_ref());
+        self.set_selection(&selection, selected.as_ref());
         self.fit_requested = true;
     }
 

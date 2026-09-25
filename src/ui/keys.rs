@@ -23,7 +23,7 @@ pub enum KeyCommand {
     OpenInOrca,
     Fit,
     ToggleHelp,
-    /// Ask to close (kill) the selected node's session.
+    /// Ask to close (kill) the selected nodes' sessions.
     CloseSession,
 }
 
@@ -34,10 +34,16 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("J  K", "Next / previous run"),
     ("Enter", "Select node, open its panel"),
     ("i", "Type into the terminal's input box"),
-    ("Esc", "Leave the input box, then clear the selection"),
+    (
+        "Esc",
+        "Leave the input box, then clear the selection (several: keep one)",
+    ),
     ("o", "Open the terminal in Orca"),
     ("f", "Fit the graph to the screen"),
-    ("x  ⌫  ⌦", "Close (kill) the selected session…"),
+    ("x  ⌫  ⌦", "Close (kill) the selected sessions…"),
+    ("drag", "Select the nodes in a box (⇧/⌘ adds)"),
+    ("⇧/⌘ click", "Add or remove a node from the selection"),
+    ("right-drag", "Pan the graph"),
     ("?", "Toggle this help"),
 ];
 

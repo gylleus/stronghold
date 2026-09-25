@@ -347,3 +347,26 @@ fn tab_companions_lists_other_sessions_in_the_targets_tabs() {
     ));
     assert!(tab_companions(&both, &s, &terminals).is_empty());
 }
+
+#[test]
+fn bulk_close_of_a_selection_skips_the_queen_and_subagents() {
+    let mut s = snapshot();
+    s.add_queen();
+    let queen = s.queen().unwrap().clone();
+    let loose = node("loose", NodeKind::Terminal, Some("t_1"));
+    let sub = node("sub", NodeKind::Subagent, None);
+    let plan = plan_bulk_close([&queen, &loose, &sub], &s, &[], PANE);
+    assert!(plan.can_run());
+    assert_eq!(plan.steps, vec![close("t_1", false)]);
+    assert_eq!(
+        plan.warnings,
+        vec![
+            format!("skipped {}: {QUEEN_REFUSAL}", queen.label),
+            format!("skipped sub: {SUBAGENT_REFUSAL}"),
+        ]
+    );
+    // Nothing closable left: refused, but the skips still explain why.
+    let none = plan_bulk_close([&queen, &sub], &s, &[], PANE);
+    assert!(!none.can_run());
+    assert_eq!(none.warnings.len(), 2);
+}

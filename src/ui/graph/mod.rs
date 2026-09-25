@@ -8,6 +8,9 @@ mod layout;
 mod saved;
 #[cfg(test)]
 mod saved_tests;
+mod select;
+#[cfg(test)]
+mod select_tests;
 mod shape;
 #[cfg(test)]
 mod tests;
@@ -37,6 +40,7 @@ pub use layout::{
     SettleTracker, memberships,
 };
 pub use saved::{MAX_SAVED_POSITIONS, SavedLayout, SavedView};
+pub use select::{circle_intersects_rect, is_additive};
 pub use shape::{
     ALL_STATES, FleetNodeShape, NodePayload, StateGlyph, agent_marker, contrast_ratio, fade_alpha,
     legend, node_radius, state_color, state_glyph,
@@ -66,14 +70,17 @@ const FOCUS_MAX_ZOOM: f32 = 2.0;
 /// What happened in the graph this frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GraphResponse {
-    /// The selected node after this frame (single selection).
+    /// The primary selected node after this frame.
     pub selected: Option<NodeId>,
+    /// Every selected node after this frame (includes `selected`).
+    pub selection: BTreeSet<NodeId>,
     /// The node under the pointer.
     pub hovered: Option<NodeId>,
     /// The node clicked this frame.
     pub clicked: Option<NodeId>,
-    /// "Close session…" was picked in a node's context menu.
-    pub close_requested: Option<NodeId>,
+    /// Nodes to close: "Close session…" (one node) or "Close N selected…" was picked in a
+    /// node's context menu. Empty if neither was.
+    pub close_requested: Vec<NodeId>,
 }
 
 type EdgeKey = (NodeId, NodeId, EdgeKind);
@@ -120,6 +127,10 @@ pub struct GraphView {
     center_requested: Option<NodeId>,
     /// Node whose context menu is open (the one right-clicked last).
     context_node: Option<NodeId>,
+    /// The primary of the selected nodes; see [`GraphView::selected`].
+    primary: Option<NodeId>,
+    /// Selection box being dragged.
+    box_select: Option<select::BoxSelect>,
 }
 
 impl Default for GraphView {
@@ -159,6 +170,8 @@ impl GraphView {
             restore: saved::Restore::default(),
             center_requested: None,
             context_node: None,
+            primary: None,
+            box_select: None,
         }
     }
 
@@ -397,14 +410,17 @@ impl GraphView {
             || self.graph.dragged_node().is_some()
             || get_layout_state::<FleetLayoutState>(ui, id.clone()).is_running();
 
+        // Selection is handled here (see `select.rs`): left-drag from empty space draws a
+        // selection box, left-drag from a node moves it and right- or middle-drag pans.
         let interaction = SettingsInteraction::new()
             .with_dragging_enabled(true)
             .with_hover_enabled(true)
             .with_node_clicking_enabled(true)
-            .with_node_selection_enabled(true);
+            .with_node_drag_button(Some(egui::PointerButton::Primary));
         let navigation = SettingsNavigation::new()
             .with_zoom_and_pan_enabled(true)
-            .with_fit_to_screen_enabled(false);
+            .with_fit_to_screen_enabled(false)
+            .with_pan_buttons(&[egui::PointerButton::Secondary, egui::PointerButton::Middle]);
         let style = SettingsStyle::new().with_labels_always(true);
 
         let response = egui_graphs::GraphView::<FleetLayoutState, FleetLayout>::new()
@@ -453,6 +469,7 @@ impl GraphView {
         if clicked.is_some() {
             self.drop_saved_selection();
         }
+        self.selection_input(ui, &response.response, clicked.as_ref());
         self.sync_saved_view(ui, false);
         if running && !animating {
             ui.ctx().request_repaint();
@@ -478,23 +495,46 @@ impl GraphView {
 
         GraphResponse {
             selected: self.selected(),
+            selection: self.selection(),
             hovered,
             clicked,
             close_requested,
         }
     }
 
-    /// Right-click menu of the node under the pointer; returns the node to close, if picked.
+    /// Right-click menu of the node under the pointer; returns the nodes to close, if picked.
+    /// On a node of a multi-selection it acts on the whole selection.
     fn node_context_menu(
         &mut self,
         response: &egui::Response,
         hovered: Option<&NodeId>,
-    ) -> Option<NodeId> {
+    ) -> Vec<NodeId> {
         if response.secondary_clicked() {
             self.context_node = hovered.cloned();
         }
-        let node = self.nodes.get(self.context_node.as_ref()?)?;
-        let mut picked = None;
+        let Some(node) = self.context_node.as_ref().and_then(|id| self.nodes.get(id)) else {
+            return Vec::new();
+        };
+        let selection = self.selection();
+        let mut picked = Vec::new();
+        if selection.len() > 1 && selection.contains(&node.id) {
+            response.context_menu(|ui| {
+                let title = format!("{} selected", selection.len());
+                ui.label(egui::RichText::new(title).strong());
+                ui.separator();
+                let close = ui
+                    .button(select::close_selected_text(selection.len()))
+                    .on_hover_text(
+                        "Kill the selected sessions in Orca (asks first; the Queen and \
+                         subagents are skipped)",
+                    );
+                if close.clicked() {
+                    picked = selection.iter().cloned().collect();
+                    ui.close();
+                }
+            });
+            return picked;
+        }
         response.context_menu(|ui| {
             ui.add(egui::Label::new(egui::RichText::new(&node.label).strong()).truncate());
             ui.separator();
@@ -508,7 +548,7 @@ impl GraphView {
                 .on_hover_text("Kill this session in Orca (asks first)")
                 .on_disabled_hover_text(refusal.unwrap_or_default());
             if close.clicked() {
-                picked = Some(node.id.clone());
+                picked = vec![node.id.clone()];
                 ui.close();
             }
         });
@@ -518,26 +558,6 @@ impl GraphView {
     /// Fits the whole graph into the view on the next frame.
     pub fn fit_to_screen(&mut self) {
         self.fit_requested = true;
-    }
-
-    /// The selected node, if any.
-    pub fn selected(&self) -> Option<NodeId> {
-        self.graph
-            .nodes_iter()
-            .find(|(_, n)| n.selected())
-            .map(|(_, n)| n.payload().id.clone())
-    }
-
-    /// Selects `id` (or clears the selection), e.g. to mirror a selection made elsewhere.
-    pub fn set_selected(&mut self, id: Option<&NodeId>) {
-        self.drop_saved_selection();
-        let target = id.and_then(|id| self.index.get(id)).copied();
-        let indices: Vec<NodeIndex> = self.index.values().copied().collect();
-        for idx in indices {
-            if let Some(node) = self.graph.node_mut(idx) {
-                node.set_selected(Some(idx) == target);
-            }
-        }
     }
 
     pub fn node_count(&self) -> usize {

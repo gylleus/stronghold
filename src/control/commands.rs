@@ -99,6 +99,10 @@ pub enum ControlCommand {
     Select {
         agent: Option<String>,
     },
+    /// Select several nodes (the first is the primary) without moving the graph.
+    SelectMany {
+        agents: Vec<String>,
+    },
     /// Select a node and pan/zoom the graph onto it; `raise` also brings the window forward.
     Focus {
         agent: String,
@@ -177,8 +181,18 @@ impl ControlCommand {
                 Ok(command)
             })(),
             "select" => (|| {
-                Ok(Self::Select {
-                    agent: p.str("id")?.map(str::to_owned),
+                let agent = p.str("id")?.map(str::to_owned);
+                let Some(ids) = p.strings("ids")? else {
+                    return Ok(Self::Select { agent });
+                };
+                let mut agents: Vec<String> = agent.into_iter().chain(ids).collect();
+                agents.retain(|a| !a.trim().is_empty());
+                Ok(match agents.len() {
+                    0 => Self::Select { agent: None },
+                    1 => Self::Select {
+                        agent: agents.pop(),
+                    },
+                    _ => Self::SelectMany { agents },
                 })
             })(),
             "focus" => (|| {

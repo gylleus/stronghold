@@ -140,6 +140,7 @@ fn status_view() -> StatusView {
         alerts: &[],
         view: View::Graph,
         selected: None,
+        selection: Vec::new(),
         filter: &FleetFilter::default(),
         whip_settings_open: false,
         now_ms: NOW,

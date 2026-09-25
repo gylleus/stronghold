@@ -261,7 +261,7 @@ impl MyrstackApp {
     /// Right-hand panel for the selected node: its screen, its transcript for a subagent, or
     /// the fleet summary and broadcast composer for the queen.
     fn terminal_panel(&mut self, ui: &mut egui::Ui, now_ms: i64) {
-        if self.queen_panel(ui, now_ms) {
+        if self.selection_panel(ui) || self.queen_panel(ui, now_ms) {
             return;
         }
         if let Some((node, info)) = self.selected_subagent() {
@@ -449,9 +449,11 @@ impl MyrstackApp {
                     ctx.memory_mut(|m| m.surrender_focus(focused));
                 } else if self.help_open {
                     self.help_open = false;
-                } else {
-                    self.selected = None;
-                    self.graph.set_selected(None);
+                } else if let Some(keep) =
+                    ui::selection::after_escape(current, &self.graph.selection())
+                {
+                    self.graph.set_selected(keep.as_ref());
+                    self.selected = keep;
                 }
                 None
             }
@@ -476,9 +478,9 @@ impl MyrstackApp {
                 None
             }
             KeyCommand::CloseSession => {
-                // The queen stands for the whole fleet; it has no session to close.
-                if let Some(id) = current.filter(|id| **id != NodeId::queen()).cloned() {
-                    self.request_close(vec![id]);
+                let ids = ui::selection::close_targets(current, &self.graph.selection());
+                if !ids.is_empty() {
+                    self.request_close(ids);
                 }
                 None
             }
@@ -572,6 +574,45 @@ impl MyrstackApp {
                 .on_hover_text(data.errors.join("\n"));
             }
         });
+    }
+}
+
+/// Multi-selection: several nodes selected in the graph (box or Shift/Cmd-click).
+impl MyrstackApp {
+    /// Draws the "N selected" panel in the terminal panel's place while 2+ nodes are selected;
+    /// returns whether it did.
+    fn selection_panel(&mut self, ui: &mut egui::Ui) -> bool {
+        let selection = self.graph.selection();
+        let Some(snapshot) = self.snapshot.as_ref().filter(|_| selection.len() > 1) else {
+            return false;
+        };
+        let nodes: Vec<&Node> = selection
+            .iter()
+            .filter_map(|id| snapshot.node(id))
+            .collect();
+        let default_width = ui.ctx().content_rect().width() * 0.45;
+        let action = egui::Panel::right("terminal")
+            .resizable(true)
+            .default_size(default_width)
+            .min_size(240.0)
+            .show(ui, |ui| ui::selection::selection_panel(ui, &nodes))
+            .inner;
+        match action {
+            Some(ui::selection::SelectionAction::SelectOnly(id)) => {
+                self.graph.set_selected(Some(&id));
+                self.graph.center_on(&id);
+                self.selected = Some(id);
+            }
+            Some(ui::selection::SelectionAction::Close) => {
+                self.request_close(selection.into_iter().collect());
+            }
+            Some(ui::selection::SelectionAction::Clear) => {
+                self.graph.set_selected(None);
+                self.selected = None;
+            }
+            None => {}
+        }
+        true
     }
 }
 
@@ -866,8 +907,9 @@ impl eframe::App for MyrstackApp {
                     if response.selected.is_some() || !hidden_selected {
                         self.selected = response.selected;
                     }
-                    if let Some(id) = response.close_requested {
-                        self.close.request(ui::close::CloseRequest::Nodes(vec![id]));
+                    if !response.close_requested.is_empty() {
+                        self.close
+                            .request(ui::close::CloseRequest::Nodes(response.close_requested));
                     }
                 }
                 View::Table => ui::table::terminal_table(ui, data, now_ms),

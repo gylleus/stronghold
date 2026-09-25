@@ -289,6 +289,10 @@ pub struct DashboardView {
     /// `graph` or `table`.
     pub view: String,
     pub selected: Option<String>,
+    /// Every selected node (several after a box select or Shift/Cmd-click); includes
+    /// `selected` when it is shown in the graph.
+    #[serde(default)]
+    pub selection: Vec<String>,
     pub filter: FilterView,
     pub whip_settings_open: bool,
 }
@@ -400,6 +404,7 @@ pub struct ViewInputs<'a> {
     pub alerts: &'a [Delivered],
     pub view: View,
     pub selected: Option<&'a str>,
+    pub selection: Vec<&'a str>,
     pub filter: &'a FleetFilter,
     pub whip_settings_open: bool,
     pub now_ms: i64,
@@ -439,6 +444,7 @@ impl StatusView {
             dashboard: DashboardView {
                 view: view_name(inputs.view).into(),
                 selected: inputs.selected.map(str::to_owned),
+                selection: inputs.selection.iter().map(|s| (*s).to_owned()).collect(),
                 filter: filter_view(inputs.filter, snapshot),
                 whip_settings_open: inputs.whip_settings_open,
             },

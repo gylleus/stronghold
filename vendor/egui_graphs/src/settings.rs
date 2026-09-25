@@ -16,6 +16,7 @@ pub struct SettingsInteraction {
     pub(crate) edge_clicking_enabled: bool,
     pub(crate) edge_selection_enabled: bool,
     pub(crate) edge_selection_multi_enabled: bool,
+    pub(crate) node_drag_button: Option<egui::PointerButton>,
 }
 
 impl Default for SettingsInteraction {
@@ -29,6 +30,7 @@ impl Default for SettingsInteraction {
             edge_clicking_enabled: false,
             edge_selection_enabled: false,
             edge_selection_multi_enabled: false,
+            node_drag_button: None,
         }
     }
 }
@@ -115,6 +117,16 @@ impl SettingsInteraction {
         self.edge_selection_multi_enabled = enabled;
         self
     }
+
+    /// Restricts node dragging to `button`: a drag starts only on the frame that button is
+    /// pressed over a node, so a drag begun elsewhere never picks up a node it passes over.
+    /// `None` lets any button start a drag whenever the pointer is down over a node.
+    ///
+    /// Default: `None`
+    pub fn with_node_drag_button(mut self, button: Option<egui::PointerButton>) -> Self {
+        self.node_drag_button = button;
+        self
+    }
 }
 
 /// Represents graph navigation settings.
@@ -124,11 +136,13 @@ pub struct SettingsNavigation {
     pub(crate) zoom_and_pan_enabled: bool,
     pub(crate) fit_to_screen_padding: f32,
     pub(crate) zoom_speed: f32,
+    pub(crate) pan_buttons: Vec<egui::PointerButton>,
 }
 
 impl Default for SettingsNavigation {
     fn default() -> Self {
         Self {
+            pan_buttons: vec![egui::PointerButton::Primary, egui::PointerButton::Middle],
             fit_to_screen_padding: 0.1,
             zoom_speed: 0.1,
             fit_to_screen_enabled: true,
@@ -176,6 +190,14 @@ impl SettingsNavigation {
     /// Default: `0.1`
     pub fn with_zoom_speed(mut self, speed: f32) -> Self {
         self.zoom_speed = speed;
+        self
+    }
+
+    /// Mouse buttons whose drag pans the view (when zoom and pan are enabled).
+    ///
+    /// Default: primary and middle
+    pub fn with_pan_buttons(mut self, buttons: &[egui::PointerButton]) -> Self {
+        self.pan_buttons = buttons.to_vec();
         self
     }
 }
