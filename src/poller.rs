@@ -3,15 +3,22 @@
 //! Each call type runs on its own cadence ([`PollerConfig`]). Every cycle that polled anything
 //! sends a complete [`FleetData`] holding the latest value of everything; a failed call keeps
 //! its previous value and reports a message in `errors` until the call next succeeds.
+//!
+//! The screen of one watched terminal ([`PollerCommand::WatchScreen`]) is read on its own
+//! thread and cadence, so slow fleet calls never delay it; results arrive as [`ScreenUpdate`]s
+//! on a separate channel ([`Poller::latest_screen`]).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError};
 
 use crate::fleet::FleetData;
-use crate::orca::{InboxMessage, OrcaClient, OrcaError, Run, Task, Terminal, Worker};
+use crate::orca::{
+    InboxMessage, OrcaClient, OrcaError, Run, Task, Terminal, TerminalRead, TerminalStatus, Worker,
+};
 
 /// How long after its last update a run stays active without any live terminal.
 pub const ACTIVE_RUN_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
@@ -19,6 +26,10 @@ pub const ACTIVE_RUN_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 /// Snapshots buffered for the UI; when full, a cycle's snapshot is dropped (the next one is
 /// complete anyway).
 const SNAPSHOT_BUFFER: usize = 4;
+
+/// Screen updates buffered for the UI; when full, the backlog is discarded in favour of the
+/// newest update.
+const SCREEN_BUFFER: usize = 4;
 
 /// Poll intervals per call type.
 #[derive(Debug, Clone, PartialEq)]
@@ -30,6 +41,8 @@ pub struct PollerConfig {
     pub tasks: Duration,
     pub inbox: Duration,
     pub inbox_limit: u64,
+    /// `terminal read --screen` of the watched terminal.
+    pub screen: Duration,
 }
 
 impl Default for PollerConfig {
@@ -40,6 +53,7 @@ impl Default for PollerConfig {
             tasks: Duration::from_secs(10),
             inbox: Duration::from_secs(5),
             inbox_limit: 300,
+            screen: Duration::from_millis(500),
         }
     }
 }
@@ -49,6 +63,8 @@ impl Default for PollerConfig {
 pub enum PollerCommand {
     /// Poll everything now, regardless of cadence.
     RefreshNow,
+    /// Read this terminal's screen on the screen cadence, starting now; `None` stops reading.
+    WatchScreen(Option<String>),
     /// Stop the thread.
     Shutdown,
 }
@@ -81,6 +97,107 @@ impl FleetSource for OrcaClient {
 
     fn inbox(&self, limit: u64) -> Result<Vec<InboxMessage>, OrcaError> {
         self.inbox(Some(limit), None)
+    }
+}
+
+/// Reads a terminal's rendered screen, abstracted for tests.
+pub trait ScreenSource: Send + 'static {
+    fn read_screen(&self, handle: &str) -> Result<TerminalRead, OrcaError>;
+}
+
+impl ScreenSource for OrcaClient {
+    fn read_screen(&self, handle: &str) -> Result<TerminalRead, OrcaError> {
+        self.terminal_read_screen(handle)
+    }
+}
+
+/// One read of the watched terminal's screen.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScreenUpdate {
+    pub handle: String,
+    /// Screen rows. On a failed read, the last good rows for this handle (if any).
+    pub lines: Vec<String>,
+    pub status: Option<TerminalStatus>,
+    /// Wall-clock time of the read, epoch ms.
+    pub read_at_ms: i64,
+    /// Set when this read failed.
+    pub error: Option<String>,
+}
+
+/// The screen watcher's state: which handle to read and when. Pure apart from the call into the
+/// [`ScreenSource`], so tests can drive it with a fake source and clock.
+#[derive(Debug, Clone)]
+pub struct ScreenWatch {
+    interval: Duration,
+    handle: Option<String>,
+    next_due: Duration,
+    /// Last good read of the current handle, reused when a read fails.
+    last_good: Option<(Vec<String>, Option<TerminalStatus>)>,
+}
+
+impl ScreenWatch {
+    pub fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            handle: None,
+            next_due: Duration::ZERO,
+            last_good: None,
+        }
+    }
+
+    pub fn handle(&self) -> Option<&str> {
+        self.handle.as_deref()
+    }
+
+    /// Watches `handle` (read due at `now`), or stops watching on `None`.
+    pub fn set(&mut self, handle: Option<String>, now: Duration) {
+        if handle != self.handle {
+            self.last_good = None;
+        }
+        self.handle = handle;
+        self.next_due = now;
+    }
+
+    /// When the next read is due; `None` while nothing is watched.
+    pub fn next_due(&self) -> Option<Duration> {
+        self.handle.as_ref().map(|_| self.next_due)
+    }
+
+    /// Reads the screen if a read is due at `now`.
+    pub fn tick(
+        &mut self,
+        source: &dyn ScreenSource,
+        now: Duration,
+        wall_ms: i64,
+    ) -> Option<ScreenUpdate> {
+        let handle = self.handle.clone()?;
+        if now < self.next_due {
+            return None;
+        }
+        self.next_due = now + self.interval;
+        let update = match source.read_screen(&handle) {
+            Ok(read) => {
+                self.last_good = Some((read.tail.clone(), read.status.clone()));
+                ScreenUpdate {
+                    handle,
+                    lines: read.tail,
+                    status: read.status,
+                    read_at_ms: wall_ms,
+                    error: None,
+                }
+            }
+            Err(err) => {
+                let (lines, status) = self.last_good.clone().unwrap_or_default();
+                ScreenUpdate {
+                    handle,
+                    lines,
+                    status,
+                    read_at_ms: wall_ms,
+                    error: Some(describe_error("screen read", &err)),
+                }
+            }
+        };
+        Some(update)
     }
 }
 
@@ -341,32 +458,57 @@ impl PollState {
     }
 }
 
-/// Callback that wakes the UI after a snapshot is sent.
-pub type Repaint = Box<dyn Fn() + Send>;
+/// Callback that wakes the UI after a snapshot or screen update is sent.
+pub type Repaint = Box<dyn Fn() + Send + Sync>;
 
-/// Handle to the poller thread. Dropping it shuts the thread down and joins it.
+/// Handle to the poller threads (fleet and screen). Dropping it shuts both down and joins them.
 pub struct Poller {
     snapshots: Receiver<FleetData>,
+    screens: Receiver<ScreenUpdate>,
     commands: Sender<PollerCommand>,
-    thread: Option<JoinHandle<()>>,
+    screen_commands: Sender<PollerCommand>,
+    threads: Vec<JoinHandle<()>>,
 }
 
 impl Poller {
     pub fn spawn(
-        source: impl FleetSource,
+        source: impl FleetSource + ScreenSource + Clone,
         config: PollerConfig,
         repaint: Option<Repaint>,
     ) -> Poller {
+        let repaint = repaint.map(Arc::new);
         let (snap_tx, snap_rx) = crossbeam_channel::bounded(SNAPSHOT_BUFFER);
+        let (screen_tx, screen_rx) = crossbeam_channel::bounded(SCREEN_BUFFER);
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
-        let thread = std::thread::Builder::new()
+        let (screen_cmd_tx, screen_cmd_rx) = crossbeam_channel::unbounded();
+
+        let screen_source = source.clone();
+        let screen_interval = config.screen;
+        let screen_repaint = repaint.clone();
+        let screen_backlog = screen_rx.clone();
+        let screen_thread = std::thread::Builder::new()
+            .name("orca-screen".into())
+            .spawn(move || {
+                screen_loop(
+                    &screen_source,
+                    screen_interval,
+                    screen_repaint.as_deref(),
+                    &screen_tx,
+                    &screen_backlog,
+                    &screen_cmd_rx,
+                )
+            })
+            .expect("spawn screen poller thread");
+        let fleet_thread = std::thread::Builder::new()
             .name("orca-poller".into())
-            .spawn(move || run_loop(&source, config, repaint, &snap_tx, &cmd_rx))
+            .spawn(move || run_loop(&source, config, repaint.as_deref(), &snap_tx, &cmd_rx))
             .expect("spawn poller thread");
         Poller {
             snapshots: snap_rx,
+            screens: screen_rx,
             commands: cmd_tx,
-            thread: Some(thread),
+            screen_commands: screen_cmd_tx,
+            threads: vec![fleet_thread, screen_thread],
         }
     }
 
@@ -380,19 +522,83 @@ impl Poller {
         self.snapshots.try_iter().last()
     }
 
+    /// The newest pending screen update, discarding older ones; `None` if nothing new arrived.
+    pub fn latest_screen(&self) -> Option<ScreenUpdate> {
+        self.screens.try_iter().last()
+    }
+
     pub fn send(&self, cmd: PollerCommand) {
-        // The thread only exits on Shutdown or a dropped handle, so a failed send is moot.
-        let _ = self.commands.send(cmd);
+        // The threads only exit on Shutdown or a dropped handle, so a failed send is moot.
+        match cmd {
+            PollerCommand::WatchScreen(_) => {
+                let _ = self.screen_commands.send(cmd);
+            }
+            PollerCommand::RefreshNow => {
+                let _ = self.commands.send(cmd);
+            }
+            PollerCommand::Shutdown => {
+                let _ = self.screen_commands.send(PollerCommand::Shutdown);
+                let _ = self.commands.send(PollerCommand::Shutdown);
+            }
+        }
     }
 }
 
 impl Drop for Poller {
     fn drop(&mut self) {
         self.send(PollerCommand::Shutdown);
-        if let Some(thread) = self.thread.take()
-            && thread.join().is_err()
-        {
-            log::error!("poller thread panicked");
+        for thread in self.threads.drain(..) {
+            if thread.join().is_err() {
+                log::error!("poller thread panicked");
+            }
+        }
+    }
+}
+
+fn screen_loop(
+    source: &dyn ScreenSource,
+    interval: Duration,
+    repaint: Option<&Repaint>,
+    updates: &Sender<ScreenUpdate>,
+    backlog: &Receiver<ScreenUpdate>,
+    commands: &Receiver<PollerCommand>,
+) {
+    let start = Instant::now();
+    let mut watch = ScreenWatch::new(interval);
+    loop {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            watch.tick(source, start.elapsed(), wall_clock_ms())
+        }));
+        match result {
+            Ok(Some(update)) => {
+                let mut pending = Some(update);
+                while let Some(update) = pending.take() {
+                    match updates.try_send(update) {
+                        Ok(()) => {
+                            if let Some(repaint) = repaint {
+                                repaint();
+                            }
+                        }
+                        // The UI is behind: drop the stale backlog, keep the newest.
+                        Err(TrySendError::Full(update)) => {
+                            while backlog.try_recv().is_ok() {}
+                            pending = Some(update);
+                        }
+                        Err(TrySendError::Disconnected(_)) => return,
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(_) => log::error!("screen read panicked; continuing"),
+        }
+        let command = match watch.next_due() {
+            Some(due) => commands.recv_timeout(due.saturating_sub(start.elapsed())),
+            None => commands.recv().map_err(|_| RecvTimeoutError::Disconnected),
+        };
+        match command {
+            Ok(PollerCommand::WatchScreen(handle)) => watch.set(handle, start.elapsed()),
+            Ok(PollerCommand::RefreshNow) | Err(RecvTimeoutError::Timeout) => {}
+            Ok(PollerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
         }
     }
 }
@@ -400,7 +606,7 @@ impl Drop for Poller {
 fn run_loop(
     source: &dyn FleetSource,
     config: PollerConfig,
-    repaint: Option<Repaint>,
+    repaint: Option<&Repaint>,
     snapshots: &Sender<FleetData>,
     commands: &Receiver<PollerCommand>,
 ) {
@@ -413,7 +619,7 @@ fn run_loop(
         match result {
             Ok(Some(snapshot)) => match snapshots.try_send(snapshot) {
                 Ok(()) => {
-                    if let Some(repaint) = &repaint {
+                    if let Some(repaint) = repaint {
                         repaint();
                     }
                 }
@@ -426,6 +632,8 @@ fn run_loop(
         let wait = state.schedule().next_due().saturating_sub(start.elapsed());
         match commands.recv_timeout(wait) {
             Ok(PollerCommand::RefreshNow) => state.force_all(),
+            // Routed to the screen thread by `Poller::send`.
+            Ok(PollerCommand::WatchScreen(_)) => {}
             Ok(PollerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
             Err(RecvTimeoutError::Timeout) => {}
         }
@@ -498,6 +706,7 @@ mod tests {
         workers: usize,
         tasks: Vec<String>,
         inbox: usize,
+        screens: Vec<String>,
     }
 
     /// Scripted source: returns the configured data, failing calls whose flag is set.
@@ -514,6 +723,7 @@ mod tests {
         fail_terminals: bool,
         fail_runs: bool,
         fail_tasks_for: Option<String>,
+        fail_screen: bool,
         calls: Calls,
     }
 
@@ -576,6 +786,34 @@ mod tests {
         }
     }
 
+    impl ScreenSource for Fake {
+        fn read_screen(&self, handle: &str) -> Result<TerminalRead, OrcaError> {
+            self.with(|s| {
+                s.calls.screens.push(handle.into());
+                if s.fail_screen {
+                    return Err(api_error("terminal gone"));
+                }
+                Ok(TerminalRead {
+                    handle: handle.into(),
+                    status: Some(TerminalStatus::Running),
+                    tail: vec![format!("{handle} line {}", s.calls.screens.len())],
+                    truncated: false,
+                    limited: false,
+                    oldest_cursor: None,
+                    next_cursor: None,
+                    latest_cursor: None,
+                    returned_line_count: None,
+                    source: None,
+                    draft: None,
+                })
+            })
+        }
+    }
+
+    fn ms(ms: u64) -> Duration {
+        Duration::from_millis(ms)
+    }
+
     fn secs(s: u64) -> Duration {
         Duration::from_secs(s)
     }
@@ -588,6 +826,7 @@ mod tests {
         assert_eq!(c.tasks, secs(10));
         assert_eq!(c.inbox, secs(5));
         assert_eq!(c.inbox_limit, 300);
+        assert_eq!(c.screen, ms(500));
     }
 
     #[test]
@@ -637,6 +876,167 @@ mod tests {
             assert_eq!(s.calls.inbox, 4);
         });
         assert_eq!(snapshots, 12);
+    }
+
+    /// Ticks `watch` every 100 ms over `[from, to)`, returning the updates.
+    fn run_watch(watch: &mut ScreenWatch, fake: &Fake, from: u64, to: u64) -> Vec<ScreenUpdate> {
+        (from..to)
+            .step_by(100)
+            .filter_map(|t| watch.tick(fake, ms(t), NOW_MS + t as i64))
+            .collect()
+    }
+
+    #[test]
+    fn screen_watch_idle_until_a_handle_is_set() {
+        let fake = Fake::default();
+        let mut watch = ScreenWatch::new(ms(500));
+        assert_eq!(watch.next_due(), None);
+        assert!(run_watch(&mut watch, &fake, 0, 2000).is_empty());
+        fake.with(|s| assert!(s.calls.screens.is_empty()));
+    }
+
+    #[test]
+    fn screen_watch_reads_on_cadence() {
+        let fake = Fake::default();
+        let mut watch = ScreenWatch::new(ms(500));
+        watch.set(Some("t1".into()), ms(0));
+        let updates = run_watch(&mut watch, &fake, 0, 2000);
+        let times: Vec<i64> = updates.iter().map(|u| u.read_at_ms - NOW_MS).collect();
+        assert_eq!(times, vec![0, 500, 1000, 1500]);
+        assert!(
+            updates
+                .iter()
+                .all(|u| u.handle == "t1" && u.error.is_none())
+        );
+        assert_eq!(updates[0].lines, vec!["t1 line 1"]);
+        assert_eq!(updates[0].status, Some(TerminalStatus::Running));
+    }
+
+    #[test]
+    fn screen_watch_switches_handle_immediately() {
+        let fake = Fake::default();
+        let mut watch = ScreenWatch::new(ms(500));
+        watch.set(Some("t1".into()), ms(0));
+        run_watch(&mut watch, &fake, 0, 700);
+        watch.set(Some("t2".into()), ms(700));
+        assert_eq!(watch.next_due(), Some(ms(700)));
+        let updates = run_watch(&mut watch, &fake, 700, 1300);
+        let handles: Vec<&str> = updates.iter().map(|u| u.handle.as_str()).collect();
+        assert_eq!(handles, vec!["t2", "t2"]);
+        fake.with(|s| assert_eq!(s.calls.screens, vec!["t1", "t1", "t2", "t2"]));
+    }
+
+    #[test]
+    fn screen_watch_stops_on_none() {
+        let fake = Fake::default();
+        let mut watch = ScreenWatch::new(ms(500));
+        watch.set(Some("t1".into()), ms(0));
+        run_watch(&mut watch, &fake, 0, 600);
+        watch.set(None, ms(600));
+        assert_eq!(watch.next_due(), None);
+        assert!(run_watch(&mut watch, &fake, 600, 3000).is_empty());
+        fake.with(|s| assert_eq!(s.calls.screens.len(), 2));
+    }
+
+    #[test]
+    fn screen_watch_failure_keeps_last_lines_for_the_same_handle() {
+        let fake = Fake::default();
+        let mut watch = ScreenWatch::new(ms(500));
+        watch.set(Some("t1".into()), ms(0));
+        let good = watch.tick(&fake, ms(0), NOW_MS).unwrap();
+        fake.with(|s| s.fail_screen = true);
+        let failed = watch.tick(&fake, ms(500), NOW_MS + 500).unwrap();
+        assert_eq!(failed.lines, good.lines);
+        assert!(failed.error.as_deref().unwrap().contains("terminal gone"));
+
+        // A new handle starts without borrowed lines.
+        watch.set(Some("t2".into()), ms(600));
+        let other = watch.tick(&fake, ms(600), NOW_MS + 600).unwrap();
+        assert!(other.lines.is_empty());
+        assert!(other.error.is_some());
+    }
+
+    #[test]
+    fn spawned_poller_watches_screen_and_stops() {
+        let fake = Fake::default();
+        let config = PollerConfig {
+            screen: ms(50),
+            ..PollerConfig::default()
+        };
+        let poller = Poller::spawn(fake.clone(), config, None);
+        std::thread::sleep(ms(150));
+        assert!(poller.latest_screen().is_none(), "nothing watched yet");
+
+        poller.send(PollerCommand::WatchScreen(Some("t1".into())));
+        let first = poller.screens.recv_timeout(secs(2)).unwrap();
+        assert_eq!(first.handle, "t1");
+        poller.screens.recv_timeout(secs(2)).unwrap();
+
+        poller.send(PollerCommand::WatchScreen(Some("t2".into())));
+        let deadline = Instant::now() + secs(2);
+        loop {
+            let update = poller.screens.recv_timeout(secs(2)).unwrap();
+            if update.handle == "t2" {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+        }
+
+        poller.send(PollerCommand::WatchScreen(None));
+        std::thread::sleep(ms(100));
+        let _ = poller.latest_screen();
+        let reads = fake.with(|s| s.calls.screens.len());
+        std::thread::sleep(ms(300));
+        assert!(poller.latest_screen().is_none());
+        fake.with(|s| assert_eq!(s.calls.screens.len(), reads));
+
+        let started = Instant::now();
+        drop(poller);
+        assert!(started.elapsed() < ms(500));
+    }
+
+    #[test]
+    fn screen_updates_are_not_delayed_by_slow_fleet_calls() {
+        #[derive(Clone, Default)]
+        struct SlowFleet(Fake);
+        impl FleetSource for SlowFleet {
+            fn terminals(&self) -> Result<Vec<Terminal>, OrcaError> {
+                std::thread::sleep(ms(1000));
+                self.0.terminals()
+            }
+            fn runs(&self) -> Result<Vec<Run>, OrcaError> {
+                self.0.runs()
+            }
+            fn workers(&self) -> Result<Vec<Worker>, OrcaError> {
+                self.0.workers()
+            }
+            fn tasks(&self, run_id: &str) -> Result<Vec<Task>, OrcaError> {
+                self.0.tasks(run_id)
+            }
+            fn inbox(&self, limit: u64) -> Result<Vec<InboxMessage>, OrcaError> {
+                self.0.inbox(limit)
+            }
+        }
+        impl ScreenSource for SlowFleet {
+            fn read_screen(&self, handle: &str) -> Result<TerminalRead, OrcaError> {
+                self.0.read_screen(handle)
+            }
+        }
+
+        let config = PollerConfig {
+            screen: ms(50),
+            ..PollerConfig::default()
+        };
+        let poller = Poller::spawn(SlowFleet::default(), config, None);
+        poller.send(PollerCommand::WatchScreen(Some("t1".into())));
+        let started = Instant::now();
+        for _ in 0..4 {
+            poller.screens.recv_timeout(ms(500)).unwrap();
+        }
+        assert!(
+            started.elapsed() < ms(800),
+            "screen reads waited on the fleet cycle"
+        );
     }
 
     #[test]
@@ -807,5 +1207,38 @@ mod tests {
             snap.tasks.len(),
             snap.inbox.len()
         );
+    }
+
+    #[test]
+    #[ignore = "needs a running Orca"]
+    fn live_poller_watches_a_screen() {
+        let client = OrcaClient::new();
+        let handle = client
+            .terminal_list()
+            .expect("terminal list")
+            .terminals
+            .into_iter()
+            .find(|t| t.connected)
+            .expect("a connected terminal")
+            .handle;
+        let poller = Poller::spawn(client, PollerConfig::default(), None);
+        poller.send(PollerCommand::WatchScreen(Some(handle.clone())));
+        let started = Instant::now();
+        let mut updates = Vec::new();
+        while started.elapsed() < secs(2) {
+            if let Ok(update) = poller.screens.recv_timeout(ms(100)) {
+                updates.push(update);
+            }
+        }
+        for u in &updates {
+            assert_eq!(u.handle, handle);
+            assert!(u.error.is_none(), "error: {:?}", u.error);
+        }
+        eprintln!(
+            "{} screen updates for {handle}; last has {} lines",
+            updates.len(),
+            updates.last().map_or(0, |u| u.lines.len())
+        );
+        assert!(updates.len() >= 3, "got {} updates", updates.len());
     }
 }
