@@ -5,12 +5,14 @@ mod shape;
 #[cfg(test)]
 mod tests;
 mod tooltip;
+#[cfg(test)]
+mod visibility_tests;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use eframe::egui::{self, Pos2, Ui, Vec2};
+use eframe::egui::{self, Pos2, Rect, Ui, Vec2};
 use egui_graphs::{
     AnimatedState, DefaultEdgeShape, GraphChange, MetadataFrame, SettingsInteraction,
     SettingsNavigation, SettingsStyle, get_layout_state, set_layout_state,
@@ -47,6 +49,10 @@ const EDGE_TIP_SIZE: f32 = 8.0;
 const SCROLL_ZOOM_SPEED: f32 = 0.0015;
 const MIN_ZOOM: f32 = 0.05;
 const MAX_ZOOM: f32 = 10.0;
+/// Margin around focused nodes, as a fraction of their bounding box.
+const FOCUS_PADDING: f32 = 0.3;
+/// Largest zoom a focus may pick, so a single node isn't blown up.
+const FOCUS_MAX_ZOOM: f32 = 2.0;
 
 /// What happened in the graph this frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -82,6 +88,14 @@ pub struct GraphView {
     /// Keep fitting the graph to the view while its first layout settles, until the user
     /// pans, zooms or drags.
     auto_fit: bool,
+    /// Nodes filtered out: kept out of the egui_graphs graph (so neither drawn nor laid out).
+    hidden: BTreeSet<NodeId>,
+    /// Positions of hidden nodes, restored when they are shown again.
+    stashed: HashMap<NodeId, Pos2>,
+    /// The last synced snapshot, re-applied when the hidden set changes.
+    last_snapshot: Option<FleetSnapshot>,
+    /// Nodes to pan/zoom onto on the next frame.
+    focus_requested: Option<Vec<NodeId>>,
 }
 
 impl Default for GraphView {
@@ -111,6 +125,10 @@ impl GraphView {
             settle: SettleTracker::default(),
             fit_requested: false,
             auto_fit: false,
+            hidden: BTreeSet::new(),
+            stashed: HashMap::new(),
+            last_snapshot: None,
+            focus_requested: None,
         }
     }
 
@@ -120,18 +138,22 @@ impl GraphView {
         let was_empty = self.index.is_empty();
         let mut topology_changed = false;
 
-        let wanted: HashSet<&NodeId> = snapshot.nodes.iter().map(|n| &n.id).collect();
+        let in_snapshot: HashSet<&NodeId> = snapshot.nodes.iter().map(|n| &n.id).collect();
+        self.stashed.retain(|id, _| in_snapshot.contains(id));
+        self.nodes.retain(|id, _| in_snapshot.contains(id));
         let gone: Vec<NodeId> = self
             .index
             .keys()
-            .filter(|id| !wanted.contains(id))
+            .filter(|id| !in_snapshot.contains(id) || self.hidden.contains(*id))
             .cloned()
             .collect();
         for id in gone {
-            if let Some(idx) = self.index.remove(&id) {
-                self.graph.remove_node(idx);
+            if let Some(idx) = self.index.remove(&id)
+                && let Some(removed) = self.graph.remove_node(idx)
+                && in_snapshot.contains(&id)
+            {
+                self.stashed.insert(id, removed.location());
             }
-            self.nodes.remove(&id);
             topology_changed = true;
         }
         self.edges.retain(|(from, to, _), _| {
@@ -146,6 +168,10 @@ impl GraphView {
 
         let mut added: Vec<&Node> = Vec::new();
         for node in &snapshot.nodes {
+            if self.hidden.contains(&node.id) {
+                self.nodes.insert(node.id.clone(), node.clone());
+                continue;
+            }
             match self.index.get(&node.id) {
                 Some(&idx) => {
                     if let Some(graph_node) = self.graph.node_mut(idx) {
@@ -165,7 +191,10 @@ impl GraphView {
         // Coordinators first so their workers can spawn next to them.
         added.sort_by_key(|n| n.kind != NodeKind::Coordinator);
         for node in added {
-            let location = self.spawn_position(node, snapshot);
+            let location = match self.stashed.remove(&node.id) {
+                Some(pos) => pos,
+                None => self.spawn_position(node, snapshot),
+            };
             let label = node.label.clone();
             let idx = self.graph.add_node_custom(payload(node), |n| {
                 n.set_location(location);
@@ -214,6 +243,81 @@ impl GraphView {
         if was_empty && !self.index.is_empty() {
             self.auto_fit = true;
         }
+        self.last_snapshot = Some(snapshot.clone());
+    }
+
+    /// Hides `hidden` nodes (and their edges) and shows all others, without moving anything:
+    /// hidden nodes keep their last position and reappear there. Filtering alone does not wake
+    /// the layout.
+    pub fn set_hidden(&mut self, hidden: &BTreeSet<NodeId>) {
+        if *hidden == self.hidden {
+            return;
+        }
+        self.hidden = hidden.clone();
+        if let Some(snapshot) = self.last_snapshot.take() {
+            let (wake, auto_fit) = (self.wake_layout, self.auto_fit);
+            self.sync(&snapshot);
+            self.wake_layout = wake;
+            self.auto_fit = auto_fit;
+        }
+    }
+
+    /// The nodes currently hidden by [`GraphView::set_hidden`].
+    pub fn hidden(&self) -> &BTreeSet<NodeId> {
+        &self.hidden
+    }
+
+    pub fn is_visible(&self, id: &NodeId) -> bool {
+        self.index.contains_key(id)
+    }
+
+    /// Pans and zooms onto the visible nodes of `ids` on the next frame.
+    pub fn focus_nodes(&mut self, ids: &[NodeId]) {
+        self.focus_requested = Some(ids.to_vec());
+    }
+
+    /// Pans and zooms onto a run's visible coordinator and workers on the next frame.
+    pub fn focus_run(&mut self, run_id: &str) {
+        let mut ids: Vec<NodeId> = self
+            .nodes
+            .values()
+            .filter(|n| n.run_id.as_deref() == Some(run_id))
+            .map(|n| n.id.clone())
+            .collect();
+        ids.sort();
+        self.focus_nodes(&ids);
+    }
+
+    /// Bounding box, in canvas coordinates, of the visible nodes of `ids` including their radii.
+    pub fn nodes_bounds(&self, ids: &[NodeId]) -> Option<Rect> {
+        let mut bounds: Option<Rect> = None;
+        for id in ids {
+            let Some(node) = self.index.get(id).and_then(|&i| self.graph.node(i)) else {
+                continue;
+            };
+            let r = node_radius(node.payload().kind);
+            let rect = Rect::from_center_size(node.location(), Vec2::splat(2.0 * r));
+            bounds = Some(bounds.map_or(rect, |b| b.union(rect)));
+        }
+        bounds
+    }
+
+    /// Applies a pending focus request to the zoom/pan of a graph widget of `view_size`.
+    fn apply_focus(&mut self, ui: &mut Ui, view_size: Vec2) -> bool {
+        let Some(ids) = self.focus_requested.take() else {
+            return false;
+        };
+        let Some(bounds) = self.nodes_bounds(&ids) else {
+            return false;
+        };
+        let (zoom, pan) = focus_transform(bounds, view_size, FOCUS_PADDING, FOCUS_MAX_ZOOM);
+        let mut meta = MetadataFrame::new(Some(self.id.clone())).load(ui);
+        meta.zoom = zoom;
+        meta.pan = pan;
+        meta.save(ui);
+        self.auto_fit = false;
+        ui.ctx().request_repaint();
+        true
     }
 
     /// Draws the graph filling the available space and handles interaction.
@@ -258,6 +362,9 @@ impl GraphView {
             }
         }
         if self.scroll_zoom(ui, &response.response) {
+            user_navigated = true;
+        }
+        if self.apply_focus(ui, response.response.rect.size()) {
             user_navigated = true;
         }
         let running = self.track_settling(ui, dragging);
@@ -331,9 +438,12 @@ impl GraphView {
         self.index.get(id).copied()
     }
 
-    /// A node's position in canvas coordinates.
+    /// A node's position in canvas coordinates; for a hidden node, where it will reappear.
     pub fn node_position(&self, id: &NodeId) -> Option<Pos2> {
-        Some(self.graph.node(self.node_index(id)?)?.location())
+        match self.node_index(id) {
+            Some(idx) => Some(self.graph.node(idx)?.location()),
+            None => self.stashed.get(id).copied(),
+        }
     }
 
     pub fn set_node_position(&mut self, id: &NodeId, pos: Pos2) {
@@ -463,6 +573,18 @@ fn jitter(id: &NodeId, radius: f32) -> Vec2 {
     id.hash(&mut hasher);
     let angle = (hasher.finish() % 3_600) as f32 / 3_600.0 * std::f32::consts::TAU;
     Vec2::angled(angle) * radius
+}
+
+/// Zoom and pan (widget-local, as egui_graphs stores them) that center `bounds` in a view of
+/// `view_size` with `padding` (fraction of the bounds) around it, zooming in at most to
+/// `max_zoom`.
+pub fn focus_transform(bounds: Rect, view_size: Vec2, padding: f32, max_zoom: f32) -> (f32, Vec2) {
+    let size = (bounds.size() * (1.0 + padding)).max(Vec2::splat(1.0));
+    let zoom = (view_size.x / size.x)
+        .min(view_size.y / size.y)
+        .clamp(MIN_ZOOM, max_zoom.max(MIN_ZOOM));
+    let pan = view_size / 2.0 - bounds.center().to_vec2() * zoom;
+    (zoom, pan)
 }
 
 fn centroid(points: &[Pos2]) -> Option<Pos2> {

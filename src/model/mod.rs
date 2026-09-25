@@ -47,7 +47,7 @@ impl fmt::Display for NodeId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum NodeKind {
     /// A run's coordinator terminal.
     Coordinator,
@@ -59,7 +59,7 @@ pub enum NodeKind {
     Subagent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum NodeState {
     Working,
     Idle,
