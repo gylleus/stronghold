@@ -68,6 +68,11 @@ pub struct RunProgress {
     pub unanswered_asks: Vec<String>,
     /// Reason from the coordinator's `holding: <reason>` status, when that is its newest message.
     pub holding: Option<String>,
+    /// Newest sign of life anywhere in the Run: its `updated_at`, coordinator activity, bus
+    /// messages for the Run (except Myrstack's own), task creation, completion and status
+    /// changes, and task progress (worker heartbeats and output). A Run silent for longer than
+    /// the abandon window is abandoned and never nudged.
+    pub last_activity_ms: Option<i64>,
 }
 
 /// Output of one [`ProgressTracker::update`].
@@ -262,6 +267,7 @@ impl ProgressTracker {
             .map(|m| m.id.clone())
             .collect();
 
+        let last_activity_ms = run_activity_ms(data, run_id, tasks, latest.ms);
         RunProgress {
             run_id: run_id.to_string(),
             coordinator_handle: coordinator,
@@ -270,8 +276,51 @@ impl ProgressTracker {
             open_ready_tasks,
             unanswered_asks,
             holding,
+            last_activity_ms,
         }
     }
+}
+
+/// See [`RunProgress::last_activity_ms`].
+fn run_activity_ms(
+    data: &FleetData,
+    run_id: &str,
+    tasks: &[TaskProgress],
+    coordinator_ms: Option<i64>,
+) -> Option<i64> {
+    let run_home = format!("run:{run_id}");
+    let meta = data
+        .run(run_id)
+        .into_iter()
+        .flat_map(|r| [ts_ms(&r.updated_at), ts_ms(&r.created_at)]);
+    let messages = data
+        .inbox
+        .iter()
+        .filter(|m| {
+            !m.from_handle
+                .as_deref()
+                .is_some_and(crate::orca::is_myrstack_sender)
+        })
+        .filter(|m| {
+            m.run_id.as_deref() == Some(run_id)
+                || m.to_handle.as_deref() == Some(run_home.as_str())
+                || m.from_handle.as_deref() == Some(run_home.as_str())
+        })
+        .map(msg_ms);
+    let run_tasks = data.tasks.get(run_id).map(Vec::as_slice).unwrap_or(&[]);
+    let task_times = run_tasks
+        .iter()
+        .flat_map(|t| [ts_ms(&t.created_at), ts_ms(&t.completed_at)]);
+    let progress = tasks
+        .iter()
+        .filter(|t| t.run_id == run_id)
+        .map(|t| t.last_progress_ms);
+    meta.chain(messages)
+        .chain(task_times)
+        .chain(progress)
+        .chain([coordinator_ms])
+        .flatten()
+        .max()
 }
 
 /// Terminals whose activity counts as the Run's coordinator's: the declared coordinator (live
@@ -1095,6 +1144,45 @@ mod tests {
                 kind: MessageType::Dispatch
             }
         );
+    }
+
+    #[test]
+    fn run_activity_sources() {
+        let mut data = fleet(vec![task("t1", "completed")], vec![]);
+        data.workers.clear();
+        let at = |data: &FleetData| {
+            ProgressTracker::new().update(data, T0 + 100 * MIN).runs[0].last_activity_ms
+        };
+        // Task creation is the only signal.
+        assert_eq!(at(&data), Some(T0));
+
+        let completed = &mut data.tasks.get_mut(RUN).unwrap()[0];
+        completed.completed_at = Some(Timestamp::Millis(T0 + 5 * MIN));
+        assert_eq!(at(&data), Some(T0 + 5 * MIN));
+
+        data.runs[0].updated_at = Some(Timestamp::Millis(T0 + 10 * MIN));
+        assert_eq!(at(&data), Some(T0 + 10 * MIN));
+
+        // A message for the Run from anyone else counts.
+        data.inbox = vec![msg("m1", "term_other", "status", T0 + 20 * MIN, json!({}))];
+        assert_eq!(at(&data), Some(T0 + 20 * MIN));
+
+        // Myrstack's own nudges and broadcasts do not keep a Run alive.
+        for sender in [crate::orca::WHIP_SENDER, crate::orca::BROADCAST_SENDER] {
+            data.inbox
+                .push(msg("m2", sender, "status", T0 + 30 * MIN, json!({})));
+            assert_eq!(at(&data), Some(T0 + 20 * MIN), "{sender}");
+            data.inbox.pop();
+        }
+
+        // Coordinator output counts.
+        data.terminals = vec![terminal(COORD, T0 + 40 * MIN)];
+        assert_eq!(at(&data), Some(T0 + 40 * MIN));
+
+        // So does a dispatched task's worker output.
+        let mut data = fleet(vec![task("t1", "dispatched")], vec![]);
+        data.terminals = vec![terminal(WORKER, T0 + 50 * MIN)];
+        assert_eq!(at(&data), Some(T0 + 50 * MIN));
     }
 
     #[test]

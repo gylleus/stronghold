@@ -128,6 +128,7 @@ impl WhipEngine {
         }
         let ctx = RuleContext {
             threshold_ms: settings.threshold_ms,
+            abandon_after_ms: settings.abandon_after_ms,
             needs_input,
         };
         let findings = evaluate(&report, data, &ctx, now_ms);

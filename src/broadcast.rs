@@ -18,7 +18,7 @@ use std::thread;
 use crossbeam_channel::{Receiver, unbounded};
 
 use crate::model::{FleetSnapshot, NodeState};
-use crate::orca::{OrcaClient, OutgoingMessage};
+use crate::orca::{BROADCAST_SENDER, OrcaClient, OutgoingMessage};
 
 /// Every Myrstack message starts with this.
 pub const PREFIX: &str = "Myrstack: ";
@@ -87,7 +87,7 @@ pub fn prefixed(text: &str) -> String {
     }
 }
 
-/// The bus message for `text`, addressed to `run_id`'s mailbox.
+/// The bus message for `text`, addressed to `run_id`'s mailbox, from [`BROADCAST_SENDER`].
 pub fn broadcast_message(run_id: &str, text: &str) -> OutgoingMessage {
     let text = prefixed(text);
     let first_line = text.lines().next().unwrap_or_default();
@@ -104,6 +104,7 @@ pub fn broadcast_message(run_id: &str, text: &str) -> OutgoingMessage {
         to: Some(format!("run:{run_id}")),
         body: (!fits).then_some(text),
         message_type: Some("status".into()),
+        from: Some(BROADCAST_SENDER.to_string()),
         ..OutgoingMessage::default()
     }
 }
@@ -457,6 +458,18 @@ mod tests {
             msg.body.as_deref(),
             Some(format!("{PREFIX}{long}").as_str())
         );
+    }
+
+    #[test]
+    fn broadcast_has_explicit_sender() {
+        let msg = broadcast_message("r1", "hi");
+        assert_eq!(msg.from.as_deref(), Some(BROADCAST_SENDER));
+        let args = crate::orca::commands::orchestration_send_args(&msg);
+        assert!(
+            args.contains(&"--from=myrstack-karl".to_string()),
+            "{args:?}"
+        );
+        assert!(args.contains(&"--to=run:r1".to_string()), "{args:?}");
     }
 
     #[test]

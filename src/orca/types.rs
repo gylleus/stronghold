@@ -576,6 +576,18 @@ impl InboxMessage {
     }
 }
 
+/// `--from` of whip nudges. Orca's runtime takes any string as the sender; without `--from` or
+/// `ORCA_TERMINAL_HANDLE` the CLI would attribute the message to the focused terminal. See
+/// `docs/heartbeat-convention.md` "Myrstack senders".
+pub const WHIP_SENDER: &str = "myrstack-whip";
+/// `--from` of messages Karl broadcasts from Myrstack.
+pub const BROADCAST_SENDER: &str = "myrstack-karl";
+
+/// Whether `from` is one of Myrstack's own senders ([`WHIP_SENDER`], [`BROADCAST_SENDER`]).
+pub fn is_myrstack_sender(from: &str) -> bool {
+    from == WHIP_SENDER || from == BROADCAST_SENDER
+}
+
 /// A message for `orca orchestration send`. Only `subject` is required.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct OutgoingMessage {
@@ -583,6 +595,7 @@ pub struct OutgoingMessage {
     /// `run:<id>`, `dispatch:<id>`, a group such as `@all`, or a terminal handle.
     pub to: Option<String>,
     pub run: Option<String>,
+    /// Sender (`--from`). Myrstack always sets [`WHIP_SENDER`] or [`BROADCAST_SENDER`].
     pub from: Option<String>,
     pub body: Option<String>,
     pub message_type: Option<String>,
