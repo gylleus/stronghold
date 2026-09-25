@@ -10,7 +10,7 @@ use myrstack::model::{
     Edge, EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RunSummary,
 };
 use myrstack::orca::AgentIdentity;
-use myrstack::ui::graph::{GraphView, state_label};
+use myrstack::ui::graph::{GraphView, legend, state_label};
 
 const TICK: Duration = Duration::from_secs(2);
 const STATES: [NodeState; 6] = [
@@ -101,6 +101,7 @@ impl eframe::App for Demo {
                 ));
             });
         });
+        egui::Panel::bottom("legend").show(ui, legend);
         egui::CentralPanel::default().show(ui, |ui| {
             let response = self.view.show(ui);
             if response.clicked.is_some() {
@@ -142,6 +143,9 @@ fn fleet(runs: usize, workers: usize, tick: u64, started_ms: i64) -> FleetSnapsh
             worker.label = format!("task {r}.{w}");
             worker.state = STATES[(w + r + tick as usize / 3) % STATES.len()];
             worker.released_at_ms = (w == workers - 1).then_some(now - 60_000);
+            if w % 3 == 1 {
+                worker.agent = Some(AgentIdentity::Codex);
+            }
             snapshot.nodes.push(worker);
             snapshot.edges.push(Edge {
                 from: coordinator.clone(),
@@ -168,7 +172,7 @@ fn node(id: NodeId, kind: NodeKind, now: i64) -> Node {
         id,
         kind,
         label: String::new(),
-        terminal_handle: None,
+        terminal_handle: Some("term".into()),
         live: true,
         run_id: None,
         task_id: None,
