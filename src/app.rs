@@ -181,6 +181,9 @@ impl eframe::App for MyrstackApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let now_ms = now_ms();
         egui::Panel::top("top_bar").show(ui, |ui| self.top_bar(ui, now_ms));
+        if self.view == View::Graph {
+            egui::Panel::bottom("legend").show(ui, ui::graph::legend);
+        }
         self.terminal_panel(ui, now_ms);
         egui::CentralPanel::default().show(ui, |ui| match &self.data {
             None => {
