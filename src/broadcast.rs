@@ -10,7 +10,7 @@
 //! every run it covers.
 //!
 //! The message type is `status` (informational, no reply expected). Text is prefixed with
-//! `Myrstack: ` per `docs/heartbeat-convention.md`.
+//! `Queen: ` per `docs/heartbeat-convention.md`: broadcasts are Karl speaking through the Queen.
 
 use std::collections::{BTreeSet, HashMap};
 use std::thread;
@@ -21,7 +21,7 @@ use crate::model::{FleetSnapshot, NodeState};
 use crate::orca::{BROADCAST_SENDER, OrcaClient, OutgoingMessage};
 
 /// Every Myrstack message starts with this.
-pub const PREFIX: &str = "Myrstack: ";
+pub const PREFIX: &str = "Queen: ";
 /// Longest subject; longer or multi-line text also goes in the body.
 pub const MAX_SUBJECT_CHARS: usize = 100;
 
@@ -77,7 +77,7 @@ pub struct BroadcastPlan {
     pub skipped: Vec<Skipped>,
 }
 
-/// Adds the `Myrstack: ` prefix unless the text already has it. Trims surrounding whitespace.
+/// Adds the `Queen: ` prefix unless the text already has it. Trims surrounding whitespace.
 pub fn prefixed(text: &str) -> String {
     let text = text.trim();
     if text.starts_with(PREFIX.trim_end()) {
@@ -435,22 +435,19 @@ mod tests {
 
     #[test]
     fn prefix_added_once() {
-        assert_eq!(prefixed("  status please "), "Myrstack: status please");
-        assert_eq!(prefixed("Myrstack: already"), "Myrstack: already");
-        assert_eq!(prefixed("Myrstack:tight"), "Myrstack:tight");
+        assert_eq!(prefixed("  status please "), "Queen: status please");
+        assert_eq!(prefixed("Queen: already"), "Queen: already");
+        assert_eq!(prefixed("Queen:tight"), "Queen:tight");
         let msg = broadcast_message("r1", "hold merges");
-        assert_eq!(msg.subject, "Myrstack: hold merges");
+        assert_eq!(msg.subject, "Queen: hold merges");
         assert_eq!(msg.body, None);
     }
 
     #[test]
     fn long_or_multiline_text_goes_in_body() {
         let msg = broadcast_message("r1", "first line\nsecond line");
-        assert_eq!(msg.subject, "Myrstack: first line…");
-        assert_eq!(
-            msg.body.as_deref(),
-            Some("Myrstack: first line\nsecond line")
-        );
+        assert_eq!(msg.subject, "Queen: first line…");
+        assert_eq!(msg.body.as_deref(), Some("Queen: first line\nsecond line"));
         let long = "x".repeat(300);
         let msg = broadcast_message("r1", &long);
         assert_eq!(msg.subject.chars().count(), MAX_SUBJECT_CHARS);
@@ -465,10 +462,7 @@ mod tests {
         let msg = broadcast_message("r1", "hi");
         assert_eq!(msg.from.as_deref(), Some(BROADCAST_SENDER));
         let args = crate::orca::commands::orchestration_send_args(&msg);
-        assert!(
-            args.contains(&"--from=myrstack-karl".to_string()),
-            "{args:?}"
-        );
+        assert!(args.contains(&"--from=queen".to_string()), "{args:?}");
         assert!(args.contains(&"--to=run:r1".to_string()), "{args:?}");
     }
 

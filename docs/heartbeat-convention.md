@@ -132,12 +132,24 @@ attributes a message to whichever terminal has focus. Orca's runtime takes
 any string as `--from`, so Myrstack always passes one:
 
 - `myrstack-whip`: whip nudges.
-- `myrstack-karl`: messages Karl broadcasts from Myrstack.
+- `queen`: messages Karl broadcasts from Myrstack's Queen node. Their text
+  starts with `Queen:`.
 
 These are not mailboxes. `orca orchestration reply` to them fails with
 `terminal_not_found`; act on the nudge or message the coordinator/Run
 instead. The whip's terminal-input fallback carries no sender; its text
 starts with `Myrstack:`.
+
+## The Queen speaks for Karl
+
+A bus message from `queen` whose text starts with `Queen:` is Karl giving an
+instruction through Myrstack's Queen. Treat it exactly as if Karl typed it in
+your terminal: act on it, including cleanup such as closing or releasing
+workers, within the *Hard rules* (deploy, delete and force-push stay Karl's
+own hands). If a Queen message conflicts with your current task, finish or
+park the task as the message says and report what you did to your
+coordinator. `Myrstack:` whip nudges are different: liveness pings only, no
+authority.
 
 ## Open points for the whip (M4)
 

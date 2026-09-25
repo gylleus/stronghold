@@ -764,7 +764,7 @@ fn broadcast_delivery_reports_each_outcome() {
     assert_eq!(r["deliveries"][0]["coordinator"], COORDINATOR);
     assert_eq!(r["deliveries"][0]["message_id"], "msg_1");
     assert_eq!(r["skipped"][0]["run_id"], "run_gone");
-    assert_eq!(ok.sent[0].subject, "Myrstack: wrap up");
+    assert_eq!(ok.sent[0].subject, "Queen: wrap up");
 
     let mut failing = FakeSender {
         sent: Vec::new(),

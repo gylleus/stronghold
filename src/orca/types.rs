@@ -678,7 +678,7 @@ impl InboxMessage {
 /// `docs/heartbeat-convention.md` "Myrstack senders".
 pub const WHIP_SENDER: &str = "myrstack-whip";
 /// `--from` of messages Karl broadcasts from Myrstack.
-pub const BROADCAST_SENDER: &str = "myrstack-karl";
+pub const BROADCAST_SENDER: &str = "queen";
 
 /// Whether `from` is one of Myrstack's own senders ([`WHIP_SENDER`], [`BROADCAST_SENDER`]).
 pub fn is_myrstack_sender(from: &str) -> bool {

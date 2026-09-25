@@ -197,7 +197,7 @@ impl BroadcastComposer {
             egui::TextEdit::multiline(&mut self.text)
                 .desired_rows(4)
                 .desired_width(f32::INFINITY)
-                .hint_text("Myrstack: prefix is added if missing"),
+                .hint_text("Sent as \"Queen: …\" — agents treat it as Karl's instruction"),
         );
 
         let selection = self.selection(&choices);

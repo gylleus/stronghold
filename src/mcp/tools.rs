@@ -257,7 +257,7 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "broadcast_to_coordinators",
             "Broadcast to coordinators",
-            "Sends a Myrstack-prefixed Orca bus message to the live coordinators of the given \
+            "Sends a Queen-prefixed Orca bus message (agents treat it as Karl's instruction) to the live coordinators of the given \
              runs, or of all runs with all=true. Give exactly one of runs or all.",
             object(
                 json!({
