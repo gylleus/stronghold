@@ -50,6 +50,31 @@ impl WhipSettingsWindow {
         &self.applied.whip
     }
 
+    /// Opens the window with a fresh draft of the applied settings.
+    pub fn open_window(&mut self) {
+        self.draft = self.applied.whip.clone();
+        self.open = true;
+    }
+
+    /// Validates, saves and applies `whip` as if saved from the window. Returns the status
+    /// message on success; on a validation error nothing changes.
+    pub fn apply(&mut self, whip: WhipSettings) -> Result<String, String> {
+        let draft = std::mem::replace(&mut self.draft, whip);
+        if self.save().is_some() {
+            Ok(self
+                .message
+                .as_ref()
+                .map(|m| m.1.clone())
+                .unwrap_or_default())
+        } else {
+            self.draft = draft;
+            Err(self
+                .message
+                .as_ref()
+                .map_or_else(|| "invalid settings".into(), |m| m.1.clone()))
+        }
+    }
+
     /// Top-bar button plus mode badge; opens the window on click.
     pub fn button(&mut self, ui: &mut egui::Ui) {
         if ui.button("Whip…").clicked() {

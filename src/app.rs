@@ -6,6 +6,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use eframe::egui;
 
 use crate::APP_NAME;
+
+mod control;
 use crate::actions::{ActionRunner, OrcaExecutor};
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
 use crate::detect::detect_prompt;
@@ -89,6 +91,8 @@ pub struct MyrstackApp {
     /// Polls `orca account list` for plan quotas every few minutes.
     quota: QuotaPoller,
     quotas: Quotas,
+    /// Control API server, its published status view and commands in flight.
+    control: control::AppControl,
     /// "Close session" confirmation dialog and the log of closes.
     close: ui::close::CloseDialog,
 }
@@ -125,6 +129,7 @@ impl MyrstackApp {
             Some(repaint_once(ctx)),
         );
         let mut app = Self {
+            control: control::AppControl::start(ctx),
             quota,
             quotas: Quotas::default(),
             hotkey,
@@ -782,7 +787,9 @@ impl eframe::App for MyrstackApp {
             self.notify_needs_input();
         }
         self.take_alerts();
+        self.poll_control(ctx);
         for result in self.actions.poll() {
+            self.control_action_done(&result);
             if self.input.on_result(&result, now_ms()) {
                 self.poller.send(PollerCommand::RefreshScreen);
             }
@@ -792,6 +799,7 @@ impl eframe::App for MyrstackApp {
         }
         self.sync_screen_watch();
         self.sync_transcript();
+        self.publish_control_status();
         ctx.request_repaint_after(TICK);
     }
 
