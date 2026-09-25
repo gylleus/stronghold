@@ -161,11 +161,6 @@ pub fn clock_label_in(at_ms: i64, tz: &TimeZone) -> String {
         .unwrap_or_else(|_| "--:--".into())
 }
 
-/// `12:04` in local time.
-pub fn clock_label(at_ms: i64) -> String {
-    clock_label_in(at_ms, &TimeZone::system())
-}
-
 /// E.g. `on · dry-run · 2 findings · last tick 12s ago`.
 pub fn status_line(status: &WhipStatus, now_ms: i64) -> String {
     let mut parts = vec![
@@ -190,6 +185,53 @@ pub struct WhipLog {
     entries: VecDeque<WhipLogItem>,
     last_seq: u64,
     filter: LogFilter,
+    /// Entries matching each filter of [`LogFilter::ALL`], kept up to date by [`Self::extend`].
+    counts: [usize; LogFilter::ALL.len()],
+    /// The rows [`Self::section`] shows, derived from the entries, the filter and the snapshot;
+    /// `None` when one of those changed.
+    rows: Option<Vec<RowView>>,
+    /// Drawn height of one row; 0 until the first row is drawn.
+    row_height: f32,
+}
+
+/// Everything drawn for one entry, computed once per entry, filter and snapshot rather than
+/// every frame.
+#[derive(Debug, Clone, PartialEq)]
+struct RowView {
+    link: Option<NodeId>,
+    clock: String,
+    badges: Vec<Badge>,
+    target: String,
+    reason: String,
+    hover: String,
+}
+
+impl RowView {
+    fn new(item: &WhipLogItem, snapshot: &FleetSnapshot, tz: &TimeZone) -> Self {
+        let entry = &item.entry;
+        let link = link_node(snapshot, item);
+        let target = target_text(snapshot, item, link.as_ref());
+        let hover = format!(
+            "{} → {}\n\n{}\n\nOutcome: {}{}",
+            entry.action,
+            entry.target,
+            entry.reason,
+            entry.outcome,
+            if link.is_some() {
+                "\n\nClick to select the node"
+            } else {
+                "\n\nNode no longer in the fleet"
+            }
+        );
+        Self {
+            link,
+            clock: clock_label_in(entry.at_ms, tz),
+            badges: badges(item),
+            target,
+            reason: entry.reason.lines().next().unwrap_or_default().to_owned(),
+            hover,
+        }
+    }
 }
 
 impl WhipLog {
@@ -200,11 +242,28 @@ impl WhipLog {
                 continue;
             }
             self.last_seq = item.seq;
-            if self.entries.len() >= HISTORY_LEN {
-                self.entries.pop_front();
+            if self.entries.len() >= HISTORY_LEN
+                && let Some(old) = self.entries.pop_front()
+            {
+                self.count(&old, false);
             }
+            self.count(&item, true);
             self.entries.push_back(item);
+            self.rows = None;
         }
+    }
+
+    fn count(&mut self, item: &WhipLogItem, add: bool) {
+        for (count, filter) in self.counts.iter_mut().zip(LogFilter::ALL) {
+            if filter.matches(item) {
+                *count = if add { *count + 1 } else { *count - 1 };
+            }
+        }
+    }
+
+    /// Call when the snapshot changes: entries link to its nodes.
+    pub fn snapshot_changed(&mut self) {
+        self.rows = None;
     }
 
     /// Oldest first.
@@ -228,6 +287,21 @@ impl WhipLog {
             .flatten()
     }
 
+    /// The shown rows, newest first, rebuilt if stale.
+    fn rows(&mut self, snapshot: &FleetSnapshot) -> &[RowView] {
+        let (entries, filter) = (&self.entries, self.filter);
+        self.rows.get_or_insert_with(|| {
+            let tz = TimeZone::system();
+            entries
+                .iter()
+                .rev()
+                .filter(|i| filter.matches(i))
+                .take(SHOWN_LEN)
+                .map(|i| RowView::new(i, snapshot, &tz))
+                .collect()
+        })
+    }
+
     fn contents(
         &mut self,
         ui: &mut Ui,
@@ -243,53 +317,71 @@ impl WhipLog {
         };
         ui.add(egui::Label::new(status_text).truncate());
         ui.horizontal_wrapped(|ui| {
-            for filter in LogFilter::ALL {
-                let count = self.entries.iter().filter(|i| filter.matches(i)).count();
+            for (filter, count) in LogFilter::ALL.into_iter().zip(self.counts) {
                 let text = format!("{} {count}", filter.label());
-                if ui.selectable_label(self.filter == filter, text).clicked() {
+                if ui.selectable_label(self.filter == filter, text).clicked()
+                    && self.filter != filter
+                {
                     self.filter = filter;
+                    self.rows = None;
                 }
             }
         });
-        let filter = self.filter;
-        let shown: Vec<&WhipLogItem> = self
-            .entries
-            .iter()
-            .rev()
-            .filter(|i| filter.matches(i))
-            .take(SHOWN_LEN)
-            .collect();
-        if shown.is_empty() {
+        let estimate = self.row_height;
+        let rows = self.rows(snapshot);
+        if rows.is_empty() {
             ui.weak("No actions yet");
             return None;
         }
         let mut clicked = None;
+        let mut measured = None;
+        // Only the rows in view are laid out: the list can hold [`SHOWN_LEN`] entries.
+        let row_height = if estimate > 0.0 {
+            estimate
+        } else {
+            estimated_row_height(ui)
+        };
         egui::ScrollArea::vertical()
             .id_salt("whip_log_list")
             .max_height(LIST_HEIGHT)
             .auto_shrink([false, true])
-            .show(ui, |ui| {
-                for item in shown {
-                    if let Some(id) = entry_row(ui, item, snapshot) {
-                        clicked = Some(id);
+            .show_rows(ui, row_height, rows.len(), |ui, range| {
+                for row in &rows[range] {
+                    let response = entry_row(ui, row);
+                    measured.get_or_insert(response.rect.height());
+                    if response.clicked() {
+                        clicked.clone_from(&row.link);
                     }
                 }
             });
+        if let Some(height) = measured
+            && (height - self.row_height).abs() > 0.5
+        {
+            self.row_height = height;
+            ui.ctx().request_repaint();
+        }
         clicked
     }
 }
 
-/// One entry; returns its node when clicked.
-fn entry_row(ui: &mut Ui, item: &WhipLogItem, snapshot: &FleetSnapshot) -> Option<NodeId> {
-    let entry = &item.entry;
-    let link = link_node(snapshot, item);
-    let target = target_text(snapshot, item, link.as_ref());
+/// A row's height before one has been drawn: a line of labels and a line of small text in a
+/// group frame.
+fn estimated_row_height(ui: &Ui) -> f32 {
+    let frame = egui::Frame::group(ui.style());
+    ui.spacing().interact_size.y
+        + ui.spacing().item_spacing.y
+        + ui.text_style_height(&egui::TextStyle::Small)
+        + frame.total_margin().sum().y
+}
+
+/// One entry; the response is clickable when the entry links to a node.
+fn entry_row(ui: &mut Ui, row: &RowView) -> egui::Response {
     let dark = ui.visuals().dark_mode;
     let frame = egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
-            ui.label(RichText::new(clock_label(entry.at_ms)).small().weak());
-            for badge in badges(item) {
+            ui.label(RichText::new(&row.clock).small().weak());
+            for badge in &row.badges {
                 ui.label(
                     RichText::new(badge.label())
                         .small()
@@ -298,30 +390,18 @@ fn entry_row(ui: &mut Ui, item: &WhipLogItem, snapshot: &FleetSnapshot) -> Optio
                         .background_color(badge.color(dark)),
                 );
             }
-            ui.add(egui::Label::new(RichText::new(&target).strong()).truncate());
+            ui.add(egui::Label::new(RichText::new(&row.target).strong()).truncate());
         });
-        let reason = entry.reason.lines().next().unwrap_or_default();
-        ui.add(egui::Label::new(RichText::new(reason).small()).truncate());
+        ui.add(egui::Label::new(RichText::new(&row.reason).small()).truncate());
     });
-    let hover = format!(
-        "{} → {}\n\n{}\n\nOutcome: {}{}",
-        entry.action,
-        entry.target,
-        entry.reason,
-        entry.outcome,
-        if link.is_some() {
-            "\n\nClick to select the node"
-        } else {
-            "\n\nNode no longer in the fleet"
-        }
-    );
-    let response = frame.response.interact(Sense::click()).on_hover_text(hover);
-    let response = if link.is_some() {
+    let response = frame.response.interact(Sense::click()).on_hover_ui(|ui| {
+        ui.label(&row.hover);
+    });
+    if row.link.is_some() {
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
         response
-    };
-    if response.clicked() { link } else { None }
+    }
 }
 
 #[cfg(test)]
@@ -384,6 +464,73 @@ mod tests {
         assert_eq!(log.entries().len(), HISTORY_LEN);
         assert_eq!(log.entries().front().unwrap().seq, 11);
         assert_eq!(log.entries().back().unwrap().seq, HISTORY_LEN as u64 + 10);
+    }
+
+    #[test]
+    fn filter_counts_follow_the_bounded_history() {
+        let mut log = WhipLog::default();
+        let mut failed = item(1);
+        failed.entry.dry_run = false;
+        failed.entry.outcome = "failed: boom".into();
+        log.extend([failed]);
+        assert_eq!(log.counts, [1, 1, 1]);
+        log.extend((2..=HISTORY_LEN as u64).map(item));
+        assert_eq!(log.counts, [HISTORY_LEN, 1, 1]);
+        // The failed entry is evicted.
+        log.extend([item(HISTORY_LEN as u64 + 1)]);
+        assert_eq!(log.counts, [HISTORY_LEN, 0, 0]);
+        let recount: Vec<usize> = LogFilter::ALL
+            .iter()
+            .map(|f| log.entries().iter().filter(|i| f.matches(i)).count())
+            .collect();
+        assert_eq!(log.counts.to_vec(), recount);
+    }
+
+    #[test]
+    fn rows_are_cached_until_entries_or_snapshot_change() {
+        let mut s = FleetSnapshot::default();
+        let mut log = WhipLog::default();
+        log.extend((1..=SHOWN_LEN as u64 + 5).map(item));
+        let rows = log.rows(&s).to_vec();
+        assert_eq!(rows.len(), SHOWN_LEN);
+        assert_eq!(rows[0].target, "term_w");
+        assert_eq!(rows[0].link, None);
+        assert_eq!(rows[0].reason, "Myrstack: no progress");
+
+        // A new snapshot is only seen after `snapshot_changed`.
+        let mut term = node(NodeId::terminal("term_w"), "claude on feat");
+        term.terminal_handle = Some("term_w".into());
+        s.nodes = vec![term];
+        assert_eq!(log.rows(&s)[0].target, "term_w");
+        log.snapshot_changed();
+        assert_eq!(log.rows(&s)[0].target, "claude on feat");
+        assert_eq!(log.rows(&s)[0].link, Some(NodeId::terminal("term_w")));
+
+        log.extend([item(1000)]);
+        assert!(log.rows.is_none());
+    }
+
+    #[test]
+    fn draws_only_rows_in_view() {
+        let s = FleetSnapshot::default();
+        let mut log = WhipLog::default();
+        log.extend((1..=SHOWN_LEN as u64).map(item));
+        let ctx = egui::Context::default();
+        let mut labels = 0;
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                log.section(ui, &WhipStatus::default(), &s, 0);
+            });
+            labels = output
+                .shapes
+                .iter()
+                .filter(|c| matches!(c.shape, egui::Shape::Text(_)))
+                .count();
+            output.textures_delta.clear();
+        }
+        assert!(log.row_height > 0.0);
+        // Two lines per row plus the header, status and filters; far fewer than all rows.
+        assert!(labels < SHOWN_LEN / 2, "{labels} text shapes");
     }
 
     #[test]

@@ -339,3 +339,30 @@ fn long_whip_item(seq: u64) -> crate::whip::WhipLogItem {
         task_id: None,
     }
 }
+
+#[test]
+fn cache_derives_once_per_snapshot_and_recounts_hidden_per_filter() {
+    let mut s = snapshot();
+    let mut cache = SidebarCache::default();
+    assert_eq!(cache.derived(&s).runs[0].row, run_rows(&s)[0]);
+    assert_eq!(cache.derived(&s).repos, repo_counts(&s));
+
+    let workers = FleetFilter {
+        kinds: [NodeKind::Worker].into(),
+        ..FleetFilter::default()
+    };
+    let hidden = workers.hidden(&s).len();
+    assert_eq!(cache.hidden_count(&s, &FleetFilter::default()), 0);
+    assert_eq!(cache.hidden_count(&s, &workers), hidden);
+
+    // Changes to the snapshot show once the cache is told.
+    s.nodes.pop();
+    assert_eq!(cache.derived(&s).repos, snapshot_repo_counts());
+    cache.snapshot_changed();
+    assert_eq!(cache.derived(&s).repos, repo_counts(&s));
+    assert_ne!(repo_counts(&s), snapshot_repo_counts());
+}
+
+fn snapshot_repo_counts() -> BTreeMap<String, usize> {
+    repo_counts(&snapshot())
+}

@@ -24,6 +24,8 @@ use crate::whip::{self, WhipInput, WhipRunner, WhipStatus};
 
 /// How often the UI redraws without new data, so relative times keep ticking.
 const TICK: Duration = Duration::from_secs(1);
+/// Delay of [`repaint_once`]: any non-zero delay makes egui draw a single frame.
+const REPAINT_SOON: Duration = Duration::from_millis(1);
 /// How often UI state is saved while running (it is also saved on exit).
 const AUTOSAVE: Duration = Duration::from_secs(5);
 
@@ -73,6 +75,8 @@ pub struct MyrstackApp {
     whip_status: WhipStatus,
     /// Whip action history for the sidebar.
     whip_log: ui::whip_log::WhipLog,
+    /// Sidebar rows and counts derived from `snapshot`.
+    sidebar_cache: ui::sidebar::SidebarCache,
     whip_window: ui::settings::WhipSettingsWindow,
     /// Rate-limited macOS notifications, shared with the whip's executors.
     notifier: Arc<Notifier>,
@@ -94,38 +98,28 @@ impl MyrstackApp {
         let hotkey = Hotkey::register(&cc.egui_ctx)
             .inspect_err(|err| log::warn!("global hotkey unavailable: {err:#}"))
             .ok();
-        let repaint_ctx = cc.egui_ctx.clone();
-        let claude = ClaudeWorker::spawn(Some(Box::new(move || repaint_ctx.request_repaint())));
-        let repaint_ctx = cc.egui_ctx.clone();
-        let actions = ActionRunner::spawn(
-            OrcaExecutor::default(),
-            Some(Box::new(move || repaint_ctx.request_repaint())),
-        );
-        let repaint_ctx = cc.egui_ctx.clone();
+        let ctx = &cc.egui_ctx;
+        let claude = ClaudeWorker::spawn(Some(repaint_once(ctx)));
+        let actions = ActionRunner::spawn(OrcaExecutor::default(), Some(repaint_once(ctx)));
         let poller = Poller::spawn(
             OrcaClient::new(),
             PollerConfig::default(),
-            Some(Box::new(move || repaint_ctx.request_repaint())),
+            Some(repaint_once(ctx)),
         );
         let whip_window = ui::settings::WhipSettingsWindow::load(whip::Settings::path());
-        let repaint_ctx = cc.egui_ctx.clone();
-        let notifier = Arc::new(Notifier::spawn(Some(Box::new(move || {
-            repaint_ctx.request_repaint();
-        }))));
+        let notifier = Arc::new(Notifier::spawn(Some(repaint_once(ctx))));
         let whip_notifier = notifier.clone();
-        let repaint_ctx = cc.egui_ctx.clone();
         let whip = WhipRunner::spawn(
             whip_window.whip().clone(),
             Box::new(move || {
                 Box::new(whip::OrcaExecutor::default().with_notifier(whip_notifier.clone()))
             }),
-            Some(Box::new(move || repaint_ctx.request_repaint())),
+            Some(repaint_once(ctx)),
         );
-        let repaint_ctx = cc.egui_ctx.clone();
         let quota = QuotaPoller::spawn(
             OrcaClient::new(),
             crate::quota::POLL_INTERVAL,
-            Some(Box::new(move || repaint_ctx.request_repaint())),
+            Some(repaint_once(ctx)),
         );
         let mut app = Self {
             quota,
@@ -149,6 +143,7 @@ impl MyrstackApp {
             whip,
             whip_status: WhipStatus::default(),
             whip_log: ui::whip_log::WhipLog::default(),
+            sidebar_cache: ui::sidebar::SidebarCache::default(),
             whip_window,
             notifier,
             needs_input_detector: NeedsInputDetector::new(),
@@ -691,6 +686,8 @@ impl eframe::App for MyrstackApp {
                 self.selected = None;
             }
             self.snapshot = Some(snapshot);
+            self.sidebar_cache.snapshot_changed();
+            self.whip_log.snapshot_changed();
             self.feed_whip();
             self.notify_needs_input();
         }
@@ -717,11 +714,12 @@ impl eframe::App for MyrstackApp {
         {
             let filter = &mut self.filter;
             let (whip_log, whip_status) = (&mut self.whip_log, &self.whip_status);
+            let cache = &mut self.sidebar_cache;
             let response = egui::Panel::left("sidebar")
                 .resizable(true)
                 .default_size(260.0)
                 .show(ui, |ui| {
-                    ui::sidebar::sidebar_with(ui, snapshot, filter, |ui| {
+                    ui::sidebar::sidebar_cached(ui, snapshot, cache, filter, |ui| {
                         whip_pick = whip_log.section(ui, whip_status, snapshot, now_ms);
                     })
                 })
@@ -776,6 +774,13 @@ impl eframe::App for MyrstackApp {
         }
         self.sync_screen_watch();
     }
+}
+
+/// A repaint callback for background threads that draws one frame. `request_repaint` would
+/// draw two (egui lets frame-delayed responses settle), doubling what each data arrival costs.
+fn repaint_once(ctx: &egui::Context) -> Box<dyn Fn() + Send + Sync> {
+    let ctx = ctx.clone();
+    Box::new(move || ctx.request_repaint_after(REPAINT_SOON))
 }
 
 fn now_ms() -> i64 {

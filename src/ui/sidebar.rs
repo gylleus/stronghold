@@ -263,6 +263,75 @@ pub struct SidebarResponse {
     pub filter_changed: bool,
 }
 
+/// What the sidebar shows of one snapshot, derived once per snapshot rather than every frame.
+#[derive(Debug, Default)]
+pub struct SidebarCache {
+    derived: Option<Derived>,
+    /// Nodes a filter hides, for the filter it was counted for.
+    hidden: Option<(FleetFilter, usize)>,
+}
+
+#[derive(Debug)]
+struct Derived {
+    runs: Vec<RunView>,
+    repos: BTreeMap<String, usize>,
+    states: BTreeMap<NodeState, usize>,
+    kinds: BTreeMap<NodeKind, usize>,
+}
+
+/// A run row with its display text.
+#[derive(Debug)]
+struct RunView {
+    row: RunRow,
+    title: String,
+    summary: String,
+}
+
+impl RunView {
+    fn new(row: RunRow) -> Self {
+        let tasks = row
+            .tasks
+            .as_ref()
+            .map_or_else(|| "tasks unknown".to_string(), task_summary);
+        let workers = match row.workers {
+            1 => "1 worker".to_string(),
+            n => format!("{n} workers"),
+        };
+        Self {
+            title: row.objective.clone().unwrap_or_else(|| row.id.clone()),
+            summary: format!("{tasks} · {workers}"),
+            row,
+        }
+    }
+}
+
+impl SidebarCache {
+    /// Call when the snapshot changes.
+    pub fn snapshot_changed(&mut self) {
+        *self = Self::default();
+    }
+
+    fn derived(&mut self, snapshot: &FleetSnapshot) -> &Derived {
+        self.derived.get_or_insert_with(|| Derived {
+            runs: run_rows(snapshot).into_iter().map(RunView::new).collect(),
+            repos: repo_counts(snapshot),
+            states: state_counts(snapshot),
+            kinds: kind_counts(snapshot),
+        })
+    }
+
+    fn hidden_count(&mut self, snapshot: &FleetSnapshot, filter: &FleetFilter) -> usize {
+        match &self.hidden {
+            Some((cached, count)) if cached == filter => *count,
+            _ => {
+                let count = filter.hidden(snapshot).len();
+                self.hidden = Some((filter.clone(), count));
+                count
+            }
+        }
+    }
+}
+
 /// Draws the run list and filter controls; edits `filter` in place.
 pub fn sidebar(ui: &mut Ui, snapshot: &FleetSnapshot, filter: &mut FleetFilter) -> SidebarResponse {
     sidebar_with(ui, snapshot, filter, |_| {})
@@ -276,6 +345,18 @@ pub fn sidebar_with(
     filter: &mut FleetFilter,
     extra: impl FnOnce(&mut Ui),
 ) -> SidebarResponse {
+    sidebar_cached(ui, snapshot, &mut SidebarCache::default(), filter, extra)
+}
+
+/// Like [`sidebar_with`], reusing what `cache` derived from `snapshot` in earlier frames; call
+/// [`SidebarCache::snapshot_changed`] when the snapshot changes.
+pub fn sidebar_cached(
+    ui: &mut Ui,
+    snapshot: &FleetSnapshot,
+    cache: &mut SidebarCache,
+    filter: &mut FleetFilter,
+    extra: impl FnOnce(&mut Ui),
+) -> SidebarResponse {
     let before = filter.clone();
     let mut response = SidebarResponse::default();
     egui::ScrollArea::vertical()
@@ -283,40 +364,44 @@ pub fn sidebar_with(
         .show(ui, |ui| {
             egui::CollapsingHeader::new(format!("Runs ({})", snapshot.runs.len()))
                 .default_open(true)
-                .show(ui, |ui| runs_section(ui, snapshot, &mut response));
+                .show(ui, |ui| {
+                    runs_section(ui, snapshot, &cache.derived(snapshot).runs, &mut response);
+                });
             extra(ui);
             egui::CollapsingHeader::new("Filters")
                 .default_open(true)
-                .show(ui, |ui| filters_section(ui, snapshot, filter));
+                .show(ui, |ui| filters_section(ui, snapshot, cache, filter));
         });
     response.filter_changed = *filter != before;
     response
 }
 
-fn runs_section(ui: &mut Ui, snapshot: &FleetSnapshot, response: &mut SidebarResponse) {
-    let rows = run_rows(snapshot);
-    if rows.is_empty() {
+fn runs_section(
+    ui: &mut Ui,
+    snapshot: &FleetSnapshot,
+    runs: &[RunView],
+    response: &mut SidebarResponse,
+) {
+    if runs.is_empty() {
         ui.weak("No active runs");
         return;
     }
-    for row in rows {
+    for RunView {
+        row,
+        title,
+        summary,
+    } in runs
+    {
         let frame = egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 state_dot(ui, row.coordinator_state);
-                let objective = row.objective.as_deref().unwrap_or(&row.id);
-                ui.add(egui::Label::new(RichText::new(objective).strong()).truncate())
-                    .on_hover_text(format!("{objective}\n\nrun {}", row.id));
+                ui.add(egui::Label::new(RichText::new(title).strong()).truncate())
+                    .on_hover_ui(|ui| {
+                        ui.label(format!("{title}\n\nrun {}", row.id));
+                    });
             });
-            let tasks = row
-                .tasks
-                .as_ref()
-                .map_or_else(|| "tasks unknown".to_string(), task_summary);
-            let workers = match row.workers {
-                1 => "1 worker".to_string(),
-                n => format!("{n} workers"),
-            };
-            ui.add(egui::Label::new(RichText::new(format!("{tasks} · {workers}")).small()).wrap());
+            ui.add(egui::Label::new(RichText::new(summary).small()).wrap());
         });
         let clicked = frame
             .response
@@ -347,7 +432,12 @@ fn state_dot(ui: &mut Ui, state: Option<NodeState>) {
     });
 }
 
-fn filters_section(ui: &mut Ui, snapshot: &FleetSnapshot, filter: &mut FleetFilter) {
+fn filters_section(
+    ui: &mut Ui,
+    snapshot: &FleetSnapshot,
+    cache: &mut SidebarCache,
+    filter: &mut FleetFilter,
+) {
     // Right-to-left so the text box gets exactly the width the button leaves: a guessed width
     // that overflows makes the resizable panel grow a little every frame.
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -369,7 +459,8 @@ fn filters_section(ui: &mut Ui, snapshot: &FleetSnapshot, filter: &mut FleetFilt
 
     ui.add_space(4.0);
     ui.label(RichText::new("Repo").strong());
-    let repos = repo_counts(snapshot);
+    let derived = cache.derived(snapshot);
+    let repos = &derived.repos;
     let mut universe: Vec<String> = repos.keys().cloned().collect();
     universe.extend(
         filter
@@ -390,7 +481,7 @@ fn filters_section(ui: &mut Ui, snapshot: &FleetSnapshot, filter: &mut FleetFilt
     ui.add_space(4.0);
     ui.label(RichText::new("State").strong())
         .on_hover_text("Pick states to show only those; none picked shows all");
-    let states = state_counts(snapshot);
+    let states = &derived.states;
     ui.horizontal_wrapped(|ui| {
         for state in ALL_STATES {
             let count = states.get(&state).copied().unwrap_or(0);
@@ -408,7 +499,7 @@ fn filters_section(ui: &mut Ui, snapshot: &FleetSnapshot, filter: &mut FleetFilt
     ui.add_space(4.0);
     ui.label(RichText::new("Kind").strong())
         .on_hover_text("Pick kinds to show only those; none picked shows all");
-    let kinds = kind_counts(snapshot);
+    let kinds = &derived.kinds;
     ui.horizontal_wrapped(|ui| {
         for kind in ALL_KINDS {
             let count = kinds.get(&kind).copied().unwrap_or(0);
@@ -426,7 +517,7 @@ fn filters_section(ui: &mut Ui, snapshot: &FleetSnapshot, filter: &mut FleetFilt
     });
 
     ui.add_space(4.0);
-    let hidden = filter.hidden(snapshot).len();
+    let hidden = cache.hidden_count(snapshot, filter);
     ui.horizontal(|ui| {
         ui.weak(format!(
             "{} of {} shown",
