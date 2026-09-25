@@ -23,6 +23,10 @@ fn main() -> eframe::Result {
             .with_title(APP_NAME)
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([640.0, 400.0]),
+        // A test instance with its own data dir keeps its UI state there too.
+        persistence_path: std::env::var_os("MYRSTACK_DATA_DIR")
+            .filter(|d| !d.is_empty())
+            .map(|d| std::path::PathBuf::from(d).join("app.ron")),
         ..Default::default()
     };
 

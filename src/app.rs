@@ -7,6 +7,7 @@ use eframe::egui;
 
 use crate::APP_NAME;
 
+mod chat;
 mod control;
 use crate::actions::{ActionRunner, OrcaExecutor};
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
@@ -95,6 +96,8 @@ pub struct MyrstackApp {
     control: control::AppControl,
     /// "Close session" confirmation dialog and the log of closes.
     close: ui::close::CloseDialog,
+    /// The Queen's chat, drawn in her panel.
+    chat: chat::AppChat,
 }
 
 /// How many posted notifications the alerts menu keeps.
@@ -160,6 +163,7 @@ impl MyrstackApp {
             help_open: false,
             frame_stats: ui::frame_stats::FrameStats::default(),
             close: ui::close::CloseDialog::default(),
+            chat: chat::AppChat::start(ctx),
         };
         app.restore_state(cc.storage);
         app
@@ -321,31 +325,37 @@ impl MyrstackApp {
         }
     }
 
-    /// Draws the queen panel if the queen is selected; returns whether it did.
+    /// Draws the queen panel (fleet summary, broadcast and the Queen's chat) if the queen is
+    /// selected; returns whether it did.
     fn queen_panel(&mut self, ui: &mut egui::Ui, now_ms: i64) -> bool {
-        let Some(snapshot) = &self.snapshot else {
-            return false;
-        };
         if self.selected.as_ref() != Some(&NodeId::queen()) {
             return false;
         }
         let default_width = ui.ctx().content_rect().width() * 0.45;
+        let snapshot = self.snapshot.as_ref();
         let inputs = ui::queen::QueenInputs {
             snapshot,
             whip: &self.whip_status,
             quotas: &self.quotas,
             now_ms,
         };
-        let queen = &mut self.queen;
+        let (queen, chat) = (&mut self.queen, &mut self.chat);
+        let mut chat_select = None;
         let response = egui::Panel::right("terminal")
             .resizable(true)
             .default_size(default_width)
             .min_size(240.0)
             .show(ui, |ui| {
-                ui::queen::queen_panel(ui, queen, inputs, || Box::new(OrcaClient::new()))
+                ui::queen::queen_panel(
+                    ui,
+                    queen,
+                    inputs,
+                    || Box::new(OrcaClient::new()),
+                    |ui| chat_select = chat.ui(ui, snapshot),
+                )
             })
             .inner;
-        if let Some(id) = response.select {
+        if let Some(id) = response.select.or(chat_select) {
             self.select_and_focus(id);
         } else if response.close {
             self.selected = None;
@@ -412,6 +422,10 @@ impl MyrstackApp {
 
     fn run_key_command(&mut self, ctx: &egui::Context, command: ui::keys::KeyCommand) {
         use ui::keys::KeyCommand;
+        if command == KeyCommand::ToggleChat {
+            self.toggle_chat();
+            return;
+        }
         let Some(snapshot) = &self.snapshot else {
             return;
         };
@@ -484,6 +498,7 @@ impl MyrstackApp {
                 self.help_open = !self.help_open;
                 None
             }
+            KeyCommand::ToggleChat => None,
             KeyCommand::CloseSession => {
                 let ids = ui::selection::close_targets(current, &self.graph.selection());
                 if !ids.is_empty() {
@@ -560,6 +575,13 @@ impl MyrstackApp {
                 .clicked()
             {
                 self.select_queen();
+            }
+            if ui
+                .button("Chat")
+                .on_hover_text("The Queen's chat: status reports and fleet commands (⌘J)")
+                .clicked()
+            {
+                self.toggle_chat();
             }
             self.whip_window.button(ui);
             self.alerts_menu(ui);
@@ -842,6 +864,7 @@ impl eframe::App for MyrstackApp {
             self.notify_needs_input();
         }
         self.take_alerts();
+        self.poll_chat();
         self.poll_control(ctx);
         for result in self.actions.poll() {
             self.control_action_done(&result);
