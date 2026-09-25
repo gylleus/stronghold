@@ -367,6 +367,7 @@ mod subagents {
             .collect(),
             subagents: [(SESSION.to_string(), agents)].into_iter().collect(),
             at_ms: NOW,
+            ..Default::default()
         }
     }
 
