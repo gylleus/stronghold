@@ -308,6 +308,32 @@ pub fn bulk_candidates<'a>(
         .collect()
 }
 
+/// Names of the other sessions that closing the targets' whole tabs would also close,
+/// excluding the targets themselves.
+pub fn tab_companions(
+    targets: &[CloseTarget],
+    snapshot: &FleetSnapshot,
+    terminals: &[Terminal],
+) -> Vec<String> {
+    let handles: Vec<&str> = targets
+        .iter()
+        .filter_map(|t| snapshot.node(&t.id)?.terminal_handle.as_deref())
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    handles
+        .iter()
+        .flat_map(|h| tab_siblings(h, terminals))
+        .filter(|t| !handles.contains(&t.handle.as_str()) && seen.insert(t.handle.clone()))
+        .map(|t| {
+            snapshot
+                .node(&NodeId::terminal(&t.handle))
+                .map(|n| n.label.clone())
+                .or_else(|| t.title.clone())
+                .unwrap_or_else(|| t.handle.clone())
+        })
+        .collect()
+}
+
 /// Other live terminals in `handle`'s Orca tab.
 fn tab_siblings<'a>(handle: &str, terminals: &'a [Terminal]) -> Vec<&'a Terminal> {
     let Some(tab_id) = terminals

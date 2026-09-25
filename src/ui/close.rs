@@ -102,7 +102,6 @@ pub struct CloseLogEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Dialog {
     request: CloseRequest,
-    options: CloseOptions,
     include_coordinators: bool,
     /// The run this dialog confirmed, once confirmed.
     run: Option<u64>,
@@ -124,7 +123,6 @@ impl CloseDialog {
     pub fn request(&mut self, request: CloseRequest) {
         self.dialog = Some(Dialog {
             request,
-            options: CloseOptions::default(),
             include_coordinators: false,
             run: None,
         });
@@ -217,20 +215,34 @@ impl CloseDialog {
         let mut confirmed = None;
         let mut dismiss = false;
         let run = dialog.run.and_then(|id| self.runs.get(&id));
-        let plan = match (run, snapshot) {
+        // A finished run hides the dialog unless a step failed, so failures stay visible.
+        if run.is_some_and(|r| r.finished() && r.failures() == 0) {
+            self.dialog = None;
+            self.forget_unshown_runs();
+            return None;
+        }
+        let plan_with = |whole_tab: bool| match (run, snapshot) {
             (Some(_), _) => None,
             (None, Some(snapshot)) => Some(plan_request(
                 &dialog.request,
                 snapshot,
                 terminals,
                 hidden,
-                dialog.options,
+                CloseOptions { whole_tab },
                 dialog.include_coordinators,
             )),
             (None, None) => Some(ClosePlan {
                 refused: Some("no fleet data yet".into()),
                 ..ClosePlan::default()
             }),
+        };
+        let plan = plan_with(false);
+        let tab_plan = plan_with(true);
+        let companions = match (&plan, snapshot) {
+            (Some(plan), Some(snapshot)) => {
+                close::tab_companions(&plan.targets, snapshot, terminals)
+            }
+            _ => Vec::new(),
         };
         let title = match &dialog.request {
             CloseRequest::Nodes(ids) if ids.len() == 1 => "Close session",
@@ -242,17 +254,20 @@ impl CloseDialog {
             .resizable(false)
             .default_width(460.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| match (run, &plan) {
-                (Some(run), _) => dismiss = run_view(ui, run),
-                (None, Some(plan)) => {
+            .show(ctx, |ui| match (run, &plan, &tab_plan) {
+                (Some(run), _, _) => run_view(ui, run),
+                (None, Some(plan), Some(tab_plan)) => {
                     let labels = step_labels(plan, snapshot);
-                    match confirm_view(ui, dialog, plan, &labels) {
+                    match confirm_view(ui, dialog, plan, tab_plan, &labels, &companions) {
                         Some(Choice::Kill) => confirmed = Some((plan.clone(), labels)),
+                        Some(Choice::KillTab) => {
+                            confirmed = Some((tab_plan.clone(), step_labels(tab_plan, snapshot)));
+                        }
                         Some(Choice::Cancel) => dismiss = true,
                         None => {}
                     }
                 }
-                (None, None) => {}
+                _ => {}
             });
         if !open || dismiss {
             self.dialog = None;
@@ -353,15 +368,19 @@ pub fn step_labels(plan: &ClosePlan, snapshot: Option<&FleetSnapshot>) -> Vec<St
 
 enum Choice {
     Kill,
+    KillTab,
     Cancel,
 }
 
-/// The plan and its buttons.
+/// The plan and its buttons. `tab_plan` is the same request closing whole tabs, and
+/// `companions` the other sessions those tabs would take down with them.
 fn confirm_view(
     ui: &mut egui::Ui,
     dialog: &mut Dialog,
     plan: &ClosePlan,
+    tab_plan: &ClosePlan,
     labels: &[String],
+    companions: &[String],
 ) -> Option<Choice> {
     let error = ui.visuals().error_fg_color;
     let warn = ui.visuals().warn_fg_color;
@@ -405,23 +424,47 @@ fn confirm_view(
     if let Some(reason) = &plan.refused {
         ui.colored_label(error, format!("Can't close: {reason}"));
     }
-    ui.add_space(6.0);
-    ui.checkbox(&mut dialog.options.whole_tab, "Close the whole tab")
-        .on_hover_text("orca terminal close --tab: closes every pane in the terminal's Orca tab");
     if dialog.request == CloseRequest::Shown {
+        ui.add_space(6.0);
         ui.checkbox(&mut dialog.include_coordinators, "Include coordinators");
     }
     ui.add_space(6.0);
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.label(RichText::new("Close whole tab").strong());
+        if companions.is_empty() {
+            ui.weak("Nothing else is in the tab; only the session above closes.");
+        } else {
+            ui.label(format!("Also closes {}:", companions.len()));
+            for name in companions {
+                ui.label(format!("• {name}"));
+            }
+        }
+    });
+    ui.add_space(6.0);
     let mut choice = None;
     ui.horizontal(|ui| {
+        let red = egui::Color32::from_rgb(190, 40, 40);
         let text = match plan.targets.len() {
             1 => "Kill session".to_string(),
             n => format!("Kill {n} sessions"),
         };
-        let button = egui::Button::new(RichText::new(text).strong().color(egui::Color32::WHITE))
-            .fill(egui::Color32::from_rgb(190, 40, 40));
-        if ui.add_enabled(plan.can_run(), button).clicked() {
+        let kill =
+            egui::Button::new(RichText::new(text).strong().color(egui::Color32::WHITE)).fill(red);
+        if ui.add_enabled(plan.can_run(), kill).clicked() {
             choice = Some(Choice::Kill);
+        }
+        let tab = egui::Button::new(
+            RichText::new("Close whole tab")
+                .strong()
+                .color(egui::Color32::WHITE),
+        )
+        .fill(red);
+        if ui
+            .add_enabled(tab_plan.can_run(), tab)
+            .on_hover_text("orca terminal close --tab: closes every pane in the Orca tab")
+            .clicked()
+        {
+            choice = Some(Choice::KillTab);
         }
         if ui.button("Cancel").clicked() {
             choice = Some(Choice::Cancel);
@@ -430,8 +473,9 @@ fn confirm_view(
     choice
 }
 
-/// Progress of a confirmed close; `true` when "Done" was clicked.
-fn run_view(ui: &mut egui::Ui, run: &CloseRun) -> bool {
+/// Progress of a confirmed close. A successful run hides the dialog on its own; a failed one
+/// stays open until the window's × is clicked.
+fn run_view(ui: &mut egui::Ui, run: &CloseRun) {
     let error = ui.visuals().error_fg_color;
     for (label, status) in run.labels.iter().zip(&run.statuses) {
         ui.horizontal_wrapped(|ui| match status {
@@ -450,12 +494,9 @@ fn run_view(ui: &mut egui::Ui, run: &CloseRun) -> bool {
             }
         });
     }
-    ui.add_space(6.0);
     if run.finished() {
+        ui.add_space(6.0);
         ui.label(RichText::new(run.summary()).strong());
-        ui.button("Done").clicked()
-    } else {
-        false
     }
 }
 

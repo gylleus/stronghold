@@ -312,3 +312,38 @@ fn queen_is_refused_and_never_a_bulk_candidate() {
         );
     }
 }
+
+#[test]
+fn tab_companions_lists_other_sessions_in_the_targets_tabs() {
+    let mut s = snapshot();
+    s.nodes = vec![
+        node("a", NodeKind::Terminal, Some("t_a")),
+        node("b", NodeKind::Terminal, Some("t_b")),
+        node("term:t_other", NodeKind::Terminal, Some("t_other")),
+    ];
+    s.add_queen();
+    let terminals = [
+        terminal("t_a", "tab_1"),
+        terminal("t_other", "tab_1"),
+        terminal("t_b", "tab_2"),
+        terminal("t_lone", "tab_3"),
+    ];
+    let targets = |ids: &[&str]| -> Vec<CloseTarget> {
+        ids.iter()
+            .map(|id| CloseTarget::of(s.node(&NodeId(id.to_string())).unwrap()))
+            .collect()
+    };
+    // The sibling's node label wins over the terminal title.
+    assert_eq!(
+        tab_companions(&targets(&["a"]), &s, &terminals),
+        vec!["term:t_other"]
+    );
+    // Nothing else in b's tab.
+    assert!(tab_companions(&targets(&["b"]), &s, &terminals).is_empty());
+    // A target is never listed as its own companion, and siblings are listed once.
+    let mut both = targets(&["a", "b"]);
+    both.push(CloseTarget::of(
+        s.node(&NodeId("term:t_other".into())).unwrap(),
+    ));
+    assert!(tab_companions(&both, &s, &terminals).is_empty());
+}
