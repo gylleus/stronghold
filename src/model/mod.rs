@@ -26,7 +26,9 @@ pub const RELEASED_FADE_MS: i64 = 10 * 60 * 1_000;
 ///
 /// Live terminals use `term:<handle>`; worker nodes without a live terminal use
 /// `dispatch:<run id>:<dispatch id>`; Claude subagents use `sub:<session id>:<agent id>`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct NodeId(pub String);
 
 impl NodeId {
@@ -58,7 +60,9 @@ impl fmt::Display for NodeId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum NodeKind {
     /// A run's coordinator terminal.
     Coordinator,
@@ -70,7 +74,9 @@ pub enum NodeKind {
     Subagent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum NodeState {
     Working,
     Idle,

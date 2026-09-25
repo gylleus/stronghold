@@ -12,6 +12,7 @@ use crate::fleet::FleetData;
 use crate::hotkey::Hotkey;
 use crate::model::{FleetSnapshot, Node, NodeId, NodeKind};
 use crate::orca::OrcaClient;
+use crate::persist::PersistedState;
 use crate::poller::{Poller, PollerCommand, PollerConfig, ScreenUpdate};
 use crate::ui;
 use crate::ui::graph::GraphView;
@@ -19,9 +20,11 @@ use crate::ui::sidebar::FleetFilter;
 
 /// How often the UI redraws without new data, so relative times keep ticking.
 const TICK: Duration = Duration::from_secs(1);
+/// How often UI state is saved while running (it is also saved on exit).
+const AUTOSAVE: Duration = Duration::from_secs(5);
 
 /// Which view fills the central panel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum View {
     #[default]
     Graph,
@@ -77,7 +80,7 @@ impl MyrstackApp {
             PollerConfig::default(),
             Some(Box::new(move || repaint_ctx.request_repaint())),
         );
-        Self {
+        let mut app = Self {
             hotkey,
             poller,
             data: None,
@@ -94,7 +97,9 @@ impl MyrstackApp {
             broadcast: ui::broadcast::BroadcastWindow::new(),
             actions,
             input: ui::terminal::InputPanelState::default(),
-        }
+        };
+        app.restore_state(cc.storage);
+        app
     }
 
     /// The selected node and its info when it is a subagent in the latest Claude scan.
@@ -197,6 +202,14 @@ impl MyrstackApp {
             if self.view == View::Graph && ui.button("Fit").clicked() {
                 self.graph.fit_to_screen();
             }
+            if self.view == View::Graph
+                && ui
+                    .button("Reset layout")
+                    .on_hover_text("Forget saved node positions and lay the graph out again")
+                    .clicked()
+            {
+                self.graph.reset_layout();
+            }
             ui.separator();
             if let Some(data) = &self.data {
                 ui.label(format!("{} terminals", data.terminals.len()));
@@ -231,7 +244,47 @@ impl MyrstackApp {
     }
 }
 
+/// Saving and restoring UI state between launches.
+impl MyrstackApp {
+    fn restore_state(&mut self, storage: Option<&dyn eframe::Storage>) {
+        let Some(state) = storage.and_then(PersistedState::load) else {
+            return;
+        };
+        log::debug!(
+            "persist: restoring {} node positions, view {:?}",
+            state.layout.positions.len(),
+            state.view
+        );
+        self.view = state.view;
+        self.filter = state.filter;
+        self.selected = state.layout.selected.clone();
+        self.graph.import_layout(state.layout);
+    }
+
+    fn persisted_state(&self) -> PersistedState {
+        PersistedState {
+            view: self.view,
+            filter: self.filter.clone(),
+            layout: self.graph.export_layout(),
+            ..PersistedState::default()
+        }
+    }
+}
+
 impl eframe::App for MyrstackApp {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        let state = self.persisted_state();
+        log::debug!(
+            "persist: saved {} node positions",
+            state.layout.positions.len()
+        );
+        state.save(storage);
+    }
+
+    fn auto_save_interval(&self) -> Duration {
+        AUTOSAVE
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if let Some(hotkey) = &mut self.hotkey {
             hotkey.poll(ctx);
