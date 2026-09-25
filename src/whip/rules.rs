@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 
 use crate::fleet::FleetData;
-use crate::orca::{InboxMessage, Task, TaskStatus, Timestamp};
+use crate::orca::{Task, TaskStatus, Timestamp};
 use crate::whip::progress::{ProgressReport, ProgressSource, RunProgress, TaskProgress};
 
 /// Default stall threshold: 15 minutes.
@@ -138,51 +138,9 @@ pub fn evaluate(
     dedupe(findings)
 }
 
-/// The terminal actually coordinating a Run. `coordinator_handle` can be stale when the
-/// coordinator re-bound from another terminal, so fall back to the newest live creator of the
-/// Run's tasks, then the newest live terminal messaging the Run. Workers of the Run are never
-/// the coordinator. `None` when no live candidate exists.
+/// The terminal actually coordinating a Run; see [`FleetData::effective_coordinator`].
 pub fn effective_coordinator(run_id: &str, data: &FleetData) -> Option<String> {
-    let live = |h: &str| data.terminal(h).is_some();
-    let declared = data
-        .run(run_id)
-        .and_then(|r| r.coordinator_handle.as_deref());
-    if let Some(h) = declared.filter(|h| live(h)) {
-        return Some(h.to_string());
-    }
-
-    let workers: BTreeSet<&str> = data
-        .workers
-        .iter()
-        .filter(|w| w.run_id.as_deref() == Some(run_id))
-        .filter_map(|w| w.agent_terminal_handle.as_deref())
-        .collect();
-    let candidate = |h: &str| live(h) && !workers.contains(h);
-
-    let tasks = data.tasks.get(run_id).map(Vec::as_slice).unwrap_or(&[]);
-    let creator = tasks
-        .iter()
-        .filter_map(|t: &Task| {
-            let h = t.created_by_terminal_handle.as_deref()?;
-            candidate(h).then_some((ts_ms(&t.created_at), h))
-        })
-        .max_by_key(|(ms, _)| *ms);
-    if let Some((_, h)) = creator {
-        return Some(h.to_string());
-    }
-
-    let run_home = format!("run:{run_id}");
-    data.inbox
-        .iter()
-        .filter(|m| {
-            m.run_id.as_deref() == Some(run_id) || m.to_handle.as_deref() == Some(&run_home)
-        })
-        .filter_map(|m: &InboxMessage| {
-            let h = m.from_handle.as_deref()?;
-            candidate(h).then_some(((ts_ms(&m.created_at), m.sequence), h))
-        })
-        .max_by_key(|(order, _)| *order)
-        .map(|(_, h)| h.to_string())
+    data.effective_coordinator(run_id)
 }
 
 /// Rule 1: a dispatched task whose live owner has shown no progress within the threshold.
@@ -462,7 +420,7 @@ fn ts_ms(ts: &Option<Timestamp>) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orca::{Run, Terminal, Worker};
+    use crate::orca::{InboxMessage, Run, Terminal, Worker};
     use crate::whip::progress::ProgressTracker;
     use serde_json::{Value, json};
 

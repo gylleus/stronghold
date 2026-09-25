@@ -1,8 +1,8 @@
 use super::*;
-use crate::orca::Timestamp;
 use crate::orca::commands::{
     parse_run_list, parse_task_list, parse_terminal_list, parse_worker_list,
 };
+use crate::orca::{Run, Timestamp};
 
 macro_rules! fixture {
     ($name:literal) => {
@@ -424,5 +424,207 @@ mod subagents {
         assert!(snap.edges.iter().all(|e| e.kind != EdgeKind::Subagent));
         let none = FleetSnapshot::build_with_claude(&scenario(), None, NOW);
         assert_eq!(none.nodes, FleetSnapshot::build(&scenario(), NOW).nodes);
+    }
+}
+
+fn coordinator_edges(snap: &FleetSnapshot, from: &str) -> Vec<NodeId> {
+    let mut to: Vec<NodeId> = snap
+        .edges
+        .iter()
+        .filter(|e| e.from == term(from) && e.kind == EdgeKind::CoordinatorWorker)
+        .map(|e| e.to.clone())
+        .collect();
+    to.sort();
+    to
+}
+
+fn run_workers(snap: &FleetSnapshot, run_id: &str) -> Vec<NodeId> {
+    let mut ids: Vec<NodeId> = snap
+        .nodes_in_run(run_id)
+        .filter(|n| n.kind == NodeKind::Worker)
+        .map(|n| n.id.clone())
+        .collect();
+    ids.sort();
+    ids
+}
+
+#[test]
+fn rebound_coordinator_is_the_coordinator_node() {
+    let mut data = scenario();
+    data.runs[0].coordinator_handle = Some("term_dead".into());
+    data.tasks.get_mut(RUN).unwrap()[0].created_by_terminal_handle = Some(LOOSE.into());
+    let snap = FleetSnapshot::build(&data, NOW);
+
+    let run = snap.run(RUN).unwrap();
+    assert_eq!(run.coordinator, Some(term(LOOSE)));
+    let coord = snap.node(&term(LOOSE)).unwrap();
+    assert_eq!(coord.kind, NodeKind::Coordinator);
+    assert_eq!(coord.run_id.as_deref(), Some(RUN));
+    // The terminal that used to be declared coordinator is now loose.
+    assert_eq!(
+        snap.node(&term(COORDINATOR)).unwrap().kind,
+        NodeKind::Terminal
+    );
+
+    assert_eq!(snap.edges.len(), 3);
+    assert_eq!(coordinator_edges(&snap, LOOSE), run_workers(&snap, RUN));
+}
+
+#[test]
+fn dead_declared_coordinator_without_candidates_gives_none() {
+    let mut data = scenario();
+    data.runs[0].coordinator_handle = Some("term_dead".into());
+    let snap = FleetSnapshot::build(&data, NOW);
+
+    let run = snap.run(RUN).unwrap();
+    assert_eq!(run.coordinator, None);
+    assert!(snap.edges.is_empty());
+    assert!(snap.nodes.iter().all(|n| n.kind != NodeKind::Coordinator));
+}
+
+#[test]
+fn live_declared_coordinator_beats_other_task_creators() {
+    let mut data = scenario();
+    data.tasks.get_mut(RUN).unwrap()[0].created_by_terminal_handle = Some(LOOSE.into());
+    let snap = FleetSnapshot::build(&data, NOW);
+
+    assert_eq!(snap.run(RUN).unwrap().coordinator, Some(term(COORDINATOR)));
+    assert_eq!(snap.node(&term(LOOSE)).unwrap().kind, NodeKind::Terminal);
+}
+
+#[test]
+fn shared_coordinator_has_one_node_with_edges_to_both_runs() {
+    const OTHER: &str = "run_other";
+    let mut data = scenario();
+    data.runs.push(Run {
+        id: OTHER.into(),
+        coordinator_handle: Some(COORDINATOR.into()),
+        ..Default::default()
+    });
+    let mut worker = data.workers[1].clone();
+    worker.run_id = Some(OTHER.into());
+    worker.dispatch_id = "ctx_other".into();
+    worker.task_id = Some("task_other".into());
+    worker.agent_terminal_handle = Some(LOOSE.into());
+    data.workers.push(worker);
+    let snap = FleetSnapshot::build(&data, NOW);
+
+    let coordinators: Vec<_> = snap
+        .nodes
+        .iter()
+        .filter(|n| n.id == term(COORDINATOR))
+        .collect();
+    assert_eq!(coordinators.len(), 1);
+    assert_eq!(coordinators[0].kind, NodeKind::Coordinator);
+    // The run the poller fetched tasks for owns the node.
+    assert_eq!(coordinators[0].run_id.as_deref(), Some(RUN));
+
+    assert_eq!(
+        snap.run(OTHER).unwrap().coordinator,
+        Some(term(COORDINATOR))
+    );
+    assert_eq!(run_workers(&snap, OTHER), vec![term(LOOSE)]);
+    let mut expected = run_workers(&snap, RUN);
+    expected.push(term(LOOSE));
+    expected.sort();
+    assert_eq!(coordinator_edges(&snap, COORDINATOR), expected);
+    assert_eq!(snap.edges.len(), 4);
+}
+
+#[test]
+fn coordinator_also_listed_as_worker_stays_coordinator() {
+    let mut data = scenario();
+    let mut worker = data.workers[5].clone();
+    worker.agent_terminal_handle = Some(COORDINATOR.into());
+    data.workers.push(worker);
+    let snap = FleetSnapshot::build(&data, NOW);
+
+    let coord = snap.node(&term(COORDINATOR)).unwrap();
+    assert_eq!(coord.kind, NodeKind::Coordinator);
+    assert_eq!(coord.run_id.as_deref(), Some(RUN));
+    assert_eq!(snap.run(RUN).unwrap().coordinator, Some(term(COORDINATOR)));
+}
+
+/// Live check against this machine's Orca: prints declared vs effective coordinator per
+/// active run. Read-only. Run with `cargo test live_coordinators -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn live_coordinators() {
+    use crate::orca::OrcaClient;
+    use crate::poller::{ACTIVE_RUN_WINDOW, FleetSource, active_run_ids};
+
+    let client = OrcaClient::new();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let mut data = FleetData {
+        polled_at_ms: now,
+        terminals: FleetSource::terminals(&client).unwrap(),
+        runs: FleetSource::runs(&client).unwrap(),
+        workers: FleetSource::workers(&client).unwrap(),
+        inbox: FleetSource::inbox(&client, 300).unwrap(),
+        ..Default::default()
+    };
+    let active = active_run_ids(
+        &data.runs,
+        &data.workers,
+        &data.terminals,
+        now,
+        ACTIVE_RUN_WINDOW,
+    );
+    for run_id in &active {
+        data.tasks
+            .insert(run_id.clone(), FleetSource::tasks(&client, run_id).unwrap());
+    }
+    let snap = FleetSnapshot::build(&data, now);
+
+    let live = |h: &str| {
+        if data.terminal(h).is_some() {
+            "live"
+        } else {
+            "dead"
+        }
+    };
+    println!("run | declared | effective | snapshot coordinator | workers | edges");
+    for run in data.runs.iter().filter(|r| active.contains(&r.id)) {
+        let declared = run
+            .coordinator_handle
+            .as_deref()
+            .map(|h| format!("{h} ({})", live(h)))
+            .unwrap_or_else(|| "-".into());
+        let effective = data
+            .effective_coordinator(&run.id)
+            .unwrap_or_else(|| "-".into());
+        let summary = snap.run(&run.id);
+        let in_snap = summary
+            .and_then(|r| r.coordinator.as_ref())
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| {
+                if summary.is_some() {
+                    "-".into()
+                } else {
+                    "(run not shown)".into()
+                }
+            });
+        let workers = snap
+            .nodes_in_run(&run.id)
+            .filter(|n| n.kind == NodeKind::Worker)
+            .count();
+        let edges = summary
+            .and_then(|r| r.coordinator.as_ref())
+            .map(|c| {
+                snap.edges
+                    .iter()
+                    .filter(|e| {
+                        &e.from == c && snap.node(&e.to).unwrap().run_id.as_deref() == Some(&run.id)
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        println!(
+            "{} | {declared} | {effective} | {in_snap} | {workers} | {edges}",
+            run.id
+        );
     }
 }
