@@ -25,11 +25,14 @@ pub enum KeyCommand {
     ToggleHelp,
     /// Ask to close (kill) the selected nodes' sessions.
     CloseSession,
+    /// Open (or close) the Queen's chat.
+    ToggleChat,
 }
 
 /// Shortcuts listed in the help overlay.
 pub const SHORTCUTS: &[(&str, &str)] = &[
     ("⌘K  /", "Search nodes"),
+    ("⌘J", "Open / close the Queen's chat"),
     ("j  k", "Next / previous node"),
     ("J  K", "Next / previous run"),
     ("Enter", "Select node, open its panel"),
@@ -47,7 +50,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("?", "Toggle this help"),
 ];
 
-/// The command `event` triggers. Only Esc works while a text field has focus; the letter
+/// The command `event` triggers. Only Esc and ⌘J work while a text field has focus; the letter
 /// commands come from text events so they follow the keyboard layout.
 pub fn command_for_event(event: &Event, text_focused: bool) -> Option<KeyCommand> {
     match event {
@@ -57,6 +60,12 @@ pub fn command_for_event(event: &Event, text_focused: bool) -> Option<KeyCommand
             modifiers,
             ..
         } if modifiers.is_none() => Some(KeyCommand::Escape),
+        Event::Key {
+            key: Key::J,
+            pressed: true,
+            modifiers,
+            ..
+        } if modifiers.command_only() => Some(KeyCommand::ToggleChat),
         _ if text_focused => None,
         Event::Key {
             key: Key::Enter,
@@ -320,6 +329,17 @@ mod tests {
         }
         assert_eq!(command_for_event(&text("X"), false), None);
         assert_eq!(command_for_event(&text("jj"), false), None);
+        for focused in [false, true] {
+            assert_eq!(
+                command_for_event(&key(Key::J, Modifiers::COMMAND), focused),
+                Some(ToggleChat),
+                "Cmd+J works in text fields too"
+            );
+        }
+        assert_eq!(
+            command_for_event(&key(Key::J, Modifiers::NONE), false),
+            None
+        );
         assert_eq!(
             command_for_event(&key(Key::Enter, Modifiers::NONE), false),
             Some(OpenPanel)
