@@ -7,9 +7,11 @@ use eframe::egui;
 use crate::APP_NAME;
 use crate::fleet::FleetData;
 use crate::hotkey::Hotkey;
+use crate::model::{FleetSnapshot, NodeId};
 use crate::orca::OrcaClient;
 use crate::poller::{Poller, PollerCommand, PollerConfig};
 use crate::ui;
+use crate::ui::graph::GraphView;
 
 /// How often the UI redraws without new data, so relative times keep ticking.
 const TICK: Duration = Duration::from_secs(1);
@@ -18,6 +20,7 @@ const TICK: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum View {
     #[default]
+    Graph,
     Table,
 }
 
@@ -28,6 +31,11 @@ pub struct MyrstackApp {
     poller: Poller,
     /// Newest snapshot; `None` until the first poll completes.
     data: Option<FleetData>,
+    /// Graph model built from `data`.
+    snapshot: Option<FleetSnapshot>,
+    graph: GraphView,
+    /// Node selected in the graph, shared by all views and side panels.
+    selected: Option<NodeId>,
     view: View,
 }
 
@@ -46,6 +54,9 @@ impl MyrstackApp {
             hotkey,
             poller,
             data: None,
+            snapshot: None,
+            graph: GraphView::new(),
+            selected: None,
             view: View::default(),
         }
     }
@@ -53,6 +64,12 @@ impl MyrstackApp {
     fn top_bar(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         ui.horizontal(|ui| {
             ui.heading(APP_NAME);
+            ui.separator();
+            ui.selectable_value(&mut self.view, View::Graph, "Graph");
+            ui.selectable_value(&mut self.view, View::Table, "Table");
+            if self.view == View::Graph && ui.button("Fit").clicked() {
+                self.graph.fit_to_screen();
+            }
             ui.separator();
             if let Some(data) = &self.data {
                 ui.label(format!("{} terminals", data.terminals.len()));
@@ -97,6 +114,14 @@ impl eframe::App for MyrstackApp {
                 data.workers.len(),
                 data.errors.len()
             );
+            let snapshot = FleetSnapshot::build(&data, now_ms());
+            self.graph.sync(&snapshot);
+            if let Some(id) = &self.selected
+                && snapshot.node(id).is_none()
+            {
+                self.selected = None;
+            }
+            self.snapshot = Some(snapshot);
             self.data = Some(data);
         }
         ctx.request_repaint_after(TICK);
@@ -115,6 +140,10 @@ impl eframe::App for MyrstackApp {
                 });
             }
             Some(data) => match self.view {
+                View::Graph => {
+                    let response = self.graph.show(ui);
+                    self.selected = response.selected;
+                }
                 View::Table => ui::table::terminal_table(ui, data, now_ms),
             },
         });
