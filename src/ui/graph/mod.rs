@@ -1,0 +1,480 @@
+//! Force-directed fleet graph: incremental sync from snapshots, state colors, click to select.
+
+mod layout;
+mod shape;
+#[cfg(test)]
+mod tests;
+mod tooltip;
+
+use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use eframe::egui::{self, Pos2, Ui, Vec2};
+use egui_graphs::{
+    AnimatedState, DefaultEdgeShape, GraphChange, MetadataFrame, SettingsInteraction,
+    SettingsNavigation, SettingsStyle, get_layout_state, set_layout_state,
+};
+use petgraph::Directed;
+use petgraph::stable_graph::{DefaultIx, EdgeIndex, NodeIndex};
+
+use crate::model::{EdgeKind, FleetSnapshot, Node, NodeId, NodeKind};
+
+pub use layout::{Extras, FleetLayout, FleetLayoutState, SettleTracker};
+pub use shape::{FleetNodeShape, NodePayload, node_radius, state_color};
+pub use tooltip::{format_ago, kind_label, preview_line, state_label};
+
+/// The egui_graphs graph the view renders.
+pub type FleetGraph = egui_graphs::Graph<
+    NodePayload,
+    EdgeKind,
+    Directed,
+    DefaultIx,
+    FleetNodeShape,
+    DefaultEdgeShape,
+>;
+
+/// Key under which egui_graphs stores zoom/pan and layout state in egui memory.
+pub const DEFAULT_GRAPH_ID: &str = "myrstack_graph";
+
+/// Spawn distance of a new node from its run's existing nodes, in canvas units.
+const SPAWN_NEAR: f32 = 40.0;
+/// Spawn distance of a new node without relatives from the layout center.
+const SPAWN_CENTER: f32 = 80.0;
+const EDGE_WIDTH: f32 = 1.5;
+const EDGE_TIP_SIZE: f32 = 8.0;
+/// Zoom factor per scrolled point.
+const SCROLL_ZOOM_SPEED: f32 = 0.0015;
+const MIN_ZOOM: f32 = 0.05;
+const MAX_ZOOM: f32 = 10.0;
+
+/// What happened in the graph this frame.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GraphResponse {
+    /// The selected node after this frame (single selection).
+    pub selected: Option<NodeId>,
+    /// The node under the pointer.
+    pub hovered: Option<NodeId>,
+    /// The node clicked this frame.
+    pub clicked: Option<NodeId>,
+}
+
+type EdgeKey = (NodeId, NodeId, EdgeKind);
+
+/// Interactive force-directed view of a [`FleetSnapshot`].
+///
+/// Keeps node positions across [`GraphView::sync`] calls: only added nodes get new positions.
+pub struct GraphView {
+    graph: FleetGraph,
+    index: HashMap<NodeId, NodeIndex>,
+    edges: HashMap<EdgeKey, EdgeIndex>,
+    /// Latest data per node, for tooltips.
+    nodes: HashMap<NodeId, Node>,
+    /// Run ID → objective, for tooltips.
+    objectives: HashMap<String, String>,
+    id: String,
+    /// Canvas point new unrelated nodes spawn around (the layout's gravity center).
+    anchor: Pos2,
+    layout_initialized: bool,
+    wake_layout: bool,
+    settle: SettleTracker,
+    fit_requested: bool,
+    /// Keep fitting the graph to the view while its first layout settles, until the user
+    /// pans, zooms or drags.
+    auto_fit: bool,
+}
+
+impl Default for GraphView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GraphView {
+    pub fn new() -> Self {
+        Self::with_id(DEFAULT_GRAPH_ID)
+    }
+
+    /// A view whose zoom/pan/layout state is stored under `id`; use distinct IDs for views
+    /// shown at the same time.
+    pub fn with_id(id: impl Into<String>) -> Self {
+        Self {
+            graph: FleetGraph::new(),
+            index: HashMap::new(),
+            edges: HashMap::new(),
+            nodes: HashMap::new(),
+            objectives: HashMap::new(),
+            id: id.into(),
+            anchor: Pos2::new(640.0, 400.0),
+            layout_initialized: false,
+            wake_layout: false,
+            settle: SettleTracker::default(),
+            fit_requested: false,
+            auto_fit: false,
+        }
+    }
+
+    /// Applies a snapshot: adds new nodes and edges, removes vanished ones and updates the rest
+    /// in place, keeping their positions.
+    pub fn sync(&mut self, snapshot: &FleetSnapshot) {
+        let was_empty = self.index.is_empty();
+        let mut topology_changed = false;
+
+        let wanted: HashSet<&NodeId> = snapshot.nodes.iter().map(|n| &n.id).collect();
+        let gone: Vec<NodeId> = self
+            .index
+            .keys()
+            .filter(|id| !wanted.contains(id))
+            .cloned()
+            .collect();
+        for id in gone {
+            if let Some(idx) = self.index.remove(&id) {
+                self.graph.remove_node(idx);
+            }
+            self.nodes.remove(&id);
+            topology_changed = true;
+        }
+        self.edges.retain(|(from, to, _), _| {
+            self.index.contains_key(from) && self.index.contains_key(to)
+        });
+
+        self.objectives = snapshot
+            .runs
+            .iter()
+            .filter_map(|r| Some((r.id.clone(), r.objective.clone()?)))
+            .collect();
+
+        let mut added: Vec<&Node> = Vec::new();
+        for node in &snapshot.nodes {
+            match self.index.get(&node.id) {
+                Some(&idx) => {
+                    if let Some(graph_node) = self.graph.node_mut(idx) {
+                        let payload = payload(node);
+                        if *graph_node.payload() != payload {
+                            *graph_node.payload_mut() = payload;
+                        }
+                        if graph_node.props().label != node.label {
+                            graph_node.set_label(node.label.clone());
+                        }
+                    }
+                    self.nodes.insert(node.id.clone(), node.clone());
+                }
+                None => added.push(node),
+            }
+        }
+        // Coordinators first so their workers can spawn next to them.
+        added.sort_by_key(|n| n.kind != NodeKind::Coordinator);
+        for node in added {
+            let location = self.spawn_position(node, snapshot);
+            let label = node.label.clone();
+            let idx = self.graph.add_node_custom(payload(node), |n| {
+                n.set_location(location);
+                n.set_label(label);
+            });
+            self.index.insert(node.id.clone(), idx);
+            self.nodes.insert(node.id.clone(), node.clone());
+            topology_changed = true;
+        }
+
+        let wanted_edges: HashSet<EdgeKey> = snapshot
+            .edges
+            .iter()
+            .filter(|e| self.index.contains_key(&e.from) && self.index.contains_key(&e.to))
+            .map(|e| (e.from.clone(), e.to.clone(), e.kind))
+            .collect();
+        let stale: Vec<EdgeKey> = self
+            .edges
+            .keys()
+            .filter(|k| !wanted_edges.contains(*k))
+            .cloned()
+            .collect();
+        for key in stale {
+            if let Some(idx) = self.edges.remove(&key) {
+                self.graph.remove_edge(idx);
+            }
+            topology_changed = true;
+        }
+        for key in wanted_edges {
+            if self.edges.contains_key(&key) {
+                continue;
+            }
+            let (from, to) = (self.index[&key.0], self.index[&key.1]);
+            let idx = self.graph.add_edge_custom(from, to, key.2, |e| {
+                let display = e.display_mut();
+                display.width = EDGE_WIDTH;
+                display.tip_size = EDGE_TIP_SIZE;
+            });
+            self.edges.insert(key, idx);
+            topology_changed = true;
+        }
+
+        if topology_changed {
+            self.wake_layout = true;
+        }
+        if was_empty && !self.index.is_empty() {
+            self.auto_fit = true;
+        }
+    }
+
+    /// Draws the graph filling the available space and handles interaction.
+    pub fn show(&mut self, ui: &mut Ui) -> GraphResponse {
+        let id = Some(self.id.clone());
+        self.anchor = ui.ctx().content_rect().center();
+        self.prepare_layout(ui);
+
+        let fit = std::mem::take(&mut self.fit_requested) || self.auto_fit;
+
+        let interaction = SettingsInteraction::new()
+            .with_dragging_enabled(true)
+            .with_hover_enabled(true)
+            .with_node_clicking_enabled(true)
+            .with_node_selection_enabled(true);
+        let navigation = SettingsNavigation::new()
+            .with_zoom_and_pan_enabled(true)
+            .with_fit_to_screen_enabled(fit)
+            .with_fit_to_screen_padding(0.15);
+        let style = SettingsStyle::new().with_labels_always(true);
+
+        let response = egui_graphs::GraphView::<FleetLayoutState, FleetLayout>::new()
+            .with_id(id.clone())
+            .with_interactions(&interaction)
+            .with_navigations(&navigation)
+            .with_styles(&style)
+            .show(ui, &mut self.graph);
+
+        let mut clicked = None;
+        let mut user_navigated = false;
+        let mut dragging = self.graph.dragged_node().is_some();
+        for change in &response.changes {
+            match change {
+                GraphChange::NodeClicked { node } => clicked = self.node_id(*node),
+                GraphChange::Panned { .. } | GraphChange::Zoomed { .. } if !fit => {
+                    user_navigated = true;
+                }
+                GraphChange::NodeDragStarted { .. } | GraphChange::NodeMoved { .. } => {
+                    dragging = true;
+                }
+                _ => {}
+            }
+        }
+        if self.scroll_zoom(ui, &response.response) {
+            user_navigated = true;
+        }
+        let running = self.track_settling(ui, dragging);
+        if user_navigated || dragging || !running {
+            self.auto_fit = false;
+        }
+
+        let hovered = self.graph.hovered_node().and_then(|idx| self.node_id(idx));
+        if let Some(node) = hovered.as_ref().and_then(|id| self.nodes.get(id))
+            && !dragging
+        {
+            let objective = node
+                .run_id
+                .as_ref()
+                .and_then(|r| self.objectives.get(r))
+                .map(String::as_str);
+            let now_ms = now_ms();
+            response.response.clone().on_hover_ui_at_pointer(|ui| {
+                tooltip::node_tooltip(ui, node, objective, now_ms);
+            });
+        }
+
+        GraphResponse {
+            selected: self.selected(),
+            hovered,
+            clicked,
+        }
+    }
+
+    /// Fits the whole graph into the view on the next frame.
+    pub fn fit_to_screen(&mut self) {
+        self.fit_requested = true;
+    }
+
+    /// The selected node, if any.
+    pub fn selected(&self) -> Option<NodeId> {
+        self.graph
+            .nodes_iter()
+            .find(|(_, n)| n.selected())
+            .map(|(_, n)| n.payload().id.clone())
+    }
+
+    /// Selects `id` (or clears the selection), e.g. to mirror a selection made elsewhere.
+    pub fn set_selected(&mut self, id: Option<&NodeId>) {
+        let target = id.and_then(|id| self.index.get(id)).copied();
+        let indices: Vec<NodeIndex> = self.index.values().copied().collect();
+        for idx in indices {
+            if let Some(node) = self.graph.node_mut(idx) {
+                node.set_selected(Some(idx) == target);
+            }
+        }
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.graph.node_count()
+    }
+
+    pub fn edge_count(&self) -> usize {
+        self.graph.edge_count()
+    }
+
+    pub fn contains_edge(&self, from: &NodeId, to: &NodeId) -> bool {
+        match (self.index.get(from), self.index.get(to)) {
+            (Some(&a), Some(&b)) => self.graph.edges_connecting(a, b).next().is_some(),
+            _ => false,
+        }
+    }
+
+    /// The petgraph index of a node; stable for as long as the node stays in the snapshot.
+    pub fn node_index(&self, id: &NodeId) -> Option<NodeIndex> {
+        self.index.get(id).copied()
+    }
+
+    /// A node's position in canvas coordinates.
+    pub fn node_position(&self, id: &NodeId) -> Option<Pos2> {
+        Some(self.graph.node(self.node_index(id)?)?.location())
+    }
+
+    pub fn set_node_position(&mut self, id: &NodeId, pos: Pos2) {
+        if let Some(node) = self.index.get(id).and_then(|&i| self.graph.node_mut(i)) {
+            node.set_location(pos);
+            self.wake_layout = true;
+        }
+    }
+
+    /// The underlying egui_graphs graph.
+    pub fn graph(&self) -> &FleetGraph {
+        &self.graph
+    }
+
+    fn node_id(&self, idx: NodeIndex) -> Option<NodeId> {
+        Some(self.graph.node(idx)?.payload().id.clone())
+    }
+
+    /// Where a new node starts: next to its coordinator, its run's other nodes or its parent
+    /// edge; otherwise near the layout center.
+    fn spawn_position(&self, node: &Node, snapshot: &FleetSnapshot) -> Pos2 {
+        let near = self.relative_position(node, snapshot);
+        let radius = if near.is_some() {
+            SPAWN_NEAR
+        } else {
+            SPAWN_CENTER
+        };
+        near.unwrap_or(self.anchor) + jitter(&node.id, radius)
+    }
+
+    fn relative_position(&self, node: &Node, snapshot: &FleetSnapshot) -> Option<Pos2> {
+        let placed = |id: &NodeId| self.node_position(id);
+        if let Some(run_id) = &node.run_id {
+            let coordinator = snapshot
+                .runs
+                .iter()
+                .find(|r| &r.id == run_id)
+                .and_then(|r| r.coordinator.as_ref())
+                .filter(|c| **c != node.id)
+                .and_then(placed);
+            if coordinator.is_some() {
+                return coordinator;
+            }
+            let siblings: Vec<Pos2> = self
+                .nodes
+                .values()
+                .filter(|n| n.run_id.as_ref() == Some(run_id) && n.id != node.id)
+                .filter_map(|n| placed(&n.id))
+                .collect();
+            if let Some(center) = centroid(&siblings) {
+                return Some(center);
+            }
+        }
+        snapshot
+            .edges
+            .iter()
+            .filter(|e| e.to == node.id)
+            .find_map(|e| placed(&e.from))
+    }
+
+    fn prepare_layout(&mut self, ui: &mut Ui) {
+        let id = Some(self.id.clone());
+        if !self.layout_initialized {
+            set_layout_state(ui, layout::initial_state(), id.clone());
+            self.layout_initialized = true;
+        }
+        if std::mem::take(&mut self.wake_layout) {
+            let mut state = get_layout_state::<FleetLayoutState>(ui, id.clone());
+            state.set_running(true);
+            set_layout_state(ui, state, id);
+            self.settle.reset();
+        }
+    }
+
+    /// Pauses the simulation once it has settled; keeps it running while a node is dragged.
+    /// Returns whether it is still running.
+    fn track_settling(&mut self, ui: &mut Ui, dragging: bool) -> bool {
+        let id = Some(self.id.clone());
+        let mut state = get_layout_state::<FleetLayoutState>(ui, id.clone());
+        let running = if dragging {
+            self.settle.reset();
+            true
+        } else if state.is_running() {
+            !self.settle.observe(state.last_avg_displacement())
+        } else {
+            false
+        };
+        if running != state.is_running() {
+            state.set_running(running);
+            set_layout_state(ui, state, id);
+        }
+        running
+    }
+
+    /// Zooms around the pointer on plain scroll (egui_graphs itself only zooms on
+    /// ctrl+scroll and pinch). Returns whether it zoomed.
+    fn scroll_zoom(&self, ui: &mut Ui, response: &egui::Response) -> bool {
+        let Some(pointer) = response.hover_pos() else {
+            return false;
+        };
+        let (scroll, zoom_delta) = ui.input(|i| (i.smooth_scroll_delta(), i.zoom_delta()));
+        if zoom_delta != 1.0 || scroll.y == 0.0 {
+            return false;
+        }
+        let mut meta = MetadataFrame::new(Some(self.id.clone())).load(ui);
+        let new_zoom = (meta.zoom * (scroll.y * SCROLL_ZOOM_SPEED).exp()).clamp(MIN_ZOOM, MAX_ZOOM);
+        let local = pointer - response.rect.left_top();
+        meta.pan = local - (local - meta.pan) * (new_zoom / meta.zoom);
+        meta.zoom = new_zoom;
+        meta.save(ui);
+        true
+    }
+}
+
+fn payload(node: &Node) -> NodePayload {
+    NodePayload {
+        id: node.id.clone(),
+        kind: node.kind,
+        state: node.state,
+        faded: node.released_at_ms.is_some(),
+    }
+}
+
+/// A deterministic offset of length `radius` in a direction derived from `id`.
+fn jitter(id: &NodeId, radius: f32) -> Vec2 {
+    let mut hasher = DefaultHasher::new();
+    id.hash(&mut hasher);
+    let angle = (hasher.finish() % 3_600) as f32 / 3_600.0 * std::f32::consts::TAU;
+    Vec2::angled(angle) * radius
+}
+
+fn centroid(points: &[Pos2]) -> Option<Pos2> {
+    if points.is_empty() {
+        return None;
+    }
+    let sum = points.iter().fold(Vec2::ZERO, |acc, p| acc + p.to_vec2());
+    Some((sum / points.len() as f32).to_pos2())
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
+}
