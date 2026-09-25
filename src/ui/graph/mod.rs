@@ -1,6 +1,9 @@
 //! Force-directed fleet graph: incremental sync from snapshots, state colors, click to select.
 
 mod edge;
+mod fit;
+#[cfg(test)]
+mod fit_tests;
 mod layout;
 mod saved;
 #[cfg(test)]
@@ -96,6 +99,11 @@ pub struct GraphView {
     /// Keep fitting the graph to the view while its first layout settles, until the user
     /// pans, zooms or drags.
     auto_fit: bool,
+    /// Widget size the current zoom/pan was fitted to; `None` once the user navigates. The
+    /// graph is fitted again whenever the widget changes size while this is set.
+    fitted_size: Option<Vec2>,
+    /// The graph widget's top-left corner on the last frame it was shown.
+    last_top_left: Option<Pos2>,
     /// Nodes filtered out: kept out of the egui_graphs graph (so neither drawn nor laid out).
     hidden: BTreeSet<NodeId>,
     /// Positions of hidden nodes, restored when they are shown again.
@@ -138,6 +146,8 @@ impl GraphView {
             settle: SettleTracker::default(),
             fit_requested: false,
             auto_fit: false,
+            fitted_size: None,
+            last_top_left: None,
             hidden: BTreeSet::new(),
             stashed: HashMap::new(),
             last_snapshot: None,
@@ -371,7 +381,12 @@ impl GraphView {
         self.prepare_layout(ui);
         self.sync_saved_view(ui, true);
 
-        let fit = std::mem::take(&mut self.fit_requested) || self.auto_fit;
+        // The rect egui_graphs allocates below; fitting to it before drawing keeps this frame
+        // inside the widget even right after a panel opened or the window resized.
+        let rect = ui.available_rect_before_wrap();
+        let resized = self.fitted_size.is_some_and(|size| size != rect.size());
+        let fit = (std::mem::take(&mut self.fit_requested) || self.auto_fit || resized)
+            && self.apply_fit(ui, rect);
         // egui_graphs would otherwise repaint every frame even with the layout paused.
         let animating = fit
             || self.graph.dragged_node().is_some()
@@ -384,8 +399,7 @@ impl GraphView {
             .with_node_selection_enabled(true);
         let navigation = SettingsNavigation::new()
             .with_zoom_and_pan_enabled(true)
-            .with_fit_to_screen_enabled(fit)
-            .with_fit_to_screen_padding(0.15);
+            .with_fit_to_screen_enabled(false);
         let style = SettingsStyle::new().with_labels_always(true);
 
         let response = egui_graphs::GraphView::<FleetLayoutState, FleetLayout>::new()
@@ -395,6 +409,7 @@ impl GraphView {
             .with_styles(&style)
             .with_continuous_repaint(animating)
             .show(ui, &mut self.graph);
+        self.last_top_left = Some(response.response.rect.left_top());
 
         let mut clicked = None;
         let mut user_navigated = false;
@@ -423,6 +438,9 @@ impl GraphView {
         let running = self.track_settling(ui, dragging);
         if user_navigated || dragging || !running {
             self.auto_fit = false;
+        }
+        if user_navigated {
+            self.fitted_size = None;
         }
         if user_navigated || dragging {
             self.mark_manual_view();
