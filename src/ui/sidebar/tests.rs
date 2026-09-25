@@ -271,3 +271,41 @@ fn sidebar_renders_headless() {
     .drop_without_applying_deltas();
     assert_eq!(response, SidebarResponse::default());
 }
+
+/// Regression: a row wider than the panel made the resizable sidebar grow every frame until the
+/// graph was squeezed out.
+#[test]
+fn sidebar_panel_width_is_stable() {
+    let ctx = egui::Context::default();
+    let s = snapshot();
+    let mut filter = FleetFilter::default();
+    let input = || egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1280.0, 800.0),
+        )),
+        ..Default::default()
+    };
+    let mut widths = Vec::new();
+    for _ in 0..30 {
+        ctx.run_ui(input(), |ui| {
+            let width = egui::Panel::left("sidebar")
+                .resizable(true)
+                .default_size(260.0)
+                .show(ui, |ui| {
+                    sidebar(ui, &s, &mut filter);
+                })
+                .response
+                .rect
+                .width();
+            widths.push(width);
+        })
+        .drop_without_applying_deltas();
+    }
+    let settled = widths[5];
+    assert!(
+        widths[5..].iter().all(|w| (w - settled).abs() < 0.5),
+        "sidebar width drifted: {widths:?}"
+    );
+    assert!(settled < 400.0, "sidebar grew to {settled}");
+}

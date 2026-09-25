@@ -336,12 +336,9 @@ fn state_dot(ui: &mut Ui, state: Option<NodeState>) {
 }
 
 fn filters_section(ui: &mut Ui, snapshot: &FleetSnapshot, filter: &mut FleetFilter) {
-    ui.horizontal(|ui| {
-        ui.add(
-            egui::TextEdit::singleline(&mut filter.text)
-                .hint_text("Search label, branch, objective")
-                .desired_width(ui.available_width() - 28.0),
-        );
+    // Right-to-left so the text box gets exactly the width the button leaves: a guessed width
+    // that overflows makes the resizable panel grow a little every frame.
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         if ui
             .add_enabled(!filter.text.is_empty(), egui::Button::new("✕").small())
             .on_hover_text("Clear search")
@@ -349,6 +346,11 @@ fn filters_section(ui: &mut Ui, snapshot: &FleetSnapshot, filter: &mut FleetFilt
         {
             filter.text.clear();
         }
+        ui.add(
+            egui::TextEdit::singleline(&mut filter.text)
+                .hint_text("Search label, branch, objective")
+                .desired_width(ui.available_width()),
+        );
     });
     ui.checkbox(&mut filter.show_loose, "Loose terminals");
     ui.checkbox(&mut filter.show_released, "Recently released");
