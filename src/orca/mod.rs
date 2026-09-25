@@ -3,4 +3,4 @@
 pub mod client;
 pub mod types;
 
-pub use client::{OrcaClient, OrcaError};
+pub use client::{ApiError, OrcaClient, OrcaError};

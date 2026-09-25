@@ -1,0 +1,28 @@
+{
+  "id": "2f9ae0d5-b4a9-463c-8e5a-62bd1b84aa82",
+  "ok": false,
+  "error": {
+    "code": "run_required",
+    "message": "No Run is bound. Use orchestration run-create or run-use first. No effects were applied.",
+    "data": {
+      "effectsApplied": false,
+      "guide": {
+        "topic": "orchestration",
+        "full": true
+      },
+      "nextCommandArgs": [
+        "skills",
+        "get",
+        "orchestration",
+        "--full"
+      ],
+      "nextSteps": [
+        "Using this same Orca CLI executable, run: skills get orchestration --full",
+        "Read the returned guide completely and do not retry the previous command unchanged."
+      ]
+    }
+  },
+  "_meta": {
+    "runtimeId": "fecc11aa-dfe9-4566-93aa-50a944d817cb"
+  }
+}
