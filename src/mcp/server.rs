@@ -1,13 +1,15 @@
-//! MCP over stdio: newline-delimited JSON-RPC 2.0 with `initialize`, `ping`, `tools/list` and
-//! `tools/call`. Notifications (`notifications/initialized`, `notifications/cancelled`, …) are
+//! MCP over stdio: newline-delimited JSON-RPC 2.0 with `initialize`, `ping`, `tools/*`,
+//! `prompts/*` and `resources/*`. Notifications (`notifications/initialized`, `notifications/cancelled`, …) are
 //! accepted and ignored.
 
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
 use crate::mcp::backend::Control;
-use crate::mcp::tools;
+use crate::mcp::{playbook, tools};
+use crate::playbook::Playbook;
 
 /// Protocol versions this server speaks, newest first. `initialize` echoes the client's version
 /// when it is one of these, and otherwise offers the newest.
@@ -37,13 +39,21 @@ prompt), stalled (the whip escalated it), done, failed.
 Start with fleet_status. Agent ids (term:…, dispatch:…, sub:…) come from list_agents or \
 fleet_status; a terminal handle or an exact label also works. send_to_agent, press_key, \
 close_agents, broadcast_to_coordinators and set_whip act on real agents, so confirm with Karl \
-first. close_agents only shows the plan unless dry_run=false is passed.";
+first. close_agents only shows the plan unless dry_run=false is passed.
+
+This server also serves the fleet playbook, the standing rules the fleet runs by, read from disk \
+(no app needed): the prompts coordinator, attendant and worker (slash commands such as \
+/mcp__myrstack__coordinator) load a role's rules; get_playbook and list_playbook fetch a role, a \
+file or one section; resources myrstack://playbook/<file> hold each file. Every answer starts \
+with the playbook version (git commit, dirty flag, content hash).";
 
 /// The MCP session state over one [`Control`].
 pub struct McpServer<C: Control> {
     control: C,
     /// Negotiated in `initialize`.
     protocol: Option<String>,
+    /// Where the playbook is read from; located per request when `None`.
+    playbook_dir: Option<PathBuf>,
 }
 
 impl<C: Control> McpServer<C> {
@@ -51,6 +61,20 @@ impl<C: Control> McpServer<C> {
         Self {
             control,
             protocol: None,
+            playbook_dir: None,
+        }
+    }
+
+    /// Serves the playbook from `dir` instead of locating it.
+    pub fn with_playbook_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.playbook_dir = Some(dir.into());
+        self
+    }
+
+    fn playbook(&self) -> Result<Playbook, String> {
+        match &self.playbook_dir {
+            Some(dir) => Ok(Playbook::at(dir)),
+            None => Playbook::locate().map_err(|e| format!("{e:#}")),
         }
     }
 
@@ -142,8 +166,17 @@ impl<C: Control> McpServer<C> {
         match method {
             "initialize" => Ok(self.initialize(params)),
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tools::definitions() })),
+            "tools/list" => {
+                let mut all = tools::definitions();
+                all.extend(playbook::tool_definitions());
+                Ok(json!({ "tools": all }))
+            }
             "tools/call" => self.call_tool(params),
+            "prompts/list" => Ok(playbook::prompts_list()),
+            "prompts/get" => playbook::prompts_get(self.playbook(), params),
+            "resources/list" => playbook::resources_list(self.playbook()),
+            "resources/read" => playbook::resources_read(self.playbook(), params),
+            "resources/templates/list" => Ok(json!({ "resourceTemplates": [] })),
             other => Err((METHOD_NOT_FOUND, format!("method not found: {other}"))),
         }
     }
@@ -155,7 +188,11 @@ impl<C: Control> McpServer<C> {
         self.protocol = Some(version.to_owned());
         json!({
             "protocolVersion": version,
-            "capabilities": { "tools": { "listChanged": false } },
+            "capabilities": {
+                "tools": { "listChanged": false },
+                "prompts": { "listChanged": false },
+                "resources": { "subscribe": false, "listChanged": false },
+            },
             "serverInfo": {
                 "name": "myrstack",
                 "title": "Myrstack",
@@ -174,7 +211,8 @@ impl<C: Control> McpServer<C> {
         if !(args.is_null() || args.is_object()) {
             return Err((INVALID_PARAMS, "arguments must be an object".into()));
         }
-        let output = tools::call(&mut self.control, name, &args)
+        let output = playbook::call_tool(|| self.playbook(), name, &args)
+            .or_else(|| tools::call(&mut self.control, name, &args))
             .ok_or_else(|| (INVALID_PARAMS, format!("unknown tool: {name}")))?;
         let mut result = json!({
             "content": [{ "type": "text", "text": output.text }],

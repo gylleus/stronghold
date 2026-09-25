@@ -294,7 +294,7 @@ fn malformed_messages_get_json_rpc_errors() {
             INVALID_PARAMS,
         ),
         (
-            r#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"sampling/createMessage"}"#,
             METHOD_NOT_FOUND,
         ),
         (
@@ -439,6 +439,8 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "open_whip_settings",
         "alerts",
         "quotas",
+        "get_playbook",
+        "list_playbook",
     ];
     assert_eq!(names, expected);
     let reads = [
@@ -448,6 +450,8 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "whip_status",
         "alerts",
         "quotas",
+        "get_playbook",
+        "list_playbook",
     ];
     let destructive = [
         "send_to_agent",
@@ -884,4 +888,211 @@ fn tidy_line_drops_terminal_padding() {
     assert_eq!(tools::tidy_line("a   b"), "a   b");
     let long = "x y ".repeat(100);
     assert_eq!(tools::tidy_line(&long).chars().count(), 240);
+}
+
+// ---------------------------------------------------------------------------
+// Playbook
+
+fn playbook_server() -> (tempfile::TempDir, McpServer<FakeControl>) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(crate::playbook::PLAYBOOK),
+        "# Playbook\n\n## Token economy\n\nCheap.\n\n## Coordinator duties\n\nWatch.\n\n## Topology\n\nTree.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(crate::playbook::PROTOCOL),
+        "# Protocol\n\n## Lifecycle\n\nReport.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(crate::playbook::ATTENDANT_BRIEF),
+        "# Attendant <campaign>\n\n## Loop\n\nPoll.\n",
+    )
+    .unwrap();
+    let server = McpServer::new(FakeControl::default()).with_playbook_dir(dir.path());
+    (dir, server)
+}
+
+#[test]
+fn initialize_advertises_prompts_and_resources() {
+    let (_d, mut server) = playbook_server();
+    let r = rpc(
+        &mut server,
+        "initialize",
+        json!({"protocolVersion": "2025-06-18"}),
+    );
+    let caps = &r["result"]["capabilities"];
+    assert!(caps["prompts"].is_object());
+    assert!(caps["resources"].is_object());
+    let instructions = r["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.contains("/mcp__myrstack__coordinator"));
+    assert!(instructions.contains("get_playbook"));
+}
+
+#[test]
+fn prompts_list_has_the_three_roles() {
+    let (_d, mut server) = playbook_server();
+    let r = rpc(&mut server, "prompts/list", json!({}));
+    let prompts = r["result"]["prompts"].as_array().unwrap();
+    let names: Vec<&str> = prompts
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["coordinator", "attendant", "worker"]);
+    for p in prompts {
+        assert!(!p["description"].as_str().unwrap().is_empty());
+        assert_eq!(p["arguments"][0]["name"], "section");
+        assert_eq!(p["arguments"][0]["required"], false);
+    }
+}
+
+#[test]
+fn prompts_get_returns_the_roles_rules_as_a_user_message() {
+    let (_d, mut server) = playbook_server();
+    let r = rpc(&mut server, "prompts/get", json!({"name": "coordinator"}));
+    let messages = r["result"]["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["role"], "user");
+    assert_eq!(messages[0]["content"]["type"], "text");
+    let text = messages[0]["content"]["text"].as_str().unwrap();
+    assert!(text.starts_with(crate::playbook::STANDING_RULES), "{text}");
+    assert!(text.contains("Playbook version: hash "), "{text}");
+    assert!(text.contains("# Playbook") && text.contains("# Protocol"));
+    assert_eq!(
+        r["result"]["_meta"]["myrstack/playbook"]["files"],
+        json!([crate::playbook::PLAYBOOK, crate::playbook::PROTOCOL])
+    );
+
+    let r = rpc(
+        &mut server,
+        "prompts/get",
+        json!({"name": "attendant", "arguments": {"section": "coord"}}),
+    );
+    let text = r["result"]["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap();
+    assert!(text.contains("## Coordinator duties\n\nWatch."), "{text}");
+    assert!(!text.contains("Poll."));
+
+    let r = rpc(&mut server, "prompts/get", json!({"name": "queen"}));
+    assert_eq!(r["error"]["code"], INVALID_PARAMS);
+    let r = rpc(
+        &mut server,
+        "prompts/get",
+        json!({"name": "worker", "arguments": {"section": "nope"}}),
+    );
+    assert_eq!(r["error"]["code"], INVALID_PARAMS);
+    assert!(
+        r["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Lifecycle")
+    );
+}
+
+#[test]
+fn prompts_get_reports_a_missing_playbook() {
+    let empty = tempfile::tempdir().unwrap();
+    let mut server = McpServer::new(FakeControl::default()).with_playbook_dir(empty.path());
+    let r = rpc(&mut server, "prompts/get", json!({"name": "worker"}));
+    let message = r["error"]["message"].as_str().unwrap();
+    assert!(message.contains("not found"), "{message}");
+}
+
+#[test]
+fn resources_list_and_read() {
+    let (_d, mut server) = playbook_server();
+    let r = rpc(&mut server, "resources/list", json!({}));
+    let resources = r["result"]["resources"].as_array().unwrap();
+    let uris: Vec<&str> = resources
+        .iter()
+        .map(|r| r["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        uris,
+        [
+            "myrstack://playbook/AGENT-FLEET-PLAYBOOK.md",
+            "myrstack://playbook/_AGENT_PROTOCOL.md",
+            "myrstack://playbook/ATTENDANT-BRIEF-TEMPLATE.md",
+        ]
+    );
+    assert!(resources.iter().all(|r| r["mimeType"] == "text/markdown"));
+    assert!(
+        resources[1]["description"]
+            .as_str()
+            .unwrap()
+            .contains("worker")
+    );
+
+    let r = rpc(
+        &mut server,
+        "resources/read",
+        json!({"uri": "myrstack://playbook/_AGENT_PROTOCOL.md"}),
+    );
+    let content = &r["result"]["contents"][0];
+    assert_eq!(content["uri"], "myrstack://playbook/_AGENT_PROTOCOL.md");
+    assert_eq!(content["mimeType"], "text/markdown");
+    let text = content["text"].as_str().unwrap();
+    assert!(text.starts_with("Playbook version: "));
+    assert!(text.ends_with("# Protocol\n\n## Lifecycle\n\nReport."));
+
+    for uri in [
+        "myrstack://playbook/NOPE.md",
+        "file:///etc/passwd",
+        "myrstack://playbook/../x",
+    ] {
+        let r = rpc(&mut server, "resources/read", json!({"uri": uri}));
+        assert_eq!(r["error"]["code"], playbook::RESOURCE_NOT_FOUND, "{uri}");
+    }
+}
+
+#[test]
+fn playbook_tools_work_without_the_app() {
+    let (_d, mut server) = playbook_server();
+    let r = rpc(&mut server, "tools/list", json!({}));
+    let tools = r["result"]["tools"].as_array().unwrap();
+    for name in playbook::TOOLS {
+        let t = tools.iter().find(|t| t["name"] == name).unwrap();
+        assert_eq!(t["annotations"]["readOnlyHint"], true);
+        check_schema(name, &t["inputSchema"]);
+    }
+
+    let r = call(&mut server, "get_playbook", json!({"role": "worker"}));
+    assert!(!is_error(&r), "{}", text(&r));
+    assert!(text(&r).contains("## Lifecycle"));
+    assert_eq!(
+        r["structuredContent"]["files"],
+        json!(["_AGENT_PROTOCOL.md"])
+    );
+    assert!(r["structuredContent"]["version"]["hash"].is_string());
+
+    let r = call(&mut server, "get_playbook", json!({"section": "topo"}));
+    assert!(text(&r).contains("section \"Topology\""), "{}", text(&r));
+    assert!(text(&r).ends_with("## Topology\n\nTree."));
+
+    let r = call(
+        &mut server,
+        "get_playbook",
+        json!({"file": "attendant-brief-template"}),
+    );
+    assert!(text(&r).contains("<campaign>"));
+
+    let r = call(
+        &mut server,
+        "get_playbook",
+        json!({"role": "worker", "file": "x"}),
+    );
+    assert!(is_error(&r));
+    let r = call(&mut server, "get_playbook", json!({"role": "queen"}));
+    assert!(is_error(&r));
+    let r = call(&mut server, "get_playbook", json!({"section": "zzz"}));
+    assert!(is_error(&r) && text(&r).contains("Coordinator duties"));
+
+    let r = call(&mut server, "list_playbook", json!({}));
+    assert!(!is_error(&r));
+    assert!(text(&r).starts_with("Playbook version: "));
+    assert!(text(&r).contains("Token economy · Coordinator duties · Topology"));
+    assert_eq!(r["structuredContent"]["roles"][0]["name"], "coordinator");
+    assert!(server.control().calls.is_empty(), "no control calls");
 }

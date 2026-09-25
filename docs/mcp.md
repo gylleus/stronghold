@@ -2,8 +2,9 @@
 
 `myrstack mcp` is an [MCP](https://modelcontextprotocol.io) server. It lets a chat client such
 as Claude Code ask for the fleet status (every coordinator and agent, and its state) and
-control the Myrstack dashboard. It proxies each tool call to the running app's
-[control API](control-api.md).
+control the Myrstack dashboard. It proxies each fleet tool call to the running app's
+[control API](control-api.md). It also serves the fleet [playbook](#playbook) straight from
+disk, which works without the app.
 
 ## Register it
 
@@ -24,13 +25,15 @@ does, so pass the same values to both if you override them
 
 - stdio, newline-delimited JSON-RPC 2.0. stdout carries only protocol messages. Logs go to
   stderr (`RUST_LOG=info` for more; the default is `warn`).
-- Methods: `initialize`, `ping`, `tools/list`, `tools/call`. Notifications such as
+- Methods: `initialize`, `ping`, `tools/list`, `tools/call`, `prompts/list`, `prompts/get`,
+  `resources/list`, `resources/read` (and an empty `resources/templates/list`). `initialize`
+  advertises the `tools`, `prompts` and `resources` capabilities. Notifications such as
   `notifications/initialized` and `notifications/cancelled` are accepted and ignored.
   Batches (JSON arrays) are rejected.
 - Protocol versions: `2025-11-25`, `2025-06-18`, `2025-03-26` and `2024-11-05`. `initialize`
   echoes the client's version when it is one of these, and otherwise answers with the newest.
   Results include `structuredContent` from `2025-06-18` on.
-- It is hand-rolled rather than built on the `rmcp` SDK. The protocol surface is four methods,
+- It is hand-rolled rather than built on the `rmcp` SDK. The protocol surface is a handful of methods,
   and `rmcp` would pull an async runtime into an otherwise synchronous binary.
 - Each tool call opens a fresh connection to the control socket, so the chat can start before
   the app does and survives app restarts.
@@ -58,6 +61,8 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `open_whip_settings` | – | `open_whip_settings` | idempotent |
 | `alerts` | `limit` (default 20) | `alerts` | read-only |
 | `quotas` | – | `quotas` | read-only |
+| `get_playbook` | `role` (default `coordinator`) or `file`, `section` | – (reads the playbook) | read-only |
+| `list_playbook` | – | – (reads the playbook) | read-only |
 
 All tools set `openWorldHint: false`. Agent ids are node ids from `list_agents` or
 `fleet_status` (`term:…`, `dispatch:…`, `sub:…`). A terminal handle or an exact label also
@@ -91,6 +96,75 @@ reused for 15 s. The text starts with a note that it is a fallback. It has no wh
 subagent or dashboard data, and no screen-based prompt detection, so the needs-input list
 relies on Orca's previews only. `structuredContent.fallback` is `true`. Every other tool
 returns the "isn't running" error.
+
+## Playbook
+
+Myrstack owns the fleet playbook: the Markdown rules in the repo's `playbook/` dir
+(`AGENT-FLEET-PLAYBOOK.md`, `_AGENT_PROTOCOL.md`, `ATTENDANT-BRIEF-TEMPLATE.md`,
+`KICKOFF-TEMPLATE.md`, `README.md`). A coordinator starting up fetches its rules from
+Myrstack instead of reading a file path. The files are read from disk on every request, so
+an edit shows up at once, and the app need not be running.
+
+**Where it reads from**, first match wins:
+
+1. `MYRSTACK_PLAYBOOK_DIR` (an error if it holds neither `AGENT-FLEET-PLAYBOOK.md` nor
+   `_AGENT_PROTOCOL.md`).
+2. The repo's `playbook/` dir, as baked in at build time, if it still exists.
+3. `~/Documents/agents` (symlinks to the repo files).
+
+**Roles:**
+
+| Role | Gets |
+|---|---|
+| `coordinator` | `AGENT-FLEET-PLAYBOOK.md` + `_AGENT_PROTOCOL.md` |
+| `attendant` | `ATTENDANT-BRIEF-TEMPLATE.md` + the playbook's *Coordinator duties* and *Token economy* sections |
+| `worker` | `_AGENT_PROTOCOL.md` |
+
+Any file can also be asked for by name (case-insensitive, `.md` and a leading `_` optional).
+
+**Sections:** a `section` argument returns just one `## ` section, matched by title
+case-insensitively (an exact title first, then a title prefix; `coord` finds *Coordinator
+duties*). A title found in several of the role's files (such as *Complexity discipline*)
+returns each. A miss is an error that lists every section title of the role's files.
+Headings inside code fences don't count.
+
+**Version stamp:** every answer starts with a line such as
+
+```
+Playbook version: 1b0b685 (clean) · hash ffafedc
+```
+
+The commit is the last one touching the playbook dir (`git log -1 --format=%h -- .`),
+`dirty` means uncommitted changes there (`git status --porcelain -- .`), and the hash is a
+short FNV-1a hash of the text served. Git runs in the real dir of the files, so the
+`~/Documents/agents` symlinks still get the repo's version. Outside git it reads
+`Playbook version: hash ffafedc (not in git)`. Structured results carry it as
+`version: {commit, dirty, in_git, hash}`.
+
+**Prompts** (`prompts/list`, `prompts/get`): `coordinator`, `attendant` and `worker`, each
+with an optional `section` argument. Claude Code exposes them as slash commands:
+`/mcp__myrstack__coordinator`, `/mcp__myrstack__attendant`, `/mcp__myrstack__worker`. Each
+returns one user message: "These are your standing rules for this session; follow them.",
+then the version line, then the role's docs. An unknown prompt or section is an
+invalid-params error (-32602); a missing playbook file is an internal error (-32603).
+
+**Resources** (`resources/list`, `resources/read`): one per file,
+`myrstack://playbook/<file>`, `mimeType: text/markdown`, the text under the version line.
+Unknown URIs get -32002 (resource not found).
+
+**Tools:** `get_playbook {role? | file?, section?}` returns the same text as the prompt, with
+`structuredContent: {target, section, files, version}`. `list_playbook` lists the files with
+their section titles, the roles and the version (the hash covers every file).
+
+**CLI:** the same from a shell:
+
+```bash
+myrstack playbook                              # coordinator rules
+myrstack playbook worker                       # a role, or a file: KICKOFF-TEMPLATE.md
+myrstack playbook --section "Coordinator duties"
+myrstack playbook coordinator --list           # section titles
+myrstack playbook --list                       # files, roles, sections
+```
 
 ## Example
 
