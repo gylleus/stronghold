@@ -5,7 +5,7 @@
 //! step ([`interpret_output`], [`parse_envelope`]) is pure so it can be tested
 //! against captured fixtures without spawning anything.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -24,6 +24,18 @@ pub const DEFAULT_BINARY: &str = "orca";
 /// Install locations checked when `orca` isn't on `PATH`. Apps launched from
 /// Finder don't inherit the shell `PATH`, so Homebrew's bin dirs are often missing.
 pub const FALLBACK_PATHS: &[&str] = &["/opt/homebrew/bin/orca", "/usr/local/bin/orca"];
+
+/// Variables through which `orca` works out which terminal is calling: `orchestration send`
+/// without `--from` takes the sender from `ORCA_TERMINAL_HANDLE` or `ORCA_PANE_KEY`, and the
+/// worktree/workspace ids scope its active-terminal fallback. A process launched from an Orca
+/// terminal inherits them, so they are removed for messages Myrstack sends on its own behalf.
+pub const SENDER_IDENTITY_ENV: &[&str] = &[
+    "ORCA_TERMINAL_HANDLE",
+    "ORCA_PANE_KEY",
+    "ORCA_TAB_ID",
+    "ORCA_WORKTREE_ID",
+    "ORCA_WORKSPACE_ID",
+];
 
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 const SNIPPET_LEN: usize = 200;
@@ -91,6 +103,8 @@ impl OrcaError {
 pub struct OrcaClient {
     binary: PathBuf,
     timeout: Duration,
+    /// Environment variables not passed to `orca`.
+    env_remove: Vec<OsString>,
 }
 
 impl Default for OrcaClient {
@@ -112,12 +126,29 @@ impl OrcaClient {
         Self {
             binary: resolve_binary(binary.as_ref(), path.as_deref(), FALLBACK_PATHS),
             timeout: DEFAULT_TIMEOUT,
+            env_remove: Vec::new(),
         }
     }
 
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    /// Runs `orca` without these environment variables.
+    pub fn without_env<I, K>(mut self, vars: I) -> Self
+    where
+        I: IntoIterator<Item = K>,
+        K: Into<OsString>,
+    {
+        self.env_remove.extend(vars.into_iter().map(Into::into));
+        self
+    }
+
+    /// Runs `orca` without the calling terminal's identity ([`SENDER_IDENTITY_ENV`]), so
+    /// messages are not attributed to the Orca terminal that launched Myrstack.
+    pub fn without_sender_identity(self) -> Self {
+        self.without_env(SENDER_IDENTITY_ENV.iter().copied())
     }
 
     pub fn binary(&self) -> &Path {
@@ -142,7 +173,11 @@ impl OrcaClient {
     }
 
     fn run<S: AsRef<OsStr>>(&self, args: &[S]) -> Result<RawOutput, OrcaError> {
-        let mut child = Command::new(&self.binary)
+        let mut command = Command::new(&self.binary);
+        for var in &self.env_remove {
+            command.env_remove(var);
+        }
+        let mut child = command
             .args(args)
             .arg("--json")
             .stdin(Stdio::null())
@@ -480,6 +515,39 @@ mod tests {
         let client = OrcaClient::with_binary(&exe);
         let result = client.call_value(&["terminal", "list"]).unwrap();
         assert_eq!(result["args"], "terminal list --json");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn removed_env_is_not_passed_to_orca() {
+        use std::os::unix::fs::PermissionsExt;
+        const VAR: &str = "MYRSTACK_CLIENT_TEST_SENDER";
+        // SAFETY: the variable is unique to this test, so no other thread reads or writes it.
+        unsafe { std::env::set_var(VAR, "term_launcher") };
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("env-orca");
+        std::fs::write(
+            &exe,
+            format!(
+                "#!/bin/sh\necho \"{{\\\"id\\\":\\\"1\\\",\\\"ok\\\":true,\\\"result\\\":\\\"${{{VAR}-unset}}\\\"}}\"\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let inherited = OrcaClient::with_binary(&exe).call_value(&["x"]).unwrap();
+        assert_eq!(inherited, "term_launcher");
+        let removed = OrcaClient::with_binary(&exe)
+            .without_env([VAR])
+            .call_value(&["x"])
+            .unwrap();
+        assert_eq!(removed, "unset");
+        assert!(
+            OrcaClient::new()
+                .without_sender_identity()
+                .env_remove
+                .iter()
+                .any(|v| v == "ORCA_TERMINAL_HANDLE")
+        );
     }
 
     #[cfg(unix)]

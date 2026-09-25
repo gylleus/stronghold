@@ -222,9 +222,17 @@ pub trait WhipExecutor {
 }
 
 /// Sends through the `orca` CLI. Notifications are log lines for now.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct OrcaExecutor {
     client: OrcaClient,
+}
+
+/// A client that runs `orca` without the launching terminal's identity, so nudges are not
+/// attributed to the Orca terminal Myrstack was started from.
+impl Default for OrcaExecutor {
+    fn default() -> Self {
+        Self::new(OrcaClient::new().without_sender_identity())
+    }
 }
 
 impl OrcaExecutor {

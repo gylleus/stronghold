@@ -2,6 +2,7 @@
 
 pub mod broadcast;
 pub mod graph;
+pub mod settings;
 pub mod sidebar;
 pub mod subagent;
 pub mod table;

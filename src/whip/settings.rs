@@ -15,6 +15,8 @@ use crate::whip::rules::DEFAULT_THRESHOLD_MS;
 const MIN: i64 = 60_000;
 /// File name inside the config dir.
 pub const SETTINGS_FILE: &str = "settings.json";
+/// Environment variable overriding the settings file path, e.g. for test runs.
+pub const SETTINGS_ENV: &str = "MYRSTACK_SETTINGS";
 
 /// Everything persisted in `settings.json`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +92,19 @@ impl Settings {
     pub fn default_path() -> Option<PathBuf> {
         directories::ProjectDirs::from("", "", crate::APP_NAME)
             .map(|dirs| dirs.config_dir().join(SETTINGS_FILE))
+    }
+
+    /// The settings file in use: `$MYRSTACK_SETTINGS` when set and non-empty, else
+    /// [`Settings::default_path`].
+    pub fn path() -> Option<PathBuf> {
+        Self::path_with_override(std::env::var_os(SETTINGS_ENV))
+    }
+
+    fn path_with_override(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
+        value
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .or_else(Self::default_path)
     }
 
     /// Reads `path`. Missing file → defaults, silently. Unreadable or invalid → defaults and a
@@ -193,6 +208,17 @@ mod tests {
         if let Some(p) = Settings::default_path() {
             assert!(p.ends_with(Path::new("Myrstack").join(SETTINGS_FILE)));
         }
+    }
+
+    #[test]
+    fn env_override_wins_over_default_path() {
+        let custom = Settings::path_with_override(Some("/tmp/x/settings.json".into()));
+        assert_eq!(custom, Some(PathBuf::from("/tmp/x/settings.json")));
+        assert_eq!(
+            Settings::path_with_override(Some("".into())),
+            Settings::default_path()
+        );
+        assert_eq!(Settings::path_with_override(None), Settings::default_path());
     }
 
     #[test]

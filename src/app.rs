@@ -10,12 +10,13 @@ use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
 use crate::detect::detect_prompt;
 use crate::fleet::FleetData;
 use crate::hotkey::Hotkey;
-use crate::model::{FleetSnapshot, Node, NodeId, NodeKind};
+use crate::model::{FleetSnapshot, Node, NodeId, NodeKind, NodeState};
 use crate::orca::OrcaClient;
 use crate::poller::{Poller, PollerCommand, PollerConfig, ScreenUpdate};
 use crate::ui;
 use crate::ui::graph::GraphView;
 use crate::ui::sidebar::FleetFilter;
+use crate::whip::{self, WhipInput, WhipRunner, WhipStatus};
 
 /// How often the UI redraws without new data, so relative times keep ticking.
 const TICK: Duration = Duration::from_secs(1);
@@ -57,6 +58,10 @@ pub struct MyrstackApp {
     actions: ActionRunner,
     /// Input box drafts and send statuses, per terminal.
     input: ui::terminal::InputPanelState,
+    /// Runs the whip on its own thread against the newest data.
+    whip: WhipRunner,
+    whip_status: WhipStatus,
+    whip_window: ui::settings::WhipSettingsWindow,
 }
 
 impl MyrstackApp {
@@ -77,6 +82,13 @@ impl MyrstackApp {
             PollerConfig::default(),
             Some(Box::new(move || repaint_ctx.request_repaint())),
         );
+        let whip_window = ui::settings::WhipSettingsWindow::load(whip::Settings::path());
+        let repaint_ctx = cc.egui_ctx.clone();
+        let whip = WhipRunner::spawn(
+            whip_window.whip().clone(),
+            Box::new(|| Box::new(whip::OrcaExecutor::default())),
+            Some(Box::new(move || repaint_ctx.request_repaint())),
+        );
         Self {
             hotkey,
             poller,
@@ -94,7 +106,37 @@ impl MyrstackApp {
             broadcast: ui::broadcast::BroadcastWindow::new(),
             actions,
             input: ui::terminal::InputPanelState::default(),
+            whip,
+            whip_status: WhipStatus::default(),
+            whip_window,
         }
+    }
+
+    /// Takes the whip's newest status; true when the escalated set changed (nodes to redraw).
+    fn poll_whip(&mut self) -> bool {
+        let Some(status) = self.whip.latest() else {
+            return false;
+        };
+        let changed = status.escalated != self.whip_status.escalated;
+        self.whip_status = status;
+        changed
+    }
+
+    /// Hands the whip the current data, with the terminals shown as NeedsInput.
+    fn feed_whip(&self) {
+        let (Some(data), Some(snapshot)) = (&self.data, &self.snapshot) else {
+            return;
+        };
+        let needs_input = snapshot
+            .nodes
+            .iter()
+            .filter(|n| n.state == NodeState::NeedsInput)
+            .filter_map(|n| n.terminal_handle.clone())
+            .collect();
+        self.whip.send_input(WhipInput {
+            data: data.clone(),
+            needs_input,
+        });
     }
 
     /// The selected node and its info when it is a subagent in the latest Claude scan.
@@ -212,6 +254,7 @@ impl MyrstackApp {
             if ui.button("Broadcast…").clicked() {
                 self.broadcast.open = true;
             }
+            self.whip_window.button(ui);
             if let Some(data) = &self.data
                 && let Some(first) = data.errors.first()
             {
@@ -284,9 +327,14 @@ impl eframe::App for MyrstackApp {
             }
             self.screen = Some(update);
         }
+        rebuild |= self.poll_whip();
         if rebuild && let Some(data) = &self.data {
-            let snapshot =
-                FleetSnapshot::build_with_claude(data, self.claude_data.as_ref(), now_ms());
+            let snapshot = FleetSnapshot::build_with_stalled(
+                data,
+                self.claude_data.as_ref(),
+                &self.whip_status.escalated,
+                now_ms(),
+            );
             self.graph.set_hidden(&self.filter.hidden(&snapshot));
             self.graph.sync(&snapshot);
             if let Some(id) = &self.selected
@@ -295,6 +343,7 @@ impl eframe::App for MyrstackApp {
                 self.selected = None;
             }
             self.snapshot = Some(snapshot);
+            self.feed_whip();
         }
         for result in self.actions.poll() {
             if self.input.on_result(&result, now_ms()) {
@@ -353,6 +402,9 @@ impl eframe::App for MyrstackApp {
         self.broadcast.show(ui.ctx(), self.snapshot.as_ref(), || {
             Box::new(OrcaClient::new())
         });
+        if let Some(settings) = self.whip_window.show(ui.ctx(), &self.whip_status, now_ms) {
+            self.whip.update_settings(settings);
+        }
         self.sync_screen_watch();
     }
 }
