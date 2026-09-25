@@ -275,8 +275,7 @@ fn layout_settles_for_large_fleet() {
     assert_eq!(view.node_count(), 120);
 
     let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 800.0));
-    let mut algorithm =
-        FruchtermanReingoldWithExtras::<Extras>::from_state(layout::initial_state());
+    let mut algorithm = FruchtermanReingoldWithExtras::<Extras>::from_state(view.layout_state());
     let mut settle = SettleTracker::default();
     let mut settled_at = None;
     for step in 0..5_000 {
