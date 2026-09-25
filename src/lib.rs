@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod claude;
+pub mod hotkey;
 pub mod model;
 pub mod orca;
 pub mod poller;
