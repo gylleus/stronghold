@@ -1,0 +1,1 @@
+//! Plain table of terminals.
