@@ -29,6 +29,9 @@ use crate::whip::progress::{ProgressReport, ProgressTracker};
 use crate::whip::rules::{RuleContext, StallFinding, StallReason, StallTarget, evaluate};
 use crate::whip::settings::WhipSettings;
 
+/// Outcome of an action that was carried out.
+const SENT: &str = "sent";
+
 /// Default size of the action log ring buffer.
 pub const DEFAULT_LOG_CAPACITY: usize = 500;
 
@@ -187,7 +190,7 @@ impl WhipEngine {
                     last_nudge_ms: now_ms,
                 },
             );
-            let via = if attempt > 1 && idle_since(data, &handle, previous) {
+            let via = if attempt > 1 && idle_since(self.tracker.output_ms(&handle), previous) {
                 NudgeVia::Terminal {
                     handle: handle.clone(),
                 }
@@ -223,6 +226,11 @@ impl WhipEngine {
             } else {
                 perform(action, executor, settings)
             };
+            if let WhipAction::Nudge { handle, .. } = action
+                && outcome == SENT
+            {
+                self.tracker.record_nudge(handle, now_ms);
+            }
             let entry = WhipLogEntry {
                 at_ms: now_ms,
                 action: action.summary(),
@@ -310,12 +318,13 @@ fn last_output_ms(data: &FleetData, handle: &str) -> Option<i64> {
     data.terminal(handle)?.last_output_at.as_ref()?.epoch_ms()
 }
 
-/// The terminal has printed nothing since the previous nudge, so the bus nudge did not wake it.
-fn idle_since(data: &FleetData, handle: &str, previous_nudge_ms: Option<i64>) -> bool {
+/// The terminal (last output `output_ms`, nudge echoes excluded) has printed nothing since the
+/// previous nudge, so the bus nudge did not wake it.
+fn idle_since(output_ms: Option<i64>, previous_nudge_ms: Option<i64>) -> bool {
     let Some(prev) = previous_nudge_ms else {
         return false;
     };
-    last_output_ms(data, handle).is_none_or(|out| out <= prev)
+    output_ms.is_none_or(|out| out <= prev)
 }
 
 /// Workers get `dispatch:<id>` when the nudge covers one task with a known dispatch, otherwise
@@ -437,7 +446,7 @@ fn perform(action: &WhipAction, executor: &dyn WhipExecutor, settings: &WhipSett
         }
     };
     match result {
-        Ok(()) => "sent".into(),
+        Ok(()) => SENT.into(),
         Err(e) => {
             log::warn!("whip: {} failed: {e:#}", action.summary());
             format!("failed: {e:#}")
@@ -637,17 +646,89 @@ mod tests {
 
     #[test]
     fn terminal_fallback_only_when_idle_since_last_nudge() {
-        let mut data = fleet();
         // First nudge: never the terminal.
-        assert!(!idle_since(&data, WORKER, None));
+        assert!(!idle_since(Some(T0), None));
         // Last output at T0, nudged at T0 + 16: no reaction.
-        assert!(idle_since(&data, WORKER, Some(T0 + 16 * MIN)));
+        assert!(idle_since(Some(T0), Some(T0 + 16 * MIN)));
         // Output after the nudge: the terminal is busy, keep using the bus.
-        data.terminals[1].last_output_at = Some(Timestamp::Millis(T0 + 17 * MIN));
-        assert!(!idle_since(&data, WORKER, Some(T0 + 16 * MIN)));
+        assert!(!idle_since(Some(T0 + 17 * MIN), Some(T0 + 16 * MIN)));
         // Unknown output time counts as idle.
-        data.terminals[1].last_output_at = None;
-        assert!(idle_since(&data, WORKER, Some(T0 + 16 * MIN)));
+        assert!(idle_since(None, Some(T0 + 16 * MIN)));
+    }
+
+    /// Ticks and executes live every minute from `from` to `to` (inclusive), with the worker's
+    /// terminal printing `echo_after_ms` after every nudge sent to it.
+    fn run_live_with_echo(
+        engine: &mut WhipEngine,
+        data: &mut FleetData,
+        exec: &FakeExecutor,
+        from: i64,
+        to: i64,
+        echo_after_ms: i64,
+    ) -> Vec<(i64, String)> {
+        let s = settings();
+        let mut out = Vec::new();
+        for m in from..=to {
+            let now = T0 + m * MIN;
+            let actions = engine.tick(data, &BTreeSet::new(), &s, now);
+            engine.execute(&actions, exec, &s, now);
+            for a in &actions {
+                if let WhipAction::Nudge { handle, .. } = a {
+                    let term = data.terminals.iter_mut().find(|t| &t.handle == handle);
+                    term.unwrap().last_output_at = Some(Timestamp::Millis(now + echo_after_ms));
+                }
+                out.push((m, a.summary()));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn nudge_echo_does_not_reset_the_ladder() {
+        let mut engine = WhipEngine::new();
+        let mut data = fleet();
+        let exec = FakeExecutor::default();
+        // Every nudge prints into the worker's pane 3 s later; the worker does nothing else.
+        let actions = run_live_with_echo(&mut engine, &mut data, &exec, 0, 40, 3_000);
+        assert_eq!(
+            actions,
+            vec![
+                (16, "nudge #1 via bus to dispatch:ctx_t1".to_string()),
+                (26, "nudge #2 via terminal input".to_string()),
+                (36, "escalate".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn late_output_after_a_nudge_is_progress() {
+        let mut engine = WhipEngine::new();
+        let mut data = fleet();
+        let exec = FakeExecutor::default();
+        // The worker wakes up and prints 2 minutes after the nudge: real progress.
+        let actions = run_live_with_echo(&mut engine, &mut data, &exec, 0, 30, 2 * MIN);
+        assert_eq!(
+            actions,
+            vec![(16, "nudge #1 via bus to dispatch:ctx_t1".to_string())]
+        );
+        assert!(engine.target_state(&worker_target("t1")).is_none());
+    }
+
+    #[test]
+    fn dry_run_nudges_do_not_hide_output() {
+        let mut engine = WhipEngine::new();
+        let mut data = fleet();
+        let s = WhipSettings::default();
+        let exec = DryRunExecutor::new();
+        for m in 0..=16 {
+            let now = T0 + m * MIN;
+            let actions = engine.tick(&data, &BTreeSet::new(), &s, now);
+            engine.execute(&actions, &exec, &s, now);
+        }
+        // Nothing was sent, so output right after the dry-run nudge is the agent's own.
+        data.terminals[1].last_output_at = Some(Timestamp::Millis(T0 + 16 * MIN + 1_000));
+        engine.tick(&data, &BTreeSet::new(), &s, T0 + 17 * MIN);
+        assert!(engine.target_state(&worker_target("t1")).is_none());
     }
 
     #[test]

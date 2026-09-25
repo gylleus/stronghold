@@ -198,6 +198,17 @@ impl FleetSnapshot {
 
     /// Like [`FleetSnapshot::build`], plus subagent nodes and edges from `claude`.
     pub fn build_with_claude(data: &FleetData, claude: Option<&ClaudeData>, now_ms: i64) -> Self {
+        Self::build_with_stalled(data, claude, &BTreeSet::new(), now_ms)
+    }
+
+    /// Like [`FleetSnapshot::build_with_claude`], with the terminals in `stalled` (the whip's
+    /// escalated handles) marked stalled, see [`StateInputs::stalled`].
+    pub fn build_with_stalled(
+        data: &FleetData,
+        claude: Option<&ClaudeData>,
+        stalled: &BTreeSet<String>,
+        now_ms: i64,
+    ) -> Self {
         let live: HashMap<&str, &Terminal> = data
             .terminals
             .iter()
@@ -215,13 +226,14 @@ impl FleetSnapshot {
         for terminal in &data.terminals {
             let handle = terminal.handle.as_str();
             let node = if let Some(run_id) = coordinator_run.get(handle) {
-                let mut node = terminal_node(terminal, NodeKind::Coordinator, now_ms, data);
+                let mut node =
+                    terminal_node(terminal, NodeKind::Coordinator, now_ms, data, stalled);
                 node.run_id = Some((*run_id).to_string());
                 node
             } else if let Some(worker) = worker_for_terminal.get(handle) {
-                worker_node(data, worker, Some(terminal), now_ms)
+                worker_node(data, worker, Some(terminal), now_ms, stalled)
             } else {
-                terminal_node(terminal, NodeKind::Terminal, now_ms, data)
+                terminal_node(terminal, NodeKind::Terminal, now_ms, data, stalled)
             };
             nodes.push(node);
         }
@@ -237,7 +249,7 @@ impl FleetSnapshot {
             if handle.is_some_and(|h| live.contains_key(h)) || !live_runs.contains(run_id) {
                 continue;
             }
-            let mut node = worker_node(data, worker, None, now_ms);
+            let mut node = worker_node(data, worker, None, now_ms, stalled);
             if worker.terminal_state == Some(WorkerTerminalState::Released) {
                 match released_at_ms(worker) {
                     Some(at) if now_ms - at <= RELEASED_FADE_MS => node.released_at_ms = Some(at),
@@ -409,9 +421,16 @@ fn released_at_ms(worker: &Worker) -> Option<i64> {
         .epoch_ms()
 }
 
-fn terminal_node(terminal: &Terminal, kind: NodeKind, now_ms: i64, data: &FleetData) -> Node {
+fn terminal_node(
+    terminal: &Terminal,
+    kind: NodeKind,
+    now_ms: i64,
+    data: &FleetData,
+    stalled: &BTreeSet<String>,
+) -> Node {
     let inputs = StateInputs {
         needs_input: data.screen_needs_input(&terminal.handle),
+        stalled: stalled.contains(&terminal.handle),
         ..StateInputs::new(Some(terminal), None, now_ms)
     };
     Node {
@@ -441,10 +460,11 @@ fn worker_node(
     worker: &Worker,
     terminal: Option<&Terminal>,
     now_ms: i64,
+    stalled: &BTreeSet<String>,
 ) -> Node {
     let task = find_task(data, worker);
     let mut node = match terminal {
-        Some(t) => terminal_node(t, NodeKind::Worker, now_ms, data),
+        Some(t) => terminal_node(t, NodeKind::Worker, now_ms, data, stalled),
         None => Node {
             id: NodeId::dispatch(worker.run_id.as_deref().unwrap_or(""), &worker.dispatch_id),
             kind: NodeKind::Worker,
@@ -476,6 +496,7 @@ fn worker_node(
     node.label = label::worker_label(task, terminal, worker);
     node.state = derive_state(&StateInputs {
         needs_input: terminal.and_then(|t| data.screen_needs_input(&t.handle)),
+        stalled: terminal.is_some_and(|t| stalled.contains(&t.handle)),
         ..StateInputs::new(terminal, Some(worker), now_ms)
     });
     node

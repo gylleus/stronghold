@@ -17,6 +17,9 @@ use crate::whip::rules::effective_coordinator;
 const REJECTION_KEY: &str = "_orcaLifecycleRejection";
 /// Prefix of a coordinator's deliberate-idle `status` message.
 const HOLDING_PREFIX: &str = "holding:";
+/// Terminal output this soon after our own nudge to that terminal is taken to be the nudge's
+/// echo (the message landing in the agent's pane), not progress.
+pub const NUDGE_ECHO_MS: i64 = 60_000;
 
 /// Which signal produced a progress time.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,10 +86,15 @@ struct SeenStatus {
     since_ms: Option<i64>,
 }
 
-/// Remembers task statuses across polls, since Orca exposes no status-change time.
+/// Remembers task statuses across polls, since Orca exposes no status-change time, and filters
+/// the echo of our own nudges out of terminal output.
 #[derive(Debug, Default)]
 pub struct ProgressTracker {
     seen: HashMap<String, SeenStatus>,
+    /// Time of the newest nudge sent to each terminal.
+    nudged_at: HashMap<String, i64>,
+    /// Newest output time per terminal that was not a nudge echo.
+    accepted_output: HashMap<String, i64>,
 }
 
 impl ProgressTracker {
@@ -94,8 +102,41 @@ impl ProgressTracker {
         Self::default()
     }
 
+    /// Records that a nudge was sent to `handle` at `at_ms`, so its echo in the terminal is not
+    /// mistaken for progress.
+    pub fn record_nudge(&mut self, handle: &str, at_ms: i64) {
+        let at = self.nudged_at.entry(handle.to_string()).or_insert(at_ms);
+        *at = (*at).max(at_ms);
+    }
+
+    /// The terminal's last output time as of the last [`ProgressTracker::update`], ignoring
+    /// output within [`NUDGE_ECHO_MS`] after a nudge to it: then the newest earlier output.
+    pub fn output_ms(&self, handle: &str) -> Option<i64> {
+        self.accepted_output.get(handle).copied()
+    }
+
+    fn update_output(&mut self, data: &FleetData) {
+        let live: HashSet<&str> = data.terminals.iter().map(|t| t.handle.as_str()).collect();
+        self.nudged_at.retain(|h, _| live.contains(h.as_str()));
+        self.accepted_output
+            .retain(|h, _| live.contains(h.as_str()));
+        for term in &data.terminals {
+            let Some(out) = ts_ms(&term.last_output_at) else {
+                continue;
+            };
+            let echo = self
+                .nudged_at
+                .get(&term.handle)
+                .is_some_and(|&n| out >= n && out - n <= NUDGE_ECHO_MS);
+            if !echo {
+                self.accepted_output.insert(term.handle.clone(), out);
+            }
+        }
+    }
+
     /// Records status transitions in `data` (observed at `now_ms`) and computes the report.
     pub fn update(&mut self, data: &FleetData, now_ms: i64) -> ProgressReport {
+        self.update_output(data);
         let mut present = HashSet::new();
         for task in data.tasks.values().flatten() {
             present.insert(task.id.clone());
@@ -125,7 +166,7 @@ impl ProgressTracker {
         for (run_id, run_tasks) in &data.tasks {
             for task in run_tasks {
                 let since = self.seen.get(&task.id).and_then(|s| s.since_ms);
-                tasks.push(task_progress(data, &bus, run_id, task, since));
+                tasks.push(task_progress(data, &bus, run_id, task, since, self));
             }
         }
 
@@ -194,8 +235,8 @@ impl ProgressTracker {
             }
         }
 
-        for term in coordinators.iter().filter_map(|h| data.terminal(h)) {
-            latest.offer(ts_ms(&term.last_output_at), ProgressSource::TerminalOutput);
+        for handle in &coordinators {
+            latest.offer(self.output_ms(handle), ProgressSource::TerminalOutput);
         }
 
         let holding = coordinator_msgs
@@ -403,6 +444,7 @@ fn task_progress(
     run_id: &str,
     task: &Task,
     status_since: Option<i64>,
+    tracker: &ProgressTracker,
 ) -> TaskProgress {
     let worker = owning_worker(data, task);
     let mut progress = TaskProgress {
@@ -451,12 +493,9 @@ fn task_progress(
 
     // The owner's output only speaks for this task while the task holds its terminal.
     if task.status == TaskStatus::Dispatched
-        && let Some(term) = progress
-            .owner_handle
-            .as_deref()
-            .and_then(|h| data.terminal(h))
+        && let Some(handle) = progress.owner_handle.as_deref()
     {
-        latest.offer(ts_ms(&term.last_output_at), ProgressSource::TerminalOutput);
+        latest.offer(tracker.output_ms(handle), ProgressSource::TerminalOutput);
     }
 
     progress.last_progress_ms = latest.ms;
@@ -686,6 +725,77 @@ mod tests {
         let t = only_task(&report);
         assert_eq!(t.source, ProgressSource::TerminalOutput);
         assert_eq!(t.phase.as_deref(), Some("reviewing"));
+    }
+
+    #[test]
+    fn nudge_echo_is_not_worker_progress() {
+        let mut data = fleet(vec![task("t1", "dispatched")], vec![]);
+        data.terminals = vec![terminal(WORKER, T0)];
+        let mut tracker = ProgressTracker::new();
+        tracker.update(&data, T0 + 16 * MIN);
+        tracker.record_nudge(WORKER, T0 + 16 * MIN);
+
+        // The nudge lands in the pane 2 s later: still silent since T0.
+        data.terminals[0].last_output_at = Some(Timestamp::Millis(T0 + 16 * MIN + 2_000));
+        let report = tracker.update(&data, T0 + 17 * MIN);
+        let t = only_task(&report);
+        assert_eq!(t.last_progress_ms, Some(T0));
+        assert_eq!(tracker.output_ms(WORKER), Some(T0));
+
+        // Right at the window's end it is still echo; later output is real.
+        data.terminals[0].last_output_at = Some(Timestamp::Millis(T0 + 16 * MIN + NUDGE_ECHO_MS));
+        let report = tracker.update(&data, T0 + 18 * MIN);
+        assert_eq!(only_task(&report).last_progress_ms, Some(T0));
+        data.terminals[0].last_output_at =
+            Some(Timestamp::Millis(T0 + 16 * MIN + NUDGE_ECHO_MS + 1));
+        let report = tracker.update(&data, T0 + 18 * MIN);
+        assert_eq!(
+            only_task(&report).last_progress_ms,
+            Some(T0 + 16 * MIN + NUDGE_ECHO_MS + 1)
+        );
+    }
+
+    #[test]
+    fn bus_signals_inside_the_echo_window_still_count() {
+        let mut data = fleet(vec![task("t1", "dispatched")], vec![]);
+        data.terminals = vec![terminal(WORKER, T0)];
+        let mut tracker = ProgressTracker::new();
+        tracker.update(&data, T0 + 16 * MIN);
+        tracker.record_nudge(WORKER, T0 + 16 * MIN);
+        data.terminals[0].last_output_at = Some(Timestamp::Millis(T0 + 16 * MIN + 5_000));
+        data.inbox = vec![heartbeat("m1", T0 + 16 * MIN + 10_000, "implementing")];
+        let report = tracker.update(&data, T0 + 17 * MIN);
+        let t = only_task(&report);
+        assert_eq!(t.last_progress_ms, Some(T0 + 16 * MIN + 10_000));
+        assert!(matches!(t.source, ProgressSource::Heartbeat { .. }));
+    }
+
+    #[test]
+    fn nudge_echo_is_not_coordinator_activity() {
+        let mut data = fleet(vec![task("t1", "completed")], vec![]);
+        data.workers.clear();
+        data.terminals = vec![terminal(COORD, T0 + 2 * MIN)];
+        let mut tracker = ProgressTracker::new();
+        tracker.update(&data, T0 + 20 * MIN);
+        tracker.record_nudge(COORD, T0 + 20 * MIN);
+        data.terminals[0].last_output_at = Some(Timestamp::Millis(T0 + 20 * MIN + 1_000));
+        let report = tracker.update(&data, T0 + 21 * MIN);
+        let run = &report.runs[0];
+        assert_eq!(run.last_coordinator_activity_ms, Some(T0 + 2 * MIN));
+    }
+
+    #[test]
+    fn echo_on_first_sight_leaves_no_output() {
+        let mut data = fleet(vec![task("t1", "dispatched")], vec![]);
+        data.terminals = vec![terminal(WORKER, T0 + 10_000)];
+        let mut tracker = ProgressTracker::new();
+        tracker.record_nudge(WORKER, T0);
+        tracker.update(&data, T0 + MIN);
+        assert_eq!(tracker.output_ms(WORKER), None);
+        // Output before the nudge is never echo.
+        data.terminals[0].last_output_at = Some(Timestamp::Millis(T0 - 1));
+        tracker.update(&data, T0 + MIN);
+        assert_eq!(tracker.output_ms(WORKER), Some(T0 - 1));
     }
 
     #[test]

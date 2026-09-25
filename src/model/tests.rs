@@ -149,6 +149,32 @@ fn run_has_coordinator_workers_and_task_counts() {
 }
 
 #[test]
+fn escalated_handles_render_stalled() {
+    let data = scenario();
+    let stalled = BTreeSet::from([
+        COORDINATOR.to_string(),
+        LIVE_WORKER.to_string(),
+        LOOSE.to_string(),
+    ]);
+    let snap = FleetSnapshot::build_with_stalled(&data, None, &stalled, NOW);
+    // Stalled beats Working and Idle, but not NeedsInput.
+    assert_eq!(
+        snap.node(&term(COORDINATOR)).unwrap().state,
+        NodeState::Stalled
+    );
+    assert_eq!(snap.node(&term(LOOSE)).unwrap().state, NodeState::Stalled);
+    assert_eq!(
+        snap.node(&term(LIVE_WORKER)).unwrap().state,
+        NodeState::NeedsInput
+    );
+    let plain = FleetSnapshot::build_with_claude(&data, None, NOW);
+    assert_eq!(
+        plain.node(&term(COORDINATOR)).unwrap().state,
+        NodeState::Working
+    );
+}
+
+#[test]
 fn loose_terminal_is_labelled_by_title() {
     let snap = FleetSnapshot::build(&scenario(), NOW);
     let loose: Vec<_> = snap.loose_nodes().collect();
