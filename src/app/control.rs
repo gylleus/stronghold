@@ -67,6 +67,7 @@ struct Fingerprint {
     selection: BTreeSet<NodeId>,
     filter: FleetFilter,
     whip_window_open: bool,
+    playbook: u64,
 }
 
 impl AppControl {
@@ -110,6 +111,7 @@ impl MyrstackApp {
             selection: self.graph.selection(),
             filter: self.filter.clone(),
             whip_window_open: self.whip_window.open,
+            playbook: self.playbook_watch.generation,
         }
     }
 
@@ -119,7 +121,7 @@ impl MyrstackApp {
         if self.control.published.as_ref() == Some(&fingerprint) {
             return;
         }
-        let view = StatusView::build(&ViewInputs {
+        let mut view = StatusView::build(&ViewInputs {
             snapshot: self.snapshot.as_ref(),
             data: self.data.as_ref(),
             claude: self.claude_data.as_ref(),
@@ -135,6 +137,9 @@ impl MyrstackApp {
             whip_settings_open: self.whip_window.open,
             now_ms: now_ms(),
         });
+        if let Some(status) = self.playbook_status() {
+            view.playbook = status.view();
+        }
         self.control.status.publish(view);
         self.control.published = Some(fingerprint);
     }

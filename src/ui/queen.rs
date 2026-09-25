@@ -7,6 +7,7 @@ use eframe::egui::{self, RichText, Ui};
 
 use crate::broadcast::BroadcastSender;
 use crate::model::{FleetSnapshot, NodeId, NodeKind, NodeState};
+use crate::playbook::fetches::PlaybookStatus;
 use crate::quota::Quotas;
 use crate::ui::broadcast::BroadcastComposer;
 use crate::ui::graph::{ALL_STATES, hexagon, kind_label, queen_color, state_color, state_label};
@@ -87,6 +88,8 @@ pub struct QueenInputs<'a> {
     pub whip: &'a WhipStatus,
     pub quotas: &'a Quotas,
     pub now_ms: i64,
+    /// Who runs which playbook version; `None` hides it.
+    pub playbook: Option<&'a PlaybookStatus>,
 }
 
 /// What the user did in the panel this frame.
@@ -154,6 +157,9 @@ pub fn queen_panel(
             }
         }
     });
+    if let Some(status) = inputs.playbook {
+        crate::ui::playbook::playbook_line(ui, status, inputs.now_ms);
+    }
 
     egui::CollapsingHeader::new(RichText::new("Fleet summary").strong())
         .id_salt("queen_summary")
@@ -173,6 +179,11 @@ pub fn queen_panel(
                         ui.horizontal_wrapped(|ui| {
                             crate::ui::quota::quota_chips(ui, inputs.quotas, inputs.now_ms);
                         });
+                    }
+                    if let Some(status) = inputs.playbook
+                        && let Some(id) = crate::ui::playbook::stale_list(ui, status, inputs.now_ms)
+                    {
+                        response.select = Some(id);
                     }
                 });
         });
@@ -325,6 +336,7 @@ mod tests {
                 whip: &whip,
                 quotas: &quotas,
                 now_ms: 0,
+                playbook: None,
             };
             queen_panel(ui, &mut panel, inputs, || Box::new(NeverSender), |_| {})
         });
@@ -350,6 +362,7 @@ mod tests {
                         whip: &whip,
                         quotas: &quotas,
                         now_ms: 0,
+                        playbook: None,
                     },
                     || Box::new(NeverSender),
                     |ui| {

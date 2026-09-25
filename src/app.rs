@@ -9,6 +9,7 @@ use crate::APP_NAME;
 
 mod chat;
 mod control;
+mod playbook;
 mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
@@ -97,6 +98,8 @@ pub struct MyrstackApp {
     control: control::AppControl,
     /// "Close session" confirmation dialog and the log of closes.
     close: ui::close::CloseDialog,
+    /// Who fetched which playbook version, re-read off the UI thread.
+    playbook_watch: playbook::PlaybookWatch,
     /// The Queen's chat, drawn in her panel.
     chat: chat::AppChat,
     /// Manual whips in flight, their confirmation popover and result toast.
@@ -166,6 +169,7 @@ impl MyrstackApp {
             help_open: false,
             frame_stats: ui::frame_stats::FrameStats::default(),
             close: ui::close::CloseDialog::default(),
+            playbook_watch: playbook::PlaybookWatch::spawn(repaint_once(ctx)),
             chat: chat::AppChat::start(ctx),
             whip_now: whip_now::WhipNowState::default(),
         };
@@ -333,12 +337,14 @@ impl MyrstackApp {
             return false;
         }
         let default_width = ui.ctx().content_rect().width() * 0.45;
+        let playbook = self.playbook_status();
         let snapshot = self.snapshot.as_ref();
         let inputs = ui::queen::QueenInputs {
             snapshot,
             whip: &self.whip_status,
             quotas: &self.quotas,
             now_ms,
+            playbook: playbook.as_ref(),
         };
         let (queen, chat) = (&mut self.queen, &mut self.chat);
         let mut chat_select = None;
@@ -847,6 +853,7 @@ impl eframe::App for MyrstackApp {
         }
         rebuild |= self.poll_whip();
         self.poll_quota();
+        self.poll_playbook();
         if rebuild && let Some(data) = &self.data {
             let snapshot = FleetSnapshot::build_with_stalled(
                 data,

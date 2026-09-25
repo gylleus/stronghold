@@ -15,6 +15,8 @@ use crate::detect::PromptKind;
 use crate::fleet::FleetData;
 use crate::model::{EdgeKind, FleetSnapshot, Node, NodeKind, NodeState, TaskCounts, fleet_state};
 use crate::notify::{self, Delivered};
+use crate::playbook::fetches::PlaybookView;
+use crate::playbook::fill::FleetFacts;
 use crate::quota::{self, Quotas, Severity};
 use crate::ui::sidebar::{FleetFilter, node_repo};
 use crate::whip::{WhipLogItem, WhipSettings, WhipStatus};
@@ -39,6 +41,12 @@ pub struct StatusView {
     pub quotas: QuotasView,
     pub alerts: Vec<AlertView>,
     pub dashboard: DashboardView,
+    /// Current playbook version and who fetched which; set by the app after [`StatusView::build`].
+    #[serde(default)]
+    pub playbook: PlaybookView,
+    /// The raw poll data the `fleet_data` method serves (for filled playbook templates).
+    #[serde(skip)]
+    pub fleet_data: Option<Arc<FleetFacts>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -452,6 +460,8 @@ impl StatusView {
                 filter: filter_view(inputs.filter, snapshot),
                 whip_settings_open: inputs.whip_settings_open,
             },
+            playbook: PlaybookView::default(),
+            fleet_data: inputs.data.map(|d| Arc::new(FleetFacts::from_fleet(d))),
         }
     }
 

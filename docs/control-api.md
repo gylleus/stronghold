@@ -117,8 +117,17 @@ first poll, with `ready: false`.
     "dashboard":{"view":"graph","selected":"queen","selection":["queen"],
                  "filter":{"repos":[],"states":[],"kinds":[],"text":"","show_loose":true,
                            "show_released":true,"hidden":0},
-                 "whip_settings_open":false}}}
+                 "whip_settings_open":false},
+    "playbook":{"current":"1b0b685","current_hash":"4acf3d6",
+                "nodes":[{"node":"term:term_df9f…","label":"…","kind":"coordinator",
+                          "terminal_handle":"term_df9f…","at_ms":…,"via":"prompt:coordinator",
+                          "target":"coordinator","section":null,"version":"1809c8a",
+                          "hash":"3f9a1c2","stale":true}]}}}
 ```
+
+`playbook` is the current playbook version and each node's newest playbook fetch (see
+[mcp.md](mcp.md#who-runs-which-version)); `stale` means the same target serves different text
+now. `current` is `null` until the app has read the fetch log.
 
 `dashboard.selected` is the primary selected node (whose panel is shown); `dashboard.selection`
 lists every node selected in the graph, several after a box select or Shift/Cmd-click.
@@ -217,6 +226,13 @@ about, if that node is still in the fleet.
 {"v":1,"method":"alerts"}
 → {"ok":true,"result":{"alerts":[{"at_ms":…,"title":"Myrstack: … needs input","node":"term:term_…"}]}}
 ```
+
+### `fleet_data`
+
+The last poll's raw Orca data: `{polled_at_ms, terminals, runs, workers, tasks: {run_id: [...]},
+inbox}` in Orca's own field names, without terminal previews or message bodies. Filled playbook
+templates (`myrstack playbook attendant-brief`, MCP `attendant_brief`/`kickoff`) read it.
+`unavailable` before the first poll.
 
 ## Action methods
 

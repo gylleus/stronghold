@@ -64,6 +64,8 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `quotas` | – | `quotas` | read-only |
 | `get_playbook` | `role` (default `coordinator`) or `file`, `section` | – (reads the playbook) | read-only |
 | `list_playbook` | – | – (reads the playbook) | read-only |
+| `attendant_brief` | `run_id` | `fleet_data` (headless fallback) | read-only |
+| `kickoff` | `task_id` | `fleet_data` (headless fallback) | read-only |
 
 All tools set `openWorldHint: false`. Agent ids are node ids from `list_agents` or
 `fleet_status` (`term:…`, `dispatch:…`, `sub:…`). A terminal handle or an exact label also
@@ -170,7 +172,41 @@ myrstack playbook worker                       # a role, or a file: KICKOFF-TEMP
 myrstack playbook --section "Coordinator duties"
 myrstack playbook coordinator --list           # section titles
 myrstack playbook --list                       # files, roles, sections
+myrstack playbook attendant-brief run_7c25cdcf46e0
+myrstack playbook kickoff task_509f138460a0
 ```
+
+### Pre-filled templates
+
+`attendant_brief {run_id}` and `kickoff {task_id}` (tools; also the prompts `attendant-brief` and
+`kickoff`, and the CLI above) return `ATTENDANT-BRIEF-TEMPLATE.md` / `KICKOFF-TEMPLATE.md` with
+every `<…>` placeholder Myrstack can answer from live data filled in. The data comes from the
+running app's `fleet_data` control method, else from one read-only Orca poll.
+
+- Attendant brief: campaign (the objective up to its first colon), objective, the run's effective
+  coordinator terminal, the coordinator's Claude scratchpad when its session is known
+  (`/private/tmp/claude-*/*/<session>/scratchpad`), and `RUN_ID=<id>`. Placeholders the attendant
+  fills as it works (`<type>`, `<track>`, `<subject>`, message `<id>`, `<time>`, …) are kept.
+- Kickoff: track name and title, scope from the task spec, repo (worker's worktree, else the
+  coordinator's), a ticket key from the title or spec, blocked-by from the deps and what it
+  blocks. `<one line>` (the approval line) is kept. The task must be in an active run.
+
+Anything else is marked `<…: FILL IN>`. The output starts with a header: template version, data
+source, each filled placeholder with its source, what is left, and facts for the reader (the
+run's live dispatches and bus event types; the task's dispatch, worktree, branch and deps),
+ending in a `----- 8< -----` line. `structuredContent`: `{template, subject, version, source,
+polled_at_ms, filled, missing, runtime}`.
+
+### Who runs which version
+
+Every playbook fetch (prompt, `get_playbook`, resource, filled template, CLI) is appended to
+`<data dir>/playbook-fetches.jsonl` (mode 0600, trimmed to its newest half past 512 KiB): time,
+`via`, target (role or file), section, commit, dirty flag, hash, and the caller's
+`ORCA_TERMINAL_HANDLE` / `ORCA_PANE_KEY` / `ORCA_TAB_ID` when set. The app re-reads it every
+30 s off the UI thread, takes each terminal's newest fetch, and calls it stale when the same
+target now serves different text. The Queen panel shows `Playbook 1b0b685 · 3 coordinators
+current · 1 on an older version` (hover lists everyone; stale nodes are listed and clicking one
+selects it), and the control API's `status` carries it as `playbook`.
 
 ## Example
 

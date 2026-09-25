@@ -381,3 +381,23 @@ fn cli_rejects_bad_options() {
     assert!(cli_text(&args(&["--help"])).unwrap().starts_with("usage:"));
     assert!(run_cli(&args(&["mcp"])).is_none());
 }
+
+#[test]
+fn template_subcommands_need_exactly_one_id() {
+    let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let e = cli_text(&args(&["kickoff"])).unwrap_err().to_string();
+    assert_eq!(e, "usage: myrstack playbook kickoff <task_id>");
+    let e = cli_text(&args(&["attendant-brief", "a", "b"]))
+        .unwrap_err()
+        .to_string();
+    assert_eq!(e, "usage: myrstack playbook attendant-brief <run_id>");
+    let e = cli_text(&args(&["attendant-brief", "--json"]))
+        .unwrap_err()
+        .to_string();
+    assert!(e.starts_with("usage:"), "{e}");
+    let help = cli_text(&args(&["kickoff", "--help"])).unwrap();
+    assert!(
+        help.contains("myrstack playbook kickoff <task_id>"),
+        "{help}"
+    );
+}

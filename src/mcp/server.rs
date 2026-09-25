@@ -44,8 +44,10 @@ first. close_agents only shows the plan unless dry_run=false is passed.
 This server also serves the fleet playbook, the standing rules the fleet runs by, read from disk \
 (no app needed): the prompts coordinator, attendant and worker (slash commands such as \
 /mcp__myrstack__coordinator) load a role's rules; get_playbook and list_playbook fetch a role, a \
-file or one section; resources myrstack://playbook/<file> hold each file. Every answer starts \
-with the playbook version (git commit, dirty flag, content hash).";
+file or one section; resources myrstack://playbook/<file> hold each file. attendant_brief \
+{run_id} and kickoff {task_id} (also prompts attendant-brief and kickoff) return those templates \
+pre-filled from live fleet data. Every answer starts with the playbook version (git commit, dirty \
+flag, content hash).";
 
 /// The MCP session state over one [`Control`].
 pub struct McpServer<C: Control> {
@@ -54,6 +56,8 @@ pub struct McpServer<C: Control> {
     protocol: Option<String>,
     /// Where the playbook is read from; located per request when `None`.
     playbook_dir: Option<PathBuf>,
+    /// Where playbook fetches are logged; `None` logs nothing.
+    fetch_log: Option<PathBuf>,
 }
 
 impl<C: Control> McpServer<C> {
@@ -62,7 +66,14 @@ impl<C: Control> McpServer<C> {
             control,
             protocol: None,
             playbook_dir: None,
+            fetch_log: crate::playbook::fetches::default_path(),
         }
+    }
+
+    /// Logs playbook fetches to `path` instead of the data dir's log.
+    pub fn with_fetch_log(mut self, path: impl Into<PathBuf>) -> Self {
+        self.fetch_log = Some(path.into());
+        self
     }
 
     /// Serves the playbook from `dir` instead of locating it.
@@ -72,10 +83,7 @@ impl<C: Control> McpServer<C> {
     }
 
     fn playbook(&self) -> Result<Playbook, String> {
-        match &self.playbook_dir {
-            Some(dir) => Ok(Playbook::at(dir)),
-            None => Playbook::locate().map_err(|e| format!("{e:#}")),
-        }
+        playbook_at(self.playbook_dir.as_deref())
     }
 
     pub fn control(&mut self) -> &mut C {
@@ -173,9 +181,14 @@ impl<C: Control> McpServer<C> {
             }
             "tools/call" => self.call_tool(params),
             "prompts/list" => Ok(playbook::prompts_list()),
-            "prompts/get" => playbook::prompts_get(self.playbook(), params),
+            "prompts/get" => {
+                let pb = self.playbook();
+                playbook::prompts_get(pb, &mut self.control, params, self.fetch_log.as_deref())
+            }
             "resources/list" => playbook::resources_list(self.playbook()),
-            "resources/read" => playbook::resources_read(self.playbook(), params),
+            "resources/read" => {
+                playbook::resources_read(self.playbook(), params, self.fetch_log.as_deref())
+            }
             "resources/templates/list" => Ok(json!({ "resourceTemplates": [] })),
             other => Err((METHOD_NOT_FOUND, format!("method not found: {other}"))),
         }
@@ -211,7 +224,18 @@ impl<C: Control> McpServer<C> {
         if !(args.is_null() || args.is_object()) {
             return Err((INVALID_PARAMS, "arguments must be an object".into()));
         }
-        let output = playbook::call_tool(|| self.playbook(), name, &args)
+        let log = self.fetch_log.clone();
+        let output = playbook::call_tool(|| self.playbook(), name, &args, log.as_deref())
+            .or_else(|| {
+                let dir = self.playbook_dir.clone();
+                playbook::call_template_tool(
+                    &mut self.control,
+                    || playbook_at(dir.as_deref()),
+                    name,
+                    &args,
+                    log.as_deref(),
+                )
+            })
             .or_else(|| tools::call(&mut self.control, name, &args))
             .ok_or_else(|| (INVALID_PARAMS, format!("unknown tool: {name}")))?;
         let mut result = json!({
@@ -231,6 +255,14 @@ impl<C: Control> McpServer<C> {
         self.protocol
             .as_deref()
             .is_none_or(|v| v >= STRUCTURED_SINCE)
+    }
+}
+
+/// The playbook in `dir`, else wherever [`Playbook::locate`] finds it.
+fn playbook_at(dir: Option<&std::path::Path>) -> Result<Playbook, String> {
+    match dir {
+        Some(dir) => Ok(Playbook::at(dir)),
+        None => Playbook::locate().map_err(|e| format!("{e:#}")),
     }
 }
 

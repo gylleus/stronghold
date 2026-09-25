@@ -18,6 +18,8 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "quotas",
     "get_playbook",
     "list_playbook",
+    "attendant_brief",
+    "kickoff",
     "focus_agent",
     "set_filter",
     "set_view",

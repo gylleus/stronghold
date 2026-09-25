@@ -442,6 +442,8 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "quotas",
         "get_playbook",
         "list_playbook",
+        "attendant_brief",
+        "kickoff",
     ];
     assert_eq!(names, expected);
     let reads = [
@@ -453,6 +455,8 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "quotas",
         "get_playbook",
         "list_playbook",
+        "attendant_brief",
+        "kickoff",
     ];
     let destructive = [
         "send_to_agent",
@@ -955,8 +959,17 @@ fn prompts_list_has_the_three_roles() {
         .iter()
         .map(|p| p["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["coordinator", "attendant", "worker"]);
-    for p in prompts {
+    assert_eq!(
+        names,
+        [
+            "coordinator",
+            "attendant",
+            "worker",
+            "attendant-brief",
+            "kickoff"
+        ]
+    );
+    for p in &prompts[..3] {
         assert!(!p["description"].as_str().unwrap().is_empty());
         assert_eq!(p["arguments"][0]["name"], "section");
         assert_eq!(p["arguments"][0]["required"], false);
@@ -1146,4 +1159,160 @@ fn whip_agents_reports_nudges_skips_and_the_pass() {
         "{t}"
     );
     assert!(t.contains("nudge #1 via bus to dispatch:ctx_1 → worker w task t1 = dry-run"));
+}
+
+// ---------------------------------------------------------------------------
+// Filled templates and the fetch log
+
+fn template_server() -> (tempfile::TempDir, McpServer<FakeControl>) {
+    let (dir, _) = playbook_server();
+    std::fs::write(
+        dir.path().join(crate::playbook::ATTENDANT_BRIEF),
+        "# Brief — <campaign>\nCOORD `<coordinator terminal handle>` · SCRATCH `<coordinator \
+         scratchpad path>` · RUN_ID=<id> · msg <id>\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(crate::playbook::KICKOFF),
+        "# KICKOFF — <track name>\n- Blocked by: <task/PR, or \"none\">\n- <fact>\n",
+    )
+    .unwrap();
+    let facts = crate::playbook::fill::FleetFacts::from_fleet(
+        &crate::playbook::fill::tests::fixture_fleet(),
+    );
+    let control =
+        FakeControl::default().reply("fleet_data", Ok(serde_json::to_value(facts).unwrap()));
+    let server = McpServer::new(control)
+        .with_playbook_dir(dir.path())
+        .with_fetch_log(dir.path().join("fetches.jsonl"));
+    (dir, server)
+}
+
+fn logged(dir: &tempfile::TempDir) -> Vec<crate::playbook::fetches::FetchRecord> {
+    crate::playbook::fetches::read(&dir.path().join("fetches.jsonl"))
+}
+
+#[test]
+fn attendant_brief_tool_fills_from_the_app() {
+    let (dir, mut server) = template_server();
+    let r = call(&mut server, "attendant_brief", json!({"run_id": "run_1"}));
+    assert!(!is_error(&r), "{}", text(&r));
+    let t = text(&r);
+    assert!(t.starts_with("Myrstack pre-filled ATTENDANT-BRIEF-TEMPLATE.md for run run_1"));
+    assert!(t.contains("Data: the running Myrstack app"));
+    assert!(t.contains("COORD `term_coord`"), "{t}");
+    assert!(t.contains("RUN_ID=run_1 · msg <id>"), "{t}");
+    assert_eq!(
+        r["structuredContent"]["missing"],
+        json!(["coordinator scratchpad path"])
+    );
+    assert_eq!(server.control().calls[0].0, "fleet_data");
+    let log = logged(&dir);
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].via, "tool:attendant_brief");
+    assert_eq!(log[0].target, crate::playbook::ATTENDANT_BRIEF);
+}
+
+#[test]
+fn template_tools_check_their_arguments_before_calling_anything() {
+    let (dir, mut server) = template_server();
+    for (tool, args, arg) in [
+        ("attendant_brief", json!({}), "run_id"),
+        ("attendant_brief", json!({"run_id": "  "}), "run_id"),
+        ("kickoff", json!({"task_id": 7}), "task_id"),
+    ] {
+        let r = call(&mut server, tool, args);
+        assert!(is_error(&r));
+        assert!(text(&r).contains(arg), "{}", text(&r));
+    }
+    assert!(server.control().calls.is_empty());
+    let r = call(&mut server, "kickoff", json!({"task_id": "t_nope"}));
+    assert!(is_error(&r) && text(&r).contains("t_nope"));
+    assert!(logged(&dir).is_empty(), "failed fills are not fetches");
+}
+
+#[test]
+fn kickoff_prompt_fills_the_task_and_argument_errors_are_invalid_params() {
+    let (dir, mut server) = template_server();
+    let r = rpc(
+        &mut server,
+        "prompts/get",
+        json!({"name": "kickoff", "arguments": {"task_id": "t_b"}}),
+    );
+    let t = r["result"]["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap();
+    assert!(t.contains("# KICKOFF — track B\n- Blocked by: t_a"), "{t}");
+    assert!(t.contains("- <fact: FILL IN>"));
+    assert_eq!(
+        r["result"]["_meta"]["myrstack/template"]["missing"],
+        json!(["fact"])
+    );
+    assert_eq!(logged(&dir)[0].via, "prompt:kickoff");
+
+    let r = rpc(&mut server, "prompts/get", json!({"name": "kickoff"}));
+    assert_eq!(r["error"]["code"], INVALID_PARAMS);
+    assert!(r["error"]["message"].as_str().unwrap().contains("task_id"));
+    let r = rpc(
+        &mut server,
+        "prompts/get",
+        json!({"name": "attendant-brief", "arguments": {"run_id": "run_nope"}}),
+    );
+    assert_eq!(r["error"]["code"], INVALID_PARAMS);
+    let r = rpc(&mut server, "prompts/list", json!({}));
+    let brief = &r["result"]["prompts"][3];
+    assert_eq!(brief["name"], "attendant-brief");
+    assert_eq!(brief["arguments"][0]["name"], "run_id");
+    assert_eq!(brief["arguments"][0]["required"], true);
+}
+
+#[test]
+fn template_tools_fall_back_to_a_poll_when_the_app_is_down() {
+    let (dir, _) = template_server();
+    let control = FakeControl {
+        fallback: Some(app()),
+        ..FakeControl::default()
+    }
+    .reply("fleet_data", Err(CallError::NotRunning));
+    let mut server = McpServer::new(control).with_playbook_dir(dir.path());
+    let r = call(&mut server, "attendant_brief", json!({"run_id": RUN}));
+    assert!(!is_error(&r), "{}", text(&r));
+    assert!(text(&r).contains("Data: one direct Orca poll"));
+    assert!(
+        text(&r).contains(&format!("COORD `{COORDINATOR}`")),
+        "{}",
+        text(&r)
+    );
+    assert!(server.control().fallback_used);
+}
+
+#[test]
+fn playbook_prompts_tools_and_resources_log_their_fetches() {
+    let (dir, mut server) = template_server();
+    rpc(&mut server, "prompts/get", json!({"name": "worker"}));
+    call(
+        &mut server,
+        "get_playbook",
+        json!({"role": "coordinator", "section": "topo"}),
+    );
+    call(&mut server, "list_playbook", json!({}));
+    rpc(
+        &mut server,
+        "resources/read",
+        json!({"uri": "myrstack://playbook/_AGENT_PROTOCOL.md"}),
+    );
+    let log = logged(&dir);
+    let got: Vec<(&str, &str, Option<&str>)> = log
+        .iter()
+        .map(|r| (r.via.as_str(), r.target.as_str(), r.section.as_deref()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("prompt:worker", "worker", None),
+            ("tool:get_playbook", "coordinator", Some("Topology")),
+            ("resource", "_AGENT_PROTOCOL.md", None),
+        ]
+    );
+    assert!(log.iter().all(|r| r.hash.len() == 7 && r.at_ms > 0));
 }
