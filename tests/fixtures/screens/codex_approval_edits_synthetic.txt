@@ -1,0 +1,14 @@
+• Proposed change to src/lib.rs
+
+  Would you like to make the following edits?
+
+  src/lib.rs (+1 -0)
+     8  pub mod claude;
+     9 +pub mod detect;
+    10  pub mod fleet;
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for these files (a)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel

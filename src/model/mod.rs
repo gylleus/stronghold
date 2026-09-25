@@ -209,13 +209,13 @@ impl FleetSnapshot {
         for terminal in &data.terminals {
             let handle = terminal.handle.as_str();
             let node = if let Some(run_id) = coordinator_run.get(handle) {
-                let mut node = terminal_node(terminal, NodeKind::Coordinator, now_ms);
+                let mut node = terminal_node(terminal, NodeKind::Coordinator, now_ms, data);
                 node.run_id = Some((*run_id).to_string());
                 node
             } else if let Some(worker) = worker_for_terminal.get(handle) {
                 worker_node(data, worker, Some(terminal), now_ms)
             } else {
-                terminal_node(terminal, NodeKind::Terminal, now_ms)
+                terminal_node(terminal, NodeKind::Terminal, now_ms, data)
             };
             nodes.push(node);
         }
@@ -403,8 +403,11 @@ fn released_at_ms(worker: &Worker) -> Option<i64> {
         .epoch_ms()
 }
 
-fn terminal_node(terminal: &Terminal, kind: NodeKind, now_ms: i64) -> Node {
-    let inputs = StateInputs::new(Some(terminal), None, now_ms);
+fn terminal_node(terminal: &Terminal, kind: NodeKind, now_ms: i64, data: &FleetData) -> Node {
+    let inputs = StateInputs {
+        needs_input: data.screen_needs_input(&terminal.handle),
+        ..StateInputs::new(Some(terminal), None, now_ms)
+    };
     Node {
         id: NodeId::terminal(&terminal.handle),
         kind,
@@ -435,7 +438,7 @@ fn worker_node(
 ) -> Node {
     let task = find_task(data, worker);
     let mut node = match terminal {
-        Some(t) => terminal_node(t, NodeKind::Worker, now_ms),
+        Some(t) => terminal_node(t, NodeKind::Worker, now_ms, data),
         None => Node {
             id: NodeId::dispatch(worker.run_id.as_deref().unwrap_or(""), &worker.dispatch_id),
             kind: NodeKind::Worker,
@@ -465,6 +468,9 @@ fn worker_node(
     node.dispatch_status = worker.dispatch_status.clone();
     node.worker_terminal_state = worker.terminal_state.clone();
     node.label = label::worker_label(task, terminal, worker);
-    node.state = derive_state(&StateInputs::new(terminal, Some(worker), now_ms));
+    node.state = derive_state(&StateInputs {
+        needs_input: terminal.and_then(|t| data.screen_needs_input(&t.handle)),
+        ..StateInputs::new(terminal, Some(worker), now_ms)
+    });
     node
 }

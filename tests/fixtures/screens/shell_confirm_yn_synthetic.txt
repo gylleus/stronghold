@@ -1,0 +1,6 @@
+karl@mac myrstack % cp -i fixtures/*.json backup/
+overwrite backup/run_list.json? (y/n [n]) n
+not overwritten
+karl@mac myrstack % ./scripts/reset.sh
+This deletes every capture in tests/fixtures/screens.
+Continue? [y/N]

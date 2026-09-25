@@ -1,0 +1,25 @@
+      811        await this.env.STORE_DO.getByName(this.name).appendActivity(
+      812          entryToInsert({
+  ⎿  … 48 more files changed
+  ⎿  (timeout 10m)
+  Ran 1 shell command
+⏺ merge_ready: https://github.com/depict-org/commerce-platform/pull/235 (head 2cd9c637). I fixed the review's medium
+  finding, rebased onto main (at #240) and pushed.
+  When a plan has ## Tables or ## Actions, planLine now adds a sentence after where the module shows and before the
+  goal. For the test fixture it reads: "Olivia wants to build Employees, shown as a backoffice page at /admin/employees.
+  It keeps its own data and gives Olivia: list, add employee and remove employee. The owner keeps a list of…"
+  - Which actions are listed: only read and owner actions, since those become Olivia's tools. public actions belong to
+    shoppers and system actions to jobs, so they're left out.
+  - The 280-character limit: the cut only trims the end of the goal, so the data and actions sentence always survives.
+  - The new test checks three things:
+    - the exact line for the fixture;
+    - that a long goal is cut to exactly 280 characters while the sentence stays;
+    - that a plan with only a public action gets no sentence.
+  pnpm -r check passes on the rebased branch (platform 925 passed, 10 skipped) and CI is green on 2cd9c637. Ankra
+  skipped this PR again, so there is no Ankra verdict. I've updated the PR body to match.
+✻ Sautéed for 5m 14s · done 12:57 PM
+                                                                                ✔ Update installed · Restart to update
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

@@ -1,0 +1,16 @@
+⏺ Update(src/model/state.rs)
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Edit file
+ src/model/state.rs
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ 170  /// Cheap heuristic: does a terminal preview show an agent waiting for the user?
+ 171  pub fn preview_needs_input(preview: &str) -> bool {
+ 172 -    let preview = preview.to_lowercase();
+ 173 -    PROMPT_MARKERS.iter().any(|m| preview.contains(m))
+ 172 +    detect_in_preview(preview).is_some()
+ 173  }
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to make this edit to state.rs?
+ ❯ 1. Yes
+   2. Yes, allow all edits during this session (shift+tab)
+   3. No, and tell Claude what to do differently (esc)

@@ -1,0 +1,11 @@
+• Done. The tests pass on the new branch.
+─ Worked for 1m 02s ────────────────────────────────────────────────────────────────────────────────
+
+  Approaching rate limits
+  Switch to gpt-5.6-luna-mini for lower credit usage?
+
+› 1. Switch to gpt-5.6-luna-mini  Optimized for simple tasks, uses fewer credits.
+  2. Keep current model
+  3. Keep current model (never show again)  Hide future rate limit reminders about switching models.
+
+  Press enter to confirm or esc to go back

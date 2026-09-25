@@ -1,0 +1,15 @@
+• Ran git status --short
+  └ M src/detect.rs
+• I need to build the crate to check the change.
+
+  Would you like to run the following command?
+
+  Reason: build the crate to verify the new module compiles
+
+  $ cargo build --all-targets
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for this command (a)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel
