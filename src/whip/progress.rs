@@ -10,7 +10,8 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
 use crate::fleet::FleetData;
-use crate::orca::{DispatchStatus, InboxMessage, MessageType, Run, Task, TaskStatus, Worker};
+use crate::orca::{DispatchStatus, InboxMessage, MessageType, Task, TaskStatus, Worker};
+use crate::whip::rules::effective_coordinator;
 
 /// Payload key Orca adds to a message it rejected (e.g. a heartbeat after `worker_done`).
 const REJECTION_KEY: &str = "_orcaLifecycleRejection";
@@ -149,17 +150,19 @@ impl ProgressTracker {
         run_id: &str,
         tasks: &[TaskProgress],
     ) -> RunProgress {
-        let coordinator = data
-            .run(run_id)
-            .and_then(|r: &Run| r.coordinator_handle.clone());
+        let coordinators = coordinator_handles(run_id, data);
+        let coordinator = effective_coordinator(run_id, data)
+            .or_else(|| data.run(run_id).and_then(|r| r.coordinator_handle.clone()));
+        let is_coordinator = |h: &str| coordinators.iter().any(|c| c == h);
         let run_home = format!("run:{run_id}");
         let run_tasks = data.tasks.get(run_id).map(Vec::as_slice).unwrap_or(&[]);
         let mut latest = Latest::default();
 
         // Answers to asks are sent from the Run home (`run:<id>`), not the coordinator terminal.
         let from_coordinator = |m: &InboxMessage| {
-            m.from_handle.as_deref() == Some(&run_home)
-                || (coordinator.is_some() && m.from_handle == coordinator)
+            m.from_handle
+                .as_deref()
+                .is_some_and(|h| h == run_home || is_coordinator(h))
         };
         let coordinator_msgs: Vec<&InboxMessage> = data
             .inbox
@@ -181,7 +184,7 @@ impl ProgressTracker {
             let by_worker = task
                 .created_by_terminal_handle
                 .as_deref()
-                .is_some_and(|h| worker_handles.contains(h) && Some(h) != coordinator.as_deref());
+                .is_some_and(|h| worker_handles.contains(h) && !is_coordinator(h));
             if !by_worker {
                 latest.offer(ts_ms(&task.created_at), ProgressSource::StatusChange);
             }
@@ -191,7 +194,7 @@ impl ProgressTracker {
             }
         }
 
-        if let Some(term) = coordinator.as_deref().and_then(|h| data.terminal(h)) {
+        for term in coordinators.iter().filter_map(|h| data.terminal(h)) {
             latest.offer(ts_ms(&term.last_output_at), ProgressSource::TerminalOutput);
         }
 
@@ -228,6 +231,19 @@ impl ProgressTracker {
             holding,
         }
     }
+}
+
+/// Terminals whose activity counts as the Run's coordinator's: the declared coordinator (live
+/// or not, for its past messages) and the effective one, which may have re-bound elsewhere.
+fn coordinator_handles(run_id: &str, data: &FleetData) -> Vec<String> {
+    let declared = data.run(run_id).and_then(|r| r.coordinator_handle.clone());
+    let mut handles: Vec<String> = declared.into_iter().collect();
+    if let Some(h) = effective_coordinator(run_id, data)
+        && !handles.contains(&h)
+    {
+        handles.push(h);
+    }
+    handles
 }
 
 /// On first sight a task's status is at least as old as its completion (finished tasks) or
@@ -354,11 +370,11 @@ impl<'a> Bus<'a> {
     fn answered(&self, data: &FleetData, q: &InboxMessage, progress: &TaskProgress) -> bool {
         let thread = q.thread_id.as_deref().unwrap_or(&q.id);
         let run_home = q.run_id.as_ref().map(|r| format!("run:{r}"));
-        let coordinator = q
+        let coordinators = q
             .run_id
             .as_deref()
-            .and_then(|r| data.run(r))
-            .and_then(|r| r.coordinator_handle.clone());
+            .map(|r| coordinator_handles(r, data))
+            .unwrap_or_default();
         let asker_addresses = [
             progress.owner_handle.clone(),
             progress
@@ -371,8 +387,10 @@ impl<'a> Bus<'a> {
                 return false;
             }
             let in_thread = m.thread_id.as_deref() == Some(thread);
-            let from_coordinator = m.from_handle.is_some()
-                && (m.from_handle == run_home || m.from_handle == coordinator);
+            let from_coordinator = m
+                .from_handle
+                .as_ref()
+                .is_some_and(|h| Some(h) == run_home.as_ref() || coordinators.contains(h));
             let to_asker = m.to_handle.is_some() && asker_addresses.contains(&m.to_handle);
             in_thread || (from_coordinator && to_asker)
         })
@@ -554,7 +572,7 @@ fn is_after(m: &InboxMessage, q: &InboxMessage) -> bool {
 mod tests {
     use super::*;
     use crate::orca::commands::{parse_inbox, parse_run_list, parse_task_list, parse_worker_list};
-    use crate::orca::{Terminal, Timestamp};
+    use crate::orca::{Run, Terminal, Timestamp};
     use serde_json::json;
 
     macro_rules! fixture {
@@ -964,7 +982,7 @@ mod tests {
         assert_eq!(
             run.source,
             ProgressSource::Message {
-                kind: MessageType::Other("dispatch".into())
+                kind: MessageType::Dispatch
             }
         );
     }
@@ -995,6 +1013,28 @@ mod tests {
         let data = fleet(vec![], vec![later, hold]);
         let report = ProgressTracker::new().update(&data, T0 + 5 * MIN);
         assert_eq!(report.runs[0].holding, None);
+    }
+
+    #[test]
+    fn rebound_coordinator_counts_as_coordinator() {
+        // The declared coordinator's terminal is gone; term_440 took over and creates tasks.
+        let rebound = "term_440";
+        let mut t2 = task("t2", "ready");
+        t2.created_by_terminal_handle = Some(rebound.into());
+        let mut reply = msg("r1", rebound, "status", T0 + 4 * MIN, json!({}));
+        reply.to_handle = Some(WORKER.into());
+        let mut data = fleet(
+            vec![task("t1", "dispatched"), t2],
+            vec![reply, question("q1", T0 + 3 * MIN)],
+        );
+        data.terminals = vec![terminal(WORKER, T0), terminal(rebound, T0 + 6 * MIN)];
+        let report = ProgressTracker::new().update(&data, T0 + 30 * MIN);
+        let run = &report.runs[0];
+        assert_eq!(run.coordinator_handle.as_deref(), Some(rebound));
+        assert_eq!(run.last_coordinator_activity_ms, Some(T0 + 6 * MIN));
+        assert_eq!(run.source, ProgressSource::TerminalOutput);
+        // Its direct reply answers the worker's ask.
+        assert!(run.unanswered_asks.is_empty());
     }
 
     #[test]
