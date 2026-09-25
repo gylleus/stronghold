@@ -345,11 +345,7 @@ fn released_at_ms(worker: &Worker) -> Option<i64> {
 }
 
 fn terminal_node(terminal: &Terminal, kind: NodeKind, now_ms: i64) -> Node {
-    let inputs = StateInputs {
-        terminal: Some(terminal),
-        worker: None,
-        now_ms,
-    };
+    let inputs = StateInputs::new(Some(terminal), None, now_ms);
     Node {
         id: NodeId::terminal(&terminal.handle),
         kind,
@@ -410,10 +406,6 @@ fn worker_node(
     node.dispatch_status = worker.dispatch_status.clone();
     node.worker_terminal_state = worker.terminal_state.clone();
     node.label = label::worker_label(task, terminal, worker);
-    node.state = derive_state(&StateInputs {
-        terminal,
-        worker: Some(worker),
-        now_ms,
-    });
+    node.state = derive_state(&StateInputs::new(terminal, Some(worker), now_ms));
     node
 }
