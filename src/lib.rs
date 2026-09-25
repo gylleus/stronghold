@@ -13,6 +13,7 @@ pub mod control;
 pub mod detect;
 pub mod fleet;
 pub mod hotkey;
+pub mod mcp;
 pub mod model;
 pub mod notify;
 pub mod orca;
