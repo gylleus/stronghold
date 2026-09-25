@@ -1,5 +1,6 @@
 //! Force-directed fleet graph: incremental sync from snapshots, state colors, click to select.
 
+mod edge;
 mod layout;
 mod shape;
 #[cfg(test)]
@@ -12,27 +13,25 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, Pos2, Ui, Vec2};
 use egui_graphs::{
-    AnimatedState, DefaultEdgeShape, GraphChange, MetadataFrame, SettingsInteraction,
-    SettingsNavigation, SettingsStyle, get_layout_state, set_layout_state,
+    AnimatedState, GraphChange, MetadataFrame, SettingsInteraction, SettingsNavigation,
+    SettingsStyle, get_layout_state, set_layout_state,
 };
 use petgraph::Directed;
 use petgraph::stable_graph::{DefaultIx, EdgeIndex, NodeIndex};
 
 use crate::model::{EdgeKind, FleetSnapshot, Node, NodeId, NodeKind};
 
+pub use edge::FleetEdgeShape;
 pub use layout::{Extras, FleetLayout, FleetLayoutState, SettleTracker};
-pub use shape::{FleetNodeShape, NodePayload, node_radius, state_color};
+pub use shape::{
+    ALL_STATES, FleetNodeShape, NodePayload, StateGlyph, agent_marker, contrast_ratio, fade_alpha,
+    legend, node_radius, state_color, state_glyph,
+};
 pub use tooltip::{format_ago, kind_label, preview_line, state_label};
 
 /// The egui_graphs graph the view renders.
-pub type FleetGraph = egui_graphs::Graph<
-    NodePayload,
-    EdgeKind,
-    Directed,
-    DefaultIx,
-    FleetNodeShape,
-    DefaultEdgeShape,
->;
+pub type FleetGraph =
+    egui_graphs::Graph<NodePayload, EdgeKind, Directed, DefaultIx, FleetNodeShape, FleetEdgeShape>;
 
 /// Key under which egui_graphs stores zoom/pan and layout state in egui memory.
 pub const DEFAULT_GRAPH_ID: &str = "myrstack_graph";
@@ -41,8 +40,6 @@ pub const DEFAULT_GRAPH_ID: &str = "myrstack_graph";
 const SPAWN_NEAR: f32 = 40.0;
 /// Spawn distance of a new node without relatives from the layout center.
 const SPAWN_CENTER: f32 = 80.0;
-const EDGE_WIDTH: f32 = 1.5;
-const EDGE_TIP_SIZE: f32 = 8.0;
 /// Zoom factor per scrolled point.
 const SCROLL_ZOOM_SPEED: f32 = 0.0015;
 const MIN_ZOOM: f32 = 0.05;
@@ -199,11 +196,7 @@ impl GraphView {
                 continue;
             }
             let (from, to) = (self.index[&key.0], self.index[&key.1]);
-            let idx = self.graph.add_edge_custom(from, to, key.2, |e| {
-                let display = e.display_mut();
-                display.width = EDGE_WIDTH;
-                display.tip_size = EDGE_TIP_SIZE;
-            });
+            let idx = self.graph.add_edge(from, to, key.2);
             self.edges.insert(key, idx);
             topology_changed = true;
         }
@@ -454,6 +447,11 @@ fn payload(node: &Node) -> NodePayload {
         kind: node.kind,
         state: node.state,
         faded: node.released_at_ms.is_some(),
+        released_at_ms: node.released_at_ms,
+        agent_marker: node
+            .terminal_handle
+            .as_ref()
+            .and_then(|_| agent_marker(node.agent.as_ref())),
     }
 }
 
