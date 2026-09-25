@@ -20,6 +20,7 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
 use crate::fleet::FleetData;
 use crate::whip::actions::{DryRunExecutor, WhipAction, WhipExecutor, WhipLogEntry};
 use crate::whip::engine::WhipEngine;
+use crate::whip::manual::ManualNudge;
 use crate::whip::rules::StallTarget;
 use crate::whip::settings::WhipSettings;
 
@@ -104,6 +105,16 @@ pub struct WhipStatus {
     pub dry_run: bool,
 }
 
+/// What a "whip now" request did: the log entries it produced, in order.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WhipNowReport {
+    /// `false` when an immediate tick could not run yet (no fleet data).
+    pub ran: bool,
+    pub items: Vec<WhipLogItem>,
+    /// The automatic whip's mode during the request; manual nudges are live regardless.
+    pub dry_run: bool,
+}
+
 /// The whip thread's state: engine, settings and the newest input.
 pub struct WhipLoop {
     engine: WhipEngine,
@@ -169,6 +180,43 @@ impl WhipLoop {
         Some(self.take_status())
     }
 
+    /// Sends manual nudges now through the live executor, even in dry-run: they are Karl's
+    /// explicit request. Threshold and cooldown do not apply. Returns the status carrying the
+    /// new log entries.
+    pub fn manual(
+        &mut self,
+        nudges: &[ManualNudge],
+        now_ms: i64,
+        live: &dyn Fn() -> Box<dyn WhipExecutor>,
+    ) -> WhipStatus {
+        if !nudges.is_empty() {
+            let executor = live();
+            for nudge in nudges {
+                let entry = self.engine.execute_manual(nudge, executor.as_ref(), now_ms);
+                self.actions_logged += 1;
+                let (run_id, task_id) = match nudge.targets.as_slice() {
+                    [
+                        StallTarget::Worker {
+                            run_id, task_id, ..
+                        },
+                    ] => (Some(run_id.clone()), Some(task_id.clone())),
+                    [StallTarget::Coordinator { run_id, .. }] => (Some(run_id.clone()), None),
+                    _ => (None, None),
+                };
+                self.pending.push(WhipLogItem {
+                    seq: self.actions_logged,
+                    entry,
+                    handle: Some(nudge.handle.clone()),
+                    run_id,
+                    task_id,
+                });
+            }
+            let excess = self.pending.len().saturating_sub(PENDING_LOG_LEN);
+            self.pending.drain(..excess);
+        }
+        self.take_status()
+    }
+
     /// Queues the log entries `execute` just appended for `actions`, one per action.
     fn record(&mut self, actions: &[WhipAction]) {
         let log = self.engine.log();
@@ -204,6 +252,10 @@ impl WhipLoop {
 enum Command {
     Input(Box<WhipInput>),
     Settings(WhipSettings),
+    /// Send these nudges now, live.
+    Manual(Vec<ManualNudge>, Sender<WhipNowReport>),
+    /// Tick now instead of at the next period, with the normal rules.
+    TickNow(Sender<WhipNowReport>),
     Shutdown,
 }
 
@@ -248,6 +300,22 @@ impl WhipRunner {
     /// once).
     pub fn update_settings(&self, settings: WhipSettings) {
         let _ = self.commands.send(Command::Settings(settings));
+    }
+
+    /// Sends `nudges` now on the whip thread, live even in dry-run. The report arrives on the
+    /// returned channel (and the entries in the next status, like any other).
+    pub fn whip_now(&self, nudges: Vec<ManualNudge>) -> Receiver<WhipNowReport> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let _ = self.commands.send(Command::Manual(nudges, tx));
+        rx
+    }
+
+    /// Runs a full tick now instead of waiting for the period: threshold, cooldown and dry-run
+    /// apply as usual. The next periodic tick is one period after this one.
+    pub fn tick_now(&self) -> Receiver<WhipNowReport> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let _ = self.commands.send(Command::TickNow(tx));
+        rx
     }
 
     /// The newest status published since the last call, if any, carrying the log entries of
@@ -319,6 +387,27 @@ fn run(
                 }
                 publish(whip.take_status());
             }
+            Some(Command::Manual(nudges, reply)) => {
+                let status = whip.manual(&nudges, now_ms(), &|| live());
+                let _ = reply.send(report(true, &status));
+                publish(status);
+            }
+            Some(Command::TickNow(reply)) => {
+                let now = Instant::now();
+                let status = whip.tick(now_ms(), &|| live());
+                let _ = reply.send(status.as_ref().map_or_else(
+                    || WhipNowReport {
+                        dry_run: whip.settings().dry_run,
+                        ..WhipNowReport::default()
+                    },
+                    |s| report(true, s),
+                ));
+                if let Some(status) = status {
+                    publish(status);
+                    last_tick = Some(now);
+                    deadline = Some(now + tick_every(whip.settings()));
+                }
+            }
             Some(Command::Shutdown) => return,
             None => {
                 let now = Instant::now();
@@ -329,6 +418,14 @@ fn run(
                 deadline = Some(now + tick_every(whip.settings()));
             }
         }
+    }
+}
+
+fn report(ran: bool, status: &WhipStatus) -> WhipNowReport {
+    WhipNowReport {
+        ran,
+        items: status.new_log.clone(),
+        dry_run: status.dry_run,
     }
 }
 
@@ -517,6 +614,7 @@ mod tests {
                 reason: String::new(),
                 dry_run: true,
                 outcome: String::new(),
+                manual: false,
             },
             handle: None,
             run_id: None,
@@ -546,6 +644,7 @@ mod tests {
             reason: String::new(),
             dry_run: true,
             outcome: String::new(),
+            manual: false,
         };
         let worker = StallTarget::Worker {
             handle: "term_w".into(),
@@ -626,5 +725,145 @@ mod tests {
         assert_eq!(live.actions_logged, 1);
         assert_eq!(rec.built(), 0);
         assert!(rec.calls().is_empty());
+    }
+
+    const RUN: &str = "run_1";
+    const WORKER: &str = "term_worker";
+
+    /// A worker on dispatched task `t1` silent for 20 minutes before `now_ms`: stalled.
+    fn stalled_worker(now_ms: i64) -> WhipInput {
+        use serde_json::json;
+        let t0 = now_ms - 20 * MIN;
+        let data = FleetData {
+            polled_at_ms: now_ms,
+            terminals: vec![Terminal {
+                handle: WORKER.into(),
+                last_output_at: Some(Timestamp::Millis(t0)),
+                ..Default::default()
+            }],
+            workers: vec![
+                serde_json::from_value(json!({
+                    "dispatchId": "ctx_t1", "taskId": "t1", "runId": RUN,
+                    "dispatchStatus": "dispatched", "agentTerminalHandle": WORKER,
+                }))
+                .unwrap(),
+            ],
+            tasks: [(
+                RUN.to_string(),
+                vec![
+                    serde_json::from_value(json!({
+                        "id": "t1", "run_id": RUN, "status": "dispatched",
+                        "created_at": t0 - 60 * MIN,
+                    }))
+                    .unwrap(),
+                ],
+            )]
+            .into(),
+            ..Default::default()
+        };
+        WhipInput {
+            data,
+            needs_input: BTreeSet::new(),
+        }
+    }
+
+    fn manual_nudge() -> ManualNudge {
+        ManualNudge {
+            node: crate::model::NodeId::terminal(WORKER),
+            label: WORKER.into(),
+            handle: WORKER.into(),
+            targets: vec![StallTarget::Worker {
+                handle: WORKER.into(),
+                task_id: "t1".into(),
+                run_id: RUN.into(),
+            }],
+            via: crate::whip::NudgeVia::Bus {
+                to: "dispatch:ctx_t1".into(),
+                run_id: Some(RUN.into()),
+            },
+            text: "Myrstack: now".into(),
+            warn: None,
+        }
+    }
+
+    #[test]
+    fn loop_manual_is_live_even_in_dry_run() {
+        let rec = Recorder::default();
+        let factory = rec.factory();
+        let mut whip = WhipLoop::new(WhipSettings::default());
+        assert!(whip.settings().dry_run);
+        let status = whip.manual(&[manual_nudge()], 1_790_000_000_000, &|| factory());
+        assert_eq!(rec.built(), 1);
+        assert_eq!(rec.calls(), vec![r#"bus Some("dispatch:ctx_t1")"#]);
+        assert!(status.dry_run, "the automatic whip stays in dry-run");
+        let item = &status.new_log[0];
+        assert_eq!(item.seq, 1);
+        assert!(item.entry.manual);
+        assert!(!item.entry.dry_run);
+        assert_eq!(item.entry.outcome, "sent");
+        assert_eq!(item.handle.as_deref(), Some(WORKER));
+        assert_eq!(
+            (item.run_id.as_deref(), item.task_id.as_deref()),
+            (Some(RUN), Some("t1"))
+        );
+        // Nothing to send: the executor is not built.
+        whip.manual(&[], 1_790_000_000_000, &|| factory());
+        assert_eq!(rec.built(), 1);
+    }
+
+    #[test]
+    fn runner_whip_now_reports_and_publishes() {
+        let rec = Recorder::default();
+        let runner = WhipRunner::spawn(WhipSettings::default(), rec.factory(), None);
+        let report = runner
+            .whip_now(vec![manual_nudge()])
+            .recv_timeout(Duration::from_secs(2))
+            .expect("a report");
+        assert!(report.ran && report.dry_run);
+        assert_eq!(report.items.len(), 1);
+        assert!(report.items[0].entry.manual);
+        let status = wait_for_status(&runner, Duration::from_secs(2)).expect("a status");
+        assert_eq!(status.new_log, report.items);
+        assert_eq!(rec.built(), 1);
+    }
+
+    #[test]
+    fn runner_tick_now_ticks_at_once_and_respects_the_cooldown() {
+        let rec = Recorder::default();
+        let settings = WhipSettings {
+            tick_ms: 60 * MIN,
+            ..WhipSettings::default()
+        };
+        let runner = WhipRunner::spawn(settings, rec.factory(), None);
+        let before = runner
+            .tick_now()
+            .recv_timeout(Duration::from_secs(2))
+            .expect("a report");
+        assert!(!before.ran, "no data yet");
+
+        // The first input ticks at once: nudge #1 (dry-run).
+        runner.send_input(stalled_worker(now_ms()));
+        let first = wait_for_status(&runner, Duration::from_secs(2)).expect("a tick");
+        assert_eq!(first.new_log.len(), 1);
+        assert_eq!(
+            first.new_log[0].entry.action,
+            "nudge #1 via bus to dispatch:ctx_t1"
+        );
+
+        // An immediate tick, long before the hourly period: still stalled, but in cooldown.
+        let report = runner
+            .tick_now()
+            .recv_timeout(Duration::from_secs(2))
+            .expect("a report");
+        assert!(report.ran && report.dry_run);
+        assert!(report.items.is_empty());
+        let status = wait_for_status(&runner, Duration::from_secs(2)).expect("a status");
+        assert!(status.last_tick_ms >= first.last_tick_ms);
+        assert_eq!(status.findings, 1);
+        assert_eq!(
+            rec.built(),
+            0,
+            "dry-run ticks never build the live executor"
+        );
     }
 }

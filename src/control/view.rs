@@ -223,6 +223,9 @@ pub struct WhipLogView {
     pub reason: String,
     pub dry_run: bool,
     pub outcome: String,
+    /// Sent because Karl (or an agent through the API) asked, not by a tick.
+    #[serde(default)]
+    pub manual: bool,
     pub handle: Option<String>,
     pub run_id: Option<String>,
     pub task_id: Option<String>,
@@ -239,6 +242,7 @@ impl From<&WhipLogItem> for WhipLogView {
             reason: e.reason.clone(),
             dry_run: e.dry_run,
             outcome: e.outcome.clone(),
+            manual: e.manual,
             handle: item.handle.clone(),
             run_id: item.run_id.clone(),
             task_id: item.task_id.clone(),

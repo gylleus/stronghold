@@ -96,6 +96,8 @@ pub struct QueenResponse {
     pub select: Option<NodeId>,
     /// The close button was clicked.
     pub close: bool,
+    /// "Whip all stalled now" was clicked.
+    pub whip_stalled: bool,
 }
 
 /// Draws the queen panel: the Queen's header with the fleet counts, the fleet summary and
@@ -125,6 +127,7 @@ pub fn queen_panel(
             {
                 response.close = true;
             }
+            response.whip_stalled |= crate::ui::whip_now::whip_stalled_button(ui);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 queen_badge(ui, fleet, dark);
                 ui.label(RichText::new("Queen").strong());
@@ -309,6 +312,23 @@ mod tests {
         assert_eq!(summary.runs.len(), 1);
         assert_eq!(summary.runs[0].title, "ship the queen");
         assert_eq!(summary.runs[0].coordinator, Some(NodeId::terminal("c1")));
+    }
+
+    #[test]
+    fn whip_all_stalled_button_is_reported() {
+        let snapshot = FleetSnapshot::build(&data(), 0);
+        let mut panel = QueenPanel::default();
+        let (whip, quotas) = (WhipStatus::default(), Quotas::default());
+        let response = crate::ui::test_util::click_label("Whip all stalled now", |ui| {
+            let inputs = QueenInputs {
+                snapshot: Some(&snapshot),
+                whip: &whip,
+                quotas: &quotas,
+                now_ms: 0,
+            };
+            queen_panel(ui, &mut panel, inputs, || Box::new(NeverSender), |_| {})
+        });
+        assert!(response.whip_stalled);
     }
 
     /// Draws the panel headlessly for a few frames with a sender that must never be used.

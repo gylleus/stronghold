@@ -81,9 +81,19 @@ pub struct GraphResponse {
     /// Nodes to close: "Close session…" (one node) or "Close N selected…" was picked in a
     /// node's context menu. Empty if neither was.
     pub close_requested: Vec<NodeId>,
+    /// Nodes to whip now: "Whip" (one node) or "Whip N selected" was picked in a node's
+    /// context menu. Empty if neither was.
+    pub whip_requested: Vec<NodeId>,
 }
 
 type EdgeKey = (NodeId, NodeId, EdgeKind);
+
+/// What a node's context menu asked for this frame.
+#[derive(Debug, Default)]
+struct MenuPick {
+    close: Vec<NodeId>,
+    whip: Vec<NodeId>,
+}
 
 /// Interactive force-directed view of a [`FleetSnapshot`].
 ///
@@ -491,37 +501,50 @@ impl GraphView {
             });
         }
 
-        let close_requested = self.node_context_menu(&response.response, hovered.as_ref());
+        let menu = self.node_context_menu(&response.response, hovered.as_ref());
 
         GraphResponse {
             selected: self.selected(),
             selection: self.selection(),
             hovered,
             clicked,
-            close_requested,
+            close_requested: menu.close,
+            whip_requested: menu.whip,
         }
     }
 
-    /// Right-click menu of the node under the pointer; returns the nodes to close, if picked.
-    /// On a node of a multi-selection it acts on the whole selection.
+    /// Right-click menu of the node under the pointer; returns the nodes to close or whip, if
+    /// picked. On a node of a multi-selection it acts on the whole selection.
     fn node_context_menu(
         &mut self,
         response: &egui::Response,
         hovered: Option<&NodeId>,
-    ) -> Vec<NodeId> {
+    ) -> MenuPick {
         if response.secondary_clicked() {
             self.context_node = hovered.cloned();
         }
         let Some(node) = self.context_node.as_ref().and_then(|id| self.nodes.get(id)) else {
-            return Vec::new();
+            return MenuPick::default();
         };
         let selection = self.selection();
         let mut picked = Vec::new();
+        let mut whip = Vec::new();
         if selection.len() > 1 && selection.contains(&node.id) {
             response.context_menu(|ui| {
                 let title = format!("{} selected", selection.len());
                 ui.label(egui::RichText::new(title).strong());
                 ui.separator();
+                if ui
+                    .button(format!("Whip {} selected", selection.len()))
+                    .on_hover_text(
+                        "Send each selected agent a Myrstack nudge now (the Queen and \
+                         subagents are skipped)",
+                    )
+                    .clicked()
+                {
+                    whip = selection.iter().cloned().collect();
+                    ui.close();
+                }
                 let close = ui
                     .button(select::close_selected_text(selection.len()))
                     .on_hover_text(
@@ -533,7 +556,10 @@ impl GraphView {
                     ui.close();
                 }
             });
-            return picked;
+            return MenuPick {
+                close: picked,
+                whip,
+            };
         }
         response.context_menu(|ui| {
             ui.add(egui::Label::new(egui::RichText::new(&node.label).strong()).truncate());
@@ -543,6 +569,20 @@ impl GraphView {
                 NodeKind::Queen => Some(crate::close::QUEEN_REFUSAL),
                 NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal => None,
             };
+            let whip_refusal = match node.kind {
+                NodeKind::Subagent => Some("Subagents have no terminal to nudge."),
+                NodeKind::Queen => Some("The Queen is Myrstack itself."),
+                NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal => None,
+            };
+            if ui
+                .add_enabled(whip_refusal.is_none(), egui::Button::new("Whip"))
+                .on_hover_text("Send this agent a Myrstack nudge now")
+                .on_disabled_hover_text(whip_refusal.unwrap_or_default())
+                .clicked()
+            {
+                whip = vec![node.id.clone()];
+                ui.close();
+            }
             let close = ui
                 .add_enabled(refusal.is_none(), egui::Button::new("Close session…"))
                 .on_hover_text("Kill this session in Orca (asks first)")
@@ -552,7 +592,10 @@ impl GraphView {
                 ui.close();
             }
         });
-        picked
+        MenuPick {
+            close: picked,
+            whip,
+        }
     }
 
     /// Fits the whole graph into the view on the next frame.

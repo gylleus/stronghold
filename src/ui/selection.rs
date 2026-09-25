@@ -15,6 +15,8 @@ pub enum SelectionAction {
     SelectOnly(NodeId),
     /// Open the close dialog for the whole selection.
     Close,
+    /// Nudge the whole selection now.
+    Whip,
     Clear,
 }
 
@@ -29,6 +31,15 @@ pub fn close_targets(primary: Option<&NodeId>, selection: &BTreeSet<NodeId>) -> 
         .cloned()
         .into_iter()
         .collect()
+}
+
+/// The nodes a manual whip covers: the whole selection when several nodes are selected, else
+/// the primary (the planner skips the Queen and subagents with a reason).
+pub fn whip_targets(primary: Option<&NodeId>, selection: &BTreeSet<NodeId>) -> Vec<NodeId> {
+    if selection.len() > 1 {
+        return selection.iter().cloned().collect();
+    }
+    primary.cloned().into_iter().collect()
 }
 
 /// What Esc leaves selected, when it clears a selection: a multi-selection collapses to its
@@ -62,6 +73,16 @@ pub fn selection_panel(ui: &mut Ui, nodes: &[&Node]) -> Option<SelectionAction> 
             .clicked()
         {
             action = Some(SelectionAction::Close);
+        }
+        if ui
+            .button(format!("Whip {}", nodes.len()))
+            .on_hover_text(
+                "Send each selected agent a Myrstack nudge now (the Queen and subagents are \
+                 skipped) — w",
+            )
+            .clicked()
+        {
+            action = Some(SelectionAction::Whip);
         }
         if ui.button("Clear selection").clicked() {
             action = Some(SelectionAction::Clear);
@@ -148,6 +169,17 @@ mod tests {
     }
 
     #[test]
+    fn whip_targets_cover_the_multi_selection_or_the_primary() {
+        let multi = set(&["a", "b"]);
+        assert_eq!(whip_targets(Some(&id("a")), &multi), vec![id("a"), id("b")]);
+        assert_eq!(whip_targets(Some(&id("a")), &set(&["a"])), vec![id("a")]);
+        // The Queen reaches the planner, which explains why it is skipped.
+        let queen = NodeId::queen();
+        assert_eq!(whip_targets(Some(&queen), &set(&[])), vec![queen]);
+        assert!(whip_targets(None, &set(&[])).is_empty());
+    }
+
+    #[test]
     fn escape_collapses_a_multi_selection_before_clearing() {
         let multi = set(&["a", "b", "c"]);
         assert_eq!(after_escape(Some(&id("b")), &multi), Some(Some(id("b"))));
@@ -155,6 +187,14 @@ mod tests {
         assert_eq!(after_escape(Some(&id("b")), &set(&["b"])), Some(None));
         assert_eq!(after_escape(Some(&id("b")), &set(&[])), Some(None));
         assert_eq!(after_escape(None, &set(&[])), None);
+    }
+
+    #[test]
+    fn whip_button_whips_the_selection() {
+        let nodes = [node("w1", NodeKind::Worker), node("t1", NodeKind::Terminal)];
+        let refs: Vec<&Node> = nodes.iter().collect();
+        let action = crate::ui::test_util::click_label("Whip 2", |ui| selection_panel(ui, &refs));
+        assert_eq!(action, Some(SelectionAction::Whip));
     }
 
     #[test]

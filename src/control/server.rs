@@ -54,6 +54,7 @@ pub const ACTION_METHODS: &[&str] = &[
     "fit",
     "open_whip_settings",
     "close",
+    "whip",
 ];
 
 /// One read of a terminal's screen.

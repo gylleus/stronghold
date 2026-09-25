@@ -821,3 +821,53 @@ fn cli_params_accept_json_or_a_bare_id() {
     assert!(client::cli_params(&args(&["{broken"])).is_err());
     assert!(client::cli_params(&args(&["a", "b"])).is_err());
 }
+
+#[test]
+fn whip_with_targets_is_an_action_and_without_them_a_read() {
+    let h = Harness::new();
+    h.ok("whip", json!({"ids": ["a", "b"]}));
+    h.ok("whip", json!({"id": "a"}));
+    h.ok("whip", json!({"stalled": true}));
+    assert_eq!(
+        h.commands(),
+        vec![
+            ControlCommand::Whip {
+                agents: vec!["a".into(), "b".into()],
+                stalled: false,
+            },
+            ControlCommand::Whip {
+                agents: vec!["a".into()],
+                stalled: false,
+            },
+            ControlCommand::Whip {
+                agents: vec![],
+                stalled: true,
+            },
+        ]
+    );
+    assert_eq!(
+        ControlCommand::Whip {
+            agents: vec![],
+            stalled: true
+        }
+        .reply_timeout(),
+        crate::control::commands::WHIP_REPLY_TIMEOUT
+    );
+    // The log read is unchanged.
+    let read = h.ok("whip", json!({"limit": 5}));
+    assert!(read.get("log").is_some());
+    assert_eq!(h.commands().len(), 3);
+    for bad in [
+        json!({"ids": []}),
+        json!({"stalled": false}),
+        json!({"ids": ["a"], "stalled": true}),
+        json!({"stalled": "yes"}),
+    ] {
+        assert_eq!(
+            h.err("whip", bad.clone()),
+            ErrorCode::InvalidParams,
+            "{bad}"
+        );
+    }
+    assert_eq!(h.commands().len(), 3);
+}

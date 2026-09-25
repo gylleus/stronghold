@@ -432,6 +432,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "broadcast_to_coordinators",
         "whip_status",
         "set_whip",
+        "whip_agents",
         "focus_agent",
         "set_filter",
         "set_view",
@@ -459,6 +460,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "close_agents",
         "broadcast_to_coordinators",
         "set_whip",
+        "whip_agents",
     ];
     for tool in tools {
         let name = tool["name"].as_str().unwrap();
@@ -566,6 +568,16 @@ fn each_tool_maps_to_its_control_request() {
             vec![("whip_settings", json!({"enabled": false, "notify": true}))],
         ),
         (
+            "whip_agents",
+            json!({"ids": ["term:a", "term:b"]}),
+            vec![("whip", json!({"ids": ["term:a", "term:b"]}))],
+        ),
+        (
+            "whip_agents",
+            json!({"stalled": true}),
+            vec![("whip", json!({"stalled": true}))],
+        ),
+        (
             "focus_agent",
             json!({"id": "queen", "raise_window": true}),
             vec![("focus", json!({"id": "queen", "raise": true}))],
@@ -655,6 +667,10 @@ fn invalid_arguments_are_tool_errors_and_call_nothing() {
         ),
         ("press_key", json!({"id": "term:a", "key": "tab"})),
         ("close_agents", json!({"ids": []})),
+        ("whip_agents", json!({})),
+        ("whip_agents", json!({"ids": []})),
+        ("whip_agents", json!({"ids": ["a"], "stalled": true})),
+        ("whip_agents", json!({"stalled": false})),
         ("close_agents", json!({"ids": ["a"], "dry_run": "no"})),
         ("broadcast_to_coordinators", json!({"text": "x"})),
         (
@@ -1095,4 +1111,39 @@ fn playbook_tools_work_without_the_app() {
     assert!(text(&r).contains("Token economy · Coordinator duties · Topology"));
     assert_eq!(r["structuredContent"]["roles"][0]["name"], "coordinator");
     assert!(server.control().calls.is_empty(), "no control calls");
+}
+
+#[test]
+fn whip_agents_reports_nudges_skips_and_the_pass() {
+    let manual = json!({
+        "mode": "manual", "sent": 1, "failed": 0, "automatic_dry_run": true,
+        "nudges": [{"id": "term:w", "label": "Worker W", "handle": "w",
+                    "via": {"bus": "dispatch:ctx_1", "run": "run_1"}, "ok": true,
+                    "outcome": "sent", "warning": "waiting on your input; a nudge won't answer it"}],
+        "skipped": [{"id": "queen", "label": "Queen", "reason": "the Queen is Myrstack itself"}],
+    });
+    let mut server = McpServer::new(FakeControl::default().reply("whip", Ok(manual)));
+    let r = call(
+        &mut server,
+        "whip_agents",
+        json!({"ids": ["term:w", "queen"]}),
+    );
+    let t = text(&r);
+    assert!(t.starts_with("Sent 1 Myrstack nudge (0 failed)."), "{t}");
+    assert!(t.contains("- Worker W `term:w` via bus to dispatch:ctx_1: sent"));
+    assert!(t.contains("Warning: waiting on your input"));
+    assert!(t.contains("- Queen `queen`: the Queen is Myrstack itself"));
+    assert!(t.contains("live even though the automatic whip is in dry-run"));
+
+    let pass = json!({"mode": "stalled", "ran": true, "dry_run": true, "actions": [
+        {"action": "nudge #1 via bus to dispatch:ctx_1", "target": "worker w task t1",
+         "outcome": "dry-run"}]});
+    let mut server = McpServer::new(FakeControl::default().reply("whip", Ok(pass)));
+    let r = call(&mut server, "whip_agents", json!({"stalled": true}));
+    let t = text(&r);
+    assert!(
+        t.starts_with("Whip pass ran (dry-run: nothing sent): 1 action(s):"),
+        "{t}"
+    );
+    assert!(t.contains("nudge #1 via bus to dispatch:ctx_1 → worker w task t1 = dry-run"));
 }

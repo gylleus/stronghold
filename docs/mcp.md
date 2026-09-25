@@ -54,6 +54,7 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `broadcast_to_coordinators` | `text`, plus `runs` or `all: true` | `broadcast` | destructive |
 | `whip_status` | `limit` (log entries, default 10) | `whip` | read-only |
 | `set_whip` | `enabled`, `dry_run`, `notify` (at least one) | `whip_settings` | destructive, idempotent |
+| `whip_agents` | `ids`, or `stalled: true` | `whip` (action) | destructive |
 | `focus_agent` | `id` (or `queen`), `raise_window` | `focus` | idempotent |
 | `set_filter` | `clear`, `repos`, `states`, `kinds`, `text`, `show_loose`, `show_released` | `filter` | idempotent |
 | `set_view` | `view`: `graph` \| `table` | `view` | idempotent |
@@ -75,6 +76,11 @@ works.
   losing its coordinator. The chat should show the plan to Karl before closing.
 - `send_to_agent`, `press_key`, `broadcast_to_coordinators` and `set_whip` act on real
   agents or on saved settings. Their descriptions tell the model to confirm with Karl first.
+- `whip_agents` sends Myrstack nudges now. With `ids` they are live even when the automatic
+  whip is in dry-run, and threshold and cooldown are ignored; the Queen, subagents, released
+  workers and dead terminals are skipped with a reason, and agents waiting on Karl's input
+  get a warning. With `stalled: true` it runs an immediate whip pass under the normal rules
+  (dry-run included).
 
 ### Errors
 

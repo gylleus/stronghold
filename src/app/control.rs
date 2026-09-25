@@ -294,6 +294,9 @@ impl MyrstackApp {
                 whole_tab,
                 dry_run,
             } => return self.control_close(&agents, whole_tab, dry_run, reply),
+            ControlCommand::Whip { agents, stalled } => {
+                return self.control_whip(&agents, stalled, reply);
+            }
         };
         let error = result.as_ref().err().cloned();
         reply.send(result);
@@ -324,7 +327,7 @@ impl MyrstackApp {
         }))
     }
 
-    fn control_node(&self, key: &str) -> Result<&Node, ControlError> {
+    pub(super) fn control_node(&self, key: &str) -> Result<&Node, ControlError> {
         let snapshot = self.snapshot.as_ref().ok_or_else(|| {
             ControlError::new(ErrorCode::Unavailable, "the app has no fleet data yet")
         })?;

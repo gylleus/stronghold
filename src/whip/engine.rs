@@ -25,6 +25,7 @@ use crate::whip::actions::{
     nudge_message, quiet_run_text, reason_label, target_label, unanswered_ask_text,
     worker_nudge_text,
 };
+use crate::whip::manual::ManualNudge;
 use crate::whip::progress::{ProgressReport, ProgressTracker};
 use crate::whip::rules::{RuleContext, StallFinding, StallReason, StallTarget, evaluate};
 use crate::whip::settings::WhipSettings;
@@ -239,6 +240,7 @@ impl WhipEngine {
                 reason: action_reason(action),
                 dry_run: settings.dry_run,
                 outcome,
+                manual: false,
             };
             log::info!(
                 "whip: {} → {} ({}): {} [{}]",
@@ -248,11 +250,75 @@ impl WhipEngine {
                 entry.reason,
                 if entry.dry_run { "dry-run" } else { "live" }
             );
-            if self.log.len() >= self.log_capacity {
-                self.log.pop_front();
-            }
-            self.log.push_back(entry);
+            self.push_log(entry);
         }
+    }
+
+    /// Sends a manual nudge now through `executor` (never dry-run: Karl asked for it) and logs
+    /// it marked manual. A sent nudge is recorded like one of the engine's own: its echo is not
+    /// taken for progress, and each stalled target it covers climbs the escalation ladder and
+    /// starts a new cooldown.
+    pub fn execute_manual(
+        &mut self,
+        nudge: &ManualNudge,
+        executor: &dyn WhipExecutor,
+        now_ms: i64,
+    ) -> WhipLogEntry {
+        let outcome = match send_nudge(&nudge.via, &nudge.targets, &nudge.text, executor) {
+            Ok(()) => SENT.to_string(),
+            Err(e) => {
+                log::warn!("whip: manual nudge to {} failed: {e:#}", nudge.handle);
+                format!("failed: {e:#}")
+            }
+        };
+        if outcome == SENT {
+            self.record_manual(nudge, now_ms);
+        }
+        let entry = WhipLogEntry {
+            at_ms: now_ms,
+            action: format!("nudge via {}", nudge.via.label()),
+            target: nudge.target_label(),
+            reason: nudge.text.clone(),
+            dry_run: false,
+            outcome,
+            manual: true,
+        };
+        log::info!(
+            "whip: manual {} → {} ({}): {}",
+            entry.action,
+            entry.target,
+            entry.outcome,
+            entry.reason
+        );
+        self.push_log(entry.clone());
+        entry
+    }
+
+    fn record_manual(&mut self, nudge: &ManualNudge, now_ms: i64) {
+        self.tracker.record_nudge(&nudge.handle, now_ms);
+        for target in &nudge.targets {
+            let state = self.targets.entry(target.clone()).or_insert(TargetState {
+                first_seen_ms: now_ms,
+                nudges_sent: 0,
+                last_nudge_ms: None,
+                escalated: false,
+            });
+            state.nudges_sent += 1;
+            state.last_nudge_ms = Some(now_ms);
+            self.terminals.insert(
+                group_key(target),
+                TerminalNudge {
+                    last_nudge_ms: now_ms,
+                },
+            );
+        }
+    }
+
+    fn push_log(&mut self, entry: WhipLogEntry) {
+        if self.log.len() >= self.log_capacity {
+            self.log.pop_front();
+        }
+        self.log.push_back(entry);
     }
 
     /// Action log, oldest first, at most the log capacity.
@@ -417,12 +483,7 @@ fn perform(action: &WhipAction, executor: &dyn WhipExecutor, settings: &WhipSett
     let result = match action {
         WhipAction::Nudge {
             targets, via, text, ..
-        } => match via {
-            NudgeVia::Bus { to, run_id } => {
-                executor.send_bus(&nudge_message(to, run_id.as_deref(), targets, text))
-            }
-            NudgeVia::Terminal { handle } => executor.send_terminal(handle, text),
-        },
+        } => send_nudge(via, targets, text, executor),
         WhipAction::Escalate {
             target, evidence, ..
         } => {
@@ -452,6 +513,20 @@ fn perform(action: &WhipAction, executor: &dyn WhipExecutor, settings: &WhipSett
             log::warn!("whip: {} failed: {e:#}", action.summary());
             format!("failed: {e:#}")
         }
+    }
+}
+
+fn send_nudge(
+    via: &NudgeVia,
+    targets: &[StallTarget],
+    text: &str,
+    executor: &dyn WhipExecutor,
+) -> anyhow::Result<()> {
+    match via {
+        NudgeVia::Bus { to, run_id } => {
+            executor.send_bus(&nudge_message(to, run_id.as_deref(), targets, text))
+        }
+        NudgeVia::Terminal { handle } => executor.send_terminal(handle, text),
     }
 }
 
@@ -1013,5 +1088,91 @@ mod tests {
             targets,
             vec!["terminal term_2", "terminal term_3", "terminal term_4"]
         );
+    }
+
+    fn manual_worker_nudge() -> ManualNudge {
+        ManualNudge {
+            node: crate::model::NodeId::terminal(WORKER),
+            label: WORKER.into(),
+            handle: WORKER.into(),
+            targets: vec![worker_target("t1")],
+            via: NudgeVia::Bus {
+                to: "dispatch:ctx_t1".into(),
+                run_id: Some(RUN.into()),
+            },
+            text: "Myrstack: manual".into(),
+            warn: None,
+        }
+    }
+
+    /// Sends the manual nudge at `minute`, with the worker's pane echoing it 3 s later.
+    fn manual_at(engine: &mut WhipEngine, data: &mut FleetData, exec: &FakeExecutor, minute: i64) {
+        let now = T0 + minute * MIN;
+        let entry = engine.execute_manual(&manual_worker_nudge(), exec, now);
+        assert_eq!(entry.outcome, "sent");
+        data.terminals[1].last_output_at = Some(Timestamp::Millis(now + 3_000));
+    }
+
+    #[test]
+    fn manual_nudge_bypasses_the_cooldown_and_climbs_the_ladder() {
+        let mut engine = WhipEngine::new();
+        let mut data = fleet();
+        let exec = FakeExecutor::default();
+        let auto = run_live_with_echo(&mut engine, &mut data, &exec, 0, 16, 3_000);
+        assert_eq!(
+            auto,
+            vec![(16, "nudge #1 via bus to dispatch:ctx_t1".to_string())]
+        );
+        // One minute later, well inside the cooldown: a manual whip still goes out.
+        manual_at(&mut engine, &mut data, &exec, 17);
+        assert_eq!(
+            exec.calls(),
+            vec!["bus dispatch:ctx_t1", "bus dispatch:ctx_t1"]
+        );
+        let state = engine.target_state(&worker_target("t1")).unwrap();
+        assert_eq!(
+            (state.nudges_sent, state.last_nudge_ms),
+            (2, Some(T0 + 17 * MIN))
+        );
+        let entry = engine.log().back().unwrap();
+        assert!(entry.manual && !entry.dry_run);
+        assert_eq!(entry.action, "nudge via bus to dispatch:ctx_t1");
+        assert_eq!(entry.target, "worker term_worker task t1");
+        // Its echo is not progress, and it counts as nudge #2: the next step, one cooldown
+        // after the manual nudge, is the escalation.
+        let later = run_live_with_echo(&mut engine, &mut data, &exec, 18, 40, 3_000);
+        assert_eq!(later, vec![(27, "escalate".to_string())]);
+    }
+
+    #[test]
+    fn manual_nudge_echo_is_not_progress() {
+        let mut engine = WhipEngine::new();
+        let mut data = fleet();
+        let exec = FakeExecutor::default();
+        run_live_with_echo(&mut engine, &mut data, &exec, 0, 4, 3_000);
+        manual_at(&mut engine, &mut data, &exec, 5);
+        // Without echo suppression the pane output at 5m would push the stall to 21m.
+        let auto = run_live_with_echo(&mut engine, &mut data, &exec, 6, 20, 3_000);
+        assert_eq!(
+            auto,
+            vec![(16, "nudge #1 via bus to dispatch:ctx_t1".to_string())]
+        );
+    }
+
+    #[test]
+    fn failed_manual_nudge_is_logged_but_not_recorded() {
+        let mut engine = WhipEngine::new();
+        let exec = FakeExecutor {
+            fail_bus: true,
+            ..Default::default()
+        };
+        let entry = engine.execute_manual(&manual_worker_nudge(), &exec, T0);
+        assert!(
+            entry.outcome.starts_with("failed: boom"),
+            "{}",
+            entry.outcome
+        );
+        assert!(entry.manual);
+        assert!(engine.target_state(&worker_target("t1")).is_none());
     }
 }
