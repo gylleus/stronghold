@@ -124,14 +124,27 @@ pub fn evaluate(
             .find(|r| r.run_id == run_id)
             .is_some_and(|r| is_abandoned(r, ctx, now_ms))
     };
+    let superseded: BTreeSet<&str> = report
+        .runs
+        .iter()
+        .map(|r| r.run_id.as_str())
+        .filter(|id| is_superseded(id, data))
+        .collect();
+    let silent_past_window = |handle: &str| {
+        data.terminal(handle)
+            .and_then(|t| ts_ms(&t.last_output_at))
+            .is_none_or(|out| now_ms - out > ctx.abandon_after_ms)
+    };
     for task in &report.tasks {
-        findings.extend(
-            worker_stalled(task, data, ctx, now_ms)
-                .filter(|f| !(f.idle_for_ms > ctx.abandon_after_ms && abandoned(&task.run_id))),
-        );
+        findings.extend(worker_stalled(task, data, ctx, now_ms).filter(|f| {
+            let quiet = f.idle_for_ms > ctx.abandon_after_ms && abandoned(&task.run_id);
+            let left_behind =
+                superseded.contains(task.run_id.as_str()) && silent_past_window(f.target.handle());
+            !quiet && !left_behind
+        }));
     }
     for run in &report.runs {
-        if is_abandoned(run, ctx, now_ms) {
+        if is_abandoned(run, ctx, now_ms) || superseded.contains(run.run_id.as_str()) {
             continue;
         }
         let Some(coordinator) = effective_coordinator(&run.run_id, data) else {
@@ -160,6 +173,23 @@ pub fn evaluate(
 pub fn is_abandoned(run: &RunProgress, ctx: &RuleContext<'_>, now_ms: i64) -> bool {
     run.last_activity_ms
         .is_some_and(|a| now_ms - a > ctx.abandon_after_ms)
+}
+
+/// A Run is superseded when its effective coordinator is also the coordinator (effective or
+/// declared) of a newer Run: the terminal has moved on, so its output and silence are about
+/// the newer Run. Its coordinator is never nudged, nor a worker of it whose terminal has been
+/// silent for longer than the abandon window.
+pub fn is_superseded(run_id: &str, data: &FleetData) -> bool {
+    let Some(coordinator) = effective_coordinator(run_id, data) else {
+        return false;
+    };
+    let created = data.run(run_id).and_then(|r| ts_ms(&r.created_at));
+    data.runs.iter().any(|other| {
+        other.id != run_id
+            && ts_ms(&other.created_at) > created
+            && (other.coordinator_handle.as_deref() == Some(coordinator.as_str())
+                || effective_coordinator(&other.id, data).as_deref() == Some(coordinator.as_str()))
+    })
 }
 
 /// The terminal actually coordinating a Run; see [`FleetData::effective_coordinator`].
@@ -332,9 +362,9 @@ fn unanswered_asks(
 }
 
 /// Rule 4: a Run with no tasks whose coordinator has been quiet longer than the threshold.
-/// Skipped when the Run looks finished: abandoned (checked by the caller), its record not
-/// updated within the abandon window (a taskless Run has no other Run-specific signal), or its
-/// coordinator has since started a newer Run. Runs whose tasks were not fetched are skipped too.
+/// Skipped when the Run looks finished: abandoned or superseded (checked by the caller), or its
+/// record not updated within the abandon window (a taskless Run has no other Run-specific
+/// signal). Runs whose tasks were not fetched are skipped too.
 fn quiet_taskless_run(
     run: &RunProgress,
     coordinator: &str,
@@ -346,17 +376,10 @@ fn quiet_taskless_run(
         return None;
     }
     let meta = data.run(&run.run_id);
-    let created = meta.and_then(|r| ts_ms(&r.created_at));
-    let updated = meta.and_then(|r| ts_ms(&r.updated_at)).or(created);
+    let updated = meta
+        .and_then(|r| ts_ms(&r.updated_at))
+        .or_else(|| meta.and_then(|r| ts_ms(&r.created_at)));
     if updated.is_some_and(|u| now_ms - u > ctx.abandon_after_ms) {
-        return None;
-    }
-    let superseded = data.runs.iter().any(|other| {
-        other.id != run.run_id
-            && ts_ms(&other.created_at) > created
-            && effective_coordinator(&other.id, data).as_deref() == Some(coordinator)
-    });
-    if superseded {
         return None;
     }
     let idle = now_ms - run.last_coordinator_activity_ms?;
@@ -1033,6 +1056,163 @@ mod tests {
         ]);
     }
 
+    #[test]
+    fn superseded_detection() {
+        const REBOUND: &str = "term_440";
+        let with = |f: fn(&mut FleetData)| {
+            let mut d = Scenario::new().data;
+            d.terminals.push(terminal(REBOUND));
+            f(&mut d);
+            d
+        };
+        let cases: Vec<(&str, FleetData, bool)> = vec![
+            ("only run", with(|_| {}), false),
+            (
+                "newer run, same declared coordinator",
+                with(|d| d.runs.push(run("run_2", COORD, NOW - 30 * MIN, NOW))),
+                true,
+            ),
+            (
+                "older run, same coordinator",
+                with(|d| d.runs.push(run("run_0", COORD, NOW - 90 * MIN, NOW))),
+                false,
+            ),
+            (
+                "same creation time",
+                with(|d| d.runs.push(run("run_2", COORD, NOW - 60 * MIN, NOW))),
+                false,
+            ),
+            (
+                "newer run, other coordinator",
+                with(|d| d.runs.push(run("run_2", REBOUND, NOW - 30 * MIN, NOW))),
+                false,
+            ),
+            (
+                "newer run whose effective coordinator re-bound to ours",
+                with(|d| {
+                    d.runs.push(run("run_2", "term_dead", NOW - 30 * MIN, NOW));
+                    d.tasks.insert(
+                        "run_2".into(),
+                        vec![task("t9", "ready", COORD, NOW - 20 * MIN)],
+                    );
+                }),
+                true,
+            ),
+            (
+                "our coordinator re-bound, newer run declares the new terminal",
+                with(|d| {
+                    d.terminals.retain(|t| t.handle != COORD);
+                    d.tasks.get_mut(RUN).unwrap()[0].created_by_terminal_handle =
+                        Some(REBOUND.into());
+                    d.runs.push(run("run_2", REBOUND, NOW - 30 * MIN, NOW));
+                }),
+                true,
+            ),
+            (
+                "our coordinator is gone and nobody took over",
+                with(|d| {
+                    d.terminals.retain(|t| t.handle != COORD);
+                    d.tasks.get_mut(RUN).unwrap()[0].created_by_terminal_handle = None;
+                    d.runs.push(run("run_2", COORD, NOW - 30 * MIN, NOW));
+                }),
+                false,
+            ),
+        ];
+        for (name, data, expected) in cases {
+            assert_eq!(is_superseded(RUN, &data), expected, "case: {name}");
+        }
+    }
+
+    #[test]
+    fn superseded_runs_are_skipped() {
+        const HOUR: i64 = 60 * MIN;
+        fn supersede(s: &mut Scenario) {
+            s.data
+                .runs
+                .push(run("run_2", COORD, NOW - 30 * MIN, NOW - MIN));
+        }
+        fn worker_output(s: &mut Scenario, at: i64) {
+            s.data.terminals.retain(|t| t.handle != WORKER);
+            s.data.terminals.push(Terminal {
+                handle: WORKER.into(),
+                last_output_at: Some(Timestamp::Millis(at)),
+                ..Default::default()
+            });
+        }
+        let ready_idle = || {
+            vec![(
+                coord_target(),
+                StallReason::CoordinatorIdle {
+                    ready_tasks: vec!["t2".into()],
+                    finished_tasks: vec![],
+                },
+                20,
+            )]
+        };
+        run_cases(vec![
+            (
+                "idle coordinator, not superseded",
+                |s| {
+                    s.add_ready("t2", NOW - 40 * MIN);
+                    s.run().last_coordinator_activity_ms = Some(NOW - 20 * MIN);
+                },
+                ready_idle(),
+            ),
+            (
+                "idle coordinator of a superseded run",
+                |s| {
+                    s.add_ready("t2", NOW - 40 * MIN);
+                    s.run().last_coordinator_activity_ms = Some(NOW - 20 * MIN);
+                    supersede(s);
+                },
+                vec![],
+            ),
+            (
+                "unanswered ask in a superseded run",
+                |s| {
+                    s.ask("q1", NOW - 20 * MIN);
+                    supersede(s);
+                },
+                vec![],
+            ),
+            (
+                "finished task with no follow-up in a superseded run",
+                |s| {
+                    s.complete_t1(NOW - 20 * MIN);
+                    s.run().last_coordinator_activity_ms = Some(NOW - 30 * MIN);
+                    supersede(s);
+                },
+                vec![],
+            ),
+            (
+                "worker of a superseded run, terminal silent past the window",
+                |s| {
+                    s.t1().last_progress_ms = Some(NOW - 20 * MIN);
+                    worker_output(s, NOW - 25 * HOUR);
+                    supersede(s);
+                },
+                vec![],
+            ),
+            (
+                "worker of a superseded run, terminal never printed",
+                |s| {
+                    s.t1().last_progress_ms = Some(NOW - 20 * MIN);
+                    supersede(s);
+                },
+                vec![],
+            ),
+            (
+                "live worker of a superseded run is still nudged",
+                |s| {
+                    s.t1().last_progress_ms = Some(NOW - 20 * MIN);
+                    worker_output(s, NOW - 2 * HOUR);
+                    supersede(s);
+                },
+                vec![(worker_target(), StallReason::WorkerNoProgress, 20)],
+            ),
+        ]);
+    }
+
     /// The live case that prompted the abandon window: a finished task nobody followed up,
     /// its coordinator's terminal still open but silent for 719 h.
     #[test]
@@ -1069,6 +1249,42 @@ mod tests {
             .push(msg("m2", "term_other", "status", NOW - 60 * MIN, json!({})));
         let report = ProgressTracker::new().update(&data, NOW);
         assert!(!is_abandoned(&report.runs[0], &ctx, NOW));
+        assert_eq!(evaluate(&report, &data, &ctx, NOW).len(), 1);
+    }
+
+    /// The live case behind output gating: a Run whose record and tasks were last touched a
+    /// month ago still has a `ready` task, and its coordinator terminal, reused for unrelated
+    /// work, printed output 2 h ago. That output does not keep the Run alive.
+    #[test]
+    fn reused_coordinator_does_not_revive_an_old_run() {
+        let month = 30 * 24 * 60 * MIN;
+        let mut data = Scenario::new().data;
+        data.runs = vec![run(RUN, COORD, NOW - month, NOW - month)];
+        data.terminals = vec![Terminal {
+            handle: COORD.into(),
+            last_output_at: Some(Timestamp::Millis(NOW - 120 * MIN)),
+            ..Default::default()
+        }];
+        data.workers.clear();
+        data.tasks = [(
+            RUN.to_string(),
+            vec![task("t2", "ready", COORD, NOW - month)],
+        )]
+        .into();
+        let needs_input = BTreeSet::new();
+        let ctx = RuleContext::new(&needs_input);
+        let report = ProgressTracker::new().update(&data, NOW);
+        assert_eq!(report.runs[0].last_activity_ms, Some(NOW - month));
+        assert!(is_abandoned(&report.runs[0], &ctx, NOW));
+        assert_eq!(evaluate(&report, &data, &ctx, NOW), vec![]);
+
+        // The same Run touched an hour ago is live, and its idle coordinator is nudged.
+        data.runs = vec![run(RUN, COORD, NOW - month, NOW - 60 * MIN)];
+        let report = ProgressTracker::new().update(&data, NOW);
+        assert_eq!(
+            report.runs[0].last_coordinator_activity_ms,
+            Some(NOW - 120 * MIN)
+        );
         assert_eq!(evaluate(&report, &data, &ctx, NOW).len(), 1);
     }
 

@@ -60,6 +60,8 @@ pub struct TaskProgress {
 pub struct RunProgress {
     pub run_id: String,
     pub coordinator_handle: Option<String>,
+    /// Newest coordinator bus message or task change, or its terminal output while the Run has
+    /// open work (see `has_open_work`).
     pub last_coordinator_activity_ms: Option<i64>,
     pub source: ProgressSource,
     /// `ready` tasks nobody has started.
@@ -68,10 +70,11 @@ pub struct RunProgress {
     pub unanswered_asks: Vec<String>,
     /// Reason from the coordinator's `holding: <reason>` status, when that is its newest message.
     pub holding: Option<String>,
-    /// Newest sign of life anywhere in the Run: its `updated_at`, coordinator activity, bus
-    /// messages for the Run (except Myrstack's own), task creation, completion and status
-    /// changes, and task progress (worker heartbeats and output). A Run silent for longer than
-    /// the abandon window is abandoned and never nudged.
+    /// Newest sign of life anywhere in the Run: its `updated_at`, coordinator bus messages and
+    /// task changes (not its terminal output, which may be about other work), bus messages for
+    /// the Run (except Myrstack's own), task creation, completion and status changes, and task
+    /// progress (worker heartbeats and output). A Run silent for longer than the abandon window
+    /// is abandoned and never nudged.
     pub last_activity_ms: Option<i64>,
 }
 
@@ -240,10 +243,6 @@ impl ProgressTracker {
             }
         }
 
-        for handle in &coordinators {
-            latest.offer(self.output_ms(handle), ProgressSource::TerminalOutput);
-        }
-
         let holding = coordinator_msgs
             .iter()
             .max_by_key(|m| msg_order(m))
@@ -265,9 +264,19 @@ impl ProgressTracker {
                     .unwrap_or_default()
             })
             .map(|m| m.id.clone())
-            .collect();
+            .collect::<Vec<_>>();
 
-        let last_activity_ms = run_activity_ms(data, run_id, tasks, latest.ms);
+        // A coordinator terminal is often reused for other work once a Run winds down, so its
+        // output only counts while the Run has work the coordinator could be acting on, and
+        // never toward the Run's own activity: that takes a bus message or task change.
+        let strong_ms = latest.ms;
+        if has_open_work(data.tasks.get(run_id), &unanswered_asks) {
+            for handle in &coordinators {
+                latest.offer(self.output_ms(handle), ProgressSource::TerminalOutput);
+            }
+        }
+
+        let last_activity_ms = run_activity_ms(data, run_id, tasks, strong_ms);
         RunProgress {
             run_id: run_id.to_string(),
             coordinator_handle: coordinator,
@@ -279,6 +288,23 @@ impl ProgressTracker {
             last_activity_ms,
         }
     }
+}
+
+/// Whether the Run has work its coordinator could be acting on: a `ready`, `dispatched` or
+/// `blocked` task, an unanswered ask, or no tasks yet (the Run is being planned). Tasks not
+/// fetched count as none open.
+fn has_open_work(run_tasks: Option<&Vec<Task>>, unanswered_asks: &[String]) -> bool {
+    let Some(run_tasks) = run_tasks else {
+        return !unanswered_asks.is_empty();
+    };
+    run_tasks.is_empty()
+        || !unanswered_asks.is_empty()
+        || run_tasks.iter().any(|t| {
+            matches!(
+                t.status,
+                TaskStatus::Ready | TaskStatus::Dispatched | TaskStatus::Blocked
+            )
+        })
 }
 
 /// See [`RunProgress::last_activity_ms`].
@@ -821,7 +847,7 @@ mod tests {
 
     #[test]
     fn nudge_echo_is_not_coordinator_activity() {
-        let mut data = fleet(vec![task("t1", "completed")], vec![]);
+        let mut data = fleet(vec![task("t1", "completed"), task("t2", "ready")], vec![]);
         data.workers.clear();
         data.terminals = vec![terminal(COORD, T0 + 2 * MIN)];
         let mut tracker = ProgressTracker::new();
@@ -1175,14 +1201,62 @@ mod tests {
             data.inbox.pop();
         }
 
-        // Coordinator output counts.
+        // Coordinator output does not count once the Run has no open work: the terminal may be
+        // busy with something else.
         data.terminals = vec![terminal(COORD, T0 + 40 * MIN)];
-        assert_eq!(at(&data), Some(T0 + 40 * MIN));
+        assert_eq!(at(&data), Some(T0 + 20 * MIN));
 
         // So does a dispatched task's worker output.
         let mut data = fleet(vec![task("t1", "dispatched")], vec![]);
         data.terminals = vec![terminal(WORKER, T0 + 50 * MIN)];
         assert_eq!(at(&data), Some(T0 + 50 * MIN));
+    }
+
+    #[test]
+    fn coordinator_output_counts_only_with_open_work() {
+        let cases = [
+            ("pending", false),
+            ("ready", true),
+            ("dispatched", true),
+            ("blocked", true),
+            ("completed", false),
+            ("failed", false),
+        ];
+        for (status, counts) in cases {
+            let mut data = fleet(vec![task("t1", status)], vec![]);
+            data.terminals = vec![terminal(COORD, T0 + 40 * MIN)];
+            let run = &ProgressTracker::new().update(&data, T0 + 60 * MIN).runs[0];
+            let (activity, source) = if counts {
+                (T0 + 40 * MIN, ProgressSource::TerminalOutput)
+            } else {
+                (T0, ProgressSource::StatusChange)
+            };
+            assert_eq!(run.last_coordinator_activity_ms, Some(activity), "{status}");
+            assert_eq!(run.source, source, "{status}");
+            // Coordinator output never keeps the Run itself alive.
+            assert_eq!(run.last_activity_ms, Some(T0), "{status}");
+        }
+
+        // A Run with no tasks yet is being planned: output counts.
+        let mut data = fleet(vec![], vec![]);
+        data.workers.clear();
+        data.terminals = vec![terminal(COORD, T0 + 40 * MIN)];
+        let run = &ProgressTracker::new().update(&data, T0 + 60 * MIN).runs[0];
+        assert_eq!(run.last_coordinator_activity_ms, Some(T0 + 40 * MIN));
+        assert_eq!(run.last_activity_ms, None);
+
+        // Tasks not fetched: nothing is known to be open.
+        data.tasks.clear();
+        let run = &ProgressTracker::new().update(&data, T0 + 60 * MIN).runs[0];
+        assert_eq!(run.last_coordinator_activity_ms, None);
+
+        // A coordinator message still counts without open work.
+        let data = fleet(
+            vec![task("t1", "completed")],
+            vec![msg("m1", COORD, "status", T0 + 30 * MIN, json!({}))],
+        );
+        let run = &ProgressTracker::new().update(&data, T0 + 60 * MIN).runs[0];
+        assert_eq!(run.last_coordinator_activity_ms, Some(T0 + 30 * MIN));
     }
 
     #[test]
