@@ -108,9 +108,10 @@ impl HeadlessControl {
     /// Polls Orca once (terminals, runs, workers, tasks, inbox and quotas).
     pub fn poll(orca: OrcaClient) -> Self {
         let now = now_ms();
-        let data = PollState::new(PollerConfig::default())
+        let mut data = PollState::new(PollerConfig::default())
             .tick(&orca, Duration::ZERO, now)
             .unwrap_or_default();
+        data.forwards = crate::claude::forwards::read_forwards(&data);
         let quotas = match orca.fetch() {
             Ok(list) => Quotas::from_account_list(&list, now),
             Err(e) => Quotas {

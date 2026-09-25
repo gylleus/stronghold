@@ -8,7 +8,7 @@ use super::{FleetData, ts_ms};
 use crate::orca::{InboxMessage, MessageType};
 
 /// One terminal a Claude terminal sent input to with `orca terminal send --terminal <target>`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Forward {
     pub target: String,
     /// Time of the newest send to `target`, in ms since the epoch.

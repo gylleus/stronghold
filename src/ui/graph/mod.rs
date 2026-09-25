@@ -583,7 +583,10 @@ impl GraphView {
             let whip_refusal = match node.kind {
                 NodeKind::Subagent => Some("Subagents have no terminal to nudge."),
                 NodeKind::Queen => Some("The Queen is Myrstack itself."),
-                NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal => None,
+                NodeKind::Coordinator
+                | NodeKind::Attendant
+                | NodeKind::Worker
+                | NodeKind::Terminal => None,
             };
             if ui
                 .add_enabled(whip_refusal.is_none(), egui::Button::new("Whip"))

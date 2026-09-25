@@ -66,6 +66,28 @@ impl ForwardScanner {
     }
 }
 
+/// Forward targets of `data`'s declared coordinators, read once from their transcripts under
+/// the default Claude projects root: for callers without a [`crate::claude::ClaudeWorker`].
+pub fn read_forwards(data: &crate::fleet::FleetData) -> BTreeMap<String, Vec<Forward>> {
+    use super::hook::{default_session_map_path, load_hook_mappings};
+    use super::sessions::{SessionLocator, default_projects_root};
+
+    let declared = data.declared_coordinators();
+    if declared.is_empty() {
+        return BTreeMap::new();
+    }
+    // Map every terminal: sessions are told apart among the terminals sharing a worktree.
+    let hooks = load_hook_mappings(&default_session_map_path());
+    let sessions =
+        SessionLocator::new(default_projects_root()).map_terminals(&data.terminals, Some(&hooks));
+    let transcripts: BTreeMap<String, PathBuf> = sessions
+        .into_iter()
+        .filter(|(h, _)| declared.contains(h))
+        .filter_map(|(h, m)| Some((h, m.session()?.transcript_path.clone())))
+        .collect();
+    ForwardScanner::new().refresh(&transcripts)
+}
+
 fn read_new_lines(path: &Path, scan: &mut Scan) -> io::Result<()> {
     let mut file = File::open(path)?;
     let len = file.metadata()?.len();
