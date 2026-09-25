@@ -1,15 +1,19 @@
-//! Orca actions that change something (terminal input), run off the UI thread.
+//! Orca actions that change something (terminal input, tab switching), run off the UI thread.
 //!
 //! [`ActionRunner`] owns one worker thread that executes [`Action`]s in submission order and
 //! reports each as an [`ActionResult`]. The executor is a trait so tests (and the whip later)
 //! can drive the runner without touching real terminals.
 
+use std::process::Command;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender};
 
 use crate::orca::{OrcaClient, TerminalInput};
+
+/// Bundle id of Orca.app, used to bring its window to the front.
+pub const ORCA_BUNDLE_ID: &str = "com.stablyai.orca";
 
 /// Timeout for action calls. `terminal send` with text and Enter waits until the agent reacts
 /// to the prompt (Orca gives up after 30 s), so it needs far longer than a read.
@@ -90,12 +94,14 @@ pub enum Action {
         handle: String,
         input: TerminalInput,
     },
+    /// `orca terminal switch`, then bring Orca's window to the front.
+    Switch { handle: String },
 }
 
 impl Action {
     pub fn handle(&self) -> &str {
         match self {
-            Action::Send { handle, .. } => handle,
+            Action::Send { handle, .. } | Action::Switch { handle } => handle,
         }
     }
 }
@@ -152,7 +158,29 @@ impl ActionExecutor for OrcaExecutor {
                 }
                 Ok(())
             }
+            Action::Switch { handle } => {
+                self.client
+                    .terminal_switch(handle)
+                    .map_err(|e| e.to_string())?;
+                // `terminal switch` only selects the tab inside Orca; it doesn't raise the window.
+                activate_orca()
+            }
         }
+    }
+}
+
+/// Brings Orca.app to the front (`open -b`, which never starts a second instance).
+fn activate_orca() -> Result<(), String> {
+    let status = Command::new("open")
+        .args(["-b", ORCA_BUNDLE_ID])
+        .status()
+        .map_err(|e| format!("tab selected, but activating Orca failed: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "tab selected, but activating Orca failed: open exited with {status}"
+        ))
     }
 }
 
@@ -328,7 +356,9 @@ mod tests {
         let mut runner = ActionRunner::spawn(fake.clone(), None);
         let a = runner.submit(send("t1", "slow"));
         let b = runner.submit(send("t2", "fail"));
-        let c = runner.submit(send("t3", "three"));
+        let c = runner.submit(Action::Switch {
+            handle: "t3".into(),
+        });
         assert!(a < b && b < c);
 
         let results: Vec<_> = (0..3)
@@ -340,10 +370,21 @@ mod tests {
         );
         assert_eq!(results[0].outcome, Ok(()));
         assert_eq!(results[1].outcome, Err("nope".into()));
-        assert_eq!(results[2].action, send("t3", "three"));
+        assert_eq!(
+            results[2].action,
+            Action::Switch {
+                handle: "t3".into()
+            }
+        );
         assert_eq!(
             *fake.log.lock().unwrap(),
-            vec![send("t1", "slow"), send("t2", "fail"), send("t3", "three")]
+            vec![
+                send("t1", "slow"),
+                send("t2", "fail"),
+                Action::Switch {
+                    handle: "t3".into()
+                }
+            ]
         );
         assert!(runner.poll().is_empty());
     }

@@ -41,6 +41,8 @@ pub enum InputKind {
     Escape,
     Digit(u8),
     Interrupt,
+    /// Open in Orca.
+    Open,
 }
 
 impl InputKind {
@@ -51,11 +53,15 @@ impl InputKind {
             InputKind::Escape => "Esc sent ✓".into(),
             InputKind::Digit(d) => format!("{d} sent ✓"),
             InputKind::Interrupt => "interrupt sent ✓".into(),
+            InputKind::Open => "opened in Orca ✓".into(),
         }
     }
 
     fn failed_label(self) -> &'static str {
-        "send failed"
+        match self {
+            InputKind::Open => "open in Orca failed",
+            _ => "send failed",
+        }
     }
 }
 
@@ -74,6 +80,15 @@ impl ActionRequest {
                 input,
             },
             kind,
+        }
+    }
+
+    pub fn open(handle: &str) -> Self {
+        Self {
+            action: Action::Switch {
+                handle: handle.to_owned(),
+            },
+            kind: InputKind::Open,
         }
     }
 }
@@ -270,6 +285,13 @@ pub fn terminal_panel(
     // Only an update for this node's terminal counts.
     let screen = screen.filter(|s| Some(s.handle.as_str()) == handle);
 
+    let open_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
+    if let Some(handle) = handle
+        && ui.input_mut(|i| i.consume_shortcut(&open_shortcut))
+    {
+        response.requests.push(ActionRequest::open(handle));
+    }
+
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
@@ -278,6 +300,18 @@ pub fn terminal_panel(
                 .clicked()
             {
                 response.close = true;
+            }
+            let open = ui
+                .add_enabled(handle.is_some(), egui::Button::new("Open in Orca"))
+                .on_hover_text(format!(
+                    "Show this terminal's tab in Orca ({})",
+                    ui.ctx().format_shortcut(&open_shortcut)
+                ))
+                .on_disabled_hover_text("No live terminal.");
+            if open.clicked()
+                && let Some(handle) = handle
+            {
+                response.requests.push(ActionRequest::open(handle));
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.add(egui::Label::new(egui::RichText::new(&node.label).strong()).truncate());
@@ -740,7 +774,7 @@ mod tests {
     }
 
     #[test]
-    fn key_sends_leave_draft() {
+    fn key_sends_leave_draft_and_open_does_not_refresh() {
         let mut state = InputPanelState::default();
         state.draft_mut("t1").push_str("draft");
         let esc = ActionRequest::send("t1", InputKind::Escape, TerminalInput::key(Key::Escape));
@@ -748,8 +782,12 @@ mod tests {
         assert!(!state.text_pending("t1"));
         assert!(state.on_result(&result(1, &esc, Ok(())), 0));
         assert_eq!(state.draft("t1"), "draft");
+
+        let open = ActionRequest::open("t1");
+        state.submitted(2, &open);
+        assert!(!state.on_result(&result(2, &open, Ok(())), 0));
         // Unknown ids are ignored.
-        assert!(!state.on_result(&result(99, &esc, Ok(())), 0));
+        assert!(!state.on_result(&result(99, &open, Ok(())), 0));
     }
 
     #[test]
