@@ -8,6 +8,7 @@ pub mod keys;
 pub mod queen;
 pub mod quota;
 pub mod search;
+pub mod selection;
 pub mod settings;
 pub mod sidebar;
 pub mod subagent;

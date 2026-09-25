@@ -1,6 +1,6 @@
 //! The app side of the control API: publishes the [`StatusView`] and runs queued commands.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use crossbeam_channel::Receiver;
@@ -64,6 +64,7 @@ struct Fingerprint {
     alerts: (usize, Option<i64>),
     view: View,
     selected: Option<NodeId>,
+    selection: BTreeSet<NodeId>,
     filter: FleetFilter,
     whip_window_open: bool,
 }
@@ -106,6 +107,7 @@ impl MyrstackApp {
             alerts: (self.alerts.len(), self.alerts.last().map(|a| a.at_ms)),
             view: self.view,
             selected: self.selected.clone(),
+            selection: self.graph.selection(),
             filter: self.filter.clone(),
             whip_window_open: self.whip_window.open,
         }
@@ -128,6 +130,7 @@ impl MyrstackApp {
             alerts: &self.alerts,
             view: self.view,
             selected: self.selected.as_ref().map(NodeId::as_str),
+            selection: fingerprint.selection.iter().map(NodeId::as_str).collect(),
             filter: &self.filter,
             whip_settings_open: self.whip_window.open,
             now_ms: now_ms(),
@@ -237,6 +240,7 @@ impl MyrstackApp {
                 self.graph.set_selected(None);
                 Ok(json!({ "selected": null }))
             }
+            ControlCommand::SelectMany { agents } => self.control_select_many(&agents),
             ControlCommand::Select { agent: Some(agent) } => self
                 .control_node(&agent)
                 .map(|node| node.id.clone())
@@ -298,6 +302,28 @@ impl MyrstackApp {
     }
 
     /// The snapshot node the API means by `key` (node id, terminal handle or label).
+    /// Selects several nodes; the first is the primary. Nodes hidden by the filter can't be
+    /// part of a multi-selection and are reported in `hidden_by_filter`.
+    fn control_select_many(&mut self, agents: &[String]) -> Result<Value, ControlError> {
+        let mut ids = Vec::new();
+        for agent in agents {
+            let id = self.control_node(agent)?.id.clone();
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        let hidden: Vec<&NodeId> = ids.iter().filter(|id| !self.graph.is_visible(id)).collect();
+        let hidden = json!(hidden);
+        let set: BTreeSet<NodeId> = ids.iter().cloned().collect();
+        self.graph.set_selection(&set, ids.first());
+        self.selected = self.graph.selected().or_else(|| ids.first().cloned());
+        Ok(json!({
+            "selected": self.selected,
+            "selection": self.graph.selection(),
+            "hidden_by_filter": hidden,
+        }))
+    }
+
     fn control_node(&self, key: &str) -> Result<&Node, ControlError> {
         let snapshot = self.snapshot.as_ref().ok_or_else(|| {
             ControlError::new(ErrorCode::Unavailable, "the app has no fleet data yet")

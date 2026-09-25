@@ -9,7 +9,7 @@ use crate::{
     DisplayEdge, DisplayNode, Graph,
 };
 
-use egui::{Id, PointerButton, Pos2, Rect, Response, Sense, Ui, Vec2};
+use egui::{Id, Pos2, Rect, Response, Sense, Ui, Vec2};
 use web_time::Instant;
 
 use petgraph::graph::EdgeIndex;
@@ -855,8 +855,17 @@ where
             None => None,
         };
 
-        if resp.is_pointer_button_down_on() {
-            if self.g.dragged_node().is_none() {
+        let (can_start, button_down) = match self.settings_interaction.node_drag_button {
+            Some(button) => resp.ctx.input(|i| {
+                (
+                    i.pointer.button_pressed(button),
+                    i.pointer.button_down(button),
+                )
+            }),
+            None => (true, true),
+        };
+        if resp.is_pointer_button_down_on() && button_down {
+            if self.g.dragged_node().is_none() && can_start {
                 if let Some(idx) = node_hover_index {
                     self.set_drag_start(idx);
                     self.g.set_dragged_node(Some(idx));
@@ -864,7 +873,7 @@ where
                     view.sync.drag_owner = Some(view.instance_id.clone());
                 }
             }
-        } else if !resp.is_pointer_button_down_on() && self.g.dragged_node().is_some() && is_owner {
+        } else if self.g.dragged_node().is_some() && is_owner {
             let dragged_idx = self.g.dragged_node().unwrap();
             self.set_drag_end(dragged_idx);
             self.g.set_dragged_node(None);
@@ -993,7 +1002,12 @@ where
             return;
         }
 
-        if (resp.dragged_by(PointerButton::Middle) || resp.dragged_by(PointerButton::Primary))
+        let pan_button = self
+            .settings_navigation
+            .pan_buttons
+            .iter()
+            .any(|b| resp.dragged_by(*b));
+        if pan_button
             && self.g.dragged_node().is_none()
             && (resp.drag_delta().x.abs() > 0. || resp.drag_delta().y.abs() > 0.)
         {

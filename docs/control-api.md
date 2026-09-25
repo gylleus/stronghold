@@ -114,11 +114,14 @@ first poll, with `ready: false`.
                "needs_input":false,"stalled":false,"last_activity_ms":1790344260137}]},
     "whip":{"enabled":true,"dry_run":true,"last_tick_ms":…,"findings":1,"escalated":[]},
     "alerts":0,
-    "dashboard":{"view":"graph","selected":"queen",
+    "dashboard":{"view":"graph","selected":"queen","selection":["queen"],
                  "filter":{"repos":[],"states":[],"kinds":[],"text":"","show_loose":true,
                            "show_released":true,"hidden":0},
                  "whip_settings_open":false}}}
 ```
+
+`dashboard.selected` is the primary selected node (whose panel is shown); `dashboard.selection`
+lists every node selected in the graph, several after a box select or Shift/Cmd-click.
 
 ### `agents`
 
@@ -282,6 +285,17 @@ Selects a node without moving the graph. Pass `"id": null` to clear the selectio
 ```json
 {"v":1,"method":"select","params":{"id":"term:term_…"}}
 → {"ok":true,"result":{"selected":"term:term_…"}}
+```
+
+Pass `"ids"` (a list, after `id` if both are given) to select several nodes at once, as a box
+select in the graph does; the first is the primary (`selected`). Nodes hidden by the filter
+can't be part of a multi-selection: they are listed in `hidden_by_filter` and left out of
+`selection`. An empty `ids` clears the selection.
+
+```json
+{"v":1,"method":"select","params":{"ids":["term:term_a…","term:term_b…"]}}
+→ {"ok":true,"result":{"selected":"term:term_a…","selection":["term:term_a…","term:term_b…"],
+                       "hidden_by_filter":[]}}
 ```
 
 ### `focus`

@@ -86,6 +86,7 @@ fn status_view() -> StatusView {
         alerts: &[],
         view: View::Table,
         selected: Some("term:x"),
+        selection: vec!["term:x", "term:y"],
         filter: &filter,
         whip_settings_open: false,
         now_ms: NOW,
@@ -294,6 +295,7 @@ fn status_returns_summary_and_dashboard() {
     assert_eq!(r["whip"]["dry_run"], true);
     assert_eq!(r["whip"]["escalated"], json!([LOOSE]));
     assert_eq!(r["dashboard"]["selected"], "term:x");
+    assert_eq!(r["dashboard"]["selection"], json!(["term:x", "term:y"]));
 }
 
 #[test]
@@ -409,6 +411,10 @@ fn every_action_reaches_the_handler() {
         ("whip_settings", json!({"enabled": false})),
         ("select", json!({"id": "a"})),
         ("select", json!({"id": null})),
+        ("select", json!({"ids": ["a", "b"]})),
+        ("select", json!({"id": "a", "ids": ["b"]})),
+        ("select", json!({"ids": ["a"]})),
+        ("select", json!({"ids": []})),
         ("focus", json!({"id": "a", "raise": true})),
         ("filter", json!({"states": ["needs_input"], "text": "hack"})),
         ("filter", json!({"clear": true})),
@@ -459,6 +465,16 @@ fn every_action_reaches_the_handler() {
             enabled: Some(false),
             dry_run: None,
             notify: None,
+        },
+        ControlCommand::Select {
+            agent: Some("a".into()),
+        },
+        ControlCommand::Select { agent: None },
+        ControlCommand::SelectMany {
+            agents: vec!["a".into(), "b".into()],
+        },
+        ControlCommand::SelectMany {
+            agents: vec!["a".into(), "b".into()],
         },
         ControlCommand::Select {
             agent: Some("a".into()),
