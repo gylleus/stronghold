@@ -1,9 +1,12 @@
-//! Terminal panel: the selected node's info and live screen (input box follows in myr-och.2).
+//! Terminal panel: the selected node's info, live screen and input box.
+
+use std::collections::HashMap;
 
 use eframe::egui;
 
+use crate::actions::{Action, ActionId, ActionResult, Key};
 use crate::model::{Node, NodeKind, NodeState};
-use crate::orca::TerminalStatus;
+use crate::orca::{Terminal, TerminalInput, TerminalStatus};
 use crate::poller::ScreenUpdate;
 use crate::ui::graph::state_color;
 
@@ -12,11 +15,236 @@ const TARGET_COLUMNS: f32 = 110.0;
 const MIN_FONT_SIZE: f32 = 8.0;
 const MAX_FONT_SIZE: f32 = 14.0;
 
+/// A second Interrupt click within this window confirms it.
+pub const INTERRUPT_CONFIRM_MS: i64 = 2_000;
+/// How long "sent ✓" stays visible.
+const OK_STATUS_MS: i64 = 4_000;
+/// Digit buttons shown while a node needs input.
+const CHOICE_DIGITS: [u8; 4] = [1, 2, 3, 4];
+
 /// What the user did in the panel this frame.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TerminalPanelResponse {
     /// The close (×) button was clicked.
     pub close: bool,
+    /// Actions to run; the caller submits each and reports the id via
+    /// [`InputPanelState::submitted`].
+    pub requests: Vec<ActionRequest>,
+}
+
+/// What an input action was, for status text and draft handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputKind {
+    /// The draft, with Enter.
+    Text,
+    Enter,
+    Escape,
+    Digit(u8),
+    Interrupt,
+}
+
+impl InputKind {
+    fn done_label(self) -> String {
+        match self {
+            InputKind::Text => "sent ✓".into(),
+            InputKind::Enter => "Enter sent ✓".into(),
+            InputKind::Escape => "Esc sent ✓".into(),
+            InputKind::Digit(d) => format!("{d} sent ✓"),
+            InputKind::Interrupt => "interrupt sent ✓".into(),
+        }
+    }
+
+    fn failed_label(self) -> &'static str {
+        "send failed"
+    }
+}
+
+/// An action the panel wants run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActionRequest {
+    pub action: Action,
+    pub kind: InputKind,
+}
+
+impl ActionRequest {
+    fn send(handle: &str, kind: InputKind, input: TerminalInput) -> Self {
+        Self {
+            action: Action::Send {
+                handle: handle.to_owned(),
+                input,
+            },
+            kind,
+        }
+    }
+}
+
+/// Last action outcome shown under the input box.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputStatus {
+    Pending(InputKind),
+    Ok { kind: InputKind, at_ms: i64 },
+    Err { kind: InputKind, message: String },
+}
+
+/// Interrupt needs two clicks on the same terminal within [`INTERRUPT_CONFIRM_MS`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InterruptGuard {
+    armed: Option<(String, i64)>,
+}
+
+impl InterruptGuard {
+    /// Registers a click; `true` means "confirmed, send it now".
+    pub fn click(&mut self, handle: &str, now_ms: i64) -> bool {
+        if self.is_armed(handle, now_ms) {
+            self.armed = None;
+            true
+        } else {
+            self.armed = Some((handle.to_owned(), now_ms));
+            false
+        }
+    }
+
+    pub fn is_armed(&self, handle: &str, now_ms: i64) -> bool {
+        self.armed.as_ref().is_some_and(|(h, at)| {
+            h == handle && (0..=INTERRUPT_CONFIRM_MS).contains(&(now_ms - at))
+        })
+    }
+}
+
+/// A queued action the panel waits on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Pending {
+    handle: String,
+    kind: InputKind,
+    /// The draft as sent, for [`InputKind::Text`].
+    sent_draft: Option<String>,
+}
+
+/// Input box state kept across frames and selection changes: drafts and statuses per
+/// terminal handle, in-flight actions and the interrupt guard.
+#[derive(Debug, Default)]
+pub struct InputPanelState {
+    drafts: HashMap<String, String>,
+    statuses: HashMap<String, InputStatus>,
+    pending: HashMap<ActionId, Pending>,
+    pub interrupt: InterruptGuard,
+}
+
+impl InputPanelState {
+    pub fn draft(&self, handle: &str) -> &str {
+        self.drafts.get(handle).map_or("", String::as_str)
+    }
+
+    pub fn draft_mut(&mut self, handle: &str) -> &mut String {
+        self.drafts.entry(handle.to_owned()).or_default()
+    }
+
+    pub fn status(&self, handle: &str) -> Option<&InputStatus> {
+        self.statuses.get(handle)
+    }
+
+    /// Whether a text send for `handle` is still in flight.
+    pub fn text_pending(&self, handle: &str) -> bool {
+        self.pending
+            .values()
+            .any(|p| p.handle == handle && p.kind == InputKind::Text)
+    }
+
+    /// Records that `request` was queued as `id`.
+    pub fn submitted(&mut self, id: ActionId, request: &ActionRequest) {
+        let handle = request.action.handle().to_owned();
+        let sent_draft = match (&request.action, request.kind) {
+            (Action::Send { .. }, InputKind::Text) => Some(self.draft(&handle).to_owned()),
+            _ => None,
+        };
+        self.statuses
+            .insert(handle.clone(), InputStatus::Pending(request.kind));
+        self.pending.insert(
+            id,
+            Pending {
+                handle,
+                kind: request.kind,
+                sent_draft,
+            },
+        );
+    }
+
+    /// Applies a finished action. A successful text send clears the draft unless it was edited
+    /// meanwhile; a failure keeps it. Returns `true` for a successful send (the screen is worth
+    /// re-reading).
+    pub fn on_result(&mut self, result: &ActionResult, now_ms: i64) -> bool {
+        let Some(pending) = self.pending.remove(&result.id) else {
+            return false;
+        };
+        let status = match &result.outcome {
+            Ok(()) => {
+                if let Some(sent) = &pending.sent_draft
+                    && self.draft(&pending.handle) == sent
+                {
+                    self.drafts.remove(&pending.handle);
+                }
+                InputStatus::Ok {
+                    kind: pending.kind,
+                    at_ms: now_ms,
+                }
+            }
+            Err(message) => InputStatus::Err {
+                kind: pending.kind,
+                message: message.clone(),
+            },
+        };
+        // Only the newest action's outcome is shown.
+        let newer_pending = self.pending.values().any(|p| p.handle == pending.handle);
+        if !newer_pending {
+            self.statuses.insert(pending.handle.clone(), status);
+        }
+        result.outcome.is_ok() && matches!(result.action, Action::Send { .. })
+    }
+}
+
+/// Why input to `terminal` is disabled, or `None` if it can be sent to.
+pub fn input_block_reason(
+    terminal: Option<&Terminal>,
+    screen: Option<&ScreenUpdate>,
+) -> Option<&'static str> {
+    let Some(terminal) = terminal else {
+        return Some("The terminal is not live in Orca.");
+    };
+    if !terminal.connected {
+        return Some("The terminal is disconnected.");
+    }
+    if !terminal.writable {
+        return Some("Orca reports the terminal as not writable.");
+    }
+    if screen.is_some_and(|s| s.status == Some(TerminalStatus::Exited)) {
+        return Some("The terminal's process has exited.");
+    }
+    None
+}
+
+/// Removes plain Enter presses (no Shift/Alt/Ctrl) from `events`, returning whether there was
+/// one. Shift+Enter is left for the text box, which inserts a newline.
+pub fn take_submit_enter(events: &mut Vec<egui::Event>) -> bool {
+    let before = events.len();
+    events.retain(|event| {
+        !matches!(
+            event,
+            egui::Event::Key {
+                key: egui::Key::Enter,
+                pressed: true,
+                modifiers,
+                ..
+            } if !modifiers.shift && !modifiers.alt && !modifiers.ctrl
+        )
+    });
+    events.len() != before
+}
+
+/// Input for the selected node's terminal, from the app.
+pub struct PanelInput<'a> {
+    pub state: &'a mut InputPanelState,
+    /// The node's row in `terminal list`, if live.
+    pub terminal: Option<&'a Terminal>,
 }
 
 /// The terminal whose screen should be polled for `node`: live terminals only (not dead
@@ -33,12 +261,14 @@ pub fn terminal_panel(
     ui: &mut egui::Ui,
     node: &Node,
     screen: Option<&ScreenUpdate>,
+    input: PanelInput<'_>,
     now_ms: i64,
 ) -> TerminalPanelResponse {
     let mut response = TerminalPanelResponse::default();
-    let has_screen = watch_handle(node).is_some();
+    let handle = watch_handle(node);
+    let has_screen = handle.is_some();
     // Only an update for this node's terminal counts.
-    let screen = screen.filter(|s| Some(s.handle.as_str()) == watch_handle(node));
+    let screen = screen.filter(|s| Some(s.handle.as_str()) == handle);
 
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -65,15 +295,184 @@ pub fn terminal_panel(
         return response;
     }
 
-    // Reserved for the input box (myr-och.2).
-    let input_height = 0.0;
-    let screen_height = (ui.available_height() - input_height).max(0.0);
-    ui.allocate_ui(egui::vec2(ui.available_width(), screen_height), |ui| {
-        screen_view(ui, screen);
-    });
-    // --- input area (myr-och.2) ---
+    if let Some(handle) = handle {
+        let blocked = input_block_reason(input.terminal, screen);
+        let needs_input = node.state == NodeState::NeedsInput;
+        egui::Panel::bottom("terminal_input")
+            .resizable(false)
+            .show(ui, |ui| {
+                input_area(
+                    ui,
+                    handle,
+                    input.state,
+                    blocked,
+                    needs_input,
+                    now_ms,
+                    &mut response.requests,
+                );
+            });
+    }
+    screen_view(ui, screen);
 
     response
+}
+
+/// The input box, key buttons and last-action status for `handle`.
+fn input_area(
+    ui: &mut egui::Ui,
+    handle: &str,
+    state: &mut InputPanelState,
+    blocked: Option<&str>,
+    needs_input: bool,
+    now_ms: i64,
+    requests: &mut Vec<ActionRequest>,
+) {
+    let enabled = blocked.is_none();
+    let disabled_text = blocked.unwrap_or_default();
+    let edit_id = egui::Id::new(("terminal_input", handle));
+    let text_pending = state.text_pending(handle);
+    let can_send = enabled && !text_pending && !state.draft(handle).trim().is_empty();
+
+    ui.add_space(4.0);
+    // Enter sends; take it before the text box sees it (Shift+Enter still inserts a newline).
+    let enter_pressed = enabled
+        && ui.memory(|m| m.has_focus(edit_id))
+        && ui.input_mut(|i| take_submit_enter(&mut i.events));
+    let mut send_text = enter_pressed && can_send;
+
+    ui.add_enabled_ui(enabled, |ui| {
+        ui.add(
+            egui::TextEdit::multiline(state.draft_mut(handle))
+                .id(edit_id)
+                .hint_text("Type a reply…  Enter sends, Shift+Enter adds a line")
+                .font(egui::TextStyle::Monospace)
+                .desired_rows(2)
+                .desired_width(f32::INFINITY),
+        )
+        .on_disabled_hover_text(disabled_text);
+    });
+
+    ui.horizontal_wrapped(|ui| {
+        let send = ui
+            .add_enabled(can_send, egui::Button::new("Send"))
+            .on_hover_text("Send the text followed by Enter")
+            .on_disabled_hover_text(if enabled {
+                "Type something first."
+            } else {
+                disabled_text
+            });
+        send_text |= send.clicked();
+
+        let key_button = |ui: &mut egui::Ui, label: &str, hover: &str| {
+            ui.add_enabled(enabled, egui::Button::new(label))
+                .on_hover_text(hover)
+                .on_disabled_hover_text(disabled_text)
+                .clicked()
+        };
+        if key_button(ui, "⏎", "Send a bare Enter (accept the default choice)") {
+            requests.push(ActionRequest::send(
+                handle,
+                InputKind::Enter,
+                TerminalInput::enter_key(),
+            ));
+        }
+        if key_button(ui, "Esc", "Send the Escape key") {
+            requests.push(ActionRequest::send(
+                handle,
+                InputKind::Escape,
+                TerminalInput::key(Key::Escape),
+            ));
+        }
+
+        let armed = state.interrupt.is_armed(handle, now_ms);
+        let (label, hover) = if armed {
+            ("Confirm interrupt", "Click again to send Ctrl-C")
+        } else {
+            ("Interrupt", "Send Ctrl-C (click twice within 2 s)")
+        };
+        let mut button = egui::Button::new(label);
+        if armed {
+            button = button.fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+            // Repaint when the confirm window closes so the button resets.
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(
+                    u64::try_from(INTERRUPT_CONFIRM_MS).unwrap_or(0),
+                ));
+        }
+        let interrupt = ui
+            .add_enabled(enabled, button)
+            .on_hover_text(hover)
+            .on_disabled_hover_text(disabled_text);
+        if interrupt.clicked() && state.interrupt.click(handle, now_ms) {
+            requests.push(ActionRequest::send(
+                handle,
+                InputKind::Interrupt,
+                TerminalInput::interrupt_key(),
+            ));
+        }
+
+        if needs_input {
+            ui.separator();
+            for digit in CHOICE_DIGITS {
+                let label = digit.to_string();
+                if key_button(
+                    ui,
+                    &label,
+                    &format!("Pick choice {digit} (sends the digit key)"),
+                ) {
+                    requests.push(ActionRequest::send(
+                        handle,
+                        InputKind::Digit(digit),
+                        TerminalInput::key(Key::Digit(digit)),
+                    ));
+                }
+            }
+        }
+    });
+
+    if send_text {
+        let text = state
+            .draft(handle)
+            .trim_end_matches(['\n', '\r'])
+            .to_owned();
+        requests.push(ActionRequest::send(
+            handle,
+            InputKind::Text,
+            TerminalInput::line(text),
+        ));
+    }
+
+    status_line(ui, state.status(handle), now_ms);
+    ui.add_space(2.0);
+}
+
+fn status_line(ui: &mut egui::Ui, status: Option<&InputStatus>, now_ms: i64) {
+    match status {
+        Some(InputStatus::Pending(_)) => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.weak("sending…");
+            });
+        }
+        Some(InputStatus::Ok { kind, at_ms }) if now_ms - at_ms < OK_STATUS_MS => {
+            let color = state_color(NodeState::Done, ui.visuals().dark_mode);
+            ui.colored_label(color, kind.done_label());
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(500));
+        }
+        Some(InputStatus::Err { kind, message }) => {
+            let text = format!("{}: {message}", kind.failed_label());
+            ui.add(
+                egui::Label::new(egui::RichText::new(&text).color(ui.visuals().error_fg_color))
+                    .truncate(),
+            )
+            .on_hover_text(text);
+        }
+        _ => {
+            // Keep the panel height steady.
+            ui.label("");
+        }
+    }
 }
 
 fn header(
@@ -265,6 +664,178 @@ mod tests {
             None
         );
         assert_eq!(watch_handle(&node(NodeKind::Terminal, true, None)), None);
+    }
+
+    fn text_request(handle: &str, text: &str) -> ActionRequest {
+        ActionRequest::send(handle, InputKind::Text, TerminalInput::line(text))
+    }
+
+    fn result(id: ActionId, request: &ActionRequest, outcome: Result<(), &str>) -> ActionResult {
+        ActionResult {
+            id,
+            action: request.action.clone(),
+            outcome: outcome.map_err(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn drafts_are_kept_per_handle() {
+        let mut state = InputPanelState::default();
+        state.draft_mut("t1").push_str("hello");
+        state.draft_mut("t2").push_str("other");
+        assert_eq!(state.draft("t1"), "hello");
+        assert_eq!(state.draft("t2"), "other");
+        assert_eq!(state.draft("t3"), "");
+    }
+
+    #[test]
+    fn successful_send_clears_draft_and_requests_refresh() {
+        let mut state = InputPanelState::default();
+        state.draft_mut("t1").push_str("yes");
+        let req = text_request("t1", "yes");
+        state.submitted(7, &req);
+        assert!(state.text_pending("t1"));
+        assert_eq!(
+            state.status("t1"),
+            Some(&InputStatus::Pending(InputKind::Text))
+        );
+        assert!(state.on_result(&result(7, &req, Ok(())), 1_000));
+        assert_eq!(state.draft("t1"), "");
+        assert!(!state.text_pending("t1"));
+        assert_eq!(
+            state.status("t1"),
+            Some(&InputStatus::Ok {
+                kind: InputKind::Text,
+                at_ms: 1_000
+            })
+        );
+    }
+
+    #[test]
+    fn failed_send_keeps_draft_and_shows_error() {
+        let mut state = InputPanelState::default();
+        state.draft_mut("t1").push_str("yes");
+        let req = text_request("t1", "yes");
+        state.submitted(1, &req);
+        assert!(!state.on_result(&result(1, &req, Err("boom")), 0));
+        assert_eq!(state.draft("t1"), "yes");
+        assert_eq!(
+            state.status("t1"),
+            Some(&InputStatus::Err {
+                kind: InputKind::Text,
+                message: "boom".into()
+            })
+        );
+    }
+
+    #[test]
+    fn draft_edited_while_sending_is_kept() {
+        let mut state = InputPanelState::default();
+        state.draft_mut("t1").push_str("yes");
+        let req = text_request("t1", "yes");
+        state.submitted(1, &req);
+        state.draft_mut("t1").push_str(" and more");
+        state.on_result(&result(1, &req, Ok(())), 0);
+        assert_eq!(state.draft("t1"), "yes and more");
+    }
+
+    #[test]
+    fn key_sends_leave_draft() {
+        let mut state = InputPanelState::default();
+        state.draft_mut("t1").push_str("draft");
+        let esc = ActionRequest::send("t1", InputKind::Escape, TerminalInput::key(Key::Escape));
+        state.submitted(1, &esc);
+        assert!(!state.text_pending("t1"));
+        assert!(state.on_result(&result(1, &esc, Ok(())), 0));
+        assert_eq!(state.draft("t1"), "draft");
+        // Unknown ids are ignored.
+        assert!(!state.on_result(&result(99, &esc, Ok(())), 0));
+    }
+
+    #[test]
+    fn older_result_does_not_hide_newer_pending_status() {
+        let mut state = InputPanelState::default();
+        let first = ActionRequest::send("t1", InputKind::Enter, TerminalInput::enter_key());
+        let second =
+            ActionRequest::send("t1", InputKind::Digit(2), TerminalInput::key(Key::Digit(2)));
+        state.submitted(1, &first);
+        state.submitted(2, &second);
+        state.on_result(&result(1, &first, Ok(())), 0);
+        assert_eq!(
+            state.status("t1"),
+            Some(&InputStatus::Pending(InputKind::Digit(2)))
+        );
+    }
+
+    #[test]
+    fn interrupt_needs_second_click_within_window() {
+        let mut guard = InterruptGuard::default();
+        assert!(!guard.click("t1", 0));
+        assert!(guard.is_armed("t1", 1_000));
+        assert!(!guard.is_armed("t2", 1_000));
+        assert!(guard.click("t1", 1_500));
+        assert!(!guard.is_armed("t1", 1_500));
+
+        // Too slow: the second click re-arms instead.
+        assert!(!guard.click("t1", 10_000));
+        assert!(!guard.click("t1", 10_000 + INTERRUPT_CONFIRM_MS + 1));
+        assert!(guard.click("t1", 12_100));
+
+        // A click on another terminal doesn't confirm.
+        assert!(!guard.click("t1", 20_000));
+        assert!(!guard.click("t2", 20_100));
+        assert!(!guard.is_armed("t1", 20_100));
+    }
+
+    #[test]
+    fn plain_enter_submits_shift_enter_does_not() {
+        let key = |modifiers| egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let mut events = vec![key(egui::Modifiers::SHIFT)];
+        assert!(!take_submit_enter(&mut events));
+        assert_eq!(events.len(), 1);
+
+        let mut events = vec![key(egui::Modifiers::NONE), egui::Event::Text("x".into())];
+        assert!(take_submit_enter(&mut events));
+        assert_eq!(events, vec![egui::Event::Text("x".into())]);
+
+        let mut events = vec![key(egui::Modifiers::COMMAND)];
+        assert!(take_submit_enter(&mut events));
+    }
+
+    #[test]
+    fn input_blocked_unless_live_and_writable() {
+        let live = Terminal {
+            handle: "t1".into(),
+            connected: true,
+            writable: true,
+            ..Terminal::default()
+        };
+        assert_eq!(input_block_reason(Some(&live), None), None);
+        assert!(input_block_reason(None, None).is_some());
+        let read_only = Terminal {
+            writable: false,
+            ..live.clone()
+        };
+        assert!(input_block_reason(Some(&read_only), None).is_some());
+        let disconnected = Terminal {
+            connected: false,
+            ..live.clone()
+        };
+        assert!(input_block_reason(Some(&disconnected), None).is_some());
+        let exited = ScreenUpdate {
+            handle: "t1".into(),
+            lines: vec![],
+            status: Some(TerminalStatus::Exited),
+            read_at_ms: 0,
+            error: None,
+        };
+        assert!(input_block_reason(Some(&live), Some(&exited)).is_some());
     }
 
     #[test]

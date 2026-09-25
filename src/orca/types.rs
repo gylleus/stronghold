@@ -372,7 +372,12 @@ pub struct TerminalRead {
 #[serde(rename_all = "camelCase", default)]
 pub struct TerminalSend {
     pub handle: Option<String>,
+    /// `false` when Orca skipped the write (terminal locked or not writable); the call still
+    /// succeeds.
+    pub accepted: Option<bool>,
     pub bytes_written: Option<u64>,
+    /// Why a guarded send was refused.
+    pub refused_reason: Option<String>,
 }
 
 /// `result.focus` of `orca terminal switch`.
