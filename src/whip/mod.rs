@@ -10,3 +10,4 @@ pub use rules::{
     DEFAULT_THRESHOLD_MS, RuleContext, StallFinding, StallReason, StallTarget,
     effective_coordinator, evaluate,
 };
+pub use settings::{Loaded, SETTINGS_FILE, Settings, WhipSettings};
