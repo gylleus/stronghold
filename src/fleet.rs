@@ -1,9 +1,9 @@
 //! `FleetData`: one poll's raw Orca data, shared by the poller (producer), the graph model and
 //! the whip (consumers).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::orca::{InboxMessage, Run, Task, Terminal, Worker};
+use crate::orca::{InboxMessage, Run, Task, Terminal, Timestamp, Worker};
 
 /// Everything one poll cycle fetched from Orca, unprocessed.
 #[derive(Debug, Clone, Default)]
@@ -30,4 +30,55 @@ impl FleetData {
     pub fn run(&self, run_id: &str) -> Option<&Run> {
         self.runs.iter().find(|r| r.id == run_id)
     }
+
+    /// The terminal actually coordinating a Run. `coordinator_handle` can be stale when the
+    /// coordinator re-bound from another terminal, so fall back to the newest live creator of the
+    /// Run's tasks, then the newest live terminal messaging the Run. Workers of the Run are never
+    /// the coordinator. `None` when no live candidate exists.
+    pub fn effective_coordinator(&self, run_id: &str) -> Option<String> {
+        let live = |h: &str| self.terminal(h).is_some();
+        let declared = self
+            .run(run_id)
+            .and_then(|r| r.coordinator_handle.as_deref());
+        if let Some(h) = declared.filter(|h| live(h)) {
+            return Some(h.to_string());
+        }
+
+        let workers: BTreeSet<&str> = self
+            .workers
+            .iter()
+            .filter(|w| w.run_id.as_deref() == Some(run_id))
+            .filter_map(|w| w.agent_terminal_handle.as_deref())
+            .collect();
+        let candidate = |h: &str| live(h) && !workers.contains(h);
+
+        let tasks = self.tasks.get(run_id).map(Vec::as_slice).unwrap_or(&[]);
+        let creator = tasks
+            .iter()
+            .filter_map(|t: &Task| {
+                let h = t.created_by_terminal_handle.as_deref()?;
+                candidate(h).then_some((ts_ms(&t.created_at), h))
+            })
+            .max_by_key(|(ms, _)| *ms);
+        if let Some((_, h)) = creator {
+            return Some(h.to_string());
+        }
+
+        let run_home = format!("run:{run_id}");
+        self.inbox
+            .iter()
+            .filter(|m| {
+                m.run_id.as_deref() == Some(run_id) || m.to_handle.as_deref() == Some(&run_home)
+            })
+            .filter_map(|m: &InboxMessage| {
+                let h = m.from_handle.as_deref()?;
+                candidate(h).then_some(((ts_ms(&m.created_at), m.sequence), h))
+            })
+            .max_by_key(|(order, _)| *order)
+            .map(|(_, h)| h.to_string())
+    }
+}
+
+fn ts_ms(ts: &Option<Timestamp>) -> Option<i64> {
+    ts.as_ref().and_then(Timestamp::epoch_ms)
 }

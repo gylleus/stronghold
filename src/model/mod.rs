@@ -180,11 +180,12 @@ impl FleetSnapshot {
             .iter()
             .map(|t| (t.handle.as_str(), t))
             .collect();
-        let coordinator_run: HashMap<&str, &str> = data
+        let coordinators: HashMap<&str, String> = data
             .runs
             .iter()
-            .filter_map(|r| Some((r.coordinator_handle.as_deref()?, r.id.as_str())))
+            .filter_map(|r| Some((r.id.as_str(), data.effective_coordinator(&r.id)?)))
             .collect();
+        let coordinator_run = pick_run_per_coordinator(data, &coordinators);
         let worker_for_terminal = pick_worker_per_terminal(data);
 
         let mut nodes = Vec::new();
@@ -236,11 +237,7 @@ impl FleetSnapshot {
             .map(|r| RunSummary {
                 id: r.id.clone(),
                 objective: r.objective.clone(),
-                coordinator: r
-                    .coordinator_handle
-                    .as_deref()
-                    .filter(|h| live.contains_key(h))
-                    .map(NodeId::terminal),
+                coordinator: coordinators.get(r.id.as_str()).map(|h| NodeId::terminal(h)),
                 task_counts: data.tasks.get(&r.id).map(|t| TaskCounts::from_tasks(t)),
             })
             .collect();
@@ -290,6 +287,44 @@ impl FleetSnapshot {
     pub fn loose_nodes(&self) -> impl Iterator<Item = &Node> {
         self.nodes.iter().filter(|n| n.kind == NodeKind::Terminal)
     }
+}
+
+/// For each coordinator terminal, the run its node belongs to when it coordinates several: a
+/// run the poller fetched tasks for beats one it did not, then the most recently updated run,
+/// then the earlier `run-list` row. Every run still gets edges from its coordinator.
+fn pick_run_per_coordinator<'a>(
+    data: &'a FleetData,
+    coordinators: &HashMap<&str, String>,
+) -> HashMap<String, &'a str> {
+    let mut best: HashMap<String, (RunRank, &str)> = HashMap::new();
+    for (position, run) in data.runs.iter().enumerate() {
+        let Some(handle) = coordinators.get(run.id.as_str()) else {
+            continue;
+        };
+        let rank = RunRank {
+            active: data.tasks.contains_key(&run.id),
+            updated_ms: run
+                .updated_at
+                .as_ref()
+                .or(run.created_at.as_ref())
+                .and_then(|t| t.epoch_ms()),
+            earlier: std::cmp::Reverse(position),
+        };
+        match best.get(handle) {
+            Some((current, _)) if *current >= rank => {}
+            _ => {
+                best.insert(handle.clone(), (rank, run.id.as_str()));
+            }
+        }
+    }
+    best.into_iter().map(|(h, (_, r))| (h, r)).collect()
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct RunRank {
+    active: bool,
+    updated_ms: Option<i64>,
+    earlier: std::cmp::Reverse<usize>,
 }
 
 /// For each terminal handle, the worker it currently serves: an active dispatch beats a
