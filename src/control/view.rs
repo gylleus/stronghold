@@ -67,6 +67,10 @@ pub struct RunView {
     /// Node id of the live coordinator.
     pub coordinator: Option<String>,
     pub coordinator_state: Option<String>,
+    /// Node id of the attendant: the terminal Orca records as coordinator, which forwards the
+    /// run's bus events to the coordinator. Messages to the run's mailbox land there.
+    #[serde(default)]
+    pub attendant: Option<String>,
     /// `None` when the last poll fetched no tasks for the run.
     pub tasks: Option<TaskCountsView>,
     /// Worker nodes, live or not.
@@ -112,7 +116,7 @@ impl From<&TaskCounts> for TaskCountsView {
 pub struct AgentView {
     /// Stable node id: `term:<handle>`, `dispatch:<run>:<dispatch>` or `sub:<session>:<agent>`.
     pub id: String,
-    /// `coordinator`, `worker`, `terminal` or `subagent`.
+    /// `coordinator`, `attendant`, `worker`, `terminal` or `subagent`.
     pub kind: String,
     pub label: String,
     /// `working`, `idle`, `needs_input`, `stalled`, `done` or `failed`.
@@ -128,7 +132,8 @@ pub struct AgentView {
     pub worktree: Option<String>,
     pub repo: String,
     pub terminal_handle: Option<String>,
-    /// Parent node: the coordinator of a worker, the terminal (or subagent) of a subagent.
+    /// Parent node: the coordinator of a worker or attendant, the terminal (or subagent) of a
+    /// subagent.
     pub parent: Option<String>,
     pub last_output_ms: Option<i64>,
     /// Seconds since the last output, as of the response.
@@ -340,6 +345,7 @@ pub fn parse_state(s: &str) -> Option<NodeState> {
 pub fn kind_name(kind: NodeKind) -> &'static str {
     match kind {
         NodeKind::Coordinator => "coordinator",
+        NodeKind::Attendant => "attendant",
         NodeKind::Worker => "worker",
         NodeKind::Terminal => "terminal",
         NodeKind::Subagent => "subagent",
@@ -348,8 +354,9 @@ pub fn kind_name(kind: NodeKind) -> &'static str {
 }
 
 pub fn parse_kind(s: &str) -> Option<NodeKind> {
-    const ALL: [NodeKind; 5] = [
+    const ALL: [NodeKind; 6] = [
         NodeKind::Coordinator,
+        NodeKind::Attendant,
         NodeKind::Worker,
         NodeKind::Terminal,
         NodeKind::Subagent,
@@ -502,7 +509,11 @@ fn agent_view(node: &Node, snapshot: &FleetSnapshot, inputs: &ViewInputs<'_>) ->
         .edges
         .iter()
         .find(|e| {
-            e.to == node.id && matches!(e.kind, EdgeKind::CoordinatorWorker | EdgeKind::Subagent)
+            e.to == node.id
+                && matches!(
+                    e.kind,
+                    EdgeKind::CoordinatorWorker | EdgeKind::Subagent | EdgeKind::Attendant
+                )
         })
         .map(|e| e.from.0.clone());
     let run_objective = node
@@ -592,6 +603,7 @@ fn fleet_summary(snapshot: &FleetSnapshot, agents: &[AgentView]) -> FleetSummary
                 repo,
                 coordinator: coordinator.map(|c| c.id.clone()),
                 coordinator_state: coordinator.map(|c| c.state.clone()),
+                attendant: snapshot.attendant(&run.id).map(|a| a.0.clone()),
                 tasks: run.task_counts.as_ref().map(TaskCountsView::from),
                 workers: members.iter().filter(|a| a.kind == "worker").count(),
                 by_state: run_states,

@@ -45,7 +45,7 @@ pub use shape::{
     ALL_STATES, FleetNodeShape, NodePayload, StateGlyph, agent_marker, contrast_ratio, fade_alpha,
     legend, node_radius, state_color, state_glyph,
 };
-pub use tooltip::{format_ago, kind_label, preview_line, state_label};
+pub use tooltip::{coordinator_gone_note, format_ago, kind_label, preview_line, state_label};
 
 /// The egui_graphs graph the view renders.
 pub type FleetGraph =
@@ -223,7 +223,7 @@ impl GraphView {
             match self.index.get(&node.id) {
                 Some(&idx) => {
                     if let Some(graph_node) = self.graph.node_mut(idx) {
-                        let payload = payload(node);
+                        let payload = payload(node, snapshot);
                         if *graph_node.payload() != payload {
                             *graph_node.payload_mut() = payload;
                         }
@@ -247,7 +247,7 @@ impl GraphView {
                 None => self.spawn_position(node, snapshot),
             };
             let label = node.label.clone();
-            let idx = self.graph.add_node_custom(payload(node), |n| {
+            let idx = self.graph.add_node_custom(payload(node, snapshot), |n| {
                 n.set_location(location);
                 n.set_label(label);
             });
@@ -486,8 +486,16 @@ impl GraphView {
                 .map(String::as_str);
             let now_ms = now_ms();
             let usage = self.usage.get(&node.id);
+            let gone = self
+                .index
+                .get(&node.id)
+                .and_then(|&i| self.graph.node(i))
+                .is_some_and(|n| n.payload().coordinator_gone);
             response.response.clone().on_hover_ui_at_pointer(|ui| {
                 tooltip::node_tooltip(ui, node, objective, usage, now_ms);
+                if gone {
+                    tooltip::coordinator_gone_note(ui);
+                }
             });
         }
 
@@ -541,7 +549,10 @@ impl GraphView {
             let refusal = match node.kind {
                 NodeKind::Subagent => Some(crate::close::SUBAGENT_REFUSAL),
                 NodeKind::Queen => Some(crate::close::QUEEN_REFUSAL),
-                NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal => None,
+                NodeKind::Coordinator
+                | NodeKind::Attendant
+                | NodeKind::Worker
+                | NodeKind::Terminal => None,
             };
             let close = ui
                 .add_enabled(refusal.is_none(), egui::Button::new("Close session…"))
@@ -748,8 +759,9 @@ impl GraphView {
     }
 }
 
-fn payload(node: &Node) -> NodePayload {
+fn payload(node: &Node, snapshot: &FleetSnapshot) -> NodePayload {
     NodePayload {
+        coordinator_gone: snapshot.coordinator_gone(node),
         id: node.id.clone(),
         kind: node.kind,
         state: node.state,

@@ -658,6 +658,7 @@ pub fn format_screen_age(age_ms: i64) -> String {
 fn kind_label(kind: NodeKind) -> &'static str {
     match kind {
         NodeKind::Coordinator => "coordinator",
+        NodeKind::Attendant => "attendant",
         NodeKind::Worker => "worker",
         NodeKind::Terminal => "terminal",
         NodeKind::Subagent => "subagent",

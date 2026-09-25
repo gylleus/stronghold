@@ -1,6 +1,7 @@
 //! Edge rendering: thin, low-contrast lines without arrowheads; edges of the selected or
 //! hovered node are highlighted, edges to released workers fade with them. Queen edges are
 //! fainter and thinner still, so the hub's spokes stay in the background until picked.
+//! Edges to attendants are dashed.
 
 use eframe::egui::{Color32, Pos2, Shape, Stroke, Vec2};
 use egui_graphs::{DisplayEdge, DisplayNode, DrawContext, EdgeProps, Node};
@@ -101,13 +102,14 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayEdge<NodePayload, E, Ty, Ix, 
             let color: Color32 = visuals.text_color().gamma_multiply(alpha * fade);
             Stroke::new(width, color)
         };
-        vec![Shape::line_segment(
-            [
-                ctx.meta.canvas_to_screen_pos(from),
-                ctx.meta.canvas_to_screen_pos(to),
-            ],
-            stroke,
-        )]
+        let points = [
+            ctx.meta.canvas_to_screen_pos(from),
+            ctx.meta.canvas_to_screen_pos(to),
+        ];
+        if !queen && end.payload().kind == NodeKind::Attendant {
+            return Shape::dashed_line(&points, stroke, 4.0, 3.0);
+        }
+        vec![Shape::line_segment(points, stroke)]
     }
 
     fn update(&mut self, _: &EdgeProps<E>) {}

@@ -283,6 +283,10 @@ impl MyrstackApp {
         else {
             return;
         };
+        let coordinator_gone = self
+            .snapshot
+            .as_ref()
+            .is_some_and(|s| s.coordinator_gone(node));
         let default_width = ui.ctx().content_rect().width() * 0.45;
         let response = egui::Panel::right("terminal")
             .resizable(true)
@@ -298,6 +302,9 @@ impl MyrstackApp {
                     terminal,
                     usage: self.claude_data.as_ref().and_then(|c| c.node_usage(node)),
                 };
+                if coordinator_gone {
+                    ui::graph::coordinator_gone_note(ui);
+                }
                 ui::terminal::terminal_panel(ui, node, self.screen.as_ref(), input, now_ms)
             })
             .inner;
@@ -764,7 +771,11 @@ impl eframe::App for MyrstackApp {
                 data.errors.len()
             );
             self.claude.send_terminals(data.terminals.clone());
+            self.claude.watch_forwards(data.declared_coordinators());
             let mut data = data;
+            if let Some(claude) = &self.claude_data {
+                data.forwards.clone_from(&claude.forwards);
+            }
             if let Some(screen) = &self.screen
                 && let Some(old) = &self.data
                 && let Some(verdict) = old.needs_input.get(&screen.handle)
@@ -782,6 +793,9 @@ impl eframe::App for MyrstackApp {
                 claude.subagents.values().filter(|a| !a.is_empty()).count(),
                 claude.subagent_count()
             );
+            if let Some(data) = &mut self.data {
+                data.forwards.clone_from(&claude.forwards);
+            }
             self.claude_data = Some(claude);
             rebuild = true;
         }

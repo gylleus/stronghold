@@ -177,13 +177,14 @@ pub fn nav_groups(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<Na
             .iter()
             .filter(|n| n.run_id.as_deref() == Some(&row.id) && n.kind != NodeKind::Subagent)
             .collect();
-        members.sort_by(|a, b| {
-            (a.kind != NodeKind::Coordinator, &a.label, &a.id).cmp(&(
-                b.kind != NodeKind::Coordinator,
-                &b.label,
-                &b.id,
-            ))
-        });
+        // Coordinator, then attendant, then the rest.
+        let rank = |k: NodeKind| match k {
+            NodeKind::Coordinator => 0,
+            NodeKind::Attendant => 1,
+            _ => 2,
+        };
+        members
+            .sort_by(|a, b| (rank(a.kind), &a.label, &a.id).cmp(&(rank(b.kind), &b.label, &b.id)));
         let mut nodes = Vec::new();
         if let Some(coordinator) = snapshot.run(&row.id).and_then(|r| r.coordinator.as_ref()) {
             visit(coordinator, &mut nodes);

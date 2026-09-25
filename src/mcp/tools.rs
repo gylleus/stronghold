@@ -150,7 +150,7 @@ const STATES: [&str; 6] = [
     "done",
     "failed",
 ];
-const KINDS: [&str; 4] = ["coordinator", "worker", "terminal", "subagent"];
+const KINDS: [&str; 5] = ["coordinator", "attendant", "worker", "terminal", "subagent"];
 
 fn one_or_many(values: &[&str], description: &str) -> Value {
     json!({
@@ -517,10 +517,7 @@ fn fleet_text(s: &Status, fallback: bool, now: i64) -> String {
         return out.join("\n");
     }
     let f = &s.fleet;
-    let kinds = counts(
-        &f.by_kind,
-        &["coordinator", "worker", "terminal", "subagent"],
-    );
+    let kinds = counts(&f.by_kind, &KINDS);
     out.push(format!(
         "Fleet: {} · {} agents, {} live ({kinds})",
         f.state.replace('_', " "),
@@ -638,6 +635,7 @@ fn runs_text(runs: &[RunView], coordinators: &[AgentView], now: i64) -> String {
                     r.coordinator_state.as_deref().unwrap_or("?")
                 )
             }
+            None if r.attendant.is_some() => "gone (only its attendant is live)".into(),
             None => "none".into(),
         };
         let tasks = r.tasks.map_or("?".into(), |t| {

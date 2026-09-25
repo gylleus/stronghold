@@ -19,8 +19,9 @@ const ALL_STATES: [NodeState; 6] = [
     NodeState::Done,
     NodeState::Failed,
 ];
-const ALL_KINDS: [NodeKind; 4] = [
+const ALL_KINDS: [NodeKind; 5] = [
     NodeKind::Coordinator,
+    NodeKind::Attendant,
     NodeKind::Worker,
     NodeKind::Terminal,
     NodeKind::Subagent,
@@ -425,7 +426,10 @@ fn runs_section(
             .clicked();
         if clicked {
             response.focus_run = Some(row.id.clone());
-            response.select = snapshot.run(&row.id).and_then(|r| r.coordinator.clone());
+            response.select = snapshot
+                .run(&row.id)
+                .and_then(|r| r.coordinator.clone())
+                .or_else(|| snapshot.attendant(&row.id).cloned());
         }
     }
 }

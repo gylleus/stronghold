@@ -11,6 +11,7 @@ const PREVIEW_CHARS: usize = 100;
 pub fn kind_label(kind: NodeKind) -> &'static str {
     match kind {
         NodeKind::Coordinator => "coordinator",
+        NodeKind::Attendant => "attendant",
         NodeKind::Worker => "worker",
         NodeKind::Terminal => "terminal",
         NodeKind::Subagent => "subagent",
@@ -77,6 +78,9 @@ pub fn node_tooltip(
     if let Some(run_id) = &node.run_id {
         ui.label(format!("Run: {}", run_objective.unwrap_or(run_id)));
     }
+    if node.kind == NodeKind::Attendant {
+        ui.label(RichText::new("Forwards the run's bus events to its coordinator").weak());
+    }
     if let Some(agent) = &node.agent {
         ui.label(format!("Agent: {agent}"));
     }
@@ -94,4 +98,12 @@ pub fn node_tooltip(
     if let Some(line) = node.preview.as_deref().and_then(preview_line) {
         ui.label(RichText::new(line).monospace().weak());
     }
+}
+
+/// The "coordinator gone" line of an attendant whose run has no live coordinator.
+pub fn coordinator_gone_note(ui: &mut Ui) {
+    ui.colored_label(
+        ui.visuals().warn_fg_color,
+        "Coordinator gone: no live terminal coordinates this run; events wait at the attendant",
+    );
 }

@@ -7,11 +7,11 @@ mod subagent;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
 use crate::claude::ClaudeData;
-use crate::fleet::FleetData;
+use crate::fleet::{FleetData, RunRoles};
 use crate::orca::{
     AgentIdentity, DispatchStatus, Task, TaskStatus, Terminal, Worker, WorkerState,
     WorkerTerminalState,
@@ -74,6 +74,9 @@ impl fmt::Display for NodeId {
 pub enum NodeKind {
     /// A run's coordinator terminal.
     Coordinator,
+    /// The terminal that created a run and forwards its bus events to the coordinator (Orca
+    /// records it as the run's coordinator); see [`crate::fleet::RunRoles`].
+    Attendant,
     /// A terminal (live or not) dispatched to a run's task.
     Worker,
     /// A live terminal outside any run.
@@ -129,8 +132,10 @@ pub enum EdgeKind {
     CoordinatorWorker,
     /// Terminal → subagent, or parent subagent → nested subagent.
     Subagent,
-    /// Queen → coordinator or loose terminal.
+    /// Queen → coordinator or loose terminal, or → attendant when its run has no coordinator.
     Queen,
+    /// Coordinator → its run's attendant.
+    Attendant,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -200,6 +205,9 @@ pub struct FleetSnapshot {
     /// Live terminals in `terminal list` order, then non-live workers.
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
+    /// Attendant node per run id, for runs whose recorded coordinator is an attendant
+    /// forwarding to the real one; see [`crate::fleet::RunRoles`].
+    pub attendants: BTreeMap<String, NodeId>,
     index: HashMap<NodeId, usize>,
 }
 
@@ -227,12 +235,22 @@ impl FleetSnapshot {
             .iter()
             .map(|t| (t.handle.as_str(), t))
             .collect();
-        let coordinators: HashMap<&str, String> = data
+        let roles: HashMap<&str, RunRoles> = data
             .runs
             .iter()
-            .filter_map(|r| Some((r.id.as_str(), data.effective_coordinator(&r.id)?)))
+            .map(|r| (r.id.as_str(), data.run_roles(&r.id)))
+            .collect();
+        let coordinators: HashMap<&str, String> = roles
+            .iter()
+            .filter_map(|(run, r)| Some((*run, r.coordinator.clone()?)))
             .collect();
         let coordinator_run = pick_run_per_coordinator(data, &coordinators);
+        let attendants: HashMap<&str, String> = roles
+            .iter()
+            .filter_map(|(run, r)| Some((*run, r.attendant.clone()?)))
+            .filter(|(_, h)| !coordinator_run.contains_key(h))
+            .collect();
+        let attendant_run = pick_run_per_coordinator(data, &attendants);
         let worker_for_terminal = pick_worker_per_terminal(data);
 
         let mut nodes = Vec::new();
@@ -241,6 +259,10 @@ impl FleetSnapshot {
             let node = if let Some(run_id) = coordinator_run.get(handle) {
                 let mut node =
                     terminal_node(terminal, NodeKind::Coordinator, now_ms, data, stalled);
+                node.run_id = Some((*run_id).to_string());
+                node
+            } else if let Some(run_id) = attendant_run.get(handle) {
+                let mut node = terminal_node(terminal, NodeKind::Attendant, now_ms, data, stalled);
                 node.run_id = Some((*run_id).to_string());
                 node
             } else if let Some(worker) = worker_for_terminal.get(handle) {
@@ -294,12 +316,28 @@ impl FleetSnapshot {
                 task_counts: data.tasks.get(&r.id).map(|t| TaskCounts::from_tasks(t)),
             })
             .collect();
+        let run_attendants: BTreeMap<String, NodeId> = runs
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r.id.clone(),
+                    NodeId::terminal(attendants.get(r.id.as_str())?),
+                ))
+            })
+            .collect();
 
         let mut edges = Vec::new();
         for run in &runs {
             let Some(coordinator) = &run.coordinator else {
                 continue;
             };
+            if let Some(attendant) = run_attendants.get(&run.id) {
+                edges.push(Edge {
+                    from: coordinator.clone(),
+                    to: attendant.clone(),
+                    kind: EdgeKind::Attendant,
+                });
+            }
             edges.extend(
                 nodes
                     .iter()
@@ -319,29 +357,34 @@ impl FleetSnapshot {
             runs,
             nodes,
             edges,
+            attendants: run_attendants,
             index,
         };
         snapshot.add_queen();
         snapshot
     }
 
-    /// Adds the queen node and its edges to every coordinator and loose terminal, replacing
-    /// any earlier queen, and reindexes. [`FleetSnapshot::build`] calls it; tests that assemble
+    /// Adds the queen node and its edges to every coordinator and loose terminal, and to
+    /// attendants whose run has no coordinator, replacing any earlier queen, and reindexes. [`FleetSnapshot::build`] calls it; tests that assemble
     /// snapshots by hand can too.
     pub fn add_queen(&mut self) {
         self.nodes.retain(|n| n.kind != NodeKind::Queen);
         self.edges.retain(|e| e.kind != EdgeKind::Queen);
         let queen = queen::queen_node(&self.nodes);
-        self.edges.extend(
-            self.nodes
-                .iter()
-                .filter(|n| matches!(n.kind, NodeKind::Coordinator | NodeKind::Terminal))
-                .map(|n| Edge {
-                    from: queen.id.clone(),
-                    to: n.id.clone(),
-                    kind: EdgeKind::Queen,
-                }),
-        );
+        let spokes: Vec<Edge> = self
+            .nodes
+            .iter()
+            .filter(|n| {
+                matches!(n.kind, NodeKind::Coordinator | NodeKind::Terminal)
+                    || self.coordinator_gone(n)
+            })
+            .map(|n| Edge {
+                from: queen.id.clone(),
+                to: n.id.clone(),
+                kind: EdgeKind::Queen,
+            })
+            .collect();
+        self.edges.extend(spokes);
         self.nodes.push(queen);
         self.index = self
             .nodes
@@ -369,7 +412,22 @@ impl FleetSnapshot {
         self.runs.iter().find(|r| r.id == run_id)
     }
 
-    /// Coordinator and workers of a run.
+    /// The attendant node of a run, if it has one.
+    pub fn attendant(&self, run_id: &str) -> Option<&NodeId> {
+        self.attendants.get(run_id)
+    }
+
+    /// Whether `node` is an attendant whose run has no live coordinator.
+    pub fn coordinator_gone(&self, node: &Node) -> bool {
+        node.kind == NodeKind::Attendant
+            && node
+                .run_id
+                .as_deref()
+                .and_then(|r| self.run(r))
+                .is_none_or(|r| r.coordinator.is_none())
+    }
+
+    /// Coordinator, attendant and workers of a run.
     pub fn nodes_in_run<'a>(&'a self, run_id: &'a str) -> impl Iterator<Item = &'a Node> + 'a {
         self.nodes
             .iter()

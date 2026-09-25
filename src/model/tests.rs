@@ -618,13 +618,83 @@ fn dead_declared_coordinator_without_candidates_gives_none() {
 }
 
 #[test]
-fn live_declared_coordinator_beats_other_task_creators() {
+fn live_declared_coordinator_that_creates_tasks_stays_coordinator() {
     let mut data = scenario();
-    data.tasks.get_mut(RUN).unwrap()[0].created_by_terminal_handle = Some(LOOSE.into());
+    let mut own = data.tasks[RUN][0].clone();
+    own.id = "task_own".into();
+    own.created_by_terminal_handle = Some(COORDINATOR.into());
+    let tasks = data.tasks.get_mut(RUN).unwrap();
+    tasks[0].created_by_terminal_handle = Some(LOOSE.into());
+    tasks.push(own);
     let snap = FleetSnapshot::build(&data, NOW);
 
     assert_eq!(snap.run(RUN).unwrap().coordinator, Some(term(COORDINATOR)));
     assert_eq!(snap.node(&term(LOOSE)).unwrap().kind, NodeKind::Terminal);
+    assert!(snap.attendants.is_empty());
+}
+
+/// The declared coordinator is an attendant: LOOSE creates the run's tasks.
+fn attendant_scenario() -> FleetData {
+    let mut data = scenario();
+    data.terminals
+        .iter_mut()
+        .find(|t| t.handle == COORDINATOR)
+        .unwrap()
+        .title = Some("✳ cp-wave-0923-ATTENDANT brief".into());
+    data.tasks.get_mut(RUN).unwrap()[0].created_by_terminal_handle = Some(LOOSE.into());
+    data
+}
+
+#[test]
+fn attendant_hangs_off_the_real_coordinator() {
+    let snap = FleetSnapshot::build(&attendant_scenario(), NOW);
+
+    let run = snap.run(RUN).unwrap();
+    assert_eq!(run.coordinator, Some(term(LOOSE)));
+    assert_eq!(snap.attendant(RUN), Some(&term(COORDINATOR)));
+    let coordinator = snap.node(&term(LOOSE)).unwrap();
+    assert_eq!(coordinator.kind, NodeKind::Coordinator);
+    let attendant = snap.node(&term(COORDINATOR)).unwrap();
+    assert_eq!(attendant.kind, NodeKind::Attendant);
+    assert_eq!(attendant.run_id.as_deref(), Some(RUN));
+    assert!(!snap.coordinator_gone(attendant));
+
+    let attendant_edges: Vec<&Edge> = snap
+        .edges
+        .iter()
+        .filter(|e| e.kind == EdgeKind::Attendant)
+        .collect();
+    assert_eq!(attendant_edges.len(), 1);
+    assert_eq!(attendant_edges[0].from, term(LOOSE));
+    assert_eq!(attendant_edges[0].to, term(COORDINATOR));
+    // Workers stay with the coordinator; the queen links the coordinator, not the attendant.
+    assert_eq!(coordinator_edges(&snap, LOOSE), run_workers(&snap, RUN));
+    let queen_to = |id: &NodeId| {
+        snap.edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::Queen && &e.to == id)
+    };
+    assert!(queen_to(&term(LOOSE)));
+    assert!(!queen_to(&term(COORDINATOR)));
+}
+
+#[test]
+fn attendant_without_coordinator_links_to_the_queen() {
+    let mut data = attendant_scenario();
+    data.terminals.retain(|t| t.handle != LOOSE);
+    let snap = FleetSnapshot::build(&data, NOW);
+
+    let run = snap.run(RUN).expect("the attendant keeps the run shown");
+    assert_eq!(run.coordinator, None);
+    let attendant = snap.node(&term(COORDINATOR)).unwrap();
+    assert_eq!(attendant.kind, NodeKind::Attendant);
+    assert!(snap.coordinator_gone(attendant));
+    assert!(
+        snap.edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::Queen && e.to == attendant.id)
+    );
+    assert!(snap.edges.iter().all(|e| e.kind != EdgeKind::Attendant));
 }
 
 #[test]
