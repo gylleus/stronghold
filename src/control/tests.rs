@@ -118,9 +118,6 @@ struct FakeCommands {
 impl CommandHandler for FakeCommands {
     fn execute(&self, command: ControlCommand) -> Result<Value, ControlError> {
         self.log.lock().unwrap().push(command.clone());
-        if let ControlCommand::Close { .. } = command {
-            return Err(ControlError::new(ErrorCode::NotSupported, "later"));
-        }
         let debug = format!("{command:?}");
         if debug.contains("\"missing\"") {
             return Err(ControlError::not_found("no agent"));
@@ -200,7 +197,13 @@ fn mode(path: &Path) -> u32 {
 #[test]
 fn view_summarizes_the_fleet() {
     let view = status_view();
-    assert_eq!(view.fleet.agents, 3);
+    assert_eq!(
+        view.fleet.state, "needs_input",
+        "the Queen takes the most urgent state"
+    );
+    assert_eq!(view.fleet.agents, 3, "the Queen is not an agent");
+    assert!(view.agents.iter().all(|a| a.kind != "queen"));
+    assert!(view.find_agent("queen").is_none());
     assert_eq!(view.fleet.live, 3);
     assert_eq!(view.fleet.by_kind["coordinator"], 1);
     assert_eq!(view.fleet.needs_input, vec![format!("term:{CODEX}")]);
@@ -412,6 +415,11 @@ fn every_action_reaches_the_handler() {
         ("view", json!({"view": "table"})),
         ("fit", Value::Null),
         ("open_whip_settings", Value::Null),
+        ("close", json!({"id": "a"})),
+        (
+            "close",
+            json!({"ids": ["a", "b"], "whole_tab": true, "dry_run": true}),
+        ),
     ];
     for (method, params) in &calls {
         h.ok(method, params.clone());
@@ -472,6 +480,16 @@ fn every_action_reaches_the_handler() {
         ControlCommand::SetView(View::Table),
         ControlCommand::Fit,
         ControlCommand::OpenWhipSettings,
+        ControlCommand::Close {
+            agents: vec!["a".into()],
+            whole_tab: false,
+            dry_run: false,
+        },
+        ControlCommand::Close {
+            agents: vec!["a".into(), "b".into()],
+            whole_tab: true,
+            dry_run: true,
+        },
     ];
     assert_eq!(h.commands(), expected);
 }
@@ -483,7 +501,10 @@ fn handler_errors_come_back() {
         h.err("focus", json!({"id": "missing"})),
         ErrorCode::NotFound
     );
-    assert_eq!(h.err("close", json!({"id": "a"})), ErrorCode::NotSupported);
+    assert_eq!(
+        h.err("close", json!({"id": "missing"})),
+        ErrorCode::NotFound
+    );
 }
 
 #[test]
@@ -507,6 +528,8 @@ fn invalid_action_params_never_reach_the_handler() {
         ("view", json!({"view": "map"})),
         ("whip_settings", json!({"dry_run": "no"})),
         ("close", json!({})),
+        ("close", json!({"ids": []})),
+        ("close", json!({"id": "a", "dry_run": "yes"})),
     ];
     for (method, params) in bad {
         assert_eq!(

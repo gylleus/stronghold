@@ -18,6 +18,8 @@ use crate::ui::sidebar::FleetFilter;
 
 /// How long a terminal send may take: Orca waits up to 30 s for the agent, the runner 45 s.
 pub const ACTION_REPLY_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a close may take: its steps run one after another.
+pub const CLOSE_REPLY_TIMEOUT: Duration = Duration::from_secs(180);
 /// How long the app may take to apply a dashboard change.
 pub const UI_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -106,9 +108,12 @@ pub enum ControlCommand {
     SetView(View),
     Fit,
     OpenWhipSettings,
-    /// Close the agent's terminal. TODO(next bead): wire to the close/kill session action.
+    /// Close (kill) the agents' sessions: worker-stop for active dispatches, then
+    /// `terminal close`. With `dry_run` only the plan is returned.
     Close {
-        agent: String,
+        agents: Vec<String>,
+        whole_tab: bool,
+        dry_run: bool,
     },
 }
 
@@ -193,7 +198,21 @@ impl ControlCommand {
             })(),
             "fit" => Ok(Self::Fit),
             "open_whip_settings" => Ok(Self::OpenWhipSettings),
-            "close" => (|| Ok(Self::Close { agent: agent()? }))(),
+            "close" => (|| {
+                let mut agents = p.strings("ids")?.unwrap_or_default();
+                if let Some(id) = p.str("id")? {
+                    agents.insert(0, id.to_owned());
+                }
+                agents.retain(|a| !a.trim().is_empty());
+                if agents.is_empty() {
+                    return Err(ControlError::invalid_params("missing \"id\" or \"ids\""));
+                }
+                Ok(Self::Close {
+                    agents,
+                    whole_tab: p.bool("whole_tab")?.unwrap_or(false),
+                    dry_run: p.bool("dry_run")?.unwrap_or(false),
+                })
+            })(),
             _ => return None,
         };
         Some(result)
@@ -203,6 +222,7 @@ impl ControlCommand {
     pub fn reply_timeout(&self) -> Duration {
         match self {
             Self::Send { .. } | Self::Key { .. } | Self::Broadcast { .. } => ACTION_REPLY_TIMEOUT,
+            Self::Close { dry_run: false, .. } => CLOSE_REPLY_TIMEOUT,
             _ => UI_REPLY_TIMEOUT,
         }
     }

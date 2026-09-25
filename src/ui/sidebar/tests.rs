@@ -366,3 +366,38 @@ fn cache_derives_once_per_snapshot_and_recounts_hidden_per_filter() {
 fn snapshot_repo_counts() -> BTreeMap<String, usize> {
     repo_counts(&snapshot())
 }
+
+#[test]
+fn filters_never_hide_the_queen_and_counts_skip_it() {
+    let mut s = snapshot();
+    s.add_queen();
+    let filters = [
+        FleetFilter {
+            show_loose: false,
+            show_released: false,
+            ..FleetFilter::default()
+        },
+        FleetFilter {
+            states: [NodeState::Done].into(),
+            ..FleetFilter::default()
+        },
+        FleetFilter {
+            kinds: [NodeKind::Worker].into(),
+            ..FleetFilter::default()
+        },
+        FleetFilter {
+            repos: ["infra".to_string()].into(),
+            ..FleetFilter::default()
+        },
+        FleetFilter {
+            text: "no such node".into(),
+            ..FleetFilter::default()
+        },
+    ];
+    for filter in filters {
+        assert!(!filter.hidden(&s).contains(&NodeId::queen()), "{filter:?}");
+    }
+    assert_eq!(kind_counts(&s).get(&NodeKind::Queen), None);
+    assert_eq!(state_counts(&s).values().sum::<usize>(), 6);
+    assert_eq!(repo_counts(&s).values().sum::<usize>(), 6);
+}

@@ -7,6 +7,7 @@ pub mod actions;
 pub mod app;
 pub mod broadcast;
 pub mod claude;
+pub mod close;
 pub mod codex;
 pub mod control;
 pub mod detect;

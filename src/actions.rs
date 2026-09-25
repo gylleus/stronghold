@@ -1,4 +1,5 @@
-//! Orca actions that change something (terminal input, tab switching), run off the UI thread.
+//! Orca actions that change something (terminal input, tab switching, closing sessions), run
+//! off the UI thread.
 //!
 //! [`ActionRunner`] owns one worker thread that executes [`Action`]s in submission order and
 //! reports each as an [`ActionResult`]. The executor is a trait so tests (and the whip later)
@@ -10,7 +11,7 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender};
 
-use crate::orca::{OrcaClient, TerminalInput};
+use crate::orca::{OrcaClient, OrcaError, TerminalInput};
 
 /// Bundle id of Orca.app, used to bring its window to the front.
 pub const ORCA_BUNDLE_ID: &str = "com.stablyai.orca";
@@ -96,12 +97,40 @@ pub enum Action {
     },
     /// `orca terminal switch`, then bring Orca's window to the front.
     Switch { handle: String },
+    /// `orca orchestration worker-stop`: fence the dispatch (and close its supervised terminal).
+    WorkerStop {
+        dispatch_id: String,
+        /// The worker's terminal, for status and logs.
+        handle: Option<String>,
+    },
+    /// `orca terminal close`, or with `tab` the terminal's whole tab. A terminal that is
+    /// already gone counts as closed.
+    CloseTerminal { handle: String, tab: bool },
 }
 
 impl Action {
+    /// The terminal the action is about (a worker-stop without one: its dispatch id).
     pub fn handle(&self) -> &str {
         match self {
-            Action::Send { handle, .. } | Action::Switch { handle } => handle,
+            Action::Send { handle, .. }
+            | Action::Switch { handle }
+            | Action::CloseTerminal { handle, .. } => handle,
+            Action::WorkerStop {
+                handle,
+                dispatch_id,
+                ..
+            } => handle.as_deref().unwrap_or(dispatch_id),
+        }
+    }
+
+    /// The `orca` arguments the [`OrcaExecutor`] runs for this action (without `--json`).
+    pub fn cli_args(&self) -> Vec<String> {
+        use crate::orca::commands;
+        match self {
+            Action::Send { handle, input } => commands::terminal_send_args(handle, input),
+            Action::Switch { handle } => commands::terminal_switch_args(handle),
+            Action::WorkerStop { dispatch_id, .. } => commands::worker_stop_args(dispatch_id),
+            Action::CloseTerminal { handle, tab } => commands::terminal_close_args(handle, *tab),
         }
     }
 }
@@ -115,11 +144,53 @@ pub struct ActionResult {
     pub id: ActionId,
     pub action: Action,
     pub outcome: Result<(), String>,
+    /// What happened, when the executor said more than "ok" (e.g. "already closed").
+    pub note: Option<String>,
 }
 
 /// Executes actions; runs on the runner's thread.
 pub trait ActionExecutor: Send + 'static {
     fn execute(&self, action: &Action) -> Result<(), String>;
+
+    /// Like [`ActionExecutor::execute`], with a short note on success. The runner calls this.
+    fn execute_noted(&self, action: &Action) -> Result<Option<String>, String> {
+        self.execute(action).map(|()| None)
+    }
+}
+
+/// Error codes `terminal close` returns for a terminal that no longer exists.
+pub const GONE_TERMINAL_CODES: &[&str] = &[
+    "terminal_handle_stale",
+    "terminal_not_found",
+    "terminal_gone",
+];
+
+/// Result note of a close whose terminal was already gone (e.g. worker-stop closed it).
+pub const ALREADY_CLOSED: &str = "already closed";
+
+/// Maps a `terminal close` call's result to the action outcome: a terminal that is already
+/// gone is not an error.
+pub fn close_outcome(
+    result: Result<crate::orca::TerminalClose, OrcaError>,
+) -> Result<Option<String>, String> {
+    match result {
+        Ok(close) => Ok(Some(close.summary())),
+        Err(err) if err.code().is_some_and(|c| GONE_TERMINAL_CODES.contains(&c)) => {
+            Ok(Some(ALREADY_CLOSED.into()))
+        }
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+/// Maps a `worker-stop` call's result to the action outcome; `stop_unknown` is an error.
+pub fn worker_stop_outcome(
+    result: Result<crate::orca::WorkerStopResult, OrcaError>,
+) -> Result<Option<String>, String> {
+    let stop = result.map_err(|e| e.to_string())?;
+    if stop.outcome_unknown() {
+        return Err(stop.summary());
+    }
+    Ok(Some(stop.summary()))
 }
 
 /// Executes actions with the real `orca` CLI.
@@ -142,6 +213,10 @@ impl Default for OrcaExecutor {
 
 impl ActionExecutor for OrcaExecutor {
     fn execute(&self, action: &Action) -> Result<(), String> {
+        self.execute_noted(action).map(|_| ())
+    }
+
+    fn execute_noted(&self, action: &Action) -> Result<Option<String>, String> {
         match action {
             Action::Send { handle, input } => {
                 let send = self
@@ -156,14 +231,20 @@ impl ActionExecutor for OrcaExecutor {
                         }
                     });
                 }
-                Ok(())
+                Ok(None)
             }
             Action::Switch { handle } => {
                 self.client
                     .terminal_switch(handle)
                     .map_err(|e| e.to_string())?;
                 // `terminal switch` only selects the tab inside Orca; it doesn't raise the window.
-                activate_orca()
+                activate_orca().map(|()| None)
+            }
+            Action::WorkerStop { dispatch_id, .. } => {
+                worker_stop_outcome(self.client.worker_stop(dispatch_id))
+            }
+            Action::CloseTerminal { handle, tab } => {
+                close_outcome(self.client.terminal_close(handle, *tab))
             }
         }
     }
@@ -203,18 +284,23 @@ impl ActionRunner {
             .name("orca-actions".into())
             .spawn(move || {
                 for (id, action) in job_rx {
-                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        executor.execute(&action)
+                    let noted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        executor.execute_noted(&action)
                     }))
                     .unwrap_or_else(|_| Err("action panicked".into()));
-                    if let Err(err) = &outcome {
+                    if let Err(err) = &noted {
                         log::warn!("action on {} failed: {err}", action.handle());
                     }
+                    let (outcome, note) = match noted {
+                        Ok(note) => (Ok(()), note),
+                        Err(err) => (Err(err), None),
+                    };
                     if result_tx
                         .send(ActionResult {
                             id,
                             action,
                             outcome,
+                            note,
                         })
                         .is_err()
                     {
@@ -404,6 +490,100 @@ mod tests {
         let second = runner.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(second.outcome, Ok(()));
         assert_eq!(*wakes.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn close_actions_build_cli_args() {
+        let stop = Action::WorkerStop {
+            dispatch_id: "d1".into(),
+            handle: Some("t1".into()),
+        };
+        assert_eq!(
+            stop.cli_args(),
+            vec!["orchestration", "worker-stop", "--dispatch=d1"]
+        );
+        assert_eq!(stop.handle(), "t1");
+        let bare = Action::WorkerStop {
+            dispatch_id: "d1".into(),
+            handle: None,
+        };
+        assert_eq!(bare.handle(), "d1");
+        let close = |tab| Action::CloseTerminal {
+            handle: "t1".into(),
+            tab,
+        };
+        assert_eq!(
+            close(false).cli_args(),
+            vec!["terminal", "close", "--terminal=t1"]
+        );
+        assert_eq!(
+            close(true).cli_args(),
+            vec!["terminal", "close", "--terminal=t1", "--tab"]
+        );
+        assert_eq!(
+            Action::Switch {
+                handle: "t1".into()
+            }
+            .cli_args(),
+            vec!["terminal", "switch", "--terminal=t1"]
+        );
+    }
+
+    macro_rules! fixture {
+        ($name:literal) => {
+            include_bytes!(concat!("../tests/fixtures/orca/", $name))
+        };
+    }
+
+    #[test]
+    fn close_outcome_treats_a_gone_terminal_as_closed() {
+        use crate::orca::commands::parse_terminal_close;
+        assert_eq!(
+            close_outcome(parse_terminal_close(fixture!("terminal_close.json"))),
+            Ok(Some("closed term_1, PTY killed".into()))
+        );
+        assert_eq!(
+            close_outcome(parse_terminal_close(fixture!(
+                "error_terminal_handle_stale.json"
+            ))),
+            Ok(Some(ALREADY_CLOSED.into()))
+        );
+        let other = close_outcome(parse_terminal_close(fixture!(
+            "error_invalid_argument.json"
+        )));
+        assert!(other.is_err(), "{other:?}");
+    }
+
+    #[test]
+    fn worker_stop_outcome_fails_on_stop_unknown() {
+        use crate::orca::commands::parse_worker_stop;
+        assert_eq!(
+            worker_stop_outcome(parse_worker_stop(fixture!("worker_stop.json"))),
+            Ok(Some("dispatch stopped, closed its terminal".into()))
+        );
+        let unknown = worker_stop_outcome(parse_worker_stop(fixture!("worker_stop_unknown.json")));
+        assert!(unknown.unwrap_err().starts_with("dispatch stop_unknown"));
+    }
+
+    #[test]
+    fn runner_reports_executor_notes() {
+        struct Noting;
+        impl ActionExecutor for Noting {
+            fn execute(&self, _: &Action) -> Result<(), String> {
+                Ok(())
+            }
+            fn execute_noted(&self, _: &Action) -> Result<Option<String>, String> {
+                Ok(Some(ALREADY_CLOSED.into()))
+            }
+        }
+        let mut runner = ActionRunner::spawn(Noting, None);
+        runner.submit(Action::CloseTerminal {
+            handle: "t".into(),
+            tab: false,
+        });
+        let result = runner.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(result.outcome, Ok(()));
+        assert_eq!(result.note.as_deref(), Some(ALREADY_CLOSED));
     }
 
     #[test]

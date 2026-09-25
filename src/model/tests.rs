@@ -142,10 +142,14 @@ fn run_has_coordinator_workers_and_task_counts() {
         ]
     );
 
-    assert_eq!(snap.edges.len(), 3);
-    assert!(snap.edges.iter().all(|e| e.from == term(COORDINATOR)
-        && e.kind == EdgeKind::CoordinatorWorker
-        && snap.node(&e.to).unwrap().kind == NodeKind::Worker));
+    assert_eq!(fleet_edges(&snap).len(), 3);
+    assert!(
+        fleet_edges(&snap)
+            .iter()
+            .all(|e| e.from == term(COORDINATOR)
+                && e.kind == EdgeKind::CoordinatorWorker
+                && snap.node(&e.to).unwrap().kind == NodeKind::Worker)
+    );
 }
 
 #[test]
@@ -308,9 +312,113 @@ fn derive_state_on_fixture_workers() {
 }
 
 #[test]
-fn empty_data_gives_empty_snapshot() {
+fn empty_data_gives_only_the_queen() {
     let snap = FleetSnapshot::build(&FleetData::default(), NOW);
-    assert!(snap.runs.is_empty() && snap.nodes.is_empty() && snap.edges.is_empty());
+    assert!(snap.runs.is_empty() && snap.edges.is_empty());
+    let ids: Vec<&str> = snap.nodes.iter().map(|n| n.id.as_str()).collect();
+    assert_eq!(ids, ["queen"]);
+    let queen = snap.queen().unwrap();
+    assert_eq!(queen.state, NodeState::Idle);
+    assert_eq!(queen.preview.as_deref(), Some("0 coordinators · 0 agents"));
+}
+
+/// Edges other than the queen's.
+fn fleet_edges(snap: &FleetSnapshot) -> Vec<&Edge> {
+    snap.edges
+        .iter()
+        .filter(|e| e.kind != EdgeKind::Queen)
+        .collect()
+}
+
+#[test]
+fn queen_links_every_coordinator_and_loose_terminal() {
+    let snap = FleetSnapshot::build(&scenario(), NOW);
+    let queens: Vec<&Node> = snap
+        .nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::Queen)
+        .collect();
+    assert_eq!(queens.len(), 1);
+    let queen = queens[0];
+    assert_eq!(queen.id, NodeId::queen());
+    assert_eq!(queen.id.as_str(), "queen");
+    assert_eq!(queen.label, "Queen");
+    assert_eq!(queen.terminal_handle, None);
+    assert_eq!(snap.node(&NodeId::queen()), Some(queen));
+
+    let mut linked: Vec<&NodeId> = snap
+        .edges
+        .iter()
+        .filter(|e| e.kind == EdgeKind::Queen)
+        .inspect(|e| assert_eq!(e.from, queen.id))
+        .map(|e| &e.to)
+        .collect();
+    linked.sort();
+    let mut expected: Vec<&NodeId> = snap
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.kind, NodeKind::Coordinator | NodeKind::Terminal))
+        .map(|n| &n.id)
+        .collect();
+    expected.sort();
+    assert_eq!(linked, expected);
+    assert_eq!(linked, [&term(LOOSE), &term(COORDINATOR)]);
+
+    let agents = snap.agent_nodes().count();
+    assert_eq!(agents, snap.nodes.len() - 1);
+    assert_eq!(
+        queen.preview.as_deref(),
+        Some(format!("1 coordinator · {agents} agents").as_str())
+    );
+}
+
+#[test]
+fn queen_is_rebuilt_not_duplicated() {
+    let mut snap = FleetSnapshot::build(&scenario(), NOW);
+    let edges = snap.edges.len();
+    snap.add_queen();
+    snap.add_queen();
+    assert_eq!(
+        snap.nodes
+            .iter()
+            .filter(|n| n.kind == NodeKind::Queen)
+            .count(),
+        1
+    );
+    assert_eq!(snap.edges.len(), edges);
+    assert!(snap.node(&NodeId::queen()).is_some());
+}
+
+#[test]
+fn queen_state_is_the_most_urgent_fleet_state() {
+    let with = |states: &[NodeState]| {
+        let nodes: Vec<Node> = states
+            .iter()
+            .map(|s| {
+                let mut n = queen::queen_node(&[]);
+                n.kind = NodeKind::Worker;
+                n.state = *s;
+                n
+            })
+            .collect();
+        fleet_state(&nodes)
+    };
+    use NodeState::*;
+    assert_eq!(with(&[]), Idle);
+    assert_eq!(with(&[Done, Failed, Idle]), Idle);
+    assert_eq!(with(&[Idle, Working, Done]), Working);
+    assert_eq!(with(&[Working, Stalled, Idle]), Stalled);
+    assert_eq!(with(&[Stalled, NeedsInput, Working]), NeedsInput);
+
+    let mut data = scenario();
+    let stalled = std::collections::BTreeSet::from([COORDINATOR.to_string()]);
+    let snap = FleetSnapshot::build_with_stalled(&data, None, &stalled, NOW);
+    // The scenario's live worker needs input, which outranks the escalated coordinator.
+    assert_eq!(snap.queen().unwrap().state, NeedsInput);
+    data.needs_input.clear();
+    data.terminals.retain(|t| t.handle != LIVE_WORKER);
+    let snap = FleetSnapshot::build_with_stalled(&data, None, &stalled, NOW);
+    assert_eq!(snap.queen().unwrap().state, Stalled);
 }
 
 mod subagents {
@@ -493,7 +601,7 @@ fn rebound_coordinator_is_the_coordinator_node() {
         NodeKind::Terminal
     );
 
-    assert_eq!(snap.edges.len(), 3);
+    assert_eq!(fleet_edges(&snap).len(), 3);
     assert_eq!(coordinator_edges(&snap, LOOSE), run_workers(&snap, RUN));
 }
 
@@ -505,7 +613,7 @@ fn dead_declared_coordinator_without_candidates_gives_none() {
 
     let run = snap.run(RUN).unwrap();
     assert_eq!(run.coordinator, None);
-    assert!(snap.edges.is_empty());
+    assert!(fleet_edges(&snap).is_empty());
     assert!(snap.nodes.iter().all(|n| n.kind != NodeKind::Coordinator));
 }
 
@@ -555,7 +663,7 @@ fn shared_coordinator_has_one_node_with_edges_to_both_runs() {
     expected.push(term(LOOSE));
     expected.sort();
     assert_eq!(coordinator_edges(&snap, COORDINATOR), expected);
-    assert_eq!(snap.edges.len(), 4);
+    assert_eq!(fleet_edges(&snap).len(), 4);
 }
 
 #[test]

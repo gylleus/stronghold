@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
-use crate::model::{FleetSnapshot, NodeId, NodeState};
+use crate::model::{FleetSnapshot, NodeId, NodeKind, NodeState};
 
 /// At most one notification per target in this window.
 pub const PER_TARGET_COOLDOWN_MS: i64 = 10 * 60_000;
@@ -205,7 +205,7 @@ impl NeedsInputDetector {
         let waiting: HashSet<NodeId> = snapshot
             .nodes
             .iter()
-            .filter(|n| n.state == NodeState::NeedsInput)
+            .filter(|n| n.state == NodeState::NeedsInput && n.kind != NodeKind::Queen)
             .map(|n| n.id.clone())
             .collect();
         let requests = match &self.previous {
@@ -509,6 +509,20 @@ mod tests {
         let mut snapshot = FleetSnapshot::default();
         snapshot.nodes = nodes;
         snapshot
+    }
+
+    #[test]
+    fn detector_ignores_the_queen() {
+        let mut d = NeedsInputDetector::new();
+        let mut calm = snapshot(vec![node("a", Some("h"), true, NodeState::Working)]);
+        calm.add_queen();
+        assert!(d.update(&calm).is_empty());
+        let mut waiting = snapshot(vec![node("a", Some("h"), true, NodeState::NeedsInput)]);
+        waiting.add_queen();
+        assert_eq!(waiting.queen().unwrap().state, NodeState::NeedsInput);
+        let requests = d.update(&waiting);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].target, "h");
     }
 
     #[test]

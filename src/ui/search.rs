@@ -616,4 +616,12 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn search_finds_the_queen() {
+        let snapshot = FleetSnapshot::build(&FleetData::default(), 0);
+        let entries = search_entries(&snapshot, None);
+        let hits = rank(&entries, "que", MAX_RESULTS);
+        assert_eq!(entries[hits[0].index].id, NodeId::queen());
+    }
 }

@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 
 use crate::control::protocol::{Request, Response};
 
-/// How long the CLI waits for a response; actions can take up to a minute.
-pub const CLIENT_TIMEOUT: Duration = Duration::from_secs(90);
+/// How long the CLI waits for a response; a close can take up to three minutes.
+pub const CLIENT_TIMEOUT: Duration = Duration::from_secs(200);
 
 /// A connection to the control socket; send any number of requests over it.
 pub struct ControlClient {

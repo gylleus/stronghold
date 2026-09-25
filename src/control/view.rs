@@ -13,7 +13,7 @@ use crate::claude::ClaudeData;
 use crate::claude::usage::TokenCounts;
 use crate::detect::PromptKind;
 use crate::fleet::FleetData;
-use crate::model::{EdgeKind, FleetSnapshot, Node, NodeKind, NodeState, TaskCounts};
+use crate::model::{EdgeKind, FleetSnapshot, Node, NodeKind, NodeState, TaskCounts, fleet_state};
 use crate::notify::{self, Delivered};
 use crate::quota::{self, Quotas, Severity};
 use crate::ui::sidebar::{FleetFilter, node_repo};
@@ -43,7 +43,10 @@ pub struct StatusView {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct FleetSummary {
-    /// Nodes of every kind.
+    /// The Queen's state: the fleet's most urgent one (`needs_input` > `stalled` > `working` >
+    /// `idle`).
+    pub state: String,
+    /// Agent nodes of every kind (the Queen is not one).
     pub agents: usize,
     /// Nodes with a live terminal.
     pub live: usize,
@@ -336,15 +339,17 @@ pub fn kind_name(kind: NodeKind) -> &'static str {
         NodeKind::Worker => "worker",
         NodeKind::Terminal => "terminal",
         NodeKind::Subagent => "subagent",
+        NodeKind::Queen => "queen",
     }
 }
 
 pub fn parse_kind(s: &str) -> Option<NodeKind> {
-    const ALL: [NodeKind; 4] = [
+    const ALL: [NodeKind; 5] = [
         NodeKind::Coordinator,
         NodeKind::Worker,
         NodeKind::Terminal,
         NodeKind::Subagent,
+        NodeKind::Queen,
     ];
     ALL.into_iter().find(|k| squash(kind_name(*k)) == squash(s))
 }
@@ -405,8 +410,7 @@ impl StatusView {
         let empty = FleetSnapshot::default();
         let snapshot = inputs.snapshot.unwrap_or(&empty);
         let agents: Vec<AgentView> = snapshot
-            .nodes
-            .iter()
+            .agent_nodes()
             .map(|n| agent_view(n, snapshot, inputs))
             .collect();
         let fleet = fleet_summary(snapshot, &agents);
@@ -592,6 +596,7 @@ fn fleet_summary(snapshot: &FleetSnapshot, agents: &[AgentView]) -> FleetSummary
         })
         .collect();
     FleetSummary {
+        state: state_name(fleet_state(snapshot.agent_nodes())).into(),
         agents: agents.len(),
         live: agents.iter().filter(|a| a.live).count(),
         by_kind,
