@@ -12,6 +12,7 @@ use crate::orca::OrcaClient;
 use crate::poller::{Poller, PollerCommand, PollerConfig, ScreenUpdate};
 use crate::ui;
 use crate::ui::graph::GraphView;
+use crate::ui::sidebar::FleetFilter;
 
 /// How often the UI redraws without new data, so relative times keep ticking.
 const TICK: Duration = Duration::from_secs(1);
@@ -41,6 +42,8 @@ pub struct MyrstackApp {
     watched_screen: Option<String>,
     /// Newest screen of `watched_screen`.
     screen: Option<ScreenUpdate>,
+    /// Which nodes the graph shows; edited in the sidebar.
+    filter: FleetFilter,
 }
 
 impl MyrstackApp {
@@ -64,6 +67,7 @@ impl MyrstackApp {
             view: View::default(),
             watched_screen: None,
             screen: None,
+            filter: FleetFilter::default(),
         }
     }
 
@@ -160,6 +164,7 @@ impl eframe::App for MyrstackApp {
                 data.errors.len()
             );
             let snapshot = FleetSnapshot::build(&data, now_ms());
+            self.graph.set_hidden(&self.filter.hidden(&snapshot));
             self.graph.sync(&snapshot);
             if let Some(id) = &self.selected
                 && snapshot.node(id).is_none()
@@ -181,6 +186,26 @@ impl eframe::App for MyrstackApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let now_ms = now_ms();
         egui::Panel::top("top_bar").show(ui, |ui| self.top_bar(ui, now_ms));
+        if self.view == View::Graph
+            && let Some(snapshot) = &self.snapshot
+        {
+            let filter = &mut self.filter;
+            let response = egui::Panel::left("sidebar")
+                .resizable(true)
+                .default_size(260.0)
+                .show(ui, |ui| ui::sidebar::sidebar(ui, snapshot, filter))
+                .inner;
+            if response.filter_changed {
+                self.graph.set_hidden(&self.filter.hidden(snapshot));
+            }
+            if let Some(run_id) = &response.focus_run {
+                self.graph.focus_run(run_id);
+            }
+            if let Some(id) = response.select {
+                self.graph.set_selected(Some(&id));
+                self.selected = Some(id);
+            }
+        }
         if self.view == View::Graph {
             egui::Panel::bottom("legend").show(ui, ui::graph::legend);
         }
