@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError};
 
+use super::forwards::ForwardScanner;
 use super::hook::{default_session_map_path, load_hook_mappings};
 use super::sessions::default_projects_root;
 use super::sessions::{HookMappings, SessionInfo, SessionLocator, SessionMatch};
@@ -15,6 +16,7 @@ use super::subagents::{SubagentInfo, SubagentWatcher};
 use super::transcript::read_transcript_tail;
 use super::usage::{SessionUsage, UsageTracker};
 use crate::codex::{CodexSession, CodexTracker, default_sessions_root};
+use crate::fleet::Forward;
 use crate::orca::Terminal;
 use crate::poller::Repaint;
 
@@ -32,6 +34,9 @@ pub struct ClaudeData {
     pub usage: BTreeMap<String, SessionUsage>,
     /// Rollout and token usage per Codex terminal handle.
     pub codex: BTreeMap<String, CodexSession>,
+    /// Terminals forwarded to with `orca terminal send`, per watched handle (see
+    /// [`ClaudeWorker::watch_forwards`]) with a mapped session.
+    pub forwards: BTreeMap<String, Vec<Forward>>,
     /// Wall-clock time of the scan, in ms since the Unix epoch.
     pub at_ms: i64,
 }
@@ -86,6 +91,7 @@ impl Default for ClaudeWorkerConfig {
 enum Command {
     Terminals(Vec<Terminal>),
     WatchTranscript(Option<PathBuf>),
+    WatchForwards(BTreeSet<String>),
     Shutdown,
 }
 
@@ -135,6 +141,12 @@ impl ClaudeWorker {
         let _ = self.commands.send(Command::WatchTranscript(path));
     }
 
+    /// Reads the forward commands of these terminals' transcripts on each scan (see
+    /// [`ClaudeData::forwards`]); a Run's declared coordinator may be an attendant.
+    pub fn watch_forwards(&self, handles: BTreeSet<String>) {
+        let _ = self.commands.send(Command::WatchForwards(handles));
+    }
+
     /// The newest pending scan, discarding older ones.
     pub fn latest(&self) -> Option<ClaudeData> {
         self.data.try_iter().last()
@@ -181,6 +193,7 @@ pub fn collect(
         subagents,
         usage,
         codex: BTreeMap::new(),
+        forwards: BTreeMap::new(),
         at_ms: now_ms,
     }
 }
@@ -221,6 +234,8 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
     let mut watcher = SubagentWatcher::new();
     let mut usage = UsageTracker::new();
     let mut codex = CodexTracker::new(&config.codex_sessions_root);
+    let mut forwards = ForwardScanner::new();
+    let mut forward_handles: BTreeSet<String> = BTreeSet::new();
     let mut terminals: Option<Vec<Terminal>> = None;
     let mut handles: BTreeSet<String> = BTreeSet::new();
     let mut next_refresh = Instant::now();
@@ -236,6 +251,7 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
                 let now_ms = wall_clock_ms();
                 let mut data = collect(&locator, &mut watcher, &mut usage, terms, &hooks, now_ms);
                 data.codex = codex.refresh(terms, now_ms);
+                data.forwards = forwards.refresh(&forward_transcripts(&data, &forward_handles));
                 data
             }));
             match result {
@@ -293,10 +309,27 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
                         watched = path.map(|path| Watched { path, seen: None });
                     }
                 }
+                Command::WatchForwards(new) => {
+                    if new != forward_handles {
+                        forward_handles = new;
+                        next_refresh = Instant::now();
+                    }
+                }
                 Command::Shutdown => return,
             }
         }
     }
+}
+
+/// Transcript paths of the `handles` that are mapped to a session.
+fn forward_transcripts(data: &ClaudeData, handles: &BTreeSet<String>) -> BTreeMap<String, PathBuf> {
+    handles
+        .iter()
+        .filter_map(|h| {
+            let session = data.session_by_handle.get(h)?.session()?;
+            Some((h.clone(), session.transcript_path.clone()))
+        })
+        .collect()
 }
 
 /// Re-renders the watched transcript when its size or mtime changed; `false` once the UI

@@ -1,10 +1,16 @@
 //! `FleetData`: one poll's raw Orca data, shared by the poller (producer), the graph model and
 //! the whip (consumers).
 
+mod roles;
+#[cfg(test)]
+mod roles_tests;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::detect::PromptKind;
 use crate::orca::{InboxMessage, Run, Task, Terminal, Timestamp, Worker};
+
+pub use roles::{AttendantSignal, Forward, RunRoles};
 
 /// Everything one poll cycle fetched from Orca, unprocessed.
 #[derive(Debug, Clone, Default)]
@@ -25,6 +31,10 @@ pub struct FleetData {
     /// `Some` when the screen showed a prompt, `None` when it did not. A terminal that was not
     /// sampled, or has produced output since, is absent.
     pub needs_input: BTreeMap<String, Option<PromptKind>>,
+    /// Terminals each Claude terminal forwarded input to with `orca terminal send`, read from
+    /// its transcript by the Claude worker, by sender handle. Only declared coordinators are
+    /// scanned; see [`FleetData::run_roles`].
+    pub forwards: BTreeMap<String, Vec<Forward>>,
 }
 
 impl FleetData {
@@ -42,11 +52,17 @@ impl FleetData {
         self.runs.iter().find(|r| r.id == run_id)
     }
 
-    /// The terminal actually coordinating a Run. `coordinator_handle` can be stale when the
-    /// coordinator re-bound from another terminal, so fall back to the newest live creator of the
-    /// Run's tasks, then the newest live terminal messaging the Run. Workers of the Run are never
-    /// the coordinator. `None` when no live candidate exists.
+    /// The terminal actually coordinating a Run: [`RunRoles::coordinator`] of
+    /// [`FleetData::run_roles`]. `None` when no live candidate exists.
     pub fn effective_coordinator(&self, run_id: &str) -> Option<String> {
+        self.run_roles(run_id).coordinator
+    }
+
+    /// The coordinator when the declared one is not an attendant. `coordinator_handle` can be
+    /// stale when the coordinator re-bound from another terminal, so fall back to the newest live
+    /// creator of the Run's tasks, then the newest live terminal messaging the Run. Workers of the
+    /// Run are never the coordinator. `None` when no live candidate exists.
+    fn declared_or_rebound_coordinator(&self, run_id: &str) -> Option<String> {
         let live = |h: &str| self.terminal(h).is_some();
         let declared = self
             .run(run_id)

@@ -161,7 +161,7 @@ fn plan_node(
     match node.kind {
         NodeKind::Queen => return Err("the Queen is Myrstack itself".into()),
         NodeKind::Subagent => return Err("subagents have no terminal to nudge".into()),
-        NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal => {}
+        NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {}
     }
     if node.released_at_ms.is_some()
         || node.worker_terminal_state == Some(WorkerTerminalState::Released)

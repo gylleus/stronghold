@@ -1,10 +1,11 @@
 //! Keyboard navigation: key → command mapping, node/run order and the shortcut help overlay.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use eframe::egui::{self, Event, Key};
 
 use crate::model::{EdgeKind, FleetSnapshot, NodeId, NodeKind};
+use crate::model::{NO_REPO, RepoIndex};
 use crate::ui::sidebar::run_rows;
 
 /// A keyboard command.
@@ -14,6 +15,9 @@ pub enum KeyCommand {
     PrevNode,
     NextRun,
     PrevRun,
+    /// Select the first node of the next repo and focus its region.
+    NextRepo,
+    PrevRepo,
     /// Select the current node (the first one if none) and open its panel.
     OpenPanel,
     /// Focus the terminal panel's input box.
@@ -37,6 +41,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("⌘J", "Open / close the Queen's chat"),
     ("j  k", "Next / previous node"),
     ("J  K", "Next / previous run"),
+    ("]  [", "Next / previous repo"),
     ("Enter", "Select node, open its panel"),
     ("i", "Type into the terminal's input box"),
     (
@@ -93,6 +98,8 @@ fn command_for_text(text: &str) -> Option<KeyCommand> {
         "k" => KeyCommand::PrevNode,
         "J" => KeyCommand::NextRun,
         "K" => KeyCommand::PrevRun,
+        "]" => KeyCommand::NextRepo,
+        "[" => KeyCommand::PrevRepo,
         "i" => KeyCommand::FocusInput,
         "o" => KeyCommand::OpenInOrca,
         "f" => KeyCommand::Fit,
@@ -190,13 +197,14 @@ pub fn nav_groups(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<Na
             .iter()
             .filter(|n| n.run_id.as_deref() == Some(&row.id) && n.kind != NodeKind::Subagent)
             .collect();
-        members.sort_by(|a, b| {
-            (a.kind != NodeKind::Coordinator, &a.label, &a.id).cmp(&(
-                b.kind != NodeKind::Coordinator,
-                &b.label,
-                &b.id,
-            ))
-        });
+        // Coordinator, then attendant, then the rest.
+        let rank = |k: NodeKind| match k {
+            NodeKind::Coordinator => 0,
+            NodeKind::Attendant => 1,
+            _ => 2,
+        };
+        members
+            .sort_by(|a, b| (rank(a.kind), &a.label, &a.id).cmp(&(rank(b.kind), &b.label, &b.id)));
         let mut nodes = Vec::new();
         if let Some(coordinator) = snapshot.run(&row.id).and_then(|r| r.coordinator.as_ref()) {
             visit(coordinator, &mut nodes);
@@ -270,6 +278,45 @@ pub fn step_run(groups: &[NavGroup], current: Option<&NodeId>, delta: isize) -> 
     runs[target as usize].nodes.first().cloned()
 }
 
+/// Visible nodes per repo in navigation order, repos by name with [`NO_REPO`] last. The queen
+/// belongs to no repo.
+pub fn repo_nav(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<(String, Vec<NodeId>)> {
+    let repos = RepoIndex::new(snapshot);
+    let mut groups: BTreeMap<(bool, String), Vec<NodeId>> = BTreeMap::new();
+    for id in nav_order(snapshot, hidden) {
+        if id == NodeId::queen() {
+            continue;
+        }
+        let repo = repos.node(&id).unwrap_or(NO_REPO).to_string();
+        groups.entry((repo == NO_REPO, repo)).or_default().push(id);
+    }
+    groups
+        .into_iter()
+        .map(|((_, repo), nodes)| (repo, nodes))
+        .collect()
+}
+
+/// The repo `delta` repos from `current`'s, wrapping, and its first node. From a node outside
+/// every repo (or none), forward goes to the first repo and back to the last.
+pub fn step_repo(
+    groups: &[(String, Vec<NodeId>)],
+    current: Option<&NodeId>,
+    delta: isize,
+) -> Option<(String, NodeId)> {
+    if groups.is_empty() {
+        return None;
+    }
+    let len = groups.len() as isize;
+    let at = current.and_then(|c| groups.iter().position(|(_, nodes)| nodes.contains(c)));
+    let target = match at {
+        Some(i) => (i as isize + delta).rem_euclid(len),
+        None if delta >= 0 => 0,
+        None => len - 1,
+    };
+    let (repo, nodes) = &groups[target as usize];
+    Some((repo.clone(), nodes.first()?.clone()))
+}
+
 /// Draws the shortcut list while `open`; closes on its close button.
 pub fn help_window(ctx: &egui::Context, open: &mut bool) {
     egui::Window::new("Keyboard shortcuts")
@@ -321,6 +368,8 @@ mod tests {
             ("k", PrevNode),
             ("J", NextRun),
             ("K", PrevRun),
+            ("]", NextRepo),
+            ("[", PrevRepo),
             ("i", FocusInput),
             ("o", OpenInOrca),
             ("f", Fit),
@@ -333,6 +382,10 @@ mod tests {
             assert_eq!(command_for_event(&text(s), true), None, "{s}");
         }
         assert!(SHORTCUTS.iter().any(|(k, _)| *k == "w"), "w is in the help");
+        assert!(
+            SHORTCUTS.iter().any(|(k, _)| k.contains('[')),
+            "[ ] are in the help"
+        );
         assert_eq!(command_for_event(&text("X"), false), None);
         assert_eq!(command_for_event(&text("jj"), false), None);
         for focused in [false, true] {
@@ -460,6 +513,45 @@ mod tests {
 
     fn strs(ids: &[NodeId]) -> Vec<&str> {
         ids.iter().map(NodeId::as_str).collect()
+    }
+
+    #[test]
+    fn repo_nav_groups_by_repo_and_steps_wrap() {
+        let mut s = snapshot();
+        for n in &mut s.nodes {
+            let repo = match n.run_id.as_deref() {
+                Some("new") => Some("/u/orca/workspaces/shop/x"),
+                Some("old") => Some("/u/orca/workspaces/infra/y"),
+                _ => None,
+            };
+            n.worktree_path = repo.map(str::to_string);
+        }
+        s.add_queen();
+        let groups = repo_nav(&s, &BTreeSet::new());
+        let names: Vec<&str> = groups.iter().map(|(r, _)| r.as_str()).collect();
+        assert_eq!(names, ["infra", "shop", NO_REPO]);
+        assert_eq!(strs(&groups[1].1)[0], "c_new");
+        assert!(
+            groups
+                .iter()
+                .all(|(_, ids)| !ids.contains(&NodeId::queen()))
+        );
+
+        let step = |current: Option<&str>, delta| {
+            step_repo(&groups, current.map(id).as_ref(), delta).map(|(r, n)| (r, n.0))
+        };
+        assert_eq!(step(None, 1), Some(("infra".into(), "c_old".into())));
+        assert_eq!(step(None, -1), Some((NO_REPO.into(), "loose".into())));
+        assert_eq!(step(Some("w_a"), 1), Some((NO_REPO.into(), "loose".into())));
+        assert_eq!(
+            step(Some("loose"), 1),
+            Some(("infra".into(), "c_old".into()))
+        );
+        assert_eq!(
+            step(Some("c_old"), -1),
+            Some((NO_REPO.into(), "loose".into()))
+        );
+        assert_eq!(step_repo(&[], None, 1), None);
     }
 
     #[test]

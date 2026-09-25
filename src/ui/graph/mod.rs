@@ -5,6 +5,7 @@ mod fit;
 #[cfg(test)]
 mod fit_tests;
 mod layout;
+mod regions;
 mod saved;
 #[cfg(test)]
 mod saved_tests;
@@ -31,21 +32,23 @@ use petgraph::Directed;
 use petgraph::stable_graph::{DefaultIx, EdgeIndex, NodeIndex};
 
 use crate::claude::Usage;
-use crate::model::{EdgeKind, FleetSnapshot, Node, NodeId, NodeKind};
+use crate::model::{EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, RepoIndex};
 use layout::centroid;
 
 pub use edge::FleetEdgeShape;
 pub use layout::{
-    ClusterNode, Extras, FleetLayout, FleetLayoutState, Membership, RunClusters, RunClustersParams,
-    SettleTracker, memberships,
+    ClusterNode, Extras, FleetLayout, FleetLayoutState, Membership, REGION_LABEL_HEIGHT,
+    REGION_PADDING, RunClusters, RunClustersParams, SettleTracker, memberships, region_rect,
+    repo_indices,
 };
+pub use regions::{Region, region_color, regions};
 pub use saved::{MAX_SAVED_POSITIONS, SavedLayout, SavedView};
 pub use select::{circle_intersects_rect, is_additive};
 pub use shape::{
     ALL_STATES, FleetNodeShape, NodePayload, StateGlyph, agent_marker, contrast_ratio, fade_alpha,
     hexagon, legend, node_radius, queen_color, state_color, state_glyph,
 };
-pub use tooltip::{format_ago, kind_label, preview_line, state_label};
+pub use tooltip::{coordinator_gone_note, format_ago, kind_label, preview_line, state_label};
 
 /// The egui_graphs graph the view renders.
 pub type FleetGraph =
@@ -106,6 +109,8 @@ pub struct GraphView {
     nodes: HashMap<NodeId, Node>,
     /// Run ID → objective, for tooltips.
     objectives: HashMap<String, String>,
+    /// The repo each node is grouped under (see [`crate::model::node_repo`]).
+    repos: HashMap<NodeId, String>,
     /// Claude token usage per node, for tooltips.
     usage: HashMap<NodeId, Usage>,
     id: String,
@@ -163,6 +168,7 @@ impl GraphView {
             edges: HashMap::new(),
             nodes: HashMap::new(),
             objectives: HashMap::new(),
+            repos: HashMap::new(),
             usage: HashMap::new(),
             id: id.into(),
             anchor: Pos2::new(640.0, 400.0),
@@ -218,6 +224,11 @@ impl GraphView {
             self.index.contains_key(from) && self.index.contains_key(to)
         });
 
+        let repos = RepoIndex::new(snapshot).by_node;
+        if repos != self.repos {
+            self.repos = repos;
+            topology_changed = true;
+        }
         self.objectives = snapshot
             .runs
             .iter()
@@ -233,7 +244,7 @@ impl GraphView {
             match self.index.get(&node.id) {
                 Some(&idx) => {
                     if let Some(graph_node) = self.graph.node_mut(idx) {
-                        let payload = payload(node);
+                        let payload = payload(node, snapshot);
                         if *graph_node.payload() != payload {
                             *graph_node.payload_mut() = payload;
                         }
@@ -257,7 +268,7 @@ impl GraphView {
                 None => self.spawn_position(node, snapshot),
             };
             let label = node.label.clone();
-            let idx = self.graph.add_node_custom(payload(node), |n| {
+            let idx = self.graph.add_node_custom(payload(node, snapshot), |n| {
                 n.set_location(location);
                 n.set_label(label);
             });
@@ -358,6 +369,48 @@ impl GraphView {
         true
     }
 
+    /// Pans and zooms onto a repo's visible nodes on the next frame.
+    pub fn focus_repo(&mut self, repo: &str) {
+        let mut ids: Vec<NodeId> = self
+            .repos
+            .iter()
+            .filter(|(id, r)| r.as_str() == repo && self.index.contains_key(*id))
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.sort();
+        self.focus_nodes(&ids);
+    }
+
+    /// The repo a node is grouped under, as of the last sync.
+    pub fn node_repo(&self, id: &NodeId) -> Option<&str> {
+        self.repos.get(id).map(String::as_str)
+    }
+
+    /// Canvas regions of the repos of the visible nodes (the queen belongs to none).
+    pub fn repo_regions(&self) -> Vec<Region> {
+        regions(self.index.iter().filter_map(|(id, &idx)| {
+            let node = self.graph.node(idx)?;
+            if node.payload().kind == NodeKind::Queen {
+                return None;
+            }
+            Some((self.repos.get(id)?.as_str(), node.location()))
+        }))
+    }
+
+    /// Fills the `backdrop` slot with the repo regions as the widget at `rect` drew them.
+    fn paint_regions(&self, ui: &Ui, backdrop: egui::layers::ShapeIdx, rect: Rect) {
+        let regions = self.repo_regions();
+        if regions.is_empty() {
+            return;
+        }
+        let meta = MetadataFrame::new(Some(self.id.clone())).load(ui);
+        let origin = meta.pan + rect.left_top().to_vec2();
+        let shapes = regions::region_shapes(&regions, meta.zoom, origin, ui.visuals(), ui.ctx());
+        ui.painter()
+            .with_clip_rect(rect)
+            .set(backdrop, egui::Shape::Vec(shapes));
+    }
+
     /// Pans and zooms onto a run's visible coordinator and workers on the next frame.
     pub fn focus_run(&mut self, run_id: &str) {
         let mut ids: Vec<NodeId> = self
@@ -433,14 +486,27 @@ impl GraphView {
             .with_pan_buttons(&[egui::PointerButton::Secondary, egui::PointerButton::Middle]);
         let style = SettingsStyle::new().with_labels_always(true);
 
-        let response = egui_graphs::GraphView::<FleetLayoutState, FleetLayout>::new()
-            .with_id(id.clone())
-            .with_interactions(&interaction)
-            .with_navigations(&navigation)
-            .with_styles(&style)
-            .with_continuous_repaint(animating)
-            .show(ui, &mut self.graph);
+        // Repo regions go behind the nodes: a slot painted before them, filled after the widget
+        // has moved them this frame.
+        let backdrop = ui.painter().add(egui::Shape::Noop);
+        // A scope of its own keeps the widget's id, and so egui_graphs' per-instance state,
+        // stable when panels around it open or close; a new instance would redo its own
+        // first-frame fit over ours.
+        let graph = &mut self.graph;
+        let scope = egui::UiBuilder::new().id(egui::Id::new(("fleet_graph", &self.id)));
+        let response = ui
+            .scope_builder(scope, |ui| {
+                egui_graphs::GraphView::<FleetLayoutState, FleetLayout>::new()
+                    .with_id(id.clone())
+                    .with_interactions(&interaction)
+                    .with_navigations(&navigation)
+                    .with_styles(&style)
+                    .with_continuous_repaint(animating)
+                    .show(ui, graph)
+            })
+            .inner;
         self.last_top_left = Some(response.response.rect.left_top());
+        self.paint_regions(ui, backdrop, response.response.rect);
 
         let mut clicked = None;
         let mut user_navigated = false;
@@ -496,8 +562,17 @@ impl GraphView {
                 .map(String::as_str);
             let now_ms = now_ms();
             let usage = self.usage.get(&node.id);
+            let gone = self
+                .index
+                .get(&node.id)
+                .and_then(|&i| self.graph.node(i))
+                .is_some_and(|n| n.payload().coordinator_gone);
             response.response.clone().on_hover_ui_at_pointer(|ui| {
-                tooltip::node_tooltip(ui, node, objective, usage, now_ms);
+                let repo = self.repos.get(&node.id).map(String::as_str);
+                tooltip::node_tooltip(ui, node, objective, repo, usage, now_ms);
+                if gone {
+                    tooltip::coordinator_gone_note(ui);
+                }
             });
         }
 
@@ -567,12 +642,18 @@ impl GraphView {
             let refusal = match node.kind {
                 NodeKind::Subagent => Some(crate::close::SUBAGENT_REFUSAL),
                 NodeKind::Queen => Some(crate::close::QUEEN_REFUSAL),
-                NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal => None,
+                NodeKind::Coordinator
+                | NodeKind::Attendant
+                | NodeKind::Worker
+                | NodeKind::Terminal => None,
             };
             let whip_refusal = match node.kind {
                 NodeKind::Subagent => Some("Subagents have no terminal to nudge."),
                 NodeKind::Queen => Some("The Queen is Myrstack itself."),
-                NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal => None,
+                NodeKind::Coordinator
+                | NodeKind::Attendant
+                | NodeKind::Worker
+                | NodeKind::Terminal => None,
             };
             if ui
                 .add_enabled(whip_refusal.is_none(), egui::Button::new("Whip"))
@@ -693,22 +774,32 @@ impl GraphView {
         if parent.is_some() || node.run_id.is_some() {
             return parent;
         }
-        // Loose terminals join the other loose terminals, or start their group left of the runs.
+        // Loose terminals join their repo's other loose terminals, else their repo's region, or
+        // start a region left of everything.
+        let repo = self.repos.get(&node.id);
+        let same_repo = |n: &&Node| n.id != node.id && self.repos.get(&n.id) == repo;
         let loose: Vec<Pos2> = self
             .nodes
             .values()
-            .filter(|n| n.run_id.is_none() && n.kind == NodeKind::Terminal && n.id != node.id)
+            .filter(same_repo)
+            .filter(|n| n.run_id.is_none() && n.kind == NodeKind::Terminal)
             .filter_map(|n| placed(&n.id))
             .collect();
-        centroid(&loose).or_else(|| {
+        let region: Vec<Pos2> = self
+            .nodes
+            .values()
+            .filter(same_repo)
+            .filter_map(|n| placed(&n.id))
+            .collect();
+        centroid(&loose).or_else(|| centroid(&region)).or_else(|| {
             let placed: Vec<Pos2> = self.nodes.keys().filter_map(placed).collect();
             let left = placed.iter().map(|p| p.x).reduce(f32::min)?;
             Some(Pos2::new(left - SPAWN_CENTER, centroid(&placed)?.y))
         })
     }
 
-    /// Run-cluster membership of every node, by graph index.
-    fn memberships(&self) -> Vec<Option<Membership>> {
+    /// Run-cluster membership and repo region of every node, by graph index.
+    fn memberships(&self) -> (Vec<Option<Membership>>, Vec<Option<u32>>) {
         let parents: HashMap<&NodeId, usize> = self
             .edges
             .keys()
@@ -725,15 +816,19 @@ impl GraphView {
                     run: node.run_id.as_deref(),
                     kind: node.kind,
                     parent: parents.get(id).copied(),
+                    repo: (node.kind != NodeKind::Queen)
+                        .then(|| self.repos.get(id).map(String::as_str))
+                        .flatten(),
                 })
             })
             .collect();
-        memberships(&nodes)
+        (memberships(&nodes), repo_indices(&nodes))
     }
 
     /// A fresh layout state for the current graph.
     fn layout_state(&self) -> FleetLayoutState {
-        layout::state_with(self.memberships())
+        let (members, repos) = self.memberships();
+        layout::state_with(members, repos)
     }
 
     fn prepare_layout(&mut self, ui: &mut Ui) {
@@ -744,7 +839,9 @@ impl GraphView {
         }
         if std::mem::take(&mut self.wake_layout) {
             let mut state = get_layout_state::<FleetLayoutState>(ui, id.clone());
-            state.extras.0.params.members = self.memberships();
+            let (members, repos) = self.memberships();
+            state.extras.0.params.members = members;
+            state.extras.0.params.repos = repos;
             state.set_running(true);
             set_layout_state(ui, state, id);
             self.settle.reset();
@@ -791,8 +888,9 @@ impl GraphView {
     }
 }
 
-fn payload(node: &Node) -> NodePayload {
+fn payload(node: &Node, snapshot: &FleetSnapshot) -> NodePayload {
     NodePayload {
+        coordinator_gone: snapshot.coordinator_gone(node),
         id: node.id.clone(),
         kind: node.kind,
         state: node.state,

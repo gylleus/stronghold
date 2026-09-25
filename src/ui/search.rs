@@ -1,12 +1,12 @@
-//! Command-palette search: find a node by label, branch, worktree, run objective, task, agent
-//! or terminal handle.
+//! Command-palette search: find a node by label, branch, repo, worktree, run objective, task,
+//! agent or terminal handle.
 
 use std::collections::BTreeSet;
 
 use eframe::egui::{self, Key, Modifiers, RichText};
 
 use crate::fleet::FleetData;
-use crate::model::{FleetSnapshot, Node, NodeId, NodeKind};
+use crate::model::{FleetSnapshot, NO_REPO, Node, NodeId, NodeKind, RepoIndex};
 use crate::ui::graph::{kind_label, state_color, state_label};
 
 /// Most results the palette lists.
@@ -19,6 +19,7 @@ pub enum Field {
     TaskTitle,
     Branch,
     Objective,
+    Repo,
     Worktree,
     TaskId,
     RunId,
@@ -31,7 +32,7 @@ impl Field {
     fn weight(self) -> u32 {
         match self {
             Field::Label | Field::TaskTitle => 3,
-            Field::Branch | Field::Objective => 2,
+            Field::Branch | Field::Objective | Field::Repo => 2,
             Field::Worktree | Field::TaskId | Field::RunId | Field::Agent | Field::Handle => 1,
         }
     }
@@ -42,6 +43,7 @@ impl Field {
             Field::TaskTitle => "task",
             Field::Branch => "branch",
             Field::Objective => "objective",
+            Field::Repo => "repo",
             Field::Worktree => "worktree",
             Field::TaskId => "task id",
             Field::RunId => "run",
@@ -71,14 +73,20 @@ impl SearchEntry {
 
 /// Search entries for every node of `snapshot`; `data` adds task titles.
 pub fn search_entries(snapshot: &FleetSnapshot, data: Option<&FleetData>) -> Vec<SearchEntry> {
+    let repos = RepoIndex::new(snapshot);
     snapshot
         .nodes
         .iter()
-        .map(|node| entry(node, snapshot, data))
+        .map(|node| entry(node, snapshot, data, &repos))
         .collect()
 }
 
-fn entry(node: &Node, snapshot: &FleetSnapshot, data: Option<&FleetData>) -> SearchEntry {
+fn entry(
+    node: &Node,
+    snapshot: &FleetSnapshot,
+    data: Option<&FleetData>,
+    repos: &RepoIndex,
+) -> SearchEntry {
     let run = node.run_id.as_deref();
     let objective = run
         .and_then(|r| snapshot.run(r))
@@ -97,6 +105,13 @@ fn entry(node: &Node, snapshot: &FleetSnapshot, data: Option<&FleetData>) -> Sea
         (Field::TaskTitle, task_title),
         (Field::Branch, node.branch.clone()),
         (Field::Objective, objective),
+        (
+            Field::Repo,
+            repos
+                .node(&node.id)
+                .filter(|r| *r != NO_REPO && node.kind != NodeKind::Queen)
+                .map(str::to_string),
+        ),
         (Field::Worktree, node.worktree_path.clone()),
         (Field::TaskId, node.task_id.clone()),
         (Field::RunId, node.run_id.clone()),
@@ -585,6 +600,7 @@ mod tests {
         w.task_id = Some("task-7".into());
         w.branch = Some("feat/stripe".into());
         w.terminal_handle = Some("term_abc".into());
+        w.worktree_path = Some("/Users/x/repo/hackathon/commerce-platform".into());
         snapshot.nodes = vec![w];
 
         let mut data = FleetData::default();
@@ -603,7 +619,9 @@ mod tests {
         assert_eq!(e.field(Field::TaskTitle), Some("Wire up payment intents"));
         assert_eq!(e.field(Field::TaskId), Some("task-7"));
         assert_eq!(e.field(Field::Handle), Some("term_abc"));
-        assert_eq!(e.field(Field::Worktree), None);
+        assert_eq!(e.field(Field::Repo), Some("commerce-platform"));
+        let hits = rank(&entries, "commerce", 5);
+        assert_eq!(hits[0].field, Field::Repo);
 
         for query in [
             "payment", "stripe", "checkout", "task-7", "term_abc", "run1",

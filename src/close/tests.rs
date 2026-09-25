@@ -370,3 +370,21 @@ fn bulk_close_of_a_selection_skips_the_queen_and_subagents() {
     assert!(!none.can_run());
     assert_eq!(none.warnings.len(), 2);
 }
+
+#[test]
+fn attendant_closes_with_a_forwarding_warning() {
+    let mut a = node("att", NodeKind::Attendant, Some("t_att"));
+    a.run_id = Some("run_1".into());
+    let plan = plan_close(&a, &snapshot(), &[], PANE);
+    assert_eq!(plan.refused, None);
+    assert_eq!(plan.steps, vec![close("t_att", false)]);
+    assert_eq!(
+        plan.warnings,
+        vec!["att is the attendant of run ship it: bus events stop reaching its coordinator"]
+    );
+    let s = snapshot();
+    let mut with = s.clone();
+    with.nodes = vec![a];
+    assert!(bulk_candidates(&with, &BTreeSet::new(), false).is_empty());
+    assert_eq!(bulk_candidates(&with, &BTreeSet::new(), true).len(), 1);
+}

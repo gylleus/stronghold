@@ -568,6 +568,15 @@ fn header(
                 ui.label(agent.as_str());
                 ui.end_row();
             }
+            if let Some(repo) = node
+                .worktree_path
+                .as_deref()
+                .and_then(crate::model::repo_of)
+            {
+                ui.weak("repo");
+                ui.label(repo);
+                ui.end_row();
+            }
             if let Some(branch) = &node.branch {
                 ui.weak("branch");
                 ui.add(egui::Label::new(branch.as_str()).truncate());
@@ -673,6 +682,7 @@ pub fn format_screen_age(age_ms: i64) -> String {
 fn kind_label(kind: NodeKind) -> &'static str {
     match kind {
         NodeKind::Coordinator => "coordinator",
+        NodeKind::Attendant => "attendant",
         NodeKind::Worker => "worker",
         NodeKind::Terminal => "terminal",
         NodeKind::Subagent => "subagent",

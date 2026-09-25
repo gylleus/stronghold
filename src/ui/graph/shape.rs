@@ -32,6 +32,8 @@ pub struct NodePayload {
     pub released_at_ms: Option<i64>,
     /// Badge letter of the agent running in the node's terminal (see [`agent_marker`]).
     pub agent_marker: Option<char>,
+    /// An attendant whose run has no live coordinator: drawn with a dashed warning ring.
+    pub coordinator_gone: bool,
 }
 
 /// Label font size in canvas units; scaled by zoom and clamped on screen.
@@ -72,6 +74,7 @@ pub const ALL_STATES: [NodeState; 6] = [
 pub fn node_radius(kind: NodeKind) -> f32 {
     match kind {
         NodeKind::Coordinator => 16.0,
+        NodeKind::Attendant => 7.0,
         NodeKind::Worker => 10.0,
         NodeKind::Terminal => 9.0,
         NodeKind::Subagent => 6.0,
@@ -87,6 +90,30 @@ pub fn queen_color(dark_mode: bool) -> Color32 {
     } else {
         Color32::from_rgb(0x8c, 0x7a, 0x2e)
     }
+}
+
+/// Opacity of an attendant's fill: attendants are plumbing, drawn muted.
+pub const ATTENDANT_ALPHA: f32 = 0.65;
+/// Radius of the dashed ring around an attendant whose coordinator is gone, in node radii.
+const GONE_RING: f32 = 1.7;
+
+/// Corners of a diamond (a square on its tip) of circumradius `radius` around `center`.
+pub fn diamond(center: Pos2, radius: f32) -> Vec<Pos2> {
+    vec![
+        center + Vec2::new(0.0, -radius),
+        center + Vec2::new(radius, 0.0),
+        center + Vec2::new(0.0, radius),
+        center + Vec2::new(-radius, 0.0),
+    ]
+}
+
+/// A dashed circle: the "coordinator gone" marker around an attendant.
+fn dashed_ring(center: Pos2, radius: f32, stroke: Stroke) -> Vec<Shape> {
+    let points: Vec<Pos2> = (0..=32)
+        .map(|i| center + Vec2::angled(i as f32 / 32.0 * std::f32::consts::TAU) * radius)
+        .collect();
+    let dash = (radius * 0.35).max(2.0);
+    Shape::dashed_line(&points, stroke, dash, dash * 0.8)
 }
 
 /// Screen radius of the queen's fleet-state badge on a queen of screen radius `radius`.
@@ -168,6 +195,9 @@ pub fn node_extent(payload: &NodePayload, label: Vec2, selected: bool, zoom: f32
     }
     if payload.kind == NodeKind::Queen {
         half = half.max(queen_badge_offset(radius).x + queen_badge_radius(radius) + 2.0);
+    }
+    if payload.coordinator_gone {
+        half = half.max(radius * GONE_RING + 2.0);
     }
     let mut extent = Rect::from_center_size(Pos2::ZERO, Vec2::splat(2.0 * half));
     if label != Vec2::ZERO
@@ -371,6 +401,19 @@ pub fn legend(ui: &mut Ui) {
                 .add(crown_shape(rect.center(), radius, glyph_color(fill)));
             ui.label("queen (fleet hub; its badge shows the most urgent state)");
         });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(text_height), Sense::hover());
+            let fill = state_color(NodeState::Idle, dark).gamma_multiply(ATTENDANT_ALPHA);
+            let stroke = Stroke::new(1.0, ui.visuals().extreme_bg_color);
+            ui.painter().add(Shape::convex_polygon(
+                diamond(rect.center(), rect.width() / 2.0),
+                fill,
+                stroke,
+            ));
+            ui.label("attendant (forwards a run's events to its coordinator)");
+        });
     });
 }
 
@@ -393,6 +436,7 @@ pub struct FleetNodeShape {
     state: NodeState,
     released_at_ms: Option<i64>,
     agent_marker: Option<char>,
+    coordinator_gone: bool,
     selected: bool,
     dragged: bool,
     hovered: bool,
@@ -409,6 +453,7 @@ impl From<NodeProps<NodePayload>> for FleetNodeShape {
             state: props.payload.state,
             released_at_ms: None,
             agent_marker: None,
+            coordinator_gone: false,
             selected: false,
             dragged: false,
             hovered: false,
@@ -433,6 +478,7 @@ impl FleetNodeShape {
         self.state = props.payload.state;
         self.released_at_ms = props.payload.released_at_ms;
         self.agent_marker = props.payload.agent_marker;
+        self.coordinator_gone = props.payload.coordinator_gone;
         self.selected = props.selected;
         self.dragged = props.dragged;
         self.hovered = props.hovered;
@@ -610,6 +656,17 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
             shapes.extend(self.pulse_ring(waiting_s, center, outer, fill));
         }
         match self.kind {
+            NodeKind::Attendant => {
+                shapes.push(Shape::convex_polygon(
+                    diamond(center, radius * 1.2),
+                    fill.gamma_multiply(ATTENDANT_ALPHA),
+                    stroke,
+                ));
+                if self.coordinator_gone {
+                    let warn = Stroke::new((radius * 0.18).max(1.0), visuals.warn_fg_color);
+                    shapes.extend(dashed_ring(center, radius * GONE_RING, warn));
+                }
+            }
             NodeKind::Terminal => {
                 let rect = Rect::from_center_size(center, Vec2::splat(radius * 1.8));
                 shapes.push(

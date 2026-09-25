@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::fleet::FleetData;
+use crate::fleet::{FleetData, Forward};
 use crate::orca::{DispatchStatus, InboxMessage, Run, Task, Terminal, Worker, WorkerState};
 use crate::playbook::{ATTENDANT_BRIEF, KICKOFF, Version};
 use crate::ui::sidebar::repo_of;
@@ -187,6 +187,10 @@ pub struct FleetFacts {
     pub workers: Vec<Worker>,
     pub tasks: BTreeMap<String, Vec<Task>>,
     pub inbox: Vec<InboxMessage>,
+    /// Forward targets read from declared coordinators' transcripts, so the attendant and the
+    /// real coordinator resolve as in the app (see [`FleetData::run_roles`]).
+    #[serde(default)]
+    pub forwards: BTreeMap<String, Vec<Forward>>,
 }
 
 impl FleetFacts {
@@ -213,6 +217,7 @@ impl FleetFacts {
                     ..m.clone()
                 })
                 .collect(),
+            forwards: data.forwards.clone(),
         }
     }
 
@@ -224,6 +229,7 @@ impl FleetFacts {
             workers: self.workers,
             tasks: self.tasks,
             inbox: self.inbox,
+            forwards: self.forwards,
             ..FleetData::default()
         }
     }
@@ -336,9 +342,13 @@ pub fn attendant_brief(
         .ok_or_else(|| format!("no run {run_id} in Orca's run list"))?;
     let objective = run.objective.as_deref().map(collapse);
     let declared = run.coordinator_handle.as_deref();
-    let coordinator = data.effective_coordinator(run_id);
+    let roles = data.run_roles(run_id);
+    let coordinator = roles.coordinator.clone();
     let coordinator_from = match (declared, &coordinator) {
         (Some(d), Some(c)) if d == c => "the run's coordinator, live",
+        (_, Some(_)) if roles.attendant.is_some() => {
+            "the run's real coordinator: its declared one is the attendant"
+        }
         (_, Some(_)) => "effective coordinator: the run's declared one is not live",
         _ => "",
     };
@@ -909,6 +919,44 @@ pub(crate) mod tests {
             f.to_json()["missing"],
             json!(["coordinator scratchpad path"])
         );
+    }
+
+    #[test]
+    fn attendant_brief_names_the_real_coordinator_not_the_attendant() {
+        let mut data = fixture_fleet();
+        data.terminals.push(Terminal {
+            handle: "term_att".into(),
+            title: Some("✳ wave-ATTENDANT brief".into()),
+            ..Terminal::default()
+        });
+        data.runs[0].coordinator_handle = Some("term_att".into());
+        // Round-trips through the wire format with the transcript forwards.
+        data.forwards.insert(
+            "term_att".into(),
+            vec![crate::fleet::Forward {
+                target: COORD.into(),
+                at_ms: Some(NOW),
+            }],
+        );
+        let wire = serde_json::to_value(FleetFacts::from_fleet(&data)).unwrap();
+        let data = serde_json::from_value::<FleetFacts>(wire)
+            .unwrap()
+            .into_fleet();
+        assert_eq!(data.run_roles(RUN).attendant.as_deref(), Some("term_att"));
+
+        let f = attendant_brief(&template(ATTENDANT_BRIEF), &data, RUN, None, context()).unwrap();
+        assert!(
+            f.result
+                .text
+                .contains(&format!("- Coordinator terminal: `{COORD}`"))
+        );
+        let coordinator = f
+            .result
+            .filled
+            .iter()
+            .find(|e| e.placeholder == "coordinator terminal handle")
+            .unwrap();
+        assert!(coordinator.from.contains("attendant"), "{coordinator:?}");
     }
 
     #[test]

@@ -106,10 +106,10 @@ fn repo_of_orca_workspace() {
 }
 
 #[test]
-fn repo_of_falls_back_to_parent_dir() {
+fn repo_of_falls_back_to_the_repo_dir() {
     assert_eq!(
         repo_of("/Users/x/code/saker/myrstack").as_deref(),
-        Some("saker")
+        Some("myrstack")
     );
     assert_eq!(
         repo_of("/Users/x/repo/myrstack-worktrees/myr-k7y.6").as_deref(),
@@ -345,7 +345,10 @@ fn long_whip_item(seq: u64) -> crate::whip::WhipLogItem {
 fn cache_derives_once_per_snapshot_and_recounts_hidden_per_filter() {
     let mut s = snapshot();
     let mut cache = SidebarCache::default();
-    assert_eq!(cache.derived(&s).runs[0].row, run_rows(&s)[0]);
+    let groups = repo_groups(&s);
+    let derived = &cache.derived(&s).groups;
+    assert_eq!(derived.len(), groups.len());
+    assert_eq!(derived[0].runs[0].row, groups[0].runs[0]);
     assert_eq!(cache.derived(&s).repos, repo_counts(&s));
 
     let workers = FleetFilter {
@@ -401,4 +404,59 @@ fn filters_never_hide_the_queen_and_counts_skip_it() {
     assert_eq!(kind_counts(&s).get(&NodeKind::Queen), None);
     assert_eq!(state_counts(&s).values().sum::<usize>(), 6);
     assert_eq!(repo_counts(&s).values().sum::<usize>(), 6);
+}
+
+#[test]
+fn runs_and_loose_terminals_group_by_repo() {
+    let mut s = snapshot();
+    let mut other = node("other", NodeKind::Terminal, None);
+    other.worktree_path = Some(format!("{ORCA}/infra/scratch"));
+    other.label = "a scratch shell".into();
+    s.nodes.push(other);
+    let mut bare = node("bare", NodeKind::Terminal, None);
+    bare.state = NodeState::Idle;
+    s.nodes.push(bare);
+
+    let groups = repo_groups(&s);
+    let names: Vec<&str> = groups.iter().map(|g| g.repo.as_str()).collect();
+    assert_eq!(names, ["infra", "myrstack", "shop", NO_REPO]);
+
+    let infra = &groups[0];
+    assert_eq!(infra.runs.len(), 1);
+    assert_eq!(infra.runs[0].id, "beta");
+    assert_eq!(infra.loose.len(), 1);
+    assert_eq!(infra.loose[0].id, id("other"));
+    assert_eq!(infra.states.values().sum::<usize>(), 3);
+
+    let shop = &groups[2];
+    assert_eq!(shop.runs[0].id, "alpha");
+    assert!(shop.loose.is_empty());
+    // The released worker without a worktree counts under its run's repo.
+    assert_eq!(shop.states.get(&NodeState::Done), Some(&1));
+    assert_eq!(shop.states.values().sum::<usize>(), 3);
+
+    let myrstack = &groups[1];
+    assert!(myrstack.runs.is_empty());
+    assert_eq!(myrstack.loose[0].state, NodeState::NeedsInput);
+    assert_eq!(groups[3].loose[0].id, id("bare"));
+}
+
+#[test]
+fn clicking_a_repo_header_focuses_its_region() {
+    let s = snapshot();
+    let mut filter = FleetFilter::default();
+    let response = crate::ui::test_util::click_label("infra", |ui| sidebar(ui, &s, &mut filter));
+    assert_eq!(response.focus_repo.as_deref(), Some("infra"));
+    assert_eq!(response.select, None);
+}
+
+#[test]
+fn clicking_a_loose_terminal_selects_and_pans_to_it() {
+    let mut s = snapshot();
+    s.nodes[5].label = "karl's shell".into();
+    let mut filter = FleetFilter::default();
+    let response =
+        crate::ui::test_util::click_label("karl's shell", |ui| sidebar(ui, &s, &mut filter));
+    assert_eq!(response.select, Some(id("loose")));
+    assert_eq!(response.focus_node, Some(id("loose")));
 }

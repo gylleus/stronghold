@@ -137,7 +137,7 @@ pub fn plan_close(
     match node.kind {
         NodeKind::Subagent => return ClosePlan::refuse(node, SUBAGENT_REFUSAL),
         NodeKind::Queen => return ClosePlan::refuse(node, QUEEN_REFUSAL),
-        NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal => {}
+        NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {}
     }
     let live_handle = node.terminal_handle.as_deref().filter(|_| node.live);
     let stop = node.kind == NodeKind::Worker && has_active_dispatch(node);
@@ -189,6 +189,9 @@ pub fn plan_close(
     }
     if node.kind == NodeKind::Coordinator {
         plan.warnings.extend(coordinator_warnings(node, snapshot));
+    }
+    if node.kind == NodeKind::Attendant {
+        plan.warnings.extend(attendant_warnings(node, snapshot));
     }
     plan
 }
@@ -298,7 +301,7 @@ pub fn bulk_candidates<'a>(
         .filter(|n| !hidden.contains(&n.id))
         .filter(|n| match n.kind {
             NodeKind::Terminal | NodeKind::Worker => true,
-            NodeKind::Coordinator => include_coordinators,
+            NodeKind::Coordinator | NodeKind::Attendant => include_coordinators,
             NodeKind::Subagent | NodeKind::Queen => false,
         })
         .filter(|n| {
@@ -394,6 +397,17 @@ fn coordinator_warnings(node: &Node, snapshot: &FleetSnapshot) -> Vec<String> {
         ));
     }
     warnings
+}
+
+fn attendant_warnings(node: &Node, snapshot: &FleetSnapshot) -> Vec<String> {
+    let run = node.run_id.as_deref().and_then(|r| snapshot.run(r));
+    let objective = run.map_or(node.label.as_str(), |r| {
+        r.objective.as_deref().unwrap_or(&r.id)
+    });
+    vec![format!(
+        "{} is the attendant of run {objective}: bus events stop reaching its coordinator",
+        node.label
+    )]
 }
 
 fn push_unique(list: &mut Vec<String>, item: String) {
