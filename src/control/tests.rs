@@ -261,7 +261,7 @@ fn names_parse_loosely() {
 
 #[test]
 fn tail_drops_trailing_blank_rows() {
-    let lines: Vec<String> = ["a", "b", "", "c", " ", ""].map(String::from).to_vec();
+    let lines: Vec<String> = ["a", "b", "", "c   ", " ", ""].map(String::from).to_vec();
     assert_eq!(server::tail(&lines, 2), vec!["", "c"]);
     assert_eq!(server::tail(&lines, 10), vec!["a", "b", "", "c"]);
     assert!(server::tail(&[String::new()], 5).is_empty());

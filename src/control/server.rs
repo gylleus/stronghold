@@ -262,13 +262,16 @@ fn agent(
     Ok(json!({ "agent": agent, "children": children, "screen": screen }))
 }
 
-/// The last `n` rows, after trailing blank rows are dropped.
+/// The last `n` rows, after trailing blank rows are dropped, without trailing padding.
 pub fn tail(lines: &[String], n: usize) -> Vec<String> {
     let end = lines
         .iter()
         .rposition(|l| !l.trim().is_empty())
         .map_or(0, |i| i + 1);
-    lines[end.saturating_sub(n)..end].to_vec()
+    lines[end.saturating_sub(n)..end]
+        .iter()
+        .map(|l| l.trim_end().to_owned())
+        .collect()
 }
 
 fn whip(view: &StatusView, params: &Value) -> Result<Value, ControlError> {
@@ -373,9 +376,18 @@ pub fn bind_socket(path: &Path) -> io::Result<UnixListener> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
-    let tmp = path.with_file_name(format!(".ctl-{}.sock", std::process::id()));
+    let tmp = path.with_file_name(format!(".c{}", std::process::id()));
     let _ = fs::remove_file(&tmp);
-    let listener = UnixListener::bind(&tmp)?;
+    let listener = UnixListener::bind(&tmp).map_err(|e| {
+        io::Error::new(
+            e.kind(),
+            format!(
+                "{e} (binding {}; set {} to a shorter path if it is too long)",
+                path.display(),
+                crate::control::SOCKET_ENV
+            ),
+        )
+    })?;
     let placed = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))
         .and_then(|()| fs::rename(&tmp, path));
     if let Err(e) = placed {
