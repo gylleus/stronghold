@@ -1,0 +1,100 @@
+{
+  "id": "6ba1d5bc-54c0-49ad-bf47-f88450d5dda9",
+  "ok": true,
+  "result": {
+    "workers": [
+      {
+        "dispatchId": "ctx_efb8c6c722b8",
+        "taskId": "task_7151c4a65d84",
+        "runId": "run_922bc2cf6b4b",
+        "workerState": "succeeded",
+        "dispatchStatus": "completed",
+        "agentTerminalHandle": "term_4fa4faa5-2265-4398-92d6-e9db6aae07b0",
+        "terminalState": "released",
+        "resource": {
+          "id": "wtr_a027c12cd6e2",
+          "ownershipState": "released",
+          "releaseState": "released",
+          "retainedReason": null,
+          "terminalHandle": "term_4fa4faa5-2265-4398-92d6-e9db6aae07b0",
+          "worktreeId": "5dc08a0b-46a3-4fc0-87dd-6550253b8072::/Users/gylleus/orca/workspaces/lite-backend/lite-recs-wheel",
+          "originDispatchId": "ctx_efb8c6c722b8",
+          "ownerDispatchId": "ctx_efb8c6c722b8",
+          "releaseRequestedAt": "2026-09-16 10:13:32",
+          "releaseCompletedAt": "2026-09-16 10:13:32",
+          "releaseError": null,
+          "archive": {
+            "source": null,
+            "status": null
+          }
+        }
+      },
+      {
+        "dispatchId": "ctx_055d47949c82",
+        "taskId": "task_48297b3a1dc8",
+        "runId": "run_97915d05445a",
+        "workerState": "succeeded",
+        "dispatchStatus": "completed",
+        "agentTerminalHandle": "term_e54d3384-5107-464d-a09c-f94d81fb6b3c",
+        "terminalState": "retained",
+        "resource": null
+      },
+      {
+        "dispatchId": "ctx_5606e1fe5584",
+        "taskId": "task_cfbfb34d81e6",
+        "runId": "run_36e69d11f0b2",
+        "workerState": "unsupervised",
+        "dispatchStatus": "circuit_broken",
+        "agentTerminalHandle": "term_ab8b3c04-8a42-4bff-a299-cec43c385ca4",
+        "terminalState": "retained",
+        "resource": null
+      },
+      {
+        "dispatchId": "ctx_e89e8238e52b",
+        "taskId": "task_d08bc0122788",
+        "runId": "run_9558d04ad3b3",
+        "workerState": "unsupervised",
+        "dispatchStatus": "completed",
+        "agentTerminalHandle": "term_08183af5-315c-4f4e-ac0c-a95478f918b3",
+        "terminalState": "retained",
+        "resource": null
+      },
+      {
+        "dispatchId": "ctx_a4a62d1e6146",
+        "taskId": "task_4fcde6d6329e",
+        "runId": "run_922bc2cf6b4b",
+        "workerState": "ready",
+        "dispatchStatus": "dispatched",
+        "agentTerminalHandle": "term_276658e8-bbb0-4a0e-bc9f-ef83b38f6c1c",
+        "terminalState": "active",
+        "resource": {
+          "id": "wtr_8855ac790a2e",
+          "ownershipState": "owned",
+          "releaseState": "not_requested",
+          "retainedReason": null,
+          "terminalHandle": "term_276658e8-bbb0-4a0e-bc9f-ef83b38f6c1c",
+          "worktreeId": "5dc08a0b-46a3-4fc0-87dd-6550253b8072::/Users/gylleus/orca/workspaces/lite-backend/lite-rec-bridge-mode",
+          "originDispatchId": "ctx_a4a62d1e6146",
+          "ownerDispatchId": "ctx_a4a62d1e6146",
+          "releaseRequestedAt": null,
+          "releaseCompletedAt": null,
+          "releaseError": null,
+          "archive": {
+            "source": null,
+            "status": null
+          }
+        }
+      }
+    ],
+    "counts": {
+      "released": 100,
+      "retained": 132,
+      "active": 9,
+      "reclaimable": 21,
+      "release_unknown": 3
+    }
+  },
+  "_meta": {
+    "runtimeId": "fecc11aa-dfe9-4566-93aa-50a944d817cb"
+  }
+}
