@@ -248,8 +248,11 @@ fn parse_usage(line: &str) -> Option<(String, String, TokenCounts)> {
 }
 
 impl ClaudeData {
-    /// Usage of the session a terminal is mapped to.
+    /// Usage of the session a terminal is mapped to (Claude, else Codex).
     pub fn usage_for_handle(&self, handle: &str) -> Option<&Usage> {
+        if let Some(codex) = self.codex.get(handle) {
+            return codex.usage.as_ref();
+        }
         let session = self.session_by_handle.get(handle)?.session()?;
         Some(&self.usage.get(&session.session_id)?.total)
     }

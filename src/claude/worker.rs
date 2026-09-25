@@ -14,6 +14,7 @@ use super::sessions::{HookMappings, SessionInfo, SessionLocator, SessionMatch};
 use super::subagents::{SubagentInfo, SubagentWatcher};
 use super::transcript::read_transcript_tail;
 use super::usage::{SessionUsage, UsageTracker};
+use crate::codex::{CodexSession, CodexTracker, default_sessions_root};
 use crate::orca::Terminal;
 use crate::poller::Repaint;
 
@@ -29,6 +30,8 @@ pub struct ClaudeData {
     pub subagents: BTreeMap<String, Vec<SubagentInfo>>,
     /// Token usage per session id, subagents included.
     pub usage: BTreeMap<String, SessionUsage>,
+    /// Rollout and token usage per Codex terminal handle.
+    pub codex: BTreeMap<String, CodexSession>,
     /// Wall-clock time of the scan, in ms since the Unix epoch.
     pub at_ms: i64,
 }
@@ -57,6 +60,8 @@ pub struct TranscriptTail {
 pub struct ClaudeWorkerConfig {
     pub projects_root: PathBuf,
     pub session_map_path: PathBuf,
+    /// Codex rollouts, `~/.codex/sessions`.
+    pub codex_sessions_root: PathBuf,
     /// Rescan interval when terminals are unchanged.
     pub refresh: Duration,
     /// How often the watched transcript is checked for changes.
@@ -70,6 +75,7 @@ impl Default for ClaudeWorkerConfig {
         Self {
             projects_root: default_projects_root(),
             session_map_path: default_session_map_path(),
+            codex_sessions_root: default_sessions_root(),
             refresh: Duration::from_secs(3),
             transcript_poll: Duration::from_millis(500),
             tail_lines: 200,
@@ -174,6 +180,7 @@ pub fn collect(
         session_by_handle,
         subagents,
         usage,
+        codex: BTreeMap::new(),
         at_ms: now_ms,
     }
 }
@@ -213,6 +220,7 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
     let locator = SessionLocator::new(&config.projects_root);
     let mut watcher = SubagentWatcher::new();
     let mut usage = UsageTracker::new();
+    let mut codex = CodexTracker::new(&config.codex_sessions_root);
     let mut terminals: Option<Vec<Terminal>> = None;
     let mut handles: BTreeSet<String> = BTreeSet::new();
     let mut next_refresh = Instant::now();
@@ -225,26 +233,23 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
             next_refresh = Instant::now() + config.refresh;
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let hooks = load_hook_mappings(&config.session_map_path);
-                collect(
-                    &locator,
-                    &mut watcher,
-                    &mut usage,
-                    terms,
-                    &hooks,
-                    wall_clock_ms(),
-                )
+                let now_ms = wall_clock_ms();
+                let mut data = collect(&locator, &mut watcher, &mut usage, terms, &hooks, now_ms);
+                data.codex = codex.refresh(terms, now_ms);
+                data
             }));
             match result {
                 Ok(data) => {
                     log::debug!(
-                        "claude scan: {} sessions, {} subagents ({} running)",
+                        "claude scan: {} sessions, {} subagents ({} running), {} codex rollouts",
                         data.subagents.len(),
                         data.subagent_count(),
                         data.subagents
                             .values()
                             .flatten()
                             .filter(|a| !a.state.is_finished())
-                            .count()
+                            .count(),
+                        data.codex.len()
                     );
                     if !outputs.send(&outputs.data, data, "claude scan") {
                         return;
@@ -406,6 +411,7 @@ mod tests {
         ClaudeWorkerConfig {
             projects_root: tree.root(),
             session_map_path: tree.root().join("no-session-map.jsonl"),
+            codex_sessions_root: tree.root().join("no-codex-sessions"),
             refresh: Duration::from_millis(50),
             transcript_poll: Duration::from_millis(20),
             tail_lines: 10,

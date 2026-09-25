@@ -1,0 +1,162 @@
+{
+  "id": "fixture",
+  "ok": true,
+  "result": {
+    "claude": {
+      "accounts": [],
+      "activeAccountId": null,
+      "activeAccountIdsByRuntime": {
+        "host": null,
+        "wsl": {}
+      }
+    },
+    "codex": {
+      "accounts": [],
+      "activeAccountId": null,
+      "activeAccountIdsByRuntime": {
+        "host": null,
+        "wsl": {}
+      },
+      "systemDefault": {
+        "hasAuth": true,
+        "authKind": "oauth",
+        "email": "user@example.com",
+        "providerAccountId": "00000000-0000-0000-0000-000000000000",
+        "workspaceLabel": null
+      }
+    },
+    "rateLimits": {
+      "claude": {
+        "provider": "claude",
+        "session": {
+          "usedPercent": 8,
+          "windowMinutes": 300,
+          "resetsAt": 1790353800000,
+          "resetDescription": "6:30 PM"
+        },
+        "weekly": {
+          "usedPercent": 17,
+          "windowMinutes": 10080,
+          "resetsAt": 1790650800000,
+          "resetDescription": "Tue 5:00 AM"
+        },
+        "fableWeekly": {
+          "usedPercent": 91,
+          "windowMinutes": 10080,
+          "resetsAt": 1790276399933,
+          "resetDescription": "Thu 8:59 PM"
+        },
+        "updatedAt": 1790339413651,
+        "error": null,
+        "status": "ok",
+        "usageMetadata": {
+          "source": "live-session",
+          "lastSuccessfulSource": "live-session",
+          "credentialSource": "legacy-keychain",
+          "authProvenance": "system"
+        }
+      },
+      "codex": {
+        "provider": "codex",
+        "session": null,
+        "weekly": {
+          "usedPercent": 0,
+          "windowMinutes": 10080,
+          "resetsAt": 1790878228000,
+          "resetDescription": "Thu 8:10 PM"
+        },
+        "rateLimitResetCredits": {
+          "availableCount": 3,
+          "totalEarnedCount": 0,
+          "nextExpiresAt": 1791080183376,
+          "credits": [
+            {
+              "status": "available",
+              "expiresAt": 1791080183376,
+              "grantedAt": 1788488183376
+            },
+            {
+              "status": "available",
+              "expiresAt": 1791173960028,
+              "grantedAt": 1788581960028
+            },
+            {
+              "status": "available",
+              "expiresAt": 1792701627066,
+              "grantedAt": 1790109627066
+            }
+          ]
+        },
+        "updatedAt": 1790339275629,
+        "error": null,
+        "status": "ok",
+        "usageMetadata": {}
+      },
+      "gemini": {
+        "provider": "gemini",
+        "session": null,
+        "weekly": null,
+        "updatedAt": 1790339274457,
+        "error": "Gemini CLI OAuth is disabled in settings",
+        "status": "unavailable"
+      },
+      "opencodeGo": {
+        "provider": "opencode-go",
+        "session": null,
+        "weekly": null,
+        "monthly": null,
+        "updatedAt": 1790339274457,
+        "error": "Session cookie not configured",
+        "status": "unavailable"
+      },
+      "kimi": {
+        "provider": "kimi",
+        "session": null,
+        "weekly": null,
+        "updatedAt": 1790339274463,
+        "error": "Not signed in to Kimi Code",
+        "status": "unavailable"
+      },
+      "antigravity": {
+        "provider": "antigravity",
+        "session": null,
+        "weekly": null,
+        "updatedAt": 1790339274457,
+        "error": "Antigravity usage is not available. Orca can only show shared Google Code Assist quota while a Gemini CLI sign-in is connected.",
+        "status": "unavailable"
+      },
+      "minimax": {
+        "provider": "minimax",
+        "session": null,
+        "weekly": null,
+        "updatedAt": 1790339274457,
+        "error": "MiniMax session cookie not configured",
+        "status": "unavailable",
+        "usageMetadata": {
+          "failureKind": "missing-credentials",
+          "source": "web"
+        }
+      },
+      "grok": {
+        "provider": "grok",
+        "session": null,
+        "weekly": null,
+        "updatedAt": 1790339274457,
+        "error": "Not signed in to Grok \u2014 run grok login",
+        "status": "unavailable"
+      },
+      "minimaxCookieConfigured": false,
+      "grokAuthConfigured": false,
+      "claudeTarget": {
+        "runtime": "host",
+        "wslDistro": null
+      },
+      "codexTarget": {
+        "runtime": "host",
+        "wslDistro": null
+      },
+      "inactiveClaudeAccounts": [],
+      "inactiveCodexAccounts": []
+    }
+  }
+}

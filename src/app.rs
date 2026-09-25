@@ -16,6 +16,7 @@ use crate::notify::{self, Delivered, NeedsInputDetector, Notifier};
 use crate::orca::OrcaClient;
 use crate::persist::PersistedState;
 use crate::poller::{Poller, PollerCommand, PollerConfig, ScreenUpdate};
+use crate::quota::{QuotaPoller, Quotas};
 use crate::ui;
 use crate::ui::graph::GraphView;
 use crate::ui::sidebar::FleetFilter;
@@ -80,6 +81,9 @@ pub struct MyrstackApp {
     alerts: Vec<Delivered>,
     /// Debug-logged frames per second and repaint causes.
     frame_stats: ui::frame_stats::FrameStats,
+    /// Polls `orca account list` for plan quotas every few minutes.
+    quota: QuotaPoller,
+    quotas: Quotas,
 }
 
 /// How many posted notifications the alerts menu keeps.
@@ -117,7 +121,15 @@ impl MyrstackApp {
             }),
             Some(Box::new(move || repaint_ctx.request_repaint())),
         );
+        let repaint_ctx = cc.egui_ctx.clone();
+        let quota = QuotaPoller::spawn(
+            OrcaClient::new(),
+            crate::quota::POLL_INTERVAL,
+            Some(Box::new(move || repaint_ctx.request_repaint())),
+        );
         let mut app = Self {
+            quota,
+            quotas: Quotas::default(),
             hotkey,
             poller,
             data: None,
@@ -147,6 +159,21 @@ impl MyrstackApp {
         };
         app.restore_state(cc.storage);
         app
+    }
+
+    /// Takes the newest plan quotas, if the poller has fetched again.
+    fn poll_quota(&mut self) {
+        if let Some(quotas) = self.quota.latest() {
+            self.quotas = quotas;
+        }
+    }
+
+    fn quota_chips(&self, ui: &mut egui::Ui, now_ms: i64) {
+        if self.quotas.providers.is_empty() {
+            return;
+        }
+        ui.separator();
+        ui::quota::quota_chips(ui, &self.quotas, now_ms);
     }
 
     /// Takes the whip's newest status; true when the escalated set changed (nodes to redraw).
@@ -464,6 +491,7 @@ impl MyrstackApp {
             }
             self.whip_window.button(ui);
             self.alerts_menu(ui);
+            self.quota_chips(ui, now_ms);
             if let Some(data) = &self.data
                 && let Some(first) = data.errors.first()
             {
@@ -644,6 +672,7 @@ impl eframe::App for MyrstackApp {
             self.screen = Some(update);
         }
         rebuild |= self.poll_whip();
+        self.poll_quota();
         if rebuild && let Some(data) = &self.data {
             let snapshot = FleetSnapshot::build_with_stalled(
                 data,

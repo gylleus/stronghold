@@ -124,8 +124,8 @@ impl AgentEntry {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub(super) struct Tail {
-    pub(super) offset: u64,
+pub(crate) struct Tail {
+    pub(crate) offset: u64,
 }
 
 #[derive(Debug, Default)]
@@ -429,7 +429,7 @@ fn first_timestamp_ms(path: &Path) -> Option<i64> {
 
 /// Feeds complete lines appended since `tail.offset` to `on_line`. A file that
 /// shrank is re-read from the start.
-pub(super) fn tail_file(path: &Path, tail: &mut Tail, mut on_line: impl FnMut(&str)) {
+pub(crate) fn tail_file(path: &Path, tail: &mut Tail, mut on_line: impl FnMut(&str)) {
     let Ok(file) = File::open(path) else {
         return;
     };
