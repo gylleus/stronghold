@@ -4,3 +4,5 @@ pub mod actions;
 pub mod progress;
 pub mod rules;
 pub mod settings;
+
+pub use progress::{ProgressReport, ProgressSource, ProgressTracker, RunProgress, TaskProgress};

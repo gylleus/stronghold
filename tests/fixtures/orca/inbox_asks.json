@@ -1,0 +1,81 @@
+{
+  "id": "b7f1de65-d43c-4dd2-a2d2-b26e389d0781",
+  "ok": true,
+  "result": {
+    "count": 4,
+    "messages": [
+      {
+        "id": "msg_629f1a3d9ec0",
+        "run_id": "run_7c25cdcf46e0",
+        "delivery_contract": "current_delivery",
+        "from_handle": "run:run_7c25cdcf46e0",
+        "to_handle": "dispatch:ctx_be46072c6286",
+        "subject": "Re: Question",
+        "body": "(b): skip the local store. svelte-check plus the start-page loader tests are enough (Karl: don't overengineer). Say it i",
+        "type": "status",
+        "priority": "normal",
+        "thread_id": "msg_98618c7ef93b",
+        "payload": null,
+        "read": 1,
+        "sequence": 2116,
+        "created_at": "2026-09-25T09:49:34Z",
+        "delivered_at": null,
+        "sender_pane_key": null
+      },
+      {
+        "id": "msg_98618c7ef93b",
+        "run_id": "run_7c25cdcf46e0",
+        "delivery_contract": "current_delivery",
+        "from_handle": "dispatch:ctx_be46072c6286",
+        "to_handle": "run:run_7c25cdcf46e0",
+        "subject": "Question",
+        "body": "Hook-point deletion is built (branch gylleus/hack-77-delete-…",
+        "type": "question",
+        "priority": "normal",
+        "thread_id": "msg_98618c7ef93b",
+        "payload": "{\"taskId\":\"task_6bd9c2a18900\",\"dispatchId\":\"ctx_be46072c6286\",\"question\":\"Hook-point deletion is built (branch gylleus/hack-77-delete-…\",\"options\":[\"a\",\"b\"]}",
+        "read": 1,
+        "sequence": 2115,
+        "created_at": "2026-09-25T09:49:04Z",
+        "delivered_at": null,
+        "sender_pane_key": null
+      },
+      {
+        "id": "msg_381383123c00",
+        "run_id": "run_7c25cdcf46e0",
+        "delivery_contract": "current_delivery",
+        "from_handle": "term_6169a9ce-59b8-4454-b652-af7da25a563b",
+        "to_handle": "run:run_7c25cdcf46e0",
+        "subject": "Rejected heartbeat: alive",
+        "body": "Orca rejected this heartbeat: Dispatch ctx_f86ca27f0183 capability is revoked.",
+        "type": "heartbeat",
+        "priority": "high",
+        "thread_id": null,
+        "payload": "{\"taskId\":\"task_a2aa098cf934\",\"dispatchId\":\"ctx_f86ca27f0183\",\"phase\":\"implementing\",\"_orcaLifecycleRejection\":{\"code\":\"dispatch_capability_invalid\",\"reason\":\"Dispatch ctx_f86ca27f0183 capability is revoked.\"}}",
+        "read": 1,
+        "sequence": 2074,
+        "created_at": "2026-09-24T11:02:43Z",
+        "delivered_at": "2026-09-24T11:02:43Z",
+        "sender_pane_key": "b6cab194-3cb9-465f-9c3a-f0e441db9852:4d2c5e5c-492b-4a6d-a847-b58cfaabbad8"
+      },
+      {
+        "id": "msg_3a6b210dd525",
+        "run_id": "run_7c25cdcf46e0",
+        "delivery_contract": "current_delivery",
+        "from_handle": "dispatch:ctx_6784d2c7c310",
+        "to_handle": "run:run_7c25cdcf46e0",
+        "subject": "Question",
+        "body": "Plan for cp-twfn.22 is at /Users/gylleus/Documents/agents/tr…",
+        "type": "question",
+        "priority": "normal",
+        "thread_id": "msg_3a6b210dd525",
+        "payload": "{\"taskId\":\"task_40a5deb4db5d\",\"dispatchId\":\"ctx_6784d2c7c310\",\"question\":\"Plan for cp-twfn.22 is at /Users/gylleus/Documents/agents/tr…\",\"options\":[\"go: mark + read log\",\"go: mark + placeholders\",\"go: owner-only read\",\"changes needed\"]}",
+        "read": 1,
+        "sequence": 1966,
+        "created_at": "2026-09-24T07:47:08Z",
+        "delivered_at": null,
+        "sender_pane_key": null
+      }
+    ]
+  }
+}
