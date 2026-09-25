@@ -185,6 +185,7 @@ impl MyrstackApp {
                 let input = ui::terminal::PanelInput {
                     state: &mut self.input,
                     terminal,
+                    usage: self.claude_data.as_ref().and_then(|c| c.node_usage(node)),
                 };
                 ui::terminal::terminal_panel(ui, node, self.screen.as_ref(), input, now_ms)
             })
@@ -502,6 +503,9 @@ impl eframe::App for MyrstackApp {
                 FleetSnapshot::build_with_claude(data, self.claude_data.as_ref(), now_ms());
             self.graph.set_hidden(&self.filter.hidden(&snapshot));
             self.graph.sync(&snapshot);
+            if let Some(claude) = &self.claude_data {
+                self.graph.set_usage(claude.node_usages(&snapshot.nodes));
+            }
             if let Some(id) = &self.selected
                 && snapshot.node(id).is_none()
             {

@@ -24,6 +24,7 @@ use egui_graphs::{
 use petgraph::Directed;
 use petgraph::stable_graph::{DefaultIx, EdgeIndex, NodeIndex};
 
+use crate::claude::Usage;
 use crate::model::{EdgeKind, FleetSnapshot, Node, NodeId, NodeKind};
 use layout::centroid;
 
@@ -83,6 +84,8 @@ pub struct GraphView {
     nodes: HashMap<NodeId, Node>,
     /// Run ID → objective, for tooltips.
     objectives: HashMap<String, String>,
+    /// Claude token usage per node, for tooltips.
+    usage: HashMap<NodeId, Usage>,
     id: String,
     /// Canvas point new unrelated nodes spawn around (the layout's gravity center).
     anchor: Pos2,
@@ -127,6 +130,7 @@ impl GraphView {
             edges: HashMap::new(),
             nodes: HashMap::new(),
             objectives: HashMap::new(),
+            usage: HashMap::new(),
             id: id.into(),
             anchor: Pos2::new(640.0, 400.0),
             layout_initialized: false,
@@ -141,6 +145,11 @@ impl GraphView {
             restore: saved::Restore::default(),
             center_requested: None,
         }
+    }
+
+    /// Claude token usage per node, shown in tooltips.
+    pub fn set_usage(&mut self, usage: HashMap<NodeId, Usage>) {
+        self.usage = usage;
     }
 
     /// Applies a snapshot: adds new nodes and edges, removes vanished ones and updates the rest
@@ -436,8 +445,9 @@ impl GraphView {
                 .and_then(|r| self.objectives.get(r))
                 .map(String::as_str);
             let now_ms = now_ms();
+            let usage = self.usage.get(&node.id);
             response.response.clone().on_hover_ui_at_pointer(|ui| {
-                tooltip::node_tooltip(ui, node, objective, now_ms);
+                tooltip::node_tooltip(ui, node, objective, usage, now_ms);
             });
         }
 

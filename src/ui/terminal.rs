@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use eframe::egui;
 
 use crate::actions::{Action, ActionId, ActionResult, Key};
+use crate::claude::Usage;
 use crate::model::{Node, NodeKind, NodeState};
 use crate::orca::{Terminal, TerminalInput, TerminalStatus};
 use crate::poller::ScreenUpdate;
@@ -260,6 +261,8 @@ pub struct PanelInput<'a> {
     pub state: &'a mut InputPanelState,
     /// The node's row in `terminal list`, if live.
     pub terminal: Option<&'a Terminal>,
+    /// Claude token usage of the node's session.
+    pub usage: Option<&'a Usage>,
 }
 
 /// The terminal whose screen should be polled for `node`: live terminals only (not dead
@@ -318,7 +321,7 @@ pub fn terminal_panel(
             });
         });
     });
-    header(ui, node, screen, has_screen, now_ms);
+    header(ui, node, screen, has_screen, input.usage, now_ms);
     ui.separator();
 
     if !has_screen {
@@ -519,6 +522,7 @@ fn header(
     node: &Node,
     screen: Option<&ScreenUpdate>,
     has_screen: bool,
+    usage: Option<&Usage>,
     now_ms: i64,
 ) {
     egui::Grid::new("terminal_panel_header")
@@ -553,6 +557,11 @@ fn header(
             if let Some(handle) = &node.terminal_handle {
                 ui.weak("terminal");
                 ui.add(egui::Label::new(handle.as_str()).truncate());
+                ui.end_row();
+            }
+            if let Some(usage) = usage {
+                ui.weak("tokens");
+                ui.label(usage.label()).on_hover_text(usage.detail());
                 ui.end_row();
             }
             if has_screen {

@@ -13,6 +13,7 @@ use super::sessions::default_projects_root;
 use super::sessions::{HookMappings, SessionInfo, SessionLocator, SessionMatch};
 use super::subagents::{SubagentInfo, SubagentWatcher};
 use super::transcript::read_transcript_tail;
+use super::usage::{SessionUsage, UsageTracker};
 use crate::orca::Terminal;
 use crate::poller::Repaint;
 
@@ -26,6 +27,8 @@ pub struct ClaudeData {
     pub session_by_handle: BTreeMap<String, SessionMatch>,
     /// Subagents per session id.
     pub subagents: BTreeMap<String, Vec<SubagentInfo>>,
+    /// Token usage per session id, subagents included.
+    pub usage: BTreeMap<String, SessionUsage>,
     /// Wall-clock time of the scan, in ms since the Unix epoch.
     pub at_ms: i64,
 }
@@ -148,10 +151,11 @@ impl Drop for ClaudeWorker {
     }
 }
 
-/// Maps `terminals` to sessions and scans their subagents as of `now_ms`.
+/// Maps `terminals` to sessions and scans their subagents and usage as of `now_ms`.
 pub fn collect(
     locator: &SessionLocator,
     watcher: &mut SubagentWatcher,
+    usage: &mut UsageTracker,
     terminals: &[Terminal],
     hooks: &HookMappings,
     now_ms: i64,
@@ -165,9 +169,11 @@ pub fn collect(
         .cloned()
         .collect();
     let subagents = watcher.refresh(&sessions, now_ms);
+    let usage = usage.refresh(&sessions);
     ClaudeData {
         session_by_handle,
         subagents,
+        usage,
         at_ms: now_ms,
     }
 }
@@ -206,6 +212,7 @@ struct Watched {
 fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<Command>) {
     let locator = SessionLocator::new(&config.projects_root);
     let mut watcher = SubagentWatcher::new();
+    let mut usage = UsageTracker::new();
     let mut terminals: Option<Vec<Terminal>> = None;
     let mut handles: BTreeSet<String> = BTreeSet::new();
     let mut next_refresh = Instant::now();
@@ -218,7 +225,14 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
             next_refresh = Instant::now() + config.refresh;
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let hooks = load_hook_mappings(&config.session_map_path);
-                collect(&locator, &mut watcher, terms, &hooks, wall_clock_ms())
+                collect(
+                    &locator,
+                    &mut watcher,
+                    &mut usage,
+                    terms,
+                    &hooks,
+                    wall_clock_ms(),
+                )
             }));
             match result {
                 Ok(data) => {
@@ -418,6 +432,7 @@ mod tests {
         let data = collect(
             &locator,
             &mut watcher,
+            &mut UsageTracker::new(),
             &terminals,
             &HookMappings::default(),
             wall_clock_ms(),

@@ -2,6 +2,7 @@
 
 use eframe::egui::{RichText, Ui};
 
+use crate::claude::Usage;
 use crate::model::{Node, NodeKind, NodeState};
 
 /// Longest preview line shown in the tooltip, in characters.
@@ -50,7 +51,13 @@ pub fn preview_line(preview: &str) -> Option<String> {
     Some(cut)
 }
 
-pub fn node_tooltip(ui: &mut Ui, node: &Node, run_objective: Option<&str>, now_ms: i64) {
+pub fn node_tooltip(
+    ui: &mut Ui,
+    node: &Node,
+    run_objective: Option<&str>,
+    usage: Option<&Usage>,
+    now_ms: i64,
+) {
     ui.set_max_width(420.0);
     ui.label(RichText::new(&node.label).strong());
     ui.label(format!(
@@ -71,6 +78,10 @@ pub fn node_tooltip(ui: &mut Ui, node: &Node, run_objective: Option<&str>, now_m
         Some(at) => ui.label(format!("Last output {}", format_ago(now_ms, at))),
         None => ui.label("No output yet"),
     };
+    if let Some(usage) = usage {
+        ui.label(format!("Tokens: {}", usage.label()));
+        ui.label(RichText::new(usage.tokens.breakdown()).weak());
+    }
     if let Some(line) = node.preview.as_deref().and_then(preview_line) {
         ui.label(RichText::new(line).monospace().weak());
     }

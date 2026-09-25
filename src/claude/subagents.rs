@@ -124,8 +124,8 @@ impl AgentEntry {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-struct Tail {
-    offset: u64,
+pub(super) struct Tail {
+    pub(super) offset: u64,
 }
 
 #[derive(Debug, Default)]
@@ -352,7 +352,7 @@ fn turn_record(line: &str) -> Option<Option<i64>> {
 }
 
 /// The `<session-id>/` directory, even if it appeared after `session` was built.
-fn session_dir(session: &SessionInfo) -> Option<PathBuf> {
+pub(super) fn session_dir(session: &SessionInfo) -> Option<PathBuf> {
     session.dir.clone().or_else(|| {
         let dir = session.transcript_path.with_extension("");
         dir.is_dir().then_some(dir)
@@ -429,7 +429,7 @@ fn first_timestamp_ms(path: &Path) -> Option<i64> {
 
 /// Feeds complete lines appended since `tail.offset` to `on_line`. A file that
 /// shrank is re-read from the start.
-fn tail_file(path: &Path, tail: &mut Tail, mut on_line: impl FnMut(&str)) {
+pub(super) fn tail_file(path: &Path, tail: &mut Tail, mut on_line: impl FnMut(&str)) {
     let Ok(file) = File::open(path) else {
         return;
     };
