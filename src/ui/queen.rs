@@ -1,5 +1,5 @@
-//! The queen's panel: a fleet summary (state counts, runs, nodes needing input or stalled,
-//! whip status, plan quotas) and the broadcast composer.
+//! The queen's panel: the Queen's chat, under a fleet summary (state counts, runs, nodes
+//! needing input or stalled, whip status, plan quotas) and the broadcast composer.
 
 use std::collections::BTreeMap;
 
@@ -9,7 +9,7 @@ use crate::broadcast::BroadcastSender;
 use crate::model::{FleetSnapshot, NodeId, NodeKind, NodeState};
 use crate::quota::Quotas;
 use crate::ui::broadcast::BroadcastComposer;
-use crate::ui::graph::{ALL_STATES, kind_label, state_color, state_label};
+use crate::ui::graph::{ALL_STATES, hexagon, kind_label, queen_color, state_color, state_label};
 use crate::ui::sidebar::run_rows;
 use crate::whip::WhipStatus;
 
@@ -82,7 +82,8 @@ pub struct QueenPanel {
 
 /// What the panel reads each frame.
 pub struct QueenInputs<'a> {
-    pub snapshot: &'a FleetSnapshot,
+    /// `None` until the first poll.
+    pub snapshot: Option<&'a FleetSnapshot>,
     pub whip: &'a WhipStatus,
     pub quotas: &'a Quotas,
     pub now_ms: i64,
@@ -99,18 +100,23 @@ pub struct QueenResponse {
     pub whip_stalled: bool,
 }
 
-/// Draws the queen panel. `make_sender` is called once, when the user confirms a broadcast.
+/// Draws the queen panel: the Queen's header with the fleet counts, the fleet summary and
+/// the broadcast composer as collapsible sections, and `chat` (the Queen's chat) filling the
+/// rest. `make_sender` is called once, when the user confirms a broadcast.
 pub fn queen_panel(
     ui: &mut Ui,
     panel: &mut QueenPanel,
     inputs: QueenInputs<'_>,
     make_sender: impl FnOnce() -> Box<dyn BroadcastSender>,
+    chat: impl FnOnce(&mut Ui),
 ) -> QueenResponse {
     let mut response = QueenResponse::default();
-    let snapshot = inputs.snapshot;
-    let summary = FleetSummary::new(snapshot);
+    let summary = inputs.snapshot.map(FleetSummary::new).unwrap_or_default();
     let dark = ui.visuals().dark_mode;
-    let fleet = snapshot.queen().map_or(NodeState::Idle, |q| q.state);
+    let fleet = inputs
+        .snapshot
+        .and_then(FleetSnapshot::queen)
+        .map_or(NodeState::Idle, |q| q.state);
 
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -121,21 +127,23 @@ pub fn queen_panel(
             {
                 response.close = true;
             }
+            response.whip_stalled |= crate::ui::whip_now::whip_stalled_button(ui);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                queen_badge(ui, fleet, dark);
                 ui.label(RichText::new("Queen").strong());
                 ui.label(RichText::new(state_label(fleet)).color(state_color(fleet, dark)))
                     .on_hover_text("The most urgent state in the fleet");
             });
         });
     });
-    ui.weak(format!(
-        "{} coordinator{} · {} agent{}",
-        summary.coordinators,
-        plural(summary.coordinators),
-        summary.agents,
-        plural(summary.agents)
-    ));
     ui.horizontal_wrapped(|ui| {
+        ui.weak(format!(
+            "{} coordinator{} · {} agent{}",
+            summary.coordinators,
+            plural(summary.coordinators),
+            summary.agents,
+            plural(summary.agents)
+        ));
         for state in ALL_STATES {
             let count = summary.states.get(&state).copied().unwrap_or(0);
             if count > 0 {
@@ -146,35 +154,55 @@ pub fn queen_panel(
             }
         }
     });
-    ui.separator();
 
-    egui::ScrollArea::vertical()
-        .id_salt("queen_panel")
-        .auto_shrink([false, false])
+    egui::CollapsingHeader::new(RichText::new("Fleet summary").strong())
+        .id_salt("queen_summary")
+        .default_open(false)
         .show(ui, |ui| {
-            node_list(ui, "Needs input", &summary.needs_input, &mut response);
-            node_list(ui, "Stalled", &summary.stalled, &mut response);
-            runs_section(ui, &summary.runs, dark, &mut response);
-
-            ui.add_space(4.0);
-            ui.label(RichText::new("Whip").strong());
-            ui.weak(crate::ui::whip_log::status_line(inputs.whip, inputs.now_ms));
-            response.whip_stalled |= crate::ui::whip_now::whip_stalled_button(ui);
-            if !inputs.quotas.providers.is_empty() {
-                ui.horizontal_wrapped(|ui| {
-                    crate::ui::quota::quota_chips(ui, inputs.quotas, inputs.now_ms);
-                });
-            }
-            ui.separator();
-
-            egui::CollapsingHeader::new(RichText::new("Broadcast to coordinators").strong())
-                .id_salt("queen_broadcast")
-                .default_open(true)
+            egui::ScrollArea::vertical()
+                .id_salt("queen_panel")
+                .max_height(ui.ctx().content_rect().height() * 0.3)
                 .show(ui, |ui| {
-                    panel.broadcast.ui(ui, Some(snapshot), make_sender);
+                    node_list(ui, "Needs input", &summary.needs_input, &mut response);
+                    node_list(ui, "Stalled", &summary.stalled, &mut response);
+                    runs_section(ui, &summary.runs, dark, &mut response);
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Whip").strong());
+                    ui.weak(crate::ui::whip_log::status_line(inputs.whip, inputs.now_ms));
+                    if !inputs.quotas.providers.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            crate::ui::quota::quota_chips(ui, inputs.quotas, inputs.now_ms);
+                        });
+                    }
                 });
         });
+
+    egui::CollapsingHeader::new(RichText::new("Broadcast to coordinators").strong())
+        .id_salt("queen_broadcast")
+        .default_open(false)
+        .show(ui, |ui| {
+            panel.broadcast.ui(ui, inputs.snapshot, make_sender);
+        });
+    ui.separator();
+    chat(ui);
     response
+}
+
+/// The Queen's hexagon in her colour, with a dot in the fleet state's colour.
+fn queen_badge(ui: &mut Ui, fleet: NodeState, dark: bool) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+    let painter = ui.painter();
+    let center = rect.center();
+    painter.add(egui::Shape::convex_polygon(
+        hexagon(center, 9.0),
+        queen_color(dark),
+        egui::Stroke::NONE,
+    ));
+    painter.circle_filled(
+        center + egui::vec2(6.5, -6.5),
+        3.5,
+        state_color(fleet, dark),
+    );
 }
 
 /// A titled list of nodes whose rows select their node; nothing when empty.
@@ -293,12 +321,12 @@ mod tests {
         let (whip, quotas) = (WhipStatus::default(), Quotas::default());
         let response = crate::ui::test_util::click_label("Whip all stalled now", |ui| {
             let inputs = QueenInputs {
-                snapshot: &snapshot,
+                snapshot: Some(&snapshot),
                 whip: &whip,
                 quotas: &quotas,
                 now_ms: 0,
             };
-            queen_panel(ui, &mut panel, inputs, || Box::new(NeverSender))
+            queen_panel(ui, &mut panel, inputs, || Box::new(NeverSender), |_| {})
         });
         assert!(response.whip_stalled);
     }
@@ -318,12 +346,15 @@ mod tests {
                     ui,
                     &mut panel,
                     QueenInputs {
-                        snapshot: &snapshot,
+                        snapshot: Some(&snapshot),
                         whip: &whip,
                         quotas: &quotas,
                         now_ms: 0,
                     },
                     || Box::new(NeverSender),
+                    |ui| {
+                        ui.label("chat");
+                    },
                 );
                 assert_eq!(response, QueenResponse::default());
             });
