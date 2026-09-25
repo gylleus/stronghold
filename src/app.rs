@@ -7,6 +7,7 @@ use eframe::egui;
 use crate::APP_NAME;
 use crate::actions::{ActionRunner, OrcaExecutor};
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
+use crate::detect::detect_prompt;
 use crate::fleet::FleetData;
 use crate::hotkey::Hotkey;
 use crate::model::{FleetSnapshot, Node, NodeId, NodeKind};
@@ -245,6 +246,14 @@ impl eframe::App for MyrstackApp {
                 data.errors.len()
             );
             self.claude.send_terminals(data.terminals.clone());
+            let mut data = data;
+            if let Some(screen) = &self.screen
+                && let Some(old) = &self.data
+                && let Some(verdict) = old.needs_input.get(&screen.handle)
+            {
+                data.needs_input
+                    .insert(screen.handle.clone(), verdict.clone());
+            }
             self.data = Some(data);
             rebuild = true;
         }
@@ -257,6 +266,23 @@ impl eframe::App for MyrstackApp {
             );
             self.claude_data = Some(claude);
             rebuild = true;
+        }
+        if let Some(update) = self.poller.latest_screen()
+            && Some(&update.handle) == self.watched_screen.as_ref()
+        {
+            // The selected terminal's screen is read every 500 ms, fresher than the poller's
+            // background sampling, so its prompt verdict overrides the sampled one.
+            if let Some(data) = &mut self.data {
+                let agent = data
+                    .terminal(&update.handle)
+                    .and_then(|t| t.agent_identity.as_ref());
+                let verdict = detect_prompt(&update.lines, agent);
+                if data.needs_input.get(&update.handle) != Some(&verdict) {
+                    data.needs_input.insert(update.handle.clone(), verdict);
+                    rebuild = true;
+                }
+            }
+            self.screen = Some(update);
         }
         if rebuild && let Some(data) = &self.data {
             let snapshot =
@@ -277,11 +303,6 @@ impl eframe::App for MyrstackApp {
         }
         self.sync_screen_watch();
         self.sync_transcript();
-        if let Some(update) = self.poller.latest_screen()
-            && Some(&update.handle) == self.watched_screen.as_ref()
-        {
-            self.screen = Some(update);
-        }
         ctx.request_repaint_after(TICK);
     }
 
