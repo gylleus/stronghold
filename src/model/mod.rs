@@ -2,6 +2,7 @@
 
 mod label;
 mod queen;
+mod repo;
 mod state;
 mod subagent;
 #[cfg(test)]
@@ -19,6 +20,7 @@ use crate::orca::{
 
 pub use label::{MAX_LABEL_CHARS, strip_spinner, truncate_label};
 pub use queen::{QUEEN_ID, QUEEN_LABEL, fleet_state};
+pub use repo::{NO_REPO, RepoIndex, node_repo, repo_of, run_repo};
 pub use state::{StateInputs, WORKING_WINDOW_MS, derive_state};
 
 /// How long a released worker stays in the snapshot after its release, so the UI can fade it.

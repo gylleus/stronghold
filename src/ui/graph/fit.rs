@@ -74,21 +74,69 @@ impl FitItem for NodeFit {
     }
 }
 
+/// A repo region as the fit sees it.
+struct RegionFit {
+    center: Pos2,
+    size: Vec2,
+    label: Vec2,
+}
+
+impl FitItem for RegionFit {
+    fn center(&self) -> Pos2 {
+        self.center
+    }
+
+    fn extent(&self, zoom: f32) -> Rect {
+        super::regions::region_extent(self.size, self.label, zoom)
+    }
+}
+
+/// A node or a region.
+enum Fit {
+    Node(NodeFit),
+    Region(RegionFit),
+}
+
+impl FitItem for Fit {
+    fn center(&self) -> Pos2 {
+        match self {
+            Fit::Node(n) => n.center(),
+            Fit::Region(r) => r.center(),
+        }
+    }
+
+    fn extent(&self, zoom: f32) -> Rect {
+        match self {
+            Fit::Node(n) => n.extent(zoom),
+            Fit::Region(r) => r.extent(zoom),
+        }
+    }
+}
+
 impl GraphView {
     /// Fits every visible node into a graph widget at `rect`, which egui_graphs is about to
     /// draw into this frame. Returns whether there was anything to fit.
     pub(super) fn apply_fit(&mut self, ui: &mut Ui, rect: Rect) -> bool {
         let ctx = ui.ctx().clone();
-        let items: Vec<NodeFit> = self
+        let mut items: Vec<Fit> = self
             .graph
             .nodes_iter()
-            .map(|(_, n)| NodeFit {
-                center: n.location(),
-                payload: n.payload().clone(),
-                label: label_size_at_max(&ctx, &n.label()),
-                selected: n.selected(),
+            .map(|(_, n)| {
+                Fit::Node(NodeFit {
+                    center: n.location(),
+                    payload: n.payload().clone(),
+                    label: label_size_at_max(&ctx, &n.label()),
+                    selected: n.selected(),
+                })
             })
             .collect();
+        items.extend(self.repo_regions().into_iter().map(|r| {
+            Fit::Region(RegionFit {
+                center: r.rect.center(),
+                size: r.rect.size(),
+                label: super::regions::label_size_at_max(&ctx, &r.repo),
+            })
+        }));
         let Some((zoom, pan)) = fit_transform(&items, rect.size(), FIT_MARGIN, FIT_MAX_ZOOM) else {
             return false;
         };

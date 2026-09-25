@@ -1,15 +1,13 @@
-//! Sidebar: run list and fleet filters.
+//! Sidebar: runs and loose terminals grouped by repo, and fleet filters.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 
 use eframe::egui::{self, RichText, Sense, Ui};
 
-use crate::model::{FleetSnapshot, Node, NodeId, NodeKind, NodeState, TaskCounts};
+use crate::model::{FleetSnapshot, Node, NodeId, NodeKind, NodeState, RepoIndex, TaskCounts};
 use crate::ui::graph::{kind_label, state_color, state_label};
 
-/// Repo bucket for nodes without a worktree.
-pub const NO_REPO: &str = "(no repo)";
+pub use crate::model::{NO_REPO, node_repo, repo_of};
 
 const ALL_STATES: [NodeState; 6] = [
     NodeState::Working,
@@ -39,7 +37,7 @@ pub struct FleetFilter {
     pub show_loose: bool,
     /// Show recently released (fading) workers.
     pub show_released: bool,
-    /// Case-insensitive substring of a node's label, branch or run objective.
+    /// Case-insensitive substring of a node's label, branch, run objective or repo.
     pub text: String,
 }
 
@@ -86,10 +84,16 @@ impl FleetFilter {
             .as_deref()
             .and_then(|r| snapshot.run(r))
             .and_then(|r| r.objective.as_deref());
-        [Some(node.label.as_str()), node.branch.as_deref(), objective]
-            .into_iter()
-            .flatten()
-            .any(|s| s.to_lowercase().contains(&needle))
+        let repo = node_repo(node, snapshot);
+        [
+            Some(node.label.as_str()),
+            node.branch.as_deref(),
+            objective,
+            Some(repo.as_str()).filter(|r| *r != NO_REPO),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|s| s.to_lowercase().contains(&needle))
     }
 
     /// IDs of the snapshot's nodes this filter hides.
@@ -106,35 +110,6 @@ impl FleetFilter {
     pub fn is_active(&self) -> bool {
         *self != Self::default()
     }
-}
-
-/// The repo of a worktree path: the component after `workspaces/` in Orca paths
-/// (`…/orca/workspaces/<repo>/<worktree>`), else the parent directory's name without a
-/// `-worktrees` suffix.
-pub fn repo_of(path: &str) -> Option<String> {
-    let path = Path::new(path.trim_end_matches('/'));
-    let components: Vec<&str> = path.iter().filter_map(|c| c.to_str()).collect();
-    if let Some(pos) = components.iter().position(|c| *c == "workspaces")
-        && let Some(repo) = components.get(pos + 1)
-    {
-        return Some((*repo).to_string());
-    }
-    let parent = path.parent()?.file_name()?.to_str()?;
-    let repo = parent.strip_suffix("-worktrees").unwrap_or(parent);
-    (!repo.is_empty()).then(|| repo.to_string())
-}
-
-/// A node's repo; workers without a worktree inherit their run coordinator's.
-pub fn node_repo(node: &Node, snapshot: &FleetSnapshot) -> String {
-    let own = node.worktree_path.as_deref().and_then(repo_of);
-    own.or_else(|| {
-        let coordinator = snapshot
-            .run(node.run_id.as_deref()?)?
-            .coordinator
-            .as_ref()?;
-        repo_of(find_node(snapshot, coordinator)?.worktree_path.as_deref()?)
-    })
-    .unwrap_or_else(|| NO_REPO.to_string())
 }
 
 /// Like [`FleetSnapshot::node`], but also works on snapshots assembled by hand.
@@ -234,6 +209,67 @@ pub fn run_rows(snapshot: &FleetSnapshot) -> Vec<RunRow> {
     rows
 }
 
+/// One repo of the sidebar: its runs and loose terminals.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RepoGroup {
+    pub repo: String,
+    /// The repo's runs, most recently active first.
+    pub runs: Vec<RunRow>,
+    /// Live terminals of the repo outside any run, by label.
+    pub loose: Vec<LooseRow>,
+    /// Nodes of the repo per state (runs and loose terminals, subagents included).
+    pub states: BTreeMap<NodeState, usize>,
+}
+
+/// A loose terminal row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LooseRow {
+    pub id: NodeId,
+    pub label: String,
+    pub state: NodeState,
+}
+
+/// Runs and loose terminals grouped by repo, repos by name with [`NO_REPO`] last.
+pub fn repo_groups(snapshot: &FleetSnapshot) -> Vec<RepoGroup> {
+    let index = RepoIndex::new(snapshot);
+    let mut out: BTreeMap<(bool, String), RepoGroup> = BTreeMap::new();
+    fn entry<'a>(
+        out: &'a mut BTreeMap<(bool, String), RepoGroup>,
+        repo: &str,
+    ) -> &'a mut RepoGroup {
+        out.entry((repo == NO_REPO, repo.to_string()))
+            .or_insert_with(|| RepoGroup {
+                repo: repo.to_string(),
+                runs: Vec::new(),
+                loose: Vec::new(),
+                states: BTreeMap::new(),
+            })
+    }
+    for row in run_rows(snapshot) {
+        let repo = index.run(&row.id).unwrap_or(NO_REPO);
+        entry(&mut out, repo).runs.push(row);
+    }
+    for node in snapshot.agent_nodes() {
+        let repo = index.node(&node.id).unwrap_or(NO_REPO);
+        let group = entry(&mut out, repo);
+        *group.states.entry(node.state).or_insert(0) += 1;
+        if node.kind == NodeKind::Terminal {
+            group.loose.push(LooseRow {
+                id: node.id.clone(),
+                label: node.label.clone(),
+                state: node.state,
+            });
+        }
+    }
+    let mut out: Vec<RepoGroup> = out.into_values().collect();
+    for group in &mut out {
+        group
+            .loose
+            .sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.id.cmp(&b.id)));
+    }
+    out
+}
+
 /// "3 ready · 2 running · 14 done", listing only non-zero buckets.
 pub fn task_summary(counts: &TaskCounts) -> String {
     let parts = [
@@ -262,6 +298,10 @@ pub fn task_summary(counts: &TaskCounts) -> String {
 pub struct SidebarResponse {
     /// A run was clicked: focus the graph on it.
     pub focus_run: Option<String>,
+    /// A repo header was clicked: focus the graph on its region.
+    pub focus_repo: Option<String>,
+    /// A loose terminal was clicked: pan the graph onto it (it is also in `select`).
+    pub focus_node: Option<NodeId>,
     /// A node to select (the clicked run's coordinator).
     pub select: Option<NodeId>,
     /// The filter changed this frame.
@@ -280,10 +320,30 @@ pub struct SidebarCache {
 
 #[derive(Debug)]
 struct Derived {
-    runs: Vec<RunView>,
+    groups: Vec<RepoView>,
     repos: BTreeMap<String, usize>,
     states: BTreeMap<NodeState, usize>,
     kinds: BTreeMap<NodeKind, usize>,
+}
+
+/// A repo group with its runs' display text.
+#[derive(Debug)]
+struct RepoView {
+    repo: String,
+    runs: Vec<RunView>,
+    loose: Vec<LooseRow>,
+    states: BTreeMap<NodeState, usize>,
+}
+
+impl RepoView {
+    fn new(group: RepoGroup) -> Self {
+        Self {
+            repo: group.repo,
+            runs: group.runs.into_iter().map(RunView::new).collect(),
+            loose: group.loose,
+            states: group.states,
+        }
+    }
 }
 
 /// A run row with its display text.
@@ -320,7 +380,10 @@ impl SidebarCache {
 
     fn derived(&mut self, snapshot: &FleetSnapshot) -> &Derived {
         self.derived.get_or_insert_with(|| Derived {
-            runs: run_rows(snapshot).into_iter().map(RunView::new).collect(),
+            groups: repo_groups(snapshot)
+                .into_iter()
+                .map(RepoView::new)
+                .collect(),
             repos: repo_counts(snapshot),
             states: state_counts(snapshot),
             kinds: kind_counts(snapshot),
@@ -369,10 +432,18 @@ pub fn sidebar_cached(
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            egui::CollapsingHeader::new(format!("Runs ({})", snapshot.runs.len()))
+            let groups = &cache.derived(snapshot).groups;
+            let title = format!(
+                "Repos ({}) · {} run{}",
+                groups.len(),
+                snapshot.runs.len(),
+                if snapshot.runs.len() == 1 { "" } else { "s" }
+            );
+            egui::CollapsingHeader::new(title)
+                .id_salt("repos_section")
                 .default_open(true)
                 .show(ui, |ui| {
-                    runs_section(ui, snapshot, &cache.derived(snapshot).runs, &mut response);
+                    repos_section(ui, snapshot, groups, &mut response);
                 });
             extra(ui);
             egui::CollapsingHeader::new("Filters")
@@ -391,16 +462,102 @@ pub fn sidebar_cached(
     response
 }
 
+fn repos_section(
+    ui: &mut Ui,
+    snapshot: &FleetSnapshot,
+    groups: &[RepoView],
+    response: &mut SidebarResponse,
+) {
+    if groups.is_empty() {
+        ui.weak("No agents");
+        return;
+    }
+    for group in groups {
+        let id = ui.make_persistent_id(("repo_group", &group.repo));
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+            .show_header(ui, |ui| repo_header(ui, group, response))
+            .body(|ui| {
+                runs_section(ui, snapshot, &group.runs, response);
+                loose_section(ui, &group.loose, response);
+            });
+    }
+}
+
+/// A repo's header: its name (click to focus its region) and node counts per state.
+fn repo_header(ui: &mut Ui, group: &RepoView, response: &mut SidebarResponse) {
+    let runs = group.runs.len();
+    let hover = format!(
+        "{}: {runs} run{} · {} loose terminal{}\n\nClick to focus its region",
+        group.repo,
+        if runs == 1 { "" } else { "s" },
+        group.loose.len(),
+        if group.loose.len() == 1 { "" } else { "s" },
+    );
+    let name = ui
+        .add(
+            egui::Label::new(RichText::new(&group.repo).strong())
+                .sense(Sense::click())
+                .truncate(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(hover);
+    if name.clicked() {
+        response.focus_repo = Some(group.repo.clone());
+    }
+    let dark = ui.visuals().dark_mode;
+    for state in ALL_STATES {
+        let Some(&n) = group.states.get(&state) else {
+            continue;
+        };
+        ui.spacing_mut().item_spacing.x = 2.0;
+        dot(
+            ui,
+            state_color(state, dark),
+            format!("{n} {}", state_label(state)),
+        );
+        ui.label(RichText::new(n.to_string()).small());
+        ui.spacing_mut().item_spacing.x = 6.0;
+    }
+}
+
+/// A repo's loose terminals; clicking one selects it and pans onto it.
+fn loose_section(ui: &mut Ui, loose: &[LooseRow], response: &mut SidebarResponse) {
+    for row in loose {
+        ui.horizontal(|ui| {
+            let color = state_color(row.state, ui.visuals().dark_mode);
+            dot(ui, color, format!("terminal {}", state_label(row.state)));
+            let clicked = ui
+                .add(
+                    egui::Label::new(&row.label)
+                        .sense(Sense::click())
+                        .truncate(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text("Select this terminal")
+                .clicked();
+            if clicked {
+                response.select = Some(row.id.clone());
+                response.focus_node = Some(row.id.clone());
+            }
+        });
+    }
+}
+
+fn dot(ui: &mut Ui, color: egui::Color32, hover: String) {
+    let (rect, dot) = ui.allocate_exact_size(
+        egui::vec2(DOT_RADIUS * 2.0, DOT_RADIUS * 2.0),
+        Sense::hover(),
+    );
+    ui.painter().circle_filled(rect.center(), DOT_RADIUS, color);
+    dot.on_hover_text(hover);
+}
+
 fn runs_section(
     ui: &mut Ui,
     snapshot: &FleetSnapshot,
     runs: &[RunView],
     response: &mut SidebarResponse,
 ) {
-    if runs.is_empty() {
-        ui.weak("No active runs");
-        return;
-    }
     for RunView {
         row,
         title,
@@ -468,7 +625,7 @@ fn filters_section(
         }
         ui.add(
             egui::TextEdit::singleline(&mut filter.text)
-                .hint_text("Search label, branch, objective")
+                .hint_text("Search label, branch, objective, repo")
                 .desired_width(ui.available_width()),
         );
     });

@@ -57,6 +57,7 @@ pub fn node_tooltip(
     ui: &mut Ui,
     node: &Node,
     run_objective: Option<&str>,
+    repo: Option<&str>,
     usage: Option<&Usage>,
     now_ms: i64,
 ) {
@@ -75,6 +76,9 @@ pub fn node_tooltip(
         kind_label(node.kind),
         state_label(node.state)
     ));
+    if let Some(repo) = repo {
+        ui.label(format!("Repo: {repo}"));
+    }
     if let Some(run_id) = &node.run_id {
         ui.label(format!("Run: {}", run_objective.unwrap_or(run_id)));
     }

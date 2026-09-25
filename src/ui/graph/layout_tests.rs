@@ -34,8 +34,21 @@ fn id(s: &str) -> NodeId {
     NodeId(s.to_string())
 }
 
+/// Number of repos [`fleet`] spreads its runs and loose terminals over.
+const REPOS: usize = 3;
+
+fn repo_name(i: usize) -> String {
+    format!("repo{}", i % REPOS)
+}
+
+fn in_repo(mut node: Node, repo: &str) -> Node {
+    node.worktree_path = Some(format!("/Users/x/orca/workspaces/{repo}/{}", node.id.0));
+    node
+}
+
 /// `runs` runs of a coordinator `c{r}` with `workers` workers `w{r}_{w}`, plus `loose`
-/// terminals `t{i}` and the queen.
+/// terminals `t{i}` and the queen. Run `r` and terminal `t{i}` are in repo `repo{r % 3}`
+/// and `repo{i % 3}`.
 fn fleet(runs: usize, workers: usize, loose: usize) -> FleetSnapshot {
     let mut s = FleetSnapshot::default();
     for r in 0..runs {
@@ -47,11 +60,15 @@ fn fleet(runs: usize, workers: usize, loose: usize) -> FleetSnapshot {
             coordinator: Some(id(&coord)),
             task_counts: None,
         });
-        s.nodes
-            .push(node(&coord, NodeKind::Coordinator, Some(&run)));
+        let repo = repo_name(r);
+        s.nodes.push(in_repo(
+            node(&coord, NodeKind::Coordinator, Some(&run)),
+            &repo,
+        ));
         for w in 0..workers {
             let worker = format!("w{r}_{w}");
-            s.nodes.push(node(&worker, NodeKind::Worker, Some(&run)));
+            s.nodes
+                .push(in_repo(node(&worker, NodeKind::Worker, Some(&run)), &repo));
             s.edges.push(Edge {
                 from: id(&coord),
                 to: id(&worker),
@@ -60,8 +77,10 @@ fn fleet(runs: usize, workers: usize, loose: usize) -> FleetSnapshot {
         }
     }
     for t in 0..loose {
-        s.nodes
-            .push(node(&format!("t{t}"), NodeKind::Terminal, None));
+        s.nodes.push(in_repo(
+            node(&format!("t{t}"), NodeKind::Terminal, None),
+            &repo_name(t),
+        ));
     }
     s.add_queen();
     s
@@ -170,44 +189,130 @@ fn clusters_do_not_overlap() {
 }
 
 #[test]
-fn loose_terminals_stay_out_of_clusters_and_together() {
-    let (view, snapshot) = settled(12, 8, 5);
+fn loose_terminals_stay_in_their_repo_out_of_clusters_and_together() {
+    let (view, snapshot) = settled(12, 8, 6);
     let pos = positions(&view, &snapshot);
     let cs = clusters(&snapshot, &pos);
-    let loose: Vec<Pos2> = (0..5).map(|t| pos[&id(&format!("t{t}"))]).collect();
-    for (t, p) in loose.iter().enumerate() {
-        for (i, c) in cs.iter().enumerate() {
-            let distance = (*p - c.center).length();
+    let regions = view.repo_regions();
+    for repo in 0..REPOS {
+        let loose: Vec<Pos2> = (0..6)
+            .filter(|t| t % REPOS == repo)
+            .map(|t| pos[&id(&format!("t{t}"))])
+            .collect();
+        let region = regions.iter().find(|r| r.repo == repo_name(repo)).unwrap();
+        for p in &loose {
+            assert!(region.rect.contains(*p), "{p:?} outside {}", region.repo);
+            for (i, c) in cs.iter().enumerate() {
+                let distance = (*p - c.center).length();
+                assert!(
+                    distance > c.radius,
+                    "{p:?} is inside run {i} ({distance} < {})",
+                    c.radius
+                );
+            }
+        }
+        let center = centroid(&loose).unwrap();
+        let spread = loose
+            .iter()
+            .map(|p| (*p - center).length())
+            .fold(0.0, f32::max);
+        assert!(
+            spread < 150.0,
+            "repo{repo} loose terminals spread over {spread}"
+        );
+    }
+}
+
+#[test]
+fn repo_regions_hold_their_nodes_apart_from_each_other_and_the_queen() {
+    let (view, snapshot) = settled(12, 8, 6);
+    let pos = positions(&view, &snapshot);
+    let regions = view.repo_regions();
+    assert_eq!(regions.len(), REPOS);
+    for (i, a) in regions.iter().enumerate() {
+        for b in &regions[i + 1..] {
             assert!(
-                distance > c.radius,
-                "t{t} is inside run {i} ({distance} < {})",
-                c.radius
+                !a.rect.intersects(b.rect),
+                "{} {:?} overlaps {} {:?}",
+                a.repo,
+                a.rect,
+                b.repo,
+                b.rect
+            );
+        }
+        assert!(
+            !a.rect.contains(pos[&NodeId::queen()]),
+            "queen inside {}",
+            a.repo
+        );
+    }
+    for node in snapshot.agent_nodes() {
+        let repo = view.node_repo(&node.id).unwrap();
+        for region in &regions {
+            assert_eq!(
+                region.rect.contains(pos[&node.id]),
+                region.repo == repo,
+                "{} (repo {repo}) vs region {}",
+                node.id,
+                region.repo
             );
         }
     }
-    let center = centroid(&loose).unwrap();
-    let spread = loose
-        .iter()
-        .map(|p| (*p - center).length())
-        .fold(0.0, f32::max);
-    let runs_left = cs
-        .iter()
-        .map(|c| c.center.x - c.radius)
-        .fold(f32::MAX, f32::min);
-    assert!(spread < 150.0, "loose terminals spread over {spread}");
-    assert!(
-        center.x < runs_left,
-        "loose group at {center:?}, runs start at {runs_left}"
+}
+
+#[test]
+fn repo_indices_follow_parents() {
+    let nodes = [
+        ClusterNode {
+            index: 0,
+            run: None,
+            kind: NodeKind::Queen,
+            parent: None,
+            repo: Some("zz"),
+        },
+        ClusterNode {
+            index: 1,
+            run: Some("r"),
+            kind: NodeKind::Coordinator,
+            parent: None,
+            repo: Some("shop"),
+        },
+        ClusterNode {
+            index: 2,
+            run: None,
+            kind: NodeKind::Terminal,
+            parent: None,
+            repo: Some("infra"),
+        },
+        ClusterNode {
+            index: 3,
+            run: None,
+            kind: NodeKind::Subagent,
+            parent: Some(2),
+            repo: None,
+        },
+        ClusterNode {
+            index: 4,
+            run: None,
+            kind: NodeKind::Terminal,
+            parent: None,
+            repo: None,
+        },
+    ];
+    assert_eq!(
+        repo_indices(&nodes),
+        vec![None, Some(1), Some(0), Some(0), None]
     );
 }
 
 #[test]
-fn settled_layout_barely_moves_when_a_node_is_added_elsewhere() {
+fn settled_layout_barely_moves_outside_the_repo_a_node_joins() {
     let (mut view, snapshot) = settled(12, 8, 4);
     let before = positions(&view, &snapshot);
 
     let mut next = snapshot.clone();
-    next.nodes.push(node("t_new", NodeKind::Terminal, None));
+    next.nodes
+        .push(in_repo(node("t_new", NodeKind::Terminal, None), "repo0"));
     view.sync(&next);
     settle(&mut view);
 
@@ -215,9 +320,10 @@ fn settled_layout_barely_moves_when_a_node_is_added_elsewhere() {
     let moved = before
         .iter()
         .filter(|(id, _)| id.0.starts_with(['c', 'w']))
+        .filter(|(id, _)| view.node_repo(id) != Some("repo0"))
         .map(|(id, p)| (after[id] - *p).length())
         .fold(0.0, f32::max);
-    assert!(moved < 20.0, "a run node moved {moved}");
+    assert!(moved < 20.0, "a run node of another repo moved {moved}");
 }
 
 #[test]
@@ -228,42 +334,49 @@ fn memberships_follow_runs_and_parents() {
             run: Some("b"),
             kind: NodeKind::Coordinator,
             parent: None,
+            repo: None,
         },
         ClusterNode {
             index: 1,
             run: Some("b"),
             kind: NodeKind::Worker,
             parent: None,
+            repo: None,
         },
         ClusterNode {
             index: 3,
             run: Some("a"),
             kind: NodeKind::Worker,
             parent: None,
+            repo: None,
         },
         ClusterNode {
             index: 4,
             run: None,
             kind: NodeKind::Terminal,
             parent: None,
+            repo: None,
         },
         ClusterNode {
             index: 5,
             run: None,
             kind: NodeKind::Subagent,
             parent: Some(1),
+            repo: None,
         },
         ClusterNode {
             index: 6,
             run: None,
             kind: NodeKind::Subagent,
             parent: Some(4),
+            repo: None,
         },
         ClusterNode {
             index: 7,
             run: None,
             kind: NodeKind::Subagent,
             parent: Some(5),
+            repo: None,
         },
     ];
     assert_eq!(
@@ -330,16 +443,36 @@ fn queen_gets_its_own_membership() {
             run: None,
             kind: NodeKind::Queen,
             parent: None,
+            repo: None,
         },
         ClusterNode {
             index: 1,
             run: None,
             kind: NodeKind::Terminal,
             parent: None,
+            repo: None,
         },
     ];
     assert_eq!(
         memberships(&nodes),
         vec![Some(Membership::Queen), Some(Membership::Loose)]
     );
+}
+
+#[test]
+fn reset_layout_regroups_scrambled_repos() {
+    let (mut view, snapshot) = settled(9, 4, 6);
+    // Pile everything onto one spot, as a stale saved layout might.
+    for (i, node) in snapshot.nodes.iter().enumerate() {
+        view.set_node_position(&node.id, Pos2::new(400.0 + i as f32, 400.0));
+    }
+    view.reset_layout();
+    settle(&mut view);
+    let regions = view.repo_regions();
+    assert_eq!(regions.len(), REPOS);
+    for (i, a) in regions.iter().enumerate() {
+        for b in &regions[i + 1..] {
+            assert!(!a.rect.intersects(b.rect), "{} overlaps {}", a.repo, b.repo);
+        }
+    }
 }

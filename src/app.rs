@@ -465,6 +465,20 @@ impl MyrstackApp {
                 };
                 ui::keys::step_run(&ui::keys::nav_groups(snapshot, hidden), current, delta)
             }
+            KeyCommand::NextRepo | KeyCommand::PrevRepo => {
+                let delta = if command == KeyCommand::NextRepo {
+                    1
+                } else {
+                    -1
+                };
+                let groups = ui::keys::repo_nav(snapshot, hidden);
+                if let Some((repo, id)) = ui::keys::step_repo(&groups, current, delta) {
+                    self.graph.set_selected(Some(&id));
+                    self.graph.focus_repo(&repo);
+                    self.selected = Some(id);
+                }
+                None
+            }
             KeyCommand::OpenPanel => {
                 if let Some(id) = current.cloned() {
                     self.select_and_focus(id);
@@ -937,6 +951,12 @@ impl eframe::App for MyrstackApp {
             }
             if let Some(run_id) = &response.focus_run {
                 self.graph.focus_run(run_id);
+            }
+            if let Some(repo) = &response.focus_repo {
+                self.graph.focus_repo(repo);
+            }
+            if let Some(id) = &response.focus_node {
+                self.graph.center_on(id);
             }
             if let Some(id) = response.select {
                 self.graph.set_selected(Some(&id));

@@ -256,12 +256,6 @@ fn dead_declared_keeps_the_rebound_fallback() {
 #[test]
 #[ignore]
 fn live_run_roles() {
-    use std::collections::BTreeMap;
-    use std::path::PathBuf;
-
-    use crate::claude::ForwardScanner;
-    use crate::claude::hook::{default_session_map_path, load_hook_mappings};
-    use crate::claude::sessions::{SessionLocator, default_projects_root};
     use crate::orca::OrcaClient;
     use crate::poller::{ACTIVE_RUN_WINDOW, FleetSource, active_run_ids};
 
@@ -289,21 +283,7 @@ fn live_run_roles() {
         data.tasks
             .insert(run_id.clone(), FleetSource::tasks(&client, run_id).unwrap());
     }
-    let hooks = load_hook_mappings(&default_session_map_path());
-    let sessions = SessionLocator::new(default_projects_root()).map_terminals_at(
-        &data.terminals,
-        Some(&hooks),
-        now,
-    );
-    let transcripts: BTreeMap<String, PathBuf> = data
-        .declared_coordinators()
-        .into_iter()
-        .filter_map(|h| {
-            let path = sessions.get(&h)?.session()?.transcript_path.clone();
-            Some((h, path))
-        })
-        .collect();
-    data.forwards = ForwardScanner::new().refresh(&transcripts);
+    data.forwards = crate::claude::forwards::read_forwards(&data);
 
     let short = |h: &Option<String>| match h {
         Some(h) => {
