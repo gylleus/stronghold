@@ -1,0 +1,9 @@
+• Explored
+  └ Read poller.rs, state.rs
+• Adding the sampler. Allow command? appears in the approval UI, which this is not.
+
+• Working (42s • esc to interrupt)
+
+› Ask Codex to do anything
+
+  gpt-6-astra high · ~/repo/saker/myrstack

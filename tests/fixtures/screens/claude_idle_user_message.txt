@@ -1,0 +1,25 @@
+  Ran 2 shell commands
+⏺ Replay is running in the background (progress prints every 25 sessions; a 90-second peek will report first movement). I'll post the comparison table when it completes.
+✻ Brewed for 39s · done 1:31 PM · 1 shell, 1 monitor still running
+⏺ Background command "Peek at replay progress after 90s" completed (exit code 0)
+  Read 1 file
+⏺ Replay is underway — 1,537 eligible purchase sessions, sampling 300. Prod-legacy latency makes this a ~20–40 minute run; I'll report the table when the completion notification lands.
+✻ Brewed for 9s · done 1:32 PM · 1 shell, 1 monitor still running
+⏺ Background command "Run n=300 next-purchase replay legacy vs v2" was stopped
+  Ran 3 shell commands
+⏺ Replay relaunched detached (pid 53306) with interim scores every 25 sessions — a kill can no longer lose the run. The watcher will wake me when it finishes; results to follow.
+✻ Baked for 36s · done 1:53 PM · 1 shell, 1 monitor still running
+⏺ Background command "Watch detached replay until it exits" was stopped
+  Ran 2 shell commands
+⏺ Watcher armed. The replay keeps running regardless — full table when it lands.
+✻ Cogitated for 23s · done 1:57 PM · 1 shell, 1 monitor still running
+❯ is it still running?
+  Ran 1 shell command
+  ⎿  12 skills available
+⏺ Yes — alive at 75/300, roughly a quarter through. And the trend is holding: legacy 31/75, v2 28/75, popularity 34/75 — a statistical dead heat, versus the pre-fix 41% vs 18% blowout. My earlier watcher tasks were stopped, but the replay itself is nohup'd and unaffected; at this pace it has ~45 minutes to go. I'll post the full table with confidence intervals when it prints.
+✻ Cooked for 9s · done 2:01 PM · 1 shell, 1 monitor still running
+                                                                                                                                                                                                                                                                                                                                                                                                                       ✔ Update installed · Restart to update
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on · 1 shell, 1 monitor · ← for agents

@@ -1,6 +1,7 @@
 //! Node state derivation: [`derive_state`] is the single place that decides a node's
 //! [`NodeState`] from its terminal, its dispatch and the detector/whip signals.
 
+use crate::detect::detect_in_preview;
 use crate::orca::{DispatchStatus, Terminal, Worker, WorkerState, WorkerTerminalState};
 
 use super::NodeState;
@@ -147,32 +148,10 @@ pub fn derive_state(inputs: &StateInputs<'_>) -> NodeState {
     }
 }
 
-/// Lower-cased fragments that only appear while an agent waits on a choice or confirmation.
-const PROMPT_MARKERS: &[&str] = &[
-    // Claude Code permission prompts.
-    "do you want to proceed?",
-    "do you want to make this edit",
-    "do you want to create",
-    "do you want to allow",
-    "❯ 1. yes",
-    "esc to cancel · tab to amend",
-    // Claude Code AskUserQuestion / selection menus.
-    "enter to select · ↑/↓ to navigate",
-    // Codex approval and selection prompts.
-    "press enter to confirm",
-    "would you like to run the following command",
-    "would you like to make the following edits",
-    "› 1. yes",
-    "allow command?",
-    // Generic shell confirmations.
-    "[y/n]",
-    "(y/n)",
-];
-
-/// Cheap heuristic: does a terminal preview show an agent waiting for the user?
+/// Cheap heuristic: does a terminal preview show an agent waiting for the user? Delegates to
+/// [`detect_in_preview`], the preview flavour of the screen detector.
 pub fn preview_needs_input(preview: &str) -> bool {
-    let preview = preview.to_lowercase();
-    PROMPT_MARKERS.iter().any(|m| preview.contains(m))
+    detect_in_preview(preview).is_some()
 }
 
 #[cfg(test)]

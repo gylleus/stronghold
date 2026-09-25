@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::detect::PromptKind;
 use crate::orca::{InboxMessage, Run, Task, Terminal, Worker};
 
 /// Everything one poll cycle fetched from Orca, unprocessed.
@@ -20,11 +21,21 @@ pub struct FleetData {
     /// Errors from this cycle's orca calls, for display. Data from a failed call keeps its
     /// previous value.
     pub errors: Vec<String>,
+    /// Screen-detector verdicts for idle agent terminals sampled in the background, by handle:
+    /// `Some` when the screen showed a prompt, `None` when it did not. A terminal that was not
+    /// sampled, or has produced output since, is absent.
+    pub needs_input: BTreeMap<String, Option<PromptKind>>,
 }
 
 impl FleetData {
     pub fn terminal(&self, handle: &str) -> Option<&Terminal> {
         self.terminals.iter().find(|t| t.handle == handle)
+    }
+
+    /// The sampled screen's verdict for [`crate::model::StateInputs::needs_input`]: `None`
+    /// when the terminal has no current sample.
+    pub fn screen_needs_input(&self, handle: &str) -> Option<bool> {
+        self.needs_input.get(handle).map(Option::is_some)
     }
 
     pub fn run(&self, run_id: &str) -> Option<&Run> {

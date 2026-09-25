@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod claude;
+pub mod detect;
 pub mod fleet;
 pub mod hotkey;
 pub mod model;

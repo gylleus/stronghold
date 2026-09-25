@@ -1,0 +1,25 @@
+  2. Drafter with real output (openai/gpt-5.6-luna, key read from .dev.vars and never printed, throwaway test not committed):
+     - Salon: four services with no inventory.
+       - Söder Cut: 45 min.
+       - Quick Fringe: 20 min.
+       - Soft Colour: 105/120/150 min.
+       - Full Colour: 135/150/180 min.
+     - Candle shop: four goods with stock between 14 and 40 and no durations.
+     - The full table is in the PR description.
+     - The prompt now asks for stock 8–60 from goods only, and a service writes stock 0.
+     - The draft schema accepts any whole-number duration, so one odd value can't throw away the whole draft. Values outside 5–1440 minutes are dropped; a planted test covers this.
+  3. The 999 stand-in:
+     - Stays. Depict's push API has no way to mark stock as untracked; a variant's inventory is only a warehouse id and a quantity. The docs say quantities feed "signals like low
+       stock", and 999 stays well clear of that.
+     - Our own search never uses stock. Results sort by relevance or price, filters are type, price and status, and the Typesense query has no stock term. The PR says so.
+  4. Low items:
+     - Sort: merchandising's stock sort now places services after the in-stock goods and before sold-out ones.
+     - Stock on a service: update_product giving a service stock is refused with "services have no stock" instead of reporting success.
+     - Tool text: the create_catalog and update_product descriptions now mention kind.
+  Every new rule has a test that goes red when the rule is removed. pnpm -r check passes locally (platform 880 tests, template 326).
+✻ Churned for 18s · done 2:27 AM
+                                                                                                                                               new task? /clear to save 680.7k tokens
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

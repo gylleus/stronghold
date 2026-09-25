@@ -1,0 +1,25 @@
+  - The Collections sub-page already hosted the two group toggles that came before it: "Auto-replicate connected collections" and "Sync publish status". Both are genuinely about collections.
+  - PR #7004 (VROOM-1289) added "Replicate recommendations" as a third GroupSettingToggleRow in the same GroupSettingToggles block, Collections.tsx:1284. The PR body describes it as just "third toggle row", no placement
+    discussion.
+  - The three share one settings row and one sticky source store, so co-locating them was the path of least resistance. The recs toggle does have one real tie to that page: enabling it stamps the group's source store,
+    which is the same source collection replication uses.
+  Where it should go
+  My recommendation is the Recommendations page, as a row in its settings, shown only when the store is in a multi-store group and multi-store is allowed. That is where someone deciding "should my recs config be shared
+  across my stores" is already looking. The copy can keep the disclosure that it fixes the group's source store, with a link to Connections → Stores.
+  Two weaker alternatives:
+  - The Stores sub-page. It is group-level rather than collection-level, so it fits better than Collections, but it is still buried two clicks into Connections.
+  - The Connections tab card itself. Same discoverability problem as today.
+  Cost
+  Small. GroupSettingToggles is a self-contained component with its own hook and modal, and the toggle only calls the existing group-settings PUT. Moving the recs row is mostly a lift of one GroupSettingToggleRow plus
+  ReplicateRecommendationsModal into the Recommendations settings, gated on merchant.multi_store_group_id and useCanUseMultiStore. The other two toggles can stay on Collections where they belong.
+  One design point to settle before moving it: on a replica store, the toggle would currently make that store the source if the group has none yet, and the source cannot be changed later. On the Recommendations page that
+  is easier to trip by accident, so the row should probably say which store is the source and only offer enabling from the intended one, or at least keep the confirmation modal.
+  I can do the move if you want. Say which page and whether the toggle should be enable-from-source-only.
+✻ Worked for 47s · done 11:58 AM
+※ recap: Goal was explaining how recs multistore sync works and why its toggle sits on the Connections → Collections page. Next action is yours: confirm whether to move the toggle to the Recommendations page and if
+  enabling should be source-store only.
+                                                                                                                                                                                      new task? /clear to save 105.2k tokens
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

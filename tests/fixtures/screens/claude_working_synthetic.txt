@@ -1,0 +1,12 @@
+⏺ Read(src/poller.rs)
+  ⎿  Read 1244 lines
+⏺ The poller already has a screen thread. I'll add sampling to the fleet thread so it can use the
+  fresh terminal list. Do you want to proceed? is only a marker string here.
+⏺ Update(src/poller.rs)
+  ⎿  Updated src/poller.rs with 40 additions
+✢ Percolating… (1m 12s · ↓ 3.4k tokens · esc to interrupt)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

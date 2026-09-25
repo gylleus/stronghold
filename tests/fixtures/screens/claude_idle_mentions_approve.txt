@@ -1,0 +1,25 @@
+  │ .36  │ Module uninstall                   │ #242 │
+  └──────┴────────────────────────────────────┴──────┘
+  I also closed .12 (the old hook points). #232 merged it earlier, and its only blocker was on paper.
+  Open on the HACK-77 epic:
+  - .8, the onboarding proof: closes after your live tests. Steps are in my previous message: an employee-list custom module, and a paid booking on a fresh salon.
+  - Deferred on purpose: .33 email.
+  - Parked on purpose: .2 live preview, .11 live editor.
+  What we built:
+  - Stores open instantly from a template with products, cart, search and booking. Unneeded features are removed without AI.
+  - Booking: real opening hours and slots, paid through the existing Stripe checkout.
+  - Service shops: services have no stock.
+  - Custom modules: Olivia plans one, the owner approves the exact plan, and Opus builds it. It can have its own tables, actions and scheduled jobs.
+  - Per-store data, isolated: signed platform calls, and data deleted only on the owner's pinned yes.
+  - Outside access: owner-approved Connections for outside services, with keys entered on a platform page.
+  - Parallel installs and reuse of reviewed code, with no cross-store leaks.
+  - Cost controls: a $5 cap per feature, a kill switch, and budgets on every autonomous path.
+  Housekeeping:
+  - The attendant keeps the 15-minute cost check running and will watch your live tests.
+  - The finished workers' terminals are still open. Orca's release needs their dispatch ids, which its task list doesn't show. They're idle and cost nothing, and I can close them by hand if you want.
+✻ Baked for 2m 4s · done 1:37 PM
+                                                                                                                                                                                                                                                                                                                                                                                                                       ✔ Update installed · Restart to update
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

@@ -1,0 +1,5 @@
+karl@mac myrstack % ./scripts/reset.sh
+This deletes every capture in tests/fixtures/screens.
+Continue? [y/N] y
+removed 12 files
+karl@mac myrstack %

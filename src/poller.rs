@@ -15,9 +15,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError};
 
+use crate::detect::{PromptKind, detect_prompt};
 use crate::fleet::FleetData;
 use crate::orca::{
-    InboxMessage, OrcaClient, OrcaError, Run, Task, Terminal, TerminalRead, TerminalStatus, Worker,
+    AgentIdentity, InboxMessage, OrcaClient, OrcaError, Run, Task, Terminal, TerminalRead,
+    TerminalStatus, Worker,
 };
 
 /// How long after its last update a run stays active without any live terminal.
@@ -43,6 +45,12 @@ pub struct PollerConfig {
     pub inbox_limit: u64,
     /// `terminal read --screen` of the watched terminal.
     pub screen: Duration,
+    /// Background screen sampling of idle agents for NeedsInput ([`PromptSampler`]).
+    pub prompt_sample: Duration,
+    /// Most screens read per sampling cycle.
+    pub prompt_sample_budget: usize,
+    /// How long an agent must be silent before its screen is sampled.
+    pub prompt_idle_after: Duration,
 }
 
 impl Default for PollerConfig {
@@ -54,6 +62,9 @@ impl Default for PollerConfig {
             inbox: Duration::from_secs(5),
             inbox_limit: 300,
             screen: Duration::from_millis(500),
+            prompt_sample: Duration::from_secs(10),
+            prompt_sample_budget: 5,
+            prompt_idle_after: Duration::from_secs(20),
         }
     }
 }
@@ -198,6 +209,122 @@ impl ScreenWatch {
             }
         };
         Some(update)
+    }
+}
+
+/// Terminals worth sampling for a prompt: live Claude or Codex terminals with no output for
+/// `idle_after` (or none ever), sorted by handle.
+pub fn prompt_sample_candidates(
+    terminals: &[Terminal],
+    now_ms: i64,
+    idle_after: Duration,
+) -> Vec<&Terminal> {
+    let idle_ms = i64::try_from(idle_after.as_millis()).unwrap_or(i64::MAX);
+    let mut candidates: Vec<&Terminal> = terminals
+        .iter()
+        .filter(|t| t.connected && !t.orphaned)
+        .filter(|t| {
+            matches!(
+                t.agent_identity,
+                Some(AgentIdentity::Claude | AgentIdentity::Codex)
+            )
+        })
+        .filter(|t| {
+            t.last_output_at
+                .as_ref()
+                .and_then(|ts| ts.epoch_ms())
+                .is_none_or(|ms| now_ms.saturating_sub(ms) > idle_ms)
+        })
+        .collect();
+    candidates.sort_by(|a, b| a.handle.cmp(&b.handle));
+    candidates
+}
+
+/// Up to `budget` of the sorted `candidates` to sample next: never-sampled ones first, then
+/// round-robin starting after `cursor` (the last handle sampled).
+pub fn pick_prompt_samples(
+    candidates: &[&str],
+    sampled: &BTreeMap<String, Option<PromptKind>>,
+    cursor: Option<&str>,
+    budget: usize,
+) -> Vec<String> {
+    let split = cursor.map_or(0, |c| candidates.partition_point(|h| *h <= c));
+    let rotated = candidates[split..].iter().chain(&candidates[..split]);
+    let (fresh, seen): (Vec<&str>, Vec<&str>) = rotated.partition(|h| !sampled.contains_key(**h));
+    fresh
+        .into_iter()
+        .chain(seen)
+        .take(budget)
+        .map(str::to_string)
+        .collect()
+}
+
+/// Background NeedsInput sampling: every `prompt_sample` interval, reads the screens of up to
+/// `prompt_sample_budget` idle agents and records [`detect_prompt`]'s verdict. The UI's own
+/// screen watch only covers the selected terminal; this covers the rest.
+#[derive(Debug, Clone)]
+pub struct PromptSampler {
+    interval: Duration,
+    budget: usize,
+    idle_after: Duration,
+    next_due: Duration,
+    cursor: Option<String>,
+}
+
+impl PromptSampler {
+    /// The first sample is due at time zero.
+    pub fn new(config: &PollerConfig) -> Self {
+        Self {
+            interval: config.prompt_sample,
+            budget: config.prompt_sample_budget,
+            idle_after: config.prompt_idle_after,
+            next_due: Duration::ZERO,
+            cursor: None,
+        }
+    }
+
+    pub fn next_due(&self) -> Duration {
+        self.next_due
+    }
+
+    pub fn is_due(&self, now: Duration) -> bool {
+        now >= self.next_due
+    }
+
+    /// Drops verdicts of terminals that are no longer candidates (output resumed, gone), then,
+    /// if due at `now`, samples the next batch into `verdicts`. A failed read keeps the
+    /// terminal's previous verdict.
+    pub fn tick(
+        &mut self,
+        verdicts: &mut BTreeMap<String, Option<PromptKind>>,
+        terminals: &[Terminal],
+        screens: &dyn ScreenSource,
+        now: Duration,
+        wall_ms: i64,
+    ) {
+        let candidates = prompt_sample_candidates(terminals, wall_ms, self.idle_after);
+        verdicts.retain(|handle, _| candidates.iter().any(|t| &t.handle == handle));
+        if !self.is_due(now) {
+            return;
+        }
+        self.next_due = now + self.interval;
+        let handles: Vec<&str> = candidates.iter().map(|t| t.handle.as_str()).collect();
+        let picked = pick_prompt_samples(&handles, verdicts, self.cursor.as_deref(), self.budget);
+        for handle in &picked {
+            let agent = candidates
+                .iter()
+                .find(|t| &t.handle == handle)
+                .and_then(|t| t.agent_identity.as_ref());
+            match screens.read_screen(handle) {
+                Ok(read) => {
+                    verdicts.insert(handle.clone(), detect_prompt(&read.tail, agent));
+                }
+                Err(err) => log::debug!("{}", describe_error("prompt sample", &err)),
+            }
+        }
+        if let Some(last) = picked.last() {
+            self.cursor = Some(last.clone());
+        }
     }
 }
 
@@ -356,6 +483,7 @@ enum CallKey {
 /// into the [`FleetSource`], so tests can drive it with a fake source and clock.
 pub struct PollState {
     schedule: Schedule,
+    sampler: PromptSampler,
     data: FleetData,
     errors: BTreeMap<CallKey, String>,
 }
@@ -363,6 +491,7 @@ pub struct PollState {
 impl PollState {
     pub fn new(config: PollerConfig) -> Self {
         Self {
+            sampler: PromptSampler::new(&config),
             schedule: Schedule::new(config),
             data: FleetData::default(),
             errors: BTreeMap::new(),
@@ -377,6 +506,11 @@ impl PollState {
         self.schedule.force_all();
     }
 
+    /// When the next call group or prompt sample is due.
+    pub fn next_due(&self) -> Duration {
+        self.schedule.next_due().min(self.sampler.next_due())
+    }
+
     /// Polls whatever is due at monotonic time `now`; returns a snapshot if anything was polled.
     pub fn tick(
         &mut self,
@@ -384,8 +518,31 @@ impl PollState {
         now: Duration,
         wall_ms: i64,
     ) -> Option<FleetData> {
+        self.poll(source, None, now, wall_ms)
+    }
+
+    /// [`Self::tick`] plus background prompt sampling ([`PromptSampler`]) into
+    /// [`FleetData::needs_input`].
+    pub fn tick_with_screens(
+        &mut self,
+        source: &dyn FleetSource,
+        screens: &dyn ScreenSource,
+        now: Duration,
+        wall_ms: i64,
+    ) -> Option<FleetData> {
+        self.poll(source, Some(screens), now, wall_ms)
+    }
+
+    fn poll(
+        &mut self,
+        source: &dyn FleetSource,
+        screens: Option<&dyn ScreenSource>,
+        now: Duration,
+        wall_ms: i64,
+    ) -> Option<FleetData> {
         let due = self.schedule.take_due(now);
-        if !due.any() {
+        let sample_due = screens.is_some() && self.sampler.is_due(now);
+        if !due.any() && !sample_due {
             return None;
         }
         if due.terminals {
@@ -408,6 +565,16 @@ impl PollState {
         if due.inbox {
             let result = source.inbox(self.schedule.config().inbox_limit);
             self.apply(CallKey::Inbox, "inbox", result, |d, v| d.inbox = v);
+        }
+        if let Some(screens) = screens {
+            let data = &mut self.data;
+            self.sampler.tick(
+                &mut data.needs_input,
+                &data.terminals,
+                screens,
+                now,
+                wall_ms,
+            );
         }
         self.data.polled_at_ms = wall_ms;
         self.data.errors = self.errors.values().cloned().collect();
@@ -501,7 +668,16 @@ impl Poller {
             .expect("spawn screen poller thread");
         let fleet_thread = std::thread::Builder::new()
             .name("orca-poller".into())
-            .spawn(move || run_loop(&source, config, repaint.as_deref(), &snap_tx, &cmd_rx))
+            .spawn(move || {
+                run_loop(
+                    &source,
+                    &source,
+                    config,
+                    repaint.as_deref(),
+                    &snap_tx,
+                    &cmd_rx,
+                )
+            })
             .expect("spawn poller thread");
         Poller {
             snapshots: snap_rx,
@@ -605,6 +781,7 @@ fn screen_loop(
 
 fn run_loop(
     source: &dyn FleetSource,
+    screens: &dyn ScreenSource,
     config: PollerConfig,
     repaint: Option<&Repaint>,
     snapshots: &Sender<FleetData>,
@@ -614,7 +791,7 @@ fn run_loop(
     let mut state = PollState::new(config);
     loop {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            state.tick(source, start.elapsed(), wall_clock_ms())
+            state.tick_with_screens(source, screens, start.elapsed(), wall_clock_ms())
         }));
         match result {
             Ok(Some(snapshot)) => match snapshots.try_send(snapshot) {
@@ -629,7 +806,7 @@ fn run_loop(
             Ok(None) => {}
             Err(_) => log::error!("poll cycle panicked; continuing"),
         }
-        let wait = state.schedule().next_due().saturating_sub(start.elapsed());
+        let wait = state.next_due().saturating_sub(start.elapsed());
         match commands.recv_timeout(wait) {
             Ok(PollerCommand::RefreshNow) => state.force_all(),
             // Routed to the screen thread by `Poller::send`.
@@ -724,6 +901,8 @@ mod tests {
         fail_runs: bool,
         fail_tasks_for: Option<String>,
         fail_screen: bool,
+        /// Screen rows per handle; others get a generic line.
+        screen_rows: BTreeMap<String, Vec<String>>,
         calls: Calls,
     }
 
@@ -796,7 +975,9 @@ mod tests {
                 Ok(TerminalRead {
                     handle: handle.into(),
                     status: Some(TerminalStatus::Running),
-                    tail: vec![format!("{handle} line {}", s.calls.screens.len())],
+                    tail: s.screen_rows.get(handle).cloned().unwrap_or_else(|| {
+                        vec![format!("{handle} line {}", s.calls.screens.len())]
+                    }),
                     truncated: false,
                     limited: false,
                     oldest_cursor: None,
@@ -1240,5 +1421,164 @@ mod tests {
             updates.last().map_or(0, |u| u.lines.len())
         );
         assert!(updates.len() >= 3, "got {} updates", updates.len());
+    }
+
+    fn agent(
+        handle: &str,
+        identity: Option<AgentIdentity>,
+        last_output_ms: Option<i64>,
+    ) -> Terminal {
+        Terminal {
+            agent_identity: identity,
+            last_output_at: last_output_ms.map(Timestamp::Millis),
+            ..terminal(handle)
+        }
+    }
+
+    #[test]
+    fn prompt_sample_candidates_are_idle_live_agents() {
+        let idle = Some(NOW_MS - 21_000);
+        let terminals = vec![
+            agent("z-codex", Some(AgentIdentity::Codex), idle),
+            agent("a-claude", Some(AgentIdentity::Claude), idle),
+            agent("never-output", Some(AgentIdentity::Claude), None),
+            agent("busy", Some(AgentIdentity::Claude), Some(NOW_MS - 19_000)),
+            agent("shell", None, idle),
+            agent("other", Some(AgentIdentity::Other("aider".into())), idle),
+            Terminal {
+                connected: false,
+                ..agent("disconnected", Some(AgentIdentity::Claude), idle)
+            },
+            Terminal {
+                orphaned: true,
+                ..agent("orphaned", Some(AgentIdentity::Claude), idle)
+            },
+        ];
+        let picked: Vec<&str> = prompt_sample_candidates(&terminals, NOW_MS, secs(20))
+            .iter()
+            .map(|t| t.handle.as_str())
+            .collect();
+        assert_eq!(picked, ["a-claude", "never-output", "z-codex"]);
+    }
+
+    #[test]
+    fn prompt_samples_rotate_within_budget() {
+        let candidates = ["a", "b", "c", "d", "e", "f", "g", "h"];
+        let mut sampled: BTreeMap<String, Option<PromptKind>> = BTreeMap::new();
+        let mut cursor: Option<String> = None;
+        let mut rounds = Vec::new();
+        for _ in 0..3 {
+            let picked = pick_prompt_samples(&candidates, &sampled, cursor.as_deref(), 5);
+            for h in &picked {
+                sampled.insert(h.clone(), None);
+            }
+            cursor = picked.last().cloned();
+            rounds.push(picked.join(""));
+        }
+        // New terminals first, then round-robin after the cursor.
+        assert_eq!(rounds, ["abcde", "fghab", "cdefg"]);
+
+        // A newcomer jumps the queue.
+        let with_new = ["a", "b", "c", "d", "e", "f", "g", "h", "i"];
+        assert_eq!(
+            pick_prompt_samples(&with_new, &sampled, Some("g"), 3),
+            ["i", "h", "a"]
+        );
+        assert!(pick_prompt_samples(&[], &sampled, Some("g"), 3).is_empty());
+        assert!(pick_prompt_samples(&candidates, &sampled, None, 0).is_empty());
+    }
+
+    #[test]
+    fn sampler_records_verdicts_on_its_cadence() {
+        let idle = Some(NOW_MS - 60_000);
+        let fake = Fake::default();
+        let prompt: Vec<String> = ["Do you want to proceed?", "❯ 1. Yes", "  2. No"]
+            .map(String::from)
+            .into();
+        let terminals: Vec<Terminal> = (0..7)
+            .map(|i| agent(&format!("t{i}"), Some(AgentIdentity::Claude), idle))
+            .collect();
+        fake.with(|s| {
+            s.screen_rows.insert("t1".into(), prompt.clone());
+        });
+        let config = PollerConfig {
+            prompt_sample_budget: 5,
+            ..PollerConfig::default()
+        };
+        let mut sampler = PromptSampler::new(&config);
+        let mut verdicts = BTreeMap::new();
+
+        sampler.tick(&mut verdicts, &terminals, &fake, secs(0), NOW_MS);
+        assert_eq!(fake.with(|s| s.calls.screens.len()), 5, "budget");
+        assert_eq!(verdicts.get("t1"), Some(&Some(PromptKind::Permission)));
+        assert_eq!(verdicts.get("t0"), Some(&None));
+        assert_eq!(verdicts.len(), 5);
+
+        // Not due again until the interval passes.
+        sampler.tick(&mut verdicts, &terminals, &fake, secs(9), NOW_MS + 9_000);
+        assert_eq!(fake.with(|s| s.calls.screens.len()), 5);
+        sampler.tick(&mut verdicts, &terminals, &fake, secs(10), NOW_MS + 10_000);
+        let reads = fake.with(|s| s.calls.screens.clone());
+        assert_eq!(reads[5..], ["t5", "t6", "t0", "t1", "t2"]);
+        assert_eq!(verdicts.len(), 7);
+
+        // Output from t1 drops its verdict at once, even between samples.
+        let mut resumed = terminals.clone();
+        resumed[1].last_output_at = Some(Timestamp::Millis(NOW_MS + 11_000));
+        sampler.tick(&mut verdicts, &resumed, &fake, secs(12), NOW_MS + 12_000);
+        assert!(!verdicts.contains_key("t1"));
+        assert_eq!(verdicts.len(), 6);
+
+        // A failed read keeps the previous verdict.
+        fake.with(|s| s.fail_screen = true);
+        sampler.tick(&mut verdicts, &terminals, &fake, secs(20), NOW_MS + 20_000);
+        assert_eq!(verdicts.len(), 6);
+    }
+
+    #[test]
+    fn poll_state_puts_samples_in_fleet_data() {
+        let fake = Fake::default();
+        fake.with(|s| {
+            s.terminals = vec![
+                agent("waiting", Some(AgentIdentity::Codex), Some(NOW_MS - 60_000)),
+                agent("busy", Some(AgentIdentity::Codex), Some(NOW_MS - 1_000)),
+            ];
+            s.screen_rows.insert(
+                "waiting".into(),
+                ["Allow command?", "$ rm -rf target"]
+                    .map(String::from)
+                    .into(),
+            );
+        });
+        let mut state = PollState::new(PollerConfig::default());
+        let data = state
+            .tick_with_screens(&fake, &fake, secs(0), NOW_MS)
+            .unwrap();
+        assert_eq!(fake.with(|s| s.calls.screens.clone()), ["waiting"]);
+        assert_eq!(data.screen_needs_input("waiting"), Some(true));
+        assert_eq!(data.screen_needs_input("busy"), None);
+
+        // Plain ticks never read screens.
+        let mut plain = PollState::new(PollerConfig::default());
+        let data = plain.tick(&fake, secs(0), NOW_MS).unwrap();
+        assert!(data.needs_input.is_empty());
+        assert_eq!(fake.with(|s| s.calls.screens.len()), 1);
+
+        // The sampler's own cadence wakes the loop and yields a snapshot.
+        let config = PollerConfig {
+            terminals: secs(60),
+            runs_workers: secs(60),
+            tasks: secs(60),
+            inbox: secs(60),
+            ..PollerConfig::default()
+        };
+        let mut slow = PollState::new(config);
+        slow.tick_with_screens(&fake, &fake, secs(0), NOW_MS)
+            .unwrap();
+        assert_eq!(slow.next_due(), secs(10));
+        assert!(
+            slow.tick_with_screens(&fake, &fake, secs(10), NOW_MS + 10_000)
+                .is_some()
+        );
     }
 }
