@@ -1,6 +1,7 @@
 //! UI panels drawn by the app.
 
 pub mod broadcast;
+pub mod close;
 pub mod frame_stats;
 pub mod graph;
 pub mod keys;

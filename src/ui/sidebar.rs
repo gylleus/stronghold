@@ -261,6 +261,8 @@ pub struct SidebarResponse {
     pub select: Option<NodeId>,
     /// The filter changed this frame.
     pub filter_changed: bool,
+    /// "Close shown…" was clicked: ask to close the nodes the filter shows.
+    pub close_shown: bool,
 }
 
 /// What the sidebar shows of one snapshot, derived once per snapshot rather than every frame.
@@ -370,7 +372,15 @@ pub fn sidebar_cached(
             extra(ui);
             egui::CollapsingHeader::new("Filters")
                 .default_open(true)
-                .show(ui, |ui| filters_section(ui, snapshot, cache, filter));
+                .show(ui, |ui| {
+                    filters_section(ui, snapshot, cache, filter);
+                    response.close_shown = ui
+                        .button("Close shown…")
+                        .on_hover_text(
+                            "Kill the loose terminals and workers the filter shows (asks first)",
+                        )
+                        .clicked();
+                });
         });
     response.filter_changed = *filter != before;
     response
