@@ -1,6 +1,7 @@
 //! `FleetSnapshot`: runs, nodes and edges built from Orca and Claude data.
 
 mod label;
+mod queen;
 mod state;
 mod subagent;
 #[cfg(test)]
@@ -17,6 +18,7 @@ use crate::orca::{
 };
 
 pub use label::{MAX_LABEL_CHARS, strip_spinner, truncate_label};
+pub use queen::{QUEEN_ID, QUEEN_LABEL, fleet_state};
 pub use state::{StateInputs, WORKING_WINDOW_MS, derive_state};
 
 /// How long a released worker stays in the snapshot after its release, so the UI can fade it.
@@ -25,7 +27,8 @@ pub const RELEASED_FADE_MS: i64 = 10 * 60 * 1_000;
 /// Identifies a node across polls; the graph view keys layout positions by it.
 ///
 /// Live terminals use `term:<handle>`; worker nodes without a live terminal use
-/// `dispatch:<run id>:<dispatch id>`; Claude subagents use `sub:<session id>:<agent id>`.
+/// `dispatch:<run id>:<dispatch id>`; Claude subagents use `sub:<session id>:<agent id>`; the
+/// queen is `queen`.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -38,6 +41,11 @@ impl NodeId {
 
     pub fn dispatch(run_id: &str, dispatch_id: &str) -> Self {
         Self(format!("dispatch:{run_id}:{dispatch_id}"))
+    }
+
+    /// The id of the snapshot's one [`NodeKind::Queen`] node.
+    pub fn queen() -> Self {
+        Self(QUEEN_ID.to_string())
     }
 
     pub fn subagent(session_id: &str, agent_id: &str) -> Self {
@@ -72,6 +80,9 @@ pub enum NodeKind {
     Terminal,
     /// A Claude subagent under a terminal (M3).
     Subagent,
+    /// The fleet's hub, linked to every coordinator and loose terminal; broadcasts start here.
+    /// Exactly one per snapshot, with no terminal.
+    Queen,
 }
 
 #[derive(
@@ -118,6 +129,8 @@ pub enum EdgeKind {
     CoordinatorWorker,
     /// Terminal → subagent, or parent subagent → nested subagent.
     Subagent,
+    /// Queen → coordinator or loose terminal.
+    Queen,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -301,13 +314,51 @@ impl FleetSnapshot {
 
         edges.extend(subagent_edges);
 
-        Self {
+        let mut snapshot = Self {
             built_at_ms: now_ms,
             runs,
             nodes,
             edges,
             index,
-        }
+        };
+        snapshot.add_queen();
+        snapshot
+    }
+
+    /// Adds the queen node and its edges to every coordinator and loose terminal, replacing
+    /// any earlier queen, and reindexes. [`FleetSnapshot::build`] calls it; tests that assemble
+    /// snapshots by hand can too.
+    pub fn add_queen(&mut self) {
+        self.nodes.retain(|n| n.kind != NodeKind::Queen);
+        self.edges.retain(|e| e.kind != EdgeKind::Queen);
+        let queen = queen::queen_node(&self.nodes);
+        self.edges.extend(
+            self.nodes
+                .iter()
+                .filter(|n| matches!(n.kind, NodeKind::Coordinator | NodeKind::Terminal))
+                .map(|n| Edge {
+                    from: queen.id.clone(),
+                    to: n.id.clone(),
+                    kind: EdgeKind::Queen,
+                }),
+        );
+        self.nodes.push(queen);
+        self.index = self
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.id.clone(), i))
+            .collect();
+    }
+
+    /// The queen node, present in every built snapshot.
+    pub fn queen(&self) -> Option<&Node> {
+        self.node(&NodeId::queen())
+    }
+
+    /// Nodes that are agents or terminals: every node but the queen.
+    pub fn agent_nodes(&self) -> impl Iterator<Item = &Node> {
+        self.nodes.iter().filter(|n| n.kind != NodeKind::Queen)
     }
 
     pub fn node(&self, id: &NodeId) -> Option<&Node> {

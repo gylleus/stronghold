@@ -18,6 +18,7 @@ use crate::orca::{DispatchStatus, Terminal, WorkerState};
 
 pub const SUBAGENT_REFUSAL: &str =
     "subagents run inside their parent session; close the parent instead";
+pub const QUEEN_REFUSAL: &str = "the Queen isn't a session; it stands for the whole fleet";
 
 /// Choices in the confirmation dialog.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -133,8 +134,10 @@ pub fn plan_close(
     terminals: &[Terminal],
     opts: CloseOptions,
 ) -> ClosePlan {
-    if node.kind == NodeKind::Subagent {
-        return ClosePlan::refuse(node, SUBAGENT_REFUSAL);
+    match node.kind {
+        NodeKind::Subagent => return ClosePlan::refuse(node, SUBAGENT_REFUSAL),
+        NodeKind::Queen => return ClosePlan::refuse(node, QUEEN_REFUSAL),
+        NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal => {}
     }
     let live_handle = node.terminal_handle.as_deref().filter(|_| node.live);
     let stop = node.kind == NodeKind::Worker && has_active_dispatch(node);
@@ -296,7 +299,7 @@ pub fn bulk_candidates<'a>(
         .filter(|n| match n.kind {
             NodeKind::Terminal | NodeKind::Worker => true,
             NodeKind::Coordinator => include_coordinators,
-            NodeKind::Subagent => false,
+            NodeKind::Subagent | NodeKind::Queen => false,
         })
         .filter(|n| {
             (n.live && n.terminal_handle.is_some())

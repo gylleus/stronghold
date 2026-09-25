@@ -295,3 +295,20 @@ fn bulk_candidates_skip_hidden_coordinators_and_dead_nodes() {
     assert_eq!(ids(false), vec!["w", "loose"]);
     assert_eq!(ids(true), vec!["coord", "w", "loose"]);
 }
+
+#[test]
+fn queen_is_refused_and_never_a_bulk_candidate() {
+    let mut s = snapshot();
+    s.add_queen();
+    let queen = s.queen().unwrap().clone();
+    let plan = plan_close(&queen, &s, &[], PANE);
+    assert_eq!(plan.refused.as_deref(), Some(QUEEN_REFUSAL));
+    assert!(!plan.can_run());
+    for coordinators in [false, true] {
+        assert!(
+            bulk_candidates(&s, &BTreeSet::new(), coordinators)
+                .iter()
+                .all(|n| n.kind != NodeKind::Queen)
+        );
+    }
+}

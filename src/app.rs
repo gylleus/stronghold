@@ -61,7 +61,8 @@ pub struct MyrstackApp {
     claude_data: Option<ClaudeData>,
     /// Tail of the selected subagent's transcript.
     transcript: Option<TranscriptTail>,
-    broadcast: ui::broadcast::BroadcastWindow,
+    /// The queen's panel: fleet summary and the broadcast composer.
+    queen: ui::queen::QueenPanel,
     /// Runs terminal sends and tab switches off the UI thread.
     actions: ActionRunner,
     /// Input box drafts and send statuses, per terminal.
@@ -139,7 +140,7 @@ impl MyrstackApp {
             claude,
             claude_data: None,
             transcript: None,
-            broadcast: ui::broadcast::BroadcastWindow::new(),
+            queen: ui::queen::QueenPanel::default(),
             actions,
             input: ui::terminal::InputPanelState::default(),
             whip,
@@ -252,8 +253,12 @@ impl MyrstackApp {
         }
     }
 
-    /// Right-hand panel for the selected node: its screen, or its transcript for a subagent.
+    /// Right-hand panel for the selected node: its screen, its transcript for a subagent, or
+    /// the fleet summary and broadcast composer for the queen.
     fn terminal_panel(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+        if self.queen_panel(ui, now_ms) {
+            return;
+        }
         if let Some((node, info)) = self.selected_subagent() {
             let tail = self.transcript.as_ref().map_or(&[][..], |t| &t.lines[..]);
             let default_width = ui.ctx().content_rect().width() * 0.45;
@@ -302,6 +307,47 @@ impl MyrstackApp {
             self.selected = None;
             self.graph.set_selected(None);
         }
+    }
+
+    /// Draws the queen panel if the queen is selected; returns whether it did.
+    fn queen_panel(&mut self, ui: &mut egui::Ui, now_ms: i64) -> bool {
+        let Some(snapshot) = &self.snapshot else {
+            return false;
+        };
+        if self.selected.as_ref() != Some(&NodeId::queen()) {
+            return false;
+        }
+        let default_width = ui.ctx().content_rect().width() * 0.45;
+        let inputs = ui::queen::QueenInputs {
+            snapshot,
+            whip: &self.whip_status,
+            quotas: &self.quotas,
+            now_ms,
+        };
+        let queen = &mut self.queen;
+        let response = egui::Panel::right("terminal")
+            .resizable(true)
+            .default_size(default_width)
+            .min_size(240.0)
+            .show(ui, |ui| {
+                ui::queen::queen_panel(ui, queen, inputs, || Box::new(OrcaClient::new()))
+            })
+            .inner;
+        if let Some(id) = response.select {
+            self.select_and_focus(id);
+        } else if response.close {
+            self.selected = None;
+            self.graph.set_selected(None);
+        }
+        true
+    }
+
+    /// Selects the queen, opening its panel, and pans onto it keeping the zoom.
+    fn select_queen(&mut self) {
+        let id = NodeId::queen();
+        self.graph.set_selected(Some(&id));
+        self.graph.center_on(&id);
+        self.selected = Some(id);
     }
 
     /// Selects `id` in the app and the graph, and pans/zooms onto it unless it is filtered out.
@@ -425,7 +471,8 @@ impl MyrstackApp {
                 None
             }
             KeyCommand::CloseSession => {
-                if let Some(id) = current.cloned() {
+                // The queen stands for the whole fleet; it has no session to close.
+                if let Some(id) = current.filter(|id| **id != NodeId::queen()).cloned() {
                     self.request_close(vec![id]);
                 }
                 None
@@ -493,8 +540,12 @@ impl MyrstackApp {
             if ui.button("Refresh").clicked() {
                 self.poller.send(PollerCommand::RefreshNow);
             }
-            if ui.button("Broadcast…").clicked() {
-                self.broadcast.open = true;
+            if ui
+                .button("Broadcast…")
+                .on_hover_text("Select the queen: fleet summary and broadcast to coordinators")
+                .clicked()
+            {
+                self.select_queen();
             }
             self.whip_window.button(ui);
             self.alerts_menu(ui);
@@ -813,9 +864,6 @@ impl eframe::App for MyrstackApp {
                 }
                 View::Table => ui::table::terminal_table(ui, data, now_ms),
             },
-        });
-        self.broadcast.show(ui.ctx(), self.snapshot.as_ref(), || {
-            Box::new(OrcaClient::new())
         });
         self.close_dialog(ui.ctx());
         if let Some(settings) = self.whip_window.show(ui.ctx(), &self.whip_status, now_ms) {

@@ -75,7 +75,51 @@ pub fn node_radius(kind: NodeKind) -> f32 {
         NodeKind::Worker => 10.0,
         NodeKind::Terminal => 9.0,
         NodeKind::Subagent => 6.0,
+        NodeKind::Queen => 24.0,
     }
+}
+
+/// Fill of the queen: a muted gold, set apart from every state color in both themes (see the
+/// `queen_color_is_distinct` test) and at least 3:1 against the panel background.
+pub fn queen_color(dark_mode: bool) -> Color32 {
+    if dark_mode {
+        Color32::from_rgb(0xd9, 0xc3, 0x8c)
+    } else {
+        Color32::from_rgb(0x8c, 0x7a, 0x2e)
+    }
+}
+
+/// Screen radius of the queen's fleet-state badge on a queen of screen radius `radius`.
+fn queen_badge_radius(radius: f32) -> f32 {
+    (radius * 0.38).clamp(4.0, 10.0)
+}
+
+/// Where the queen's fleet-state badge sits relative to the queen's center.
+fn queen_badge_offset(radius: f32) -> Vec2 {
+    Vec2::new(radius, -radius) * 0.8
+}
+
+/// Corners of a flat-topped hexagon of circumradius `radius` around `center`.
+pub fn hexagon(center: Pos2, radius: f32) -> Vec<Pos2> {
+    (0..6)
+        .map(|i| center + Vec2::angled(i as f32 * std::f32::consts::FRAC_PI_3) * radius)
+        .collect()
+}
+
+/// A crown outline for the queen, fitting a node of screen radius `radius`.
+fn crown_shape(center: Pos2, radius: f32, color: Color32) -> Shape {
+    let s = radius * 0.42;
+    let p = |x: f32, y: f32| center + Vec2::new(x, y) * s;
+    let points = vec![
+        p(-0.9, 0.55),
+        p(-0.9, -0.45),
+        p(-0.45, 0.05),
+        p(0.0, -0.7),
+        p(0.45, 0.05),
+        p(0.9, -0.45),
+        p(0.9, 0.55),
+    ];
+    Shape::closed_line(points, Stroke::new((radius * 0.1).max(1.0), color))
 }
 
 /// Fill color of a node in the given state; at least 3:1 contrast against egui's default
@@ -121,6 +165,9 @@ pub fn node_extent(payload: &NodePayload, label: Vec2, selected: bool, zoom: f32
     half = half.max(outer + (radius * 0.25).clamp(3.0, 6.0) + 2.0);
     if payload.agent_marker.is_some() && radius >= DETAIL_MIN_PX {
         half = half.max(radius * 0.8 + 10.0);
+    }
+    if payload.kind == NodeKind::Queen {
+        half = half.max(queen_badge_offset(radius).x + queen_badge_radius(radius) + 2.0);
     }
     let mut extent = Rect::from_center_size(Pos2::ZERO, Vec2::splat(2.0 * half));
     if label != Vec2::ZERO
@@ -309,6 +356,21 @@ pub fn legend(ui: &mut Ui) {
             });
             ui.add_space(6.0);
         }
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(text_height), Sense::hover());
+            let fill = queen_color(dark);
+            let stroke = Stroke::new(1.0, ui.visuals().extreme_bg_color);
+            let radius = rect.width() / 2.0;
+            ui.painter().add(Shape::convex_polygon(
+                hexagon(rect.center(), radius),
+                fill,
+                stroke,
+            ));
+            ui.painter()
+                .add(crown_shape(rect.center(), radius, glyph_color(fill)));
+            ui.label("queen (fleet hub; its badge shows the most urgent state)");
+        });
     });
 }
 
@@ -433,6 +495,62 @@ impl FleetNodeShape {
         ))
     }
 
+    /// The queen: a gold hexagon with a crown, a badge in the fleet state's color and glyph,
+    /// and its label. It never pulses; the nodes it summarizes do.
+    fn queen_shapes(&self, ctx: &DrawContext) -> Vec<Shape> {
+        let style = ctx.ctx.global_style();
+        let visuals = &style.visuals;
+        let center = ctx.meta.canvas_to_screen_pos(self.pos);
+        let radius = ctx.meta.canvas_to_screen_size(self.radius());
+        let fill = queen_color(visuals.dark_mode);
+        let stroke = if self.dragged || self.hovered {
+            Stroke::new(1.5, visuals.text_color())
+        } else {
+            Stroke::new(1.0, visuals.extreme_bg_color)
+        };
+        let mut shapes = vec![Shape::convex_polygon(hexagon(center, radius), fill, stroke)];
+        if self.selected {
+            let ring = radius + (radius * 0.25).clamp(3.0, 6.0);
+            shapes.push(Shape::circle_stroke(
+                center,
+                ring,
+                Stroke::new(2.5, visuals.selection.stroke.color),
+            ));
+        }
+        if radius >= DETAIL_MIN_PX {
+            shapes.push(crown_shape(center, radius, glyph_color(fill)));
+            let badge_r = queen_badge_radius(radius);
+            let badge = center + queen_badge_offset(radius);
+            let state_fill = state_color(self.state, visuals.dark_mode);
+            shapes.push(Shape::circle_filled(
+                badge,
+                badge_r + 1.5,
+                visuals.panel_fill,
+            ));
+            shapes.push(Shape::circle_filled(badge, badge_r, state_fill));
+            shapes.extend(glyph_shapes(
+                state_glyph(self.state),
+                badge,
+                badge_r,
+                glyph_color(state_fill),
+            ));
+        }
+        let emphasized = self.selected || self.hovered || self.dragged;
+        if let Some(size) = label_px(ctx.meta.zoom, emphasized).filter(|_| !self.label.is_empty()) {
+            let color = visuals.strong_text_color();
+            let galley = ctx.ctx.fonts_mut(|f| {
+                f.layout_no_wrap(
+                    self.label.clone(),
+                    FontId::new(size, FontFamily::Proportional),
+                    color,
+                )
+            });
+            let pos = Pos2::new(center.x - galley.size().x / 2.0, center.y + radius + 3.0);
+            shapes.push(TextShape::new(pos, galley, color).into());
+        }
+        shapes
+    }
+
     fn agent_badge(&self, ctx: &DrawContext, center: Pos2, radius: f32, alpha: f32) -> Vec<Shape> {
         let Some(letter) = self.agent_marker else {
             return Vec::new();
@@ -464,6 +582,9 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
     }
 
     fn shapes(&mut self, ctx: &DrawContext) -> Vec<Shape> {
+        if self.kind == NodeKind::Queen {
+            return self.queen_shapes(ctx);
+        }
         let style = ctx.ctx.global_style();
         let visuals = &style.visuals;
         let center = ctx.meta.canvas_to_screen_pos(self.pos);
@@ -588,6 +709,37 @@ mod tests {
                         "{state:?} dark={dark} contrast {ratio:.2} against {bg:?}"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn queen_color_contrasts_and_is_distinct() {
+        for (dark, visuals) in [
+            (true, egui::Visuals::dark()),
+            (false, egui::Visuals::light()),
+        ] {
+            let queen = queen_color(dark);
+            for bg in [visuals.panel_fill, visuals.extreme_bg_color] {
+                let ratio = contrast_ratio(queen, bg);
+                assert!(ratio >= 3.0, "queen dark={dark} contrast {ratio:.2}");
+            }
+            assert!(contrast_ratio(glyph_color(queen), queen) >= 3.0);
+            for state in ALL_STATES {
+                let other = state_color(state, dark);
+                let distance = [
+                    (queen.r(), other.r()),
+                    (queen.g(), other.g()),
+                    (queen.b(), other.b()),
+                ]
+                .iter()
+                .map(|(a, b)| (f32::from(*a) - f32::from(*b)).powi(2))
+                .sum::<f32>()
+                .sqrt();
+                assert!(
+                    distance >= 60.0,
+                    "queen too close to {state:?} (dark={dark}): {distance:.0}"
+                );
             }
         }
     }
