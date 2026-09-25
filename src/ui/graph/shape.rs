@@ -1,5 +1,7 @@
 //! Node rendering: per-kind shape and size, color and glyph by state, a static ring around
-//! working nodes and a pulse for nodes waiting for input, agent badge, fade-out of released workers, label under the node.
+//! working nodes and a ring for nodes waiting for input that pulses when they start waiting and
+//! again every [`NEEDS_INPUT_REMINDER_S`], agent badge, fade-out of released workers, label under
+//! the node.
 
 use std::time::Duration;
 
@@ -44,10 +46,14 @@ pub const FADE_END_ALPHA: f32 = 0.1;
 const HOVER_SCALE: f32 = 1.15;
 /// Pulse period of nodes waiting for input.
 const NEEDS_INPUT_PULSE_S: f64 = 2.4;
+/// Pulses a node shows right after it starts waiting for input; its ring is static after them.
+const NEEDS_INPUT_FIRST_PULSES: f64 = 4.0;
+/// While a node keeps waiting, it pulses once more every this many seconds as a reminder.
+pub const NEEDS_INPUT_REMINDER_S: f64 = 30.0;
 /// Point of the pulse wave at which the static ring of working nodes is drawn.
 const WORKING_RING_WAVE: f32 = 0.3;
-/// Repaint interval while pulsing nodes are visible (10 fps): the pulse is slow, so a low
-/// rate looks smooth enough and keeps idle CPU low.
+/// Repaint interval while a node pulses (10 fps): the pulse is slow, so a low rate looks
+/// smooth enough. Pulses are short (see [`needs_input_wave`]), so this rate is rarely needed.
 const ANIMATION_FRAME: Duration = Duration::from_millis(100);
 /// Repaint interval while fading nodes are visible; the fade is slow.
 const FADE_FRAME: Duration = Duration::from_secs(1);
@@ -184,6 +190,35 @@ pub fn pulse(time: f64, period_s: f64) -> f32 {
     (0.5 - 0.5 * (phase * std::f64::consts::TAU).cos()) as f32
 }
 
+/// The NeedsInput ring's pulse wave `waiting_s` seconds after the node started waiting, or
+/// `None` while the ring is static (drawn like wave 0, its brightest point, so pulses start and
+/// end without a jump). The node pulses [`NEEDS_INPUT_FIRST_PULSES`] times, then once every
+/// [`NEEDS_INPUT_REMINDER_S`]: noticeable, while the UI redraws at the animation rate only for a
+/// small share of a long wait.
+pub fn needs_input_wave(waiting_s: f64) -> Option<f32> {
+    let first = NEEDS_INPUT_PULSE_S * NEEDS_INPUT_FIRST_PULSES;
+    let waiting_s = waiting_s.max(0.0);
+    if waiting_s < first {
+        return Some(pulse(waiting_s, NEEDS_INPUT_PULSE_S));
+    }
+    // Each reminder pulse ends its interval.
+    let pulse_start = NEEDS_INPUT_REMINDER_S - NEEDS_INPUT_PULSE_S;
+    let t = (waiting_s - first) % NEEDS_INPUT_REMINDER_S;
+    (t >= pulse_start).then(|| pulse(t - pulse_start, NEEDS_INPUT_PULSE_S))
+}
+
+/// When the NeedsInput ring of a node waiting `waiting_s` seconds next changes: the next
+/// animation frame while it pulses, else the start of the next reminder pulse.
+pub fn needs_input_repaint(waiting_s: f64) -> Duration {
+    if needs_input_wave(waiting_s).is_some() {
+        return ANIMATION_FRAME;
+    }
+    let first = NEEDS_INPUT_PULSE_S * NEEDS_INPUT_FIRST_PULSES;
+    let t = (waiting_s - first) % NEEDS_INPUT_REMINDER_S;
+    let until_pulse = NEEDS_INPUT_REMINDER_S - NEEDS_INPUT_PULSE_S - t;
+    Duration::from_secs_f64(until_pulse.max(0.0)).max(ANIMATION_FRAME)
+}
+
 /// Whether nodes in this state are animated. Working nodes get a static ring instead: many
 /// terminals count as working (e.g. an idle spinner keeps their output fresh), and pulsing
 /// them all would keep the UI redrawing.
@@ -300,6 +335,8 @@ pub struct FleetNodeShape {
     dragged: bool,
     hovered: bool,
     label: String,
+    /// egui time at which this node was first drawn waiting for input; drives its pulse.
+    waiting_since: Option<f64>,
 }
 
 impl From<NodeProps<NodePayload>> for FleetNodeShape {
@@ -314,6 +351,7 @@ impl From<NodeProps<NodePayload>> for FleetNodeShape {
             dragged: false,
             hovered: false,
             label: String::new(),
+            waiting_since: None,
         };
         shape.apply(&props);
         shape
@@ -341,23 +379,49 @@ impl FleetNodeShape {
         }
     }
 
-    /// Asks for the next frame while this node animates or fades on screen.
-    fn schedule_repaint(&self, ctx: &DrawContext, center: Pos2, extent: f32) {
+    /// Seconds this node has been waiting for input at egui time `time`, or `None` if it is not
+    /// waiting.
+    fn waiting_s(&mut self, time: f64) -> Option<f64> {
+        if !is_animated(self.state) {
+            self.waiting_since = None;
+            return None;
+        }
+        Some(time - *self.waiting_since.get_or_insert(time))
+    }
+
+    /// Asks for the next frame at which this node's pulse or fade changes on screen.
+    fn schedule_repaint(
+        &self,
+        ctx: &DrawContext,
+        center: Pos2,
+        extent: f32,
+        waiting_s: Option<f64>,
+    ) {
         let visible = ctx.painter.clip_rect().expand(extent).contains(center);
         if !visible {
             return;
         }
         if self.released_at_ms.is_some() {
             ctx.ctx.request_repaint_after(FADE_FRAME);
-        } else if is_animated(self.state) {
-            ctx.ctx.request_repaint_after(ANIMATION_FRAME);
+        } else if let Some(waiting_s) = waiting_s {
+            ctx.ctx
+                .request_repaint_after(needs_input_repaint(waiting_s));
         }
     }
 
-    fn pulse_ring(&self, time: f64, center: Pos2, outer: f32, fill: Color32) -> Option<Shape> {
+    fn pulse_ring(
+        &self,
+        waiting_s: Option<f64>,
+        center: Pos2,
+        outer: f32,
+        fill: Color32,
+    ) -> Option<Shape> {
         let (wave, spread, max_alpha, width) = match self.state {
             NodeState::Working => (WORKING_RING_WAVE, 0.35, 0.45, 0.10),
-            NodeState::NeedsInput => (pulse(time, NEEDS_INPUT_PULSE_S), 0.7, 0.8, 0.16),
+            NodeState::NeedsInput => {
+                let wave = waiting_s.and_then(needs_input_wave).unwrap_or(0.0);
+                (wave, 0.7, 0.8, 0.16)
+            }
             _ => return None,
         };
         let radius = outer * (1.12 + spread * wave);
@@ -400,7 +464,8 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
     }
 
     fn shapes(&mut self, ctx: &DrawContext) -> Vec<Shape> {
-        let visuals = ctx.ctx.global_style().visuals.clone();
+        let style = ctx.ctx.global_style();
+        let visuals = &style.visuals;
         let center = ctx.meta.canvas_to_screen_pos(self.pos);
         let radius = ctx.meta.canvas_to_screen_size(self.radius());
         let alpha = fade_alpha(self.released_at_ms, super::now_ms());
@@ -410,7 +475,8 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
         } else {
             radius
         };
-        self.schedule_repaint(ctx, center, outer * 2.0);
+        let waiting_s = self.waiting_s(ctx.ctx.input(|i| i.time));
+        self.schedule_repaint(ctx, center, outer * 2.0, waiting_s);
 
         let stroke = if self.dragged || self.hovered {
             Stroke::new(1.5, visuals.text_color())
@@ -420,8 +486,7 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
 
         let mut shapes = Vec::with_capacity(8);
         if self.released_at_ms.is_none() {
-            let time = ctx.ctx.input(|i| i.time);
-            shapes.extend(self.pulse_ring(time, center, outer, fill));
+            shapes.extend(self.pulse_ring(waiting_s, center, outer, fill));
         }
         match self.kind {
             NodeKind::Terminal => {
@@ -583,6 +648,39 @@ mod tests {
             let v = pulse(f64::from(i) * 0.137, 1.6);
             assert!((0.0..=1.0).contains(&v));
         }
+    }
+
+    #[test]
+    fn needs_input_pulses_first_then_reminds() {
+        let first = NEEDS_INPUT_PULSE_S * NEEDS_INPUT_FIRST_PULSES;
+        // Pulsing right away, then static until the next reminder.
+        assert_eq!(needs_input_wave(0.0), Some(0.0));
+        assert!((needs_input_wave(NEEDS_INPUT_PULSE_S / 2.0).unwrap() - 1.0).abs() < 1e-6);
+        assert!(needs_input_wave(first - 0.05).is_some());
+        assert_eq!(needs_input_wave(first + 1.0), None);
+        let reminder = first + NEEDS_INPUT_REMINDER_S - NEEDS_INPUT_PULSE_S;
+        assert_eq!(needs_input_wave(reminder - 0.1), None);
+        assert!(
+            (needs_input_wave(reminder + NEEDS_INPUT_PULSE_S / 2.0).unwrap() - 1.0).abs() < 1e-6
+        );
+        assert_eq!(needs_input_wave(first + NEEDS_INPUT_REMINDER_S + 1.0), None);
+        // Over a long wait the ring animates only a small share of the time.
+        let steps: u32 = 10_000;
+        let animated = (0..steps)
+            .filter(|i| needs_input_wave(first + f64::from(*i) * 0.01).is_some())
+            .count();
+        assert!(animated * 10 <= steps as usize, "{animated} of {steps}");
+    }
+
+    #[test]
+    fn needs_input_repaint_waits_for_the_next_pulse() {
+        let first = NEEDS_INPUT_PULSE_S * NEEDS_INPUT_FIRST_PULSES;
+        assert_eq!(needs_input_repaint(1.0), ANIMATION_FRAME);
+        let wait = needs_input_repaint(first + 1.0).as_secs_f64();
+        assert!((wait - (NEEDS_INPUT_REMINDER_S - NEEDS_INPUT_PULSE_S - 1.0)).abs() < 1e-6);
+        let reminder = first + NEEDS_INPUT_REMINDER_S - NEEDS_INPUT_PULSE_S;
+        assert_eq!(needs_input_repaint(reminder - 0.01), ANIMATION_FRAME);
+        assert_eq!(needs_input_repaint(reminder + 0.5), ANIMATION_FRAME);
     }
 
     #[test]
