@@ -6,7 +6,8 @@ fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli = myrstack::claude::hook::run_cli(&args)
         .or_else(|| myrstack::control::client::run_cli(&args))
-        .or_else(|| myrstack::mcp::run_cli(&args));
+        .or_else(|| myrstack::mcp::run_cli(&args))
+        .or_else(|| myrstack::playbook::run_cli(&args));
     if let Some(result) = cli {
         if let Err(e) = result {
             eprintln!("myrstack: {e:#}");

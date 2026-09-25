@@ -1,11 +1,14 @@
 //! `myrstack mcp`: an MCP server on stdin/stdout that proxies to the running app's control API,
 //! so a chat client (Claude Code etc.) can read the fleet and drive the dashboard.
 //!
+//! It also serves the fleet playbook (prompts, resources, tools) straight from disk.
+//!
 //! Hand-rolled rather than built on `rmcp`: the server only needs `initialize`, `ping`,
-//! `tools/list` and `tools/call` over newline-delimited JSON-RPC, and the app is synchronous, so
+//! `tools/*`, `prompts/*` and `resources/*` over newline-delimited JSON-RPC, and the app is synchronous, so
 //! an async runtime would add weight without buying anything. Tools and setup: `docs/mcp.md`.
 
 pub mod backend;
+pub mod playbook;
 pub mod server;
 #[cfg(test)]
 mod tests;

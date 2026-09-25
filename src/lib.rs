@@ -18,6 +18,7 @@ pub mod model;
 pub mod notify;
 pub mod orca;
 pub mod persist;
+pub mod playbook;
 pub mod poller;
 pub mod quota;
 pub mod ui;
