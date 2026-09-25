@@ -3,6 +3,7 @@
 // Stub modules are filled in by later milestones.
 #![allow(dead_code)]
 
+pub mod actions;
 pub mod app;
 pub mod broadcast;
 pub mod claude;

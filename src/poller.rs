@@ -65,6 +65,8 @@ pub enum PollerCommand {
     RefreshNow,
     /// Read this terminal's screen on the screen cadence, starting now; `None` stops reading.
     WatchScreen(Option<String>),
+    /// Read the watched screen now (e.g. right after sending input), then resume the cadence.
+    RefreshScreen,
     /// Stop the thread.
     Shutdown,
 }
@@ -156,6 +158,11 @@ impl ScreenWatch {
         }
         self.handle = handle;
         self.next_due = now;
+    }
+
+    /// Makes the next read due at `now`.
+    pub fn refresh(&mut self, now: Duration) {
+        self.next_due = self.next_due.min(now);
     }
 
     /// When the next read is due; `None` while nothing is watched.
@@ -530,7 +537,7 @@ impl Poller {
     pub fn send(&self, cmd: PollerCommand) {
         // The threads only exit on Shutdown or a dropped handle, so a failed send is moot.
         match cmd {
-            PollerCommand::WatchScreen(_) => {
+            PollerCommand::WatchScreen(_) | PollerCommand::RefreshScreen => {
                 let _ = self.screen_commands.send(cmd);
             }
             PollerCommand::RefreshNow => {
@@ -597,6 +604,7 @@ fn screen_loop(
         };
         match command {
             Ok(PollerCommand::WatchScreen(handle)) => watch.set(handle, start.elapsed()),
+            Ok(PollerCommand::RefreshScreen) => watch.refresh(start.elapsed()),
             Ok(PollerCommand::RefreshNow) | Err(RecvTimeoutError::Timeout) => {}
             Ok(PollerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
         }
@@ -633,7 +641,7 @@ fn run_loop(
         match commands.recv_timeout(wait) {
             Ok(PollerCommand::RefreshNow) => state.force_all(),
             // Routed to the screen thread by `Poller::send`.
-            Ok(PollerCommand::WatchScreen(_)) => {}
+            Ok(PollerCommand::WatchScreen(_) | PollerCommand::RefreshScreen) => {}
             Ok(PollerCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
             Err(RecvTimeoutError::Timeout) => {}
         }
@@ -924,6 +932,23 @@ mod tests {
         let handles: Vec<&str> = updates.iter().map(|u| u.handle.as_str()).collect();
         assert_eq!(handles, vec!["t2", "t2"]);
         fake.with(|s| assert_eq!(s.calls.screens, vec!["t1", "t1", "t2", "t2"]));
+    }
+
+    #[test]
+    fn screen_watch_refresh_reads_early() {
+        let fake = Fake::default();
+        let mut watch = ScreenWatch::new(ms(500));
+        watch.set(Some("t1".into()), ms(0));
+        run_watch(&mut watch, &fake, 0, 200);
+        watch.refresh(ms(200));
+        let times: Vec<i64> = run_watch(&mut watch, &fake, 200, 1000)
+            .iter()
+            .map(|u| u.read_at_ms - NOW_MS)
+            .collect();
+        assert_eq!(times, vec![200, 700]);
+        // Refreshing never delays a read that's already due sooner.
+        watch.refresh(ms(5000));
+        assert_eq!(watch.next_due(), Some(ms(1200)));
     }
 
     #[test]

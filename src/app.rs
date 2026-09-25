@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use eframe::egui;
 
 use crate::APP_NAME;
+use crate::actions::{ActionRunner, OrcaExecutor};
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
 use crate::fleet::FleetData;
 use crate::hotkey::Hotkey;
@@ -51,6 +52,10 @@ pub struct MyrstackApp {
     /// Tail of the selected subagent's transcript.
     transcript: Option<TranscriptTail>,
     broadcast: ui::broadcast::BroadcastWindow,
+    /// Runs terminal sends and tab switches off the UI thread.
+    actions: ActionRunner,
+    /// Input box drafts and send statuses, per terminal.
+    input: ui::terminal::InputPanelState,
 }
 
 impl MyrstackApp {
@@ -60,6 +65,11 @@ impl MyrstackApp {
             .ok();
         let repaint_ctx = cc.egui_ctx.clone();
         let claude = ClaudeWorker::spawn(Some(Box::new(move || repaint_ctx.request_repaint())));
+        let repaint_ctx = cc.egui_ctx.clone();
+        let actions = ActionRunner::spawn(
+            OrcaExecutor::default(),
+            Some(Box::new(move || repaint_ctx.request_repaint())),
+        );
         let repaint_ctx = cc.egui_ctx.clone();
         let poller = Poller::spawn(
             OrcaClient::new(),
@@ -81,6 +91,8 @@ impl MyrstackApp {
             claude_data: None,
             transcript: None,
             broadcast: ui::broadcast::BroadcastWindow::new(),
+            actions,
+            input: ui::terminal::InputPanelState::default(),
         }
     }
 
@@ -154,9 +166,21 @@ impl MyrstackApp {
             .default_size(default_width)
             .min_size(240.0)
             .show(ui, |ui| {
-                ui::terminal::terminal_panel(ui, node, self.screen.as_ref(), now_ms)
+                let terminal = node
+                    .terminal_handle
+                    .as_deref()
+                    .and_then(|h| self.data.as_ref()?.terminals.iter().find(|t| t.handle == h));
+                let input = ui::terminal::PanelInput {
+                    state: &mut self.input,
+                    terminal,
+                };
+                ui::terminal::terminal_panel(ui, node, self.screen.as_ref(), input, now_ms)
             })
             .inner;
+        for request in &response.requests {
+            let id = self.actions.submit(request.action.clone());
+            self.input.submitted(id, request);
+        }
         if response.close {
             self.selected = None;
             self.graph.set_selected(None);
@@ -245,6 +269,11 @@ impl eframe::App for MyrstackApp {
                 self.selected = None;
             }
             self.snapshot = Some(snapshot);
+        }
+        for result in self.actions.poll() {
+            if self.input.on_result(&result, now_ms()) {
+                self.poller.send(PollerCommand::RefreshScreen);
+            }
         }
         self.sync_screen_watch();
         self.sync_transcript();

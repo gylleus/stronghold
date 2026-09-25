@@ -351,6 +351,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(send.bytes_written, Some(6));
+        assert_eq!(send.accepted, None);
+        let refused = parse_terminal_send(
+            br#"{"id":"1","ok":true,"result":{"send":{"handle":"term_1","accepted":false,"bytesWritten":0,"refusedReason":"permission"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(refused.accepted, Some(false));
+        assert_eq!(refused.refused_reason.as_deref(), Some("permission"));
         let focus = parse_terminal_switch(
             br#"{"id":"1","ok":true,"result":{"focus":{"handle":"term_1","tabId":"tab","navigated":false}}}"#,
         )
