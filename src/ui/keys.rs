@@ -37,7 +37,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Esc", "Leave the input box, then clear the selection"),
     ("o", "Open the terminal in Orca"),
     ("f", "Fit the graph to the screen"),
-    ("x", "Close (kill) the selected session…"),
+    ("x  ⌫  ⌦", "Close (kill) the selected session…"),
     ("?", "Toggle this help"),
 ];
 
@@ -58,6 +58,12 @@ pub fn command_for_event(event: &Event, text_focused: bool) -> Option<KeyCommand
             modifiers,
             ..
         } if modifiers.is_none() => Some(KeyCommand::OpenPanel),
+        Event::Key {
+            key: Key::Delete | Key::Backspace,
+            pressed: true,
+            modifiers,
+            ..
+        } if modifiers.is_none() || modifiers.command_only() => Some(KeyCommand::CloseSession),
         Event::Text(text) => command_for_text(text),
         _ => None,
     }
@@ -325,6 +331,14 @@ mod tests {
                 command_for_event(&key(Key::Escape, Modifiers::NONE), focused),
                 Some(Escape)
             );
+        }
+        for k in [Key::Delete, Key::Backspace] {
+            for m in [Modifiers::NONE, Modifiers::COMMAND] {
+                assert_eq!(command_for_event(&key(k, m), false), Some(CloseSession));
+                // Backspace in the input box still edits text.
+                assert_eq!(command_for_event(&key(k, m), true), None);
+            }
+            assert_eq!(command_for_event(&key(k, Modifiers::SHIFT), false), None);
         }
         // Letter keys act through their text events, not the key events.
         assert_eq!(
