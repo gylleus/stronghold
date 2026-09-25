@@ -74,6 +74,59 @@ pub fn node_radius(kind: NodeKind) -> f32 {
 
 /// Fill color of a node in the given state; at least 3:1 contrast against egui's default
 /// panel background of the theme.
+/// Font size of a node label on screen at `zoom`, or `None` when it is too small to draw.
+fn label_px(zoom: f32, emphasized: bool) -> Option<f32> {
+    let px = LABEL_SIZE * zoom;
+    (px >= LABEL_MIN_PX || emphasized).then(|| px.clamp(LABEL_MIN_PX, LABEL_MAX_PX))
+}
+
+/// Size of `label` drawn at [`LABEL_MAX_PX`]; [`node_extent`] scales it to the drawn size.
+pub fn label_size_at_max(ctx: &egui::Context, label: &str) -> Vec2 {
+    if label.is_empty() {
+        return Vec2::ZERO;
+    }
+    ctx.fonts_mut(|f| {
+        f.layout_no_wrap(
+            label.to_owned(),
+            FontId::new(LABEL_MAX_PX, FontFamily::Proportional),
+            Color32::WHITE,
+        )
+    })
+    .size()
+}
+
+/// Screen-space area a node drawn at `zoom` covers, relative to its center: the shape, its
+/// rings (pulse, coordinator, selection), agent badge and label. `label` is the label's size
+/// from [`label_size_at_max`]. Mirrors [`FleetNodeShape`]'s drawing, ignoring the hover scale.
+pub fn node_extent(payload: &NodePayload, label: Vec2, selected: bool, zoom: f32) -> Rect {
+    let radius = node_radius(payload.kind) * zoom;
+    let outer = if payload.kind == NodeKind::Coordinator {
+        radius * 1.3
+    } else {
+        radius
+    };
+    let pulse = match payload.state {
+        NodeState::Working => 1.12 + 0.35 * WORKING_RING_WAVE,
+        NodeState::NeedsInput => 1.12 + 0.7,
+        _ => 1.0,
+    };
+    // Stroke half-widths are generous so anti-aliasing stays inside too.
+    let mut half = (outer * pulse + (outer * 0.16).max(1.0)).max(outer + (radius * 0.15).max(1.5));
+    half = half.max(outer + (radius * 0.25).clamp(3.0, 6.0) + 2.0);
+    if payload.agent_marker.is_some() && radius >= DETAIL_MIN_PX {
+        half = half.max(radius * 0.8 + 10.0);
+    }
+    let mut extent = Rect::from_center_size(Pos2::ZERO, Vec2::splat(2.0 * half));
+    if label != Vec2::ZERO
+        && let Some(px) = label_px(zoom, selected)
+    {
+        let size = label * (px / LABEL_MAX_PX) + Vec2::splat(2.0);
+        let top = outer + 3.0;
+        extent = extent.union(Rect::from_min_size(Pos2::new(-size.x / 2.0, top), size));
+    }
+    extent
+}
+
 pub fn state_color(state: NodeState, dark_mode: bool) -> Color32 {
     let (dark, light) = match state {
         NodeState::Working => (0x38bdf8, 0x0284c7),
@@ -422,10 +475,9 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
             shapes.extend(self.agent_badge(ctx, center, radius, alpha));
         }
 
-        let label_px = ctx.meta.canvas_to_screen_size(LABEL_SIZE);
         let emphasized = self.selected || self.hovered || self.dragged;
-        if !self.label.is_empty() && (label_px >= LABEL_MIN_PX || emphasized) {
-            let size = label_px.clamp(LABEL_MIN_PX, LABEL_MAX_PX);
+        let label_px = label_px(ctx.meta.zoom, emphasized).filter(|_| !self.label.is_empty());
+        if let Some(size) = label_px {
             let color = if emphasized {
                 visuals.strong_text_color()
             } else {
