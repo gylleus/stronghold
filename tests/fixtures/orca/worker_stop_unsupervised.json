@@ -1,0 +1,1 @@
+{"id":"s3","ok":true,"result":{"dispatchId":"dispatch_1","state":"stopped","alreadySettled":false,"processAction":"none","warning":"The assignment was stopped without closing its unsupervised terminal process."},"_meta":{"runtimeId":"rt"}}

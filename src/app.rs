@@ -89,6 +89,8 @@ pub struct MyrstackApp {
     /// Polls `orca account list` for plan quotas every few minutes.
     quota: QuotaPoller,
     quotas: Quotas,
+    /// "Close session" confirmation dialog and the log of closes.
+    close: ui::close::CloseDialog,
 }
 
 /// How many posted notifications the alerts menu keeps.
@@ -152,6 +154,7 @@ impl MyrstackApp {
             search: ui::search::SearchPalette::default(),
             help_open: false,
             frame_stats: ui::frame_stats::FrameStats::default(),
+            close: ui::close::CloseDialog::default(),
         };
         app.restore_state(cc.storage);
         app
@@ -296,6 +299,9 @@ impl MyrstackApp {
         for request in &response.requests {
             let id = self.actions.submit(request.action.clone());
             self.input.submitted(id, request);
+        }
+        if response.close_session {
+            self.request_close(vec![node.id.clone()]);
         }
         if response.close {
             self.selected = None;
@@ -464,6 +470,13 @@ impl MyrstackApp {
                 self.help_open = !self.help_open;
                 None
             }
+            KeyCommand::CloseSession => {
+                // The queen stands for the whole fleet; it has no session to close.
+                if let Some(id) = current.filter(|id| **id != NodeId::queen()).cloned() {
+                    self.request_close(vec![id]);
+                }
+                None
+            }
         };
         if let Some(id) = target {
             self.graph.set_selected(Some(&id));
@@ -536,6 +549,7 @@ impl MyrstackApp {
             }
             self.whip_window.button(ui);
             self.alerts_menu(ui);
+            self.close.log_menu(ui, now_ms);
             self.quota_chips(ui, now_ms);
             if let Some(data) = &self.data
                 && let Some(first) = data.errors.first()
@@ -618,6 +632,32 @@ impl MyrstackApp {
                 }
             }
             None => {}
+        }
+    }
+}
+
+/// Closing (killing) sessions: requests from the terminal panel, the graph's context menu, `x`
+/// and the sidebar's "Close shown…" open one confirmation dialog; confirmed steps run on the
+/// action runner.
+impl MyrstackApp {
+    fn request_close(&mut self, ids: Vec<NodeId>) {
+        self.close.request(ui::close::CloseRequest::Nodes(ids));
+    }
+
+    /// Draws the dialog and submits a confirmed plan's steps, in order.
+    fn close_dialog(&mut self, ctx: &egui::Context) {
+        let terminals = self.data.as_ref().map_or(&[][..], |d| &d.terminals[..]);
+        let confirmed =
+            self.close
+                .show(ctx, self.snapshot.as_ref(), terminals, self.graph.hidden());
+        if let Some((plan, labels)) = confirmed {
+            log::info!("closing sessions: {:?}", plan.steps);
+            let ids: Vec<_> = plan
+                .actions()
+                .into_iter()
+                .map(|action| self.actions.submit(action))
+                .collect();
+            self.close.started(plan, labels, &ids, now_ms());
         }
     }
 }
@@ -746,6 +786,9 @@ impl eframe::App for MyrstackApp {
             if self.input.on_result(&result, now_ms()) {
                 self.poller.send(PollerCommand::RefreshScreen);
             }
+            if self.close.on_result(&result, now_ms()) {
+                self.poller.send(PollerCommand::RefreshNow);
+            }
         }
         self.sync_screen_watch();
         self.sync_transcript();
@@ -784,6 +827,9 @@ impl eframe::App for MyrstackApp {
                 self.graph.set_selected(Some(&id));
                 self.selected = Some(id);
             }
+            if response.close_shown {
+                self.close.request(ui::close::CloseRequest::Shown);
+            }
         }
         if let Some(id) = whip_pick {
             self.select_and_focus(id);
@@ -812,10 +858,14 @@ impl eframe::App for MyrstackApp {
                     if response.selected.is_some() || !hidden_selected {
                         self.selected = response.selected;
                     }
+                    if let Some(id) = response.close_requested {
+                        self.close.request(ui::close::CloseRequest::Nodes(vec![id]));
+                    }
                 }
                 View::Table => ui::table::terminal_table(ui, data, now_ms),
             },
         });
+        self.close_dialog(ui.ctx());
         if let Some(settings) = self.whip_window.show(ui.ctx(), &self.whip_status, now_ms) {
             self.whip.update_settings(settings);
         }

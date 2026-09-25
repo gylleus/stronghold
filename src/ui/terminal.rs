@@ -28,6 +28,8 @@ const CHOICE_DIGITS: [u8; 4] = [1, 2, 3, 4];
 pub struct TerminalPanelResponse {
     /// The close (×) button was clicked.
     pub close: bool,
+    /// "Close…" was clicked: ask to kill the node's session.
+    pub close_session: bool,
     /// Actions to run; the caller submits each and reports the id via
     /// [`InputPanelState::submitted`].
     pub requests: Vec<ActionRequest>,
@@ -303,6 +305,14 @@ pub fn terminal_panel(
                 .clicked()
             {
                 response.close = true;
+            }
+            if node.kind != NodeKind::Subagent
+                && ui
+                    .button(egui::RichText::new("Close…").color(ui.visuals().error_fg_color))
+                    .on_hover_text("Kill this session in Orca (asks first) — x")
+                    .clicked()
+            {
+                response.close_session = true;
             }
             let open = ui
                 .add_enabled(handle.is_some(), egui::Button::new("Open in Orca"))
@@ -724,6 +734,7 @@ mod tests {
             id,
             action: request.action.clone(),
             outcome: outcome.map_err(str::to_owned),
+            note: None,
         }
     }
 

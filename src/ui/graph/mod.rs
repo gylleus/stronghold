@@ -72,6 +72,8 @@ pub struct GraphResponse {
     pub hovered: Option<NodeId>,
     /// The node clicked this frame.
     pub clicked: Option<NodeId>,
+    /// "Close session…" was picked in a node's context menu.
+    pub close_requested: Option<NodeId>,
 }
 
 type EdgeKey = (NodeId, NodeId, EdgeKind);
@@ -116,6 +118,8 @@ pub struct GraphView {
     restore: saved::Restore,
     /// Node to pan onto, keeping the zoom, on the next frame.
     center_requested: Option<NodeId>,
+    /// Node whose context menu is open (the one right-clicked last).
+    context_node: Option<NodeId>,
 }
 
 impl Default for GraphView {
@@ -154,6 +158,7 @@ impl GraphView {
             focus_requested: None,
             restore: saved::Restore::default(),
             center_requested: None,
+            context_node: None,
         }
     }
 
@@ -469,11 +474,45 @@ impl GraphView {
             });
         }
 
+        let close_requested = self.node_context_menu(&response.response, hovered.as_ref());
+
         GraphResponse {
             selected: self.selected(),
             hovered,
             clicked,
+            close_requested,
         }
+    }
+
+    /// Right-click menu of the node under the pointer; returns the node to close, if picked.
+    fn node_context_menu(
+        &mut self,
+        response: &egui::Response,
+        hovered: Option<&NodeId>,
+    ) -> Option<NodeId> {
+        if response.secondary_clicked() {
+            self.context_node = hovered.cloned();
+        }
+        let node = self.nodes.get(self.context_node.as_ref()?)?;
+        let mut picked = None;
+        response.context_menu(|ui| {
+            ui.add(egui::Label::new(egui::RichText::new(&node.label).strong()).truncate());
+            ui.separator();
+            let refusal = match node.kind {
+                NodeKind::Subagent => Some(crate::close::SUBAGENT_REFUSAL),
+                NodeKind::Queen => Some(crate::close::QUEEN_REFUSAL),
+                NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal => None,
+            };
+            let close = ui
+                .add_enabled(refusal.is_none(), egui::Button::new("Close session…"))
+                .on_hover_text("Kill this session in Orca (asks first)")
+                .on_disabled_hover_text(refusal.unwrap_or_default());
+            if close.clicked() {
+                picked = Some(node.id.clone());
+                ui.close();
+            }
+        });
+        picked
     }
 
     /// Fits the whole graph into the view on the next frame.
