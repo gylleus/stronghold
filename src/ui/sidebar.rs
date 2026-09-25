@@ -265,6 +265,17 @@ pub struct SidebarResponse {
 
 /// Draws the run list and filter controls; edits `filter` in place.
 pub fn sidebar(ui: &mut Ui, snapshot: &FleetSnapshot, filter: &mut FleetFilter) -> SidebarResponse {
+    sidebar_with(ui, snapshot, filter, |_| {})
+}
+
+/// Like [`sidebar`], with `extra` sections (e.g. the whip log) drawn between the runs and the
+/// filters, inside the sidebar's scroll area.
+pub fn sidebar_with(
+    ui: &mut Ui,
+    snapshot: &FleetSnapshot,
+    filter: &mut FleetFilter,
+    extra: impl FnOnce(&mut Ui),
+) -> SidebarResponse {
     let before = filter.clone();
     let mut response = SidebarResponse::default();
     egui::ScrollArea::vertical()
@@ -273,6 +284,7 @@ pub fn sidebar(ui: &mut Ui, snapshot: &FleetSnapshot, filter: &mut FleetFilter) 
             egui::CollapsingHeader::new(format!("Runs ({})", snapshot.runs.len()))
                 .default_open(true)
                 .show(ui, |ui| runs_section(ui, snapshot, &mut response));
+            extra(ui);
             egui::CollapsingHeader::new("Filters")
                 .default_open(true)
                 .show(ui, |ui| filters_section(ui, snapshot, filter));

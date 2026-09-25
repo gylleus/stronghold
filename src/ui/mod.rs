@@ -10,3 +10,4 @@ pub mod sidebar;
 pub mod subagent;
 pub mod table;
 pub mod terminal;
+pub mod whip_log;

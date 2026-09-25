@@ -18,5 +18,7 @@ pub use rules::{
     DEFAULT_THRESHOLD_MS, RuleContext, StallFinding, StallReason, StallTarget,
     effective_coordinator, evaluate,
 };
-pub use runner::{ExecutorFactory, STATUS_LOG_LEN, WhipInput, WhipLoop, WhipRunner, WhipStatus};
+pub use runner::{
+    ExecutorFactory, PENDING_LOG_LEN, WhipInput, WhipLogItem, WhipLoop, WhipRunner, WhipStatus,
+};
 pub use settings::{Loaded, SETTINGS_ENV, SETTINGS_FILE, Settings, WhipSettings};

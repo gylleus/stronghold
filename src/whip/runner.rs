@@ -5,6 +5,9 @@
 //! [`WhipEngine::execute`]. After each tick it publishes a [`WhipStatus`] for the UI. In dry-run
 //! the executor is a [`DryRunExecutor`] and the live executor factory is never called.
 //!
+//! Log entries are delivered once: each status carries only the entries logged since the
+//! previous one, numbered with a sequence number, and the UI keeps the history.
+//!
 //! [`WhipLoop`] is the thread's state without the thread, so it can be tested with a fake
 //! clock and executor.
 
@@ -15,12 +18,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
 
 use crate::fleet::FleetData;
-use crate::whip::actions::{DryRunExecutor, WhipExecutor, WhipLogEntry};
+use crate::whip::actions::{DryRunExecutor, WhipAction, WhipExecutor, WhipLogEntry};
 use crate::whip::engine::WhipEngine;
+use crate::whip::rules::StallTarget;
 use crate::whip::settings::WhipSettings;
 
-/// Newest log entries carried in each [`WhipStatus`].
-pub const STATUS_LOG_LEN: usize = 200;
+/// Most log entries held for the UI between two published statuses; older ones are dropped.
+pub const PENDING_LOG_LEN: usize = 1000;
 
 /// Builds the executor that really sends; called once per live tick.
 pub type ExecutorFactory = Box<dyn Fn() -> Box<dyn WhipExecutor> + Send>;
@@ -36,11 +40,58 @@ pub struct WhipInput {
     pub needs_input: BTreeSet<String>,
 }
 
+/// A log entry numbered in logging order, with what it is about as structured fields so the UI
+/// can link it to a node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WhipLogItem {
+    /// 1 for the runner's first entry, then +1 per entry.
+    pub seq: u64,
+    pub entry: WhipLogEntry,
+    /// Terminal the action was about.
+    pub handle: Option<String>,
+    pub run_id: Option<String>,
+    /// Set for a single worker target.
+    pub task_id: Option<String>,
+}
+
+impl WhipLogItem {
+    /// Numbers `entry` and takes its structured target from the `action` it logged.
+    pub fn new(seq: u64, entry: WhipLogEntry, action: &WhipAction) -> Self {
+        let (handle, target) = match action {
+            WhipAction::Nudge {
+                handle, targets, ..
+            } => (handle, (targets.len() == 1).then(|| &targets[0])),
+            WhipAction::Escalate { target, .. } => (target_handle(target), Some(target)),
+            WhipAction::NotifyNeedsInput { handle, .. } => (handle, None),
+        };
+        let (run_id, task_id) = match target {
+            Some(StallTarget::Worker {
+                run_id, task_id, ..
+            }) => (Some(run_id.clone()), Some(task_id.clone())),
+            Some(StallTarget::Coordinator { run_id, .. }) => (Some(run_id.clone()), None),
+            None => (None, None),
+        };
+        Self {
+            seq,
+            entry,
+            handle: Some(handle.clone()),
+            run_id,
+            task_id,
+        }
+    }
+}
+
+fn target_handle(target: &StallTarget) -> &String {
+    match target {
+        StallTarget::Worker { handle, .. } | StallTarget::Coordinator { handle, .. } => handle,
+    }
+}
+
 /// The whip's state after a tick, for the UI.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WhipStatus {
-    /// Newest action log entries, oldest first, at most [`STATUS_LOG_LEN`].
-    pub log: Vec<WhipLogEntry>,
+    /// Entries logged since the previous published status, oldest first.
+    pub new_log: Vec<WhipLogItem>,
     /// Actions logged since the runner started (the log itself is bounded).
     pub actions_logged: u64,
     /// Terminal handles with an escalated, unrecovered stall (rendered Stalled).
@@ -60,6 +111,8 @@ pub struct WhipLoop {
     input: Option<WhipInput>,
     actions_logged: u64,
     last_tick_ms: Option<i64>,
+    /// Entries not yet handed out by [`WhipLoop::take_status`].
+    pending: Vec<WhipLogItem>,
 }
 
 impl WhipLoop {
@@ -70,6 +123,7 @@ impl WhipLoop {
             input: None,
             actions_logged: 0,
             last_tick_ms: None,
+            pending: Vec::new(),
         }
     }
 
@@ -109,17 +163,34 @@ impl WhipLoop {
             };
             self.engine
                 .execute(&actions, executor.as_ref(), &self.settings, now_ms);
-            self.actions_logged += actions.len() as u64;
+            self.record(&actions);
         }
         self.last_tick_ms = Some(now_ms);
-        Some(self.status())
+        Some(self.take_status())
     }
 
-    pub fn status(&self) -> WhipStatus {
+    /// Queues the log entries `execute` just appended for `actions`, one per action.
+    fn record(&mut self, actions: &[WhipAction]) {
         let log = self.engine.log();
-        let skip = log.len().saturating_sub(STATUS_LOG_LEN);
+        let n = actions.len().min(log.len());
+        let first_seq = self.actions_logged + (actions.len() - n) as u64 + 1;
+        let new = log.iter().skip(log.len() - n);
+        let items =
+            new.zip(&actions[actions.len() - n..])
+                .enumerate()
+                .map(|(i, (entry, action))| {
+                    WhipLogItem::new(first_seq + i as u64, entry.clone(), action)
+                });
+        self.pending.extend(items);
+        let excess = self.pending.len().saturating_sub(PENDING_LOG_LEN);
+        self.pending.drain(..excess);
+        self.actions_logged += actions.len() as u64;
+    }
+
+    /// The current status, carrying the log entries not handed out before.
+    pub fn take_status(&mut self) -> WhipStatus {
         WhipStatus {
-            log: log.iter().skip(skip).cloned().collect(),
+            new_log: std::mem::take(&mut self.pending),
             actions_logged: self.actions_logged,
             escalated: self.engine.escalated_handles(),
             findings: self.engine.findings().len(),
@@ -179,9 +250,10 @@ impl WhipRunner {
         let _ = self.commands.send(Command::Settings(settings));
     }
 
-    /// The newest status published since the last call, if any.
+    /// The newest status published since the last call, if any, carrying the log entries of
+    /// every status published since then.
     pub fn latest(&self) -> Option<WhipStatus> {
-        self.statuses.try_iter().last()
+        merge_statuses(self.statuses.try_iter())
     }
 }
 
@@ -191,6 +263,15 @@ impl Drop for WhipRunner {
         // Not joined: a live tick can take several orca call timeouts and must not block quitting.
         drop(self.thread.take());
     }
+}
+
+/// The last of `statuses` with the log entries of all of them, in order.
+fn merge_statuses(statuses: impl Iterator<Item = WhipStatus>) -> Option<WhipStatus> {
+    statuses.reduce(|mut older, mut newer| {
+        older.new_log.append(&mut newer.new_log);
+        newer.new_log = older.new_log;
+        newer
+    })
 }
 
 fn run(
@@ -236,7 +317,7 @@ fn run(
                 if let Some(last) = last_tick {
                     deadline = Some(last + tick_every(whip.settings()));
                 }
-                publish(whip.status());
+                publish(whip.take_status());
             }
             Some(Command::Shutdown) => return,
             None => {
@@ -328,7 +409,7 @@ mod tests {
         let factory = rec.factory();
         let mut whip = WhipLoop::new(WhipSettings::default());
         assert_eq!(whip.tick(1_000, &|| factory()), None);
-        assert_eq!(whip.status().last_tick_ms, None);
+        assert_eq!(whip.take_status().last_tick_ms, None);
     }
 
     #[test]
@@ -341,9 +422,12 @@ mod tests {
         let status = whip.tick(now, &|| factory()).unwrap();
         assert!(status.dry_run);
         assert_eq!(status.actions_logged, 1);
-        assert_eq!(status.log.len(), 1);
-        assert_eq!(status.log[0].action, "notify needs-input");
-        assert_eq!(status.log[0].outcome, "dry-run");
+        assert_eq!(status.new_log.len(), 1);
+        let item = &status.new_log[0];
+        assert_eq!(item.seq, 1);
+        assert_eq!(item.handle.as_deref(), Some(HANDLE));
+        assert_eq!(item.entry.action, "notify needs-input");
+        assert_eq!(item.entry.outcome, "dry-run");
         assert_eq!(status.last_tick_ms, Some(now));
         assert_eq!(rec.built(), 0);
         assert!(rec.calls().is_empty());
@@ -362,32 +446,142 @@ mod tests {
         });
         let status = whip.tick(now, &|| factory()).unwrap();
         assert!(!status.dry_run);
-        assert_eq!(status.log[0].outcome, "sent");
+        assert_eq!(status.new_log[0].entry.outcome, "sent");
         assert_eq!(rec.built(), 1);
         assert_eq!(
             rec.calls(),
             vec![format!("notify Myrstack: {HANDLE} is waiting on you")]
         );
         // Nothing to do on the next tick: the executor is not even built.
-        whip.tick(now + MIN, &|| factory()).unwrap();
+        let next = whip.tick(now + MIN, &|| factory()).unwrap();
+        assert!(next.new_log.is_empty());
         assert_eq!(rec.built(), 1);
     }
 
-    #[test]
-    fn status_log_is_capped() {
-        let mut whip = WhipLoop::new(WhipSettings::default());
-        let now = 1_790_000_000_000;
-        let exec = DryRunExecutor::new();
-        for i in 0..(STATUS_LOG_LEN + 5) {
-            let action = crate::whip::WhipAction::NotifyNeedsInput {
-                handle: format!("term_{i}"),
-                since_ms: now,
-            };
-            whip.engine.execute(&[action], &exec, &whip.settings, now);
+    fn needs_input(i: usize) -> WhipAction {
+        WhipAction::NotifyNeedsInput {
+            handle: format!("term_{i}"),
+            since_ms: 0,
         }
-        let status = whip.status();
-        assert_eq!(status.log.len(), STATUS_LOG_LEN);
-        assert_eq!(status.log.last().unwrap().target, "terminal term_204");
+    }
+
+    /// Runs `actions` through the engine and records them, as a tick does.
+    fn execute(whip: &mut WhipLoop, actions: &[WhipAction]) {
+        let exec = DryRunExecutor::new();
+        whip.engine
+            .execute(actions, &exec, &whip.settings.clone(), 1_790_000_000_000);
+        whip.record(actions);
+    }
+
+    #[test]
+    fn statuses_carry_each_entry_once_with_increasing_seq() {
+        let mut whip = WhipLoop::new(WhipSettings::default());
+        execute(&mut whip, &[needs_input(0), needs_input(1)]);
+        let first = whip.take_status();
+        execute(&mut whip, &[needs_input(2)]);
+        let second = whip.take_status();
+        let third = whip.take_status();
+        let seqs = |s: &WhipStatus| s.new_log.iter().map(|i| i.seq).collect::<Vec<_>>();
+        assert_eq!(seqs(&first), vec![1, 2]);
+        assert_eq!(seqs(&second), vec![3]);
+        assert!(third.new_log.is_empty());
+        assert_eq!(second.new_log[0].entry.target, "terminal term_2");
+        assert_eq!(second.actions_logged, 3);
+    }
+
+    #[test]
+    fn pending_log_is_bounded_and_keeps_the_newest() {
+        let mut whip = WhipLoop::new(WhipSettings::default());
+        for i in 0..(PENDING_LOG_LEN + 5) {
+            execute(&mut whip, &[needs_input(i)]);
+        }
+        let status = whip.take_status();
+        assert_eq!(status.new_log.len(), PENDING_LOG_LEN);
+        assert_eq!(status.new_log[0].seq, 6);
+        let last = status.new_log.last().unwrap();
+        assert_eq!(last.seq, PENDING_LOG_LEN as u64 + 5);
+        assert_eq!(
+            last.entry.target,
+            format!("terminal term_{}", PENDING_LOG_LEN + 4)
+        );
+    }
+
+    #[test]
+    fn merged_statuses_keep_every_entry_and_the_newest_fields() {
+        let item = |seq| WhipLogItem {
+            seq,
+            entry: WhipLogEntry {
+                at_ms: 0,
+                action: String::new(),
+                target: String::new(),
+                reason: String::new(),
+                dry_run: true,
+                outcome: String::new(),
+            },
+            handle: None,
+            run_id: None,
+            task_id: None,
+        };
+        let status = |seqs: &[u64], findings| WhipStatus {
+            new_log: seqs.iter().map(|&s| item(s)).collect(),
+            findings,
+            ..WhipStatus::default()
+        };
+        let merged =
+            merge_statuses([status(&[1, 2], 1), status(&[], 2), status(&[3], 3)].into_iter())
+                .unwrap();
+        assert_eq!(merged.findings, 3);
+        let seqs: Vec<u64> = merged.new_log.iter().map(|i| i.seq).collect();
+        assert_eq!(seqs, vec![1, 2, 3]);
+        assert_eq!(merge_statuses(std::iter::empty()), None);
+    }
+
+    #[test]
+    fn items_carry_structured_targets() {
+        use crate::whip::{NudgeVia, StallReason};
+        let entry = WhipLogEntry {
+            at_ms: 0,
+            action: String::new(),
+            target: String::new(),
+            reason: String::new(),
+            dry_run: true,
+            outcome: String::new(),
+        };
+        let worker = StallTarget::Worker {
+            handle: "term_w".into(),
+            task_id: "t1".into(),
+            run_id: "r1".into(),
+        };
+        let coordinator = StallTarget::Coordinator {
+            handle: "term_c".into(),
+            run_id: "r2".into(),
+        };
+        let escalate = WhipAction::Escalate {
+            target: worker.clone(),
+            reason: StallReason::WorkerNoProgress,
+            evidence: String::new(),
+        };
+        let item = WhipLogItem::new(1, entry.clone(), &escalate);
+        assert_eq!(item.handle.as_deref(), Some("term_w"));
+        assert_eq!(item.run_id.as_deref(), Some("r1"));
+        assert_eq!(item.task_id.as_deref(), Some("t1"));
+
+        let nudge = |targets: Vec<StallTarget>| WhipAction::Nudge {
+            handle: "term_c".into(),
+            targets,
+            attempt: 1,
+            via: NudgeVia::Terminal {
+                handle: "term_c".into(),
+            },
+            text: String::new(),
+        };
+        let item = WhipLogItem::new(2, entry.clone(), &nudge(vec![coordinator.clone()]));
+        assert_eq!(item.run_id.as_deref(), Some("r2"));
+        assert_eq!(item.task_id, None);
+        // Several folded targets: only the terminal is certain.
+        let item = WhipLogItem::new(3, entry, &nudge(vec![coordinator, worker]));
+        assert_eq!(item.handle.as_deref(), Some("term_c"));
+        assert_eq!((item.run_id, item.task_id), (None, None));
     }
 
     fn wait_for_status(runner: &WhipRunner, timeout: Duration) -> Option<WhipStatus> {
@@ -415,7 +609,7 @@ mod tests {
         let status = wait_for_status(&runner, Duration::from_secs(2)).expect("a tick");
         assert!(status.dry_run);
         assert_eq!(status.actions_logged, 1);
-        assert_eq!(status.log[0].outcome, "dry-run");
+        assert_eq!(status.new_log[0].entry.outcome, "dry-run");
 
         // Going live publishes the new mode at once; the wait was already notified, so nothing
         // is sent.

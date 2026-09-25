@@ -7,8 +7,6 @@ use eframe::egui::{self, Color32, RichText};
 use crate::ui::table::format_age;
 use crate::whip::{Settings, WhipSettings, WhipStatus};
 
-/// Log entries shown in the window, newest first.
-const WINDOW_LOG_LEN: usize = 20;
 const SEC: i64 = 1_000;
 
 /// Settings window state: the applied settings, the edited draft and the file they live in.
@@ -206,33 +204,7 @@ fn status_view(ui: &mut egui::Ui, status: &WhipStatus, now_ms: i64) {
             format!("Escalated: {}", list.join(", ")),
         );
     }
-    ui.label(RichText::new("Recent actions").strong());
-    if status.log.is_empty() {
-        ui.weak("None yet.");
-        return;
-    }
-    egui::ScrollArea::vertical()
-        .max_height(280.0)
-        .show(ui, |ui| {
-            egui::Grid::new("whip_log")
-                .num_columns(4)
-                .striped(true)
-                .show(ui, |ui| {
-                    for entry in status.log.iter().rev().take(WINDOW_LOG_LEN) {
-                        ui.label(format!("{} ago", format_age(now_ms - entry.at_ms)));
-                        ui.label(&entry.action).on_hover_text(&entry.reason);
-                        ui.label(&entry.target);
-                        let outcome = RichText::new(&entry.outcome);
-                        let outcome = if entry.outcome.starts_with("failed") {
-                            outcome.color(ui.visuals().error_fg_color)
-                        } else {
-                            outcome
-                        };
-                        ui.label(outcome);
-                        ui.end_row();
-                    }
-                });
-        });
+    ui.weak("The action log is in the sidebar's Whip section.");
 }
 
 #[cfg(test)]
