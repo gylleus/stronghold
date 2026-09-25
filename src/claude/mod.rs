@@ -4,3 +4,6 @@ pub mod sessions;
 pub mod subagents;
 
 pub use sessions::{HookMappings, SessionInfo, SessionLocator, SessionMatch, encode_project_dir};
+pub use subagents::{
+    SubagentInfo, SubagentParent, SubagentScanner, SubagentState, SubagentWatcher,
+};
