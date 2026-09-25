@@ -56,7 +56,11 @@ impl Default for FleetFilter {
 }
 
 impl FleetFilter {
+    /// Whether `node` is shown. The queen always is.
     pub fn matches(&self, node: &Node, snapshot: &FleetSnapshot) -> bool {
+        if node.kind == NodeKind::Queen {
+            return true;
+        }
         if !self.show_loose && node.kind == NodeKind::Terminal {
             return false;
         }
@@ -141,7 +145,7 @@ fn find_node<'a>(snapshot: &'a FleetSnapshot, id: &NodeId) -> Option<&'a Node> {
 
 pub fn repo_counts(snapshot: &FleetSnapshot) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
-    for node in &snapshot.nodes {
+    for node in snapshot.agent_nodes() {
         *counts.entry(node_repo(node, snapshot)).or_insert(0) += 1;
     }
     counts
@@ -149,7 +153,7 @@ pub fn repo_counts(snapshot: &FleetSnapshot) -> BTreeMap<String, usize> {
 
 pub fn state_counts(snapshot: &FleetSnapshot) -> BTreeMap<NodeState, usize> {
     let mut counts = BTreeMap::new();
-    for node in &snapshot.nodes {
+    for node in snapshot.agent_nodes() {
         *counts.entry(node.state).or_insert(0) += 1;
     }
     counts
@@ -157,7 +161,7 @@ pub fn state_counts(snapshot: &FleetSnapshot) -> BTreeMap<NodeState, usize> {
 
 pub fn kind_counts(snapshot: &FleetSnapshot) -> BTreeMap<NodeKind, usize> {
     let mut counts = BTreeMap::new();
-    for node in &snapshot.nodes {
+    for node in snapshot.agent_nodes() {
         *counts.entry(node.kind).or_insert(0) += 1;
     }
     counts
@@ -518,12 +522,9 @@ fn filters_section(
 
     ui.add_space(4.0);
     let hidden = cache.hidden_count(snapshot, filter);
+    let total = snapshot.agent_nodes().count();
     ui.horizontal(|ui| {
-        ui.weak(format!(
-            "{} of {} shown",
-            snapshot.nodes.len() - hidden,
-            snapshot.nodes.len()
-        ));
+        ui.weak(format!("{} of {total} shown", total.saturating_sub(hidden)));
         if ui
             .add_enabled(filter.is_active(), egui::Button::new("Reset"))
             .clicked()

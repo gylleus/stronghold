@@ -35,7 +35,7 @@ fn id(s: &str) -> NodeId {
 }
 
 /// `runs` runs of a coordinator `c{r}` with `workers` workers `w{r}_{w}`, plus `loose`
-/// terminals `t{i}`.
+/// terminals `t{i}` and the queen.
 fn fleet(runs: usize, workers: usize, loose: usize) -> FleetSnapshot {
     let mut s = FleetSnapshot::default();
     for r in 0..runs {
@@ -63,6 +63,7 @@ fn fleet(runs: usize, workers: usize, loose: usize) -> FleetSnapshot {
         s.nodes
             .push(node(&format!("t{t}"), NodeKind::Terminal, None));
     }
+    s.add_queen();
     s
 }
 
@@ -277,5 +278,68 @@ fn memberships_follow_runs_and_parents() {
             Some(Membership::Loose),
             Some(Membership::Member(1)),
         ]
+    );
+}
+
+#[test]
+fn queen_sits_at_the_center_outside_every_cluster() {
+    let (view, snapshot) = settled(12, 8, 4);
+    let pos = positions(&view, &snapshot);
+    let cs = clusters(&snapshot, &pos);
+    let queen = pos[&NodeId::queen()];
+    let centers: Vec<Pos2> = cs.iter().map(|c| c.center).collect();
+    let middle = centroid(&centers).unwrap();
+    let spread = centers
+        .iter()
+        .map(|p| (*p - middle).length())
+        .fold(0.0, f32::max);
+    let off = (queen - middle).length();
+    assert!(
+        off < spread / 3.0,
+        "queen {off} from the clusters' centroid (spread {spread})"
+    );
+    for (i, c) in cs.iter().enumerate() {
+        let distance = (queen - c.center).length();
+        assert!(
+            distance > c.radius,
+            "queen inside run {i} ({distance} < {})",
+            c.radius
+        );
+    }
+}
+
+#[test]
+fn queen_edges_do_not_knot_the_coordinators() {
+    let (view, snapshot) = settled(12, 8, 4);
+    let pos = positions(&view, &snapshot);
+    let queen = pos[&NodeId::queen()];
+    let near = snapshot
+        .nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::Coordinator)
+        .filter(|n| (pos[&n.id] - queen).length() < 60.0)
+        .count();
+    assert_eq!(near, 0, "{near} coordinators crowd the queen");
+}
+
+#[test]
+fn queen_gets_its_own_membership() {
+    let nodes = [
+        ClusterNode {
+            index: 0,
+            run: None,
+            kind: NodeKind::Queen,
+            parent: None,
+        },
+        ClusterNode {
+            index: 1,
+            run: None,
+            kind: NodeKind::Terminal,
+            parent: None,
+        },
+    ];
+    assert_eq!(
+        memberships(&nodes),
+        vec![Some(Membership::Queen), Some(Membership::Loose)]
     );
 }

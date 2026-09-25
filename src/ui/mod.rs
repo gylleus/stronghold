@@ -4,6 +4,7 @@ pub mod broadcast;
 pub mod frame_stats;
 pub mod graph;
 pub mod keys;
+pub mod queen;
 pub mod quota;
 pub mod search;
 pub mod settings;

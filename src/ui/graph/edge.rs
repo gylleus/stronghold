@@ -1,5 +1,6 @@
 //! Edge rendering: thin, low-contrast lines without arrowheads; edges of the selected or
-//! hovered node are highlighted, edges to released workers fade with them.
+//! hovered node are highlighted, edges to released workers fade with them. Queen edges are
+//! fainter and thinner still, so the hub's spokes stay in the background until picked.
 
 use eframe::egui::{Color32, Pos2, Shape, Stroke, Vec2};
 use egui_graphs::{DisplayEdge, DisplayNode, DrawContext, EdgeProps, Node};
@@ -7,6 +8,7 @@ use petgraph::EdgeType;
 use petgraph::stable_graph::IndexType;
 
 use super::shape::{FleetNodeShape, NodePayload, fade_alpha};
+use crate::model::NodeKind;
 
 /// Opacity of an edge whose endpoints are not highlighted.
 pub const EDGE_ALPHA: f32 = 0.28;
@@ -14,6 +16,12 @@ pub const EDGE_ALPHA: f32 = 0.28;
 const EDGE_WIDTH: f32 = 1.0;
 /// Screen width of a highlighted edge, in points.
 const HIGHLIGHT_WIDTH: f32 = 2.0;
+/// Opacity of a queen edge whose endpoints are not highlighted.
+pub const QUEEN_EDGE_ALPHA: f32 = 0.1;
+/// Screen width of a plain queen edge, in points.
+const QUEEN_EDGE_WIDTH: f32 = 0.6;
+/// Screen width of a highlighted queen edge, in points.
+const QUEEN_HIGHLIGHT_WIDTH: f32 = 1.2;
 /// Pointer distance (canvas units) within which an edge counts as hovered.
 const HIT_DISTANCE: f32 = 3.0;
 
@@ -77,14 +85,21 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayEdge<NodePayload, E, Ty, Ix, 
         let now = super::now_ms();
         let fade = fade_alpha(start.payload().released_at_ms, now)
             .min(fade_alpha(end.payload().released_at_ms, now));
+        let queen =
+            start.payload().kind == NodeKind::Queen || end.payload().kind == NodeKind::Queen;
+        let (width, highlight_width, alpha) = if queen {
+            (QUEEN_EDGE_WIDTH, QUEEN_HIGHLIGHT_WIDTH, QUEEN_EDGE_ALPHA)
+        } else {
+            (EDGE_WIDTH, HIGHLIGHT_WIDTH, EDGE_ALPHA)
+        };
         let stroke = if edge_highlighted(interaction(start), interaction(end)) {
             Stroke::new(
-                HIGHLIGHT_WIDTH,
+                highlight_width,
                 visuals.selection.stroke.color.gamma_multiply(fade),
             )
         } else {
-            let color: Color32 = visuals.text_color().gamma_multiply(EDGE_ALPHA * fade);
-            Stroke::new(EDGE_WIDTH, color)
+            let color: Color32 = visuals.text_color().gamma_multiply(alpha * fade);
+            Stroke::new(width, color)
         };
         vec![Shape::line_segment(
             [

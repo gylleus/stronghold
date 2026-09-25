@@ -14,6 +14,7 @@ pub fn kind_label(kind: NodeKind) -> &'static str {
         NodeKind::Worker => "worker",
         NodeKind::Terminal => "terminal",
         NodeKind::Subagent => "subagent",
+        NodeKind::Queen => "queen",
     }
 }
 
@@ -60,6 +61,14 @@ pub fn node_tooltip(
 ) {
     ui.set_max_width(420.0);
     ui.label(RichText::new(&node.label).strong());
+    if node.kind == NodeKind::Queen {
+        ui.label(format!("fleet · {}", state_label(node.state)));
+        if let Some(counts) = &node.preview {
+            ui.label(counts);
+        }
+        ui.label(RichText::new("Click for the fleet summary and broadcast").weak());
+        return;
+    }
     ui.label(format!(
         "{} · {}",
         kind_label(node.kind),

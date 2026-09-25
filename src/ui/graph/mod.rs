@@ -545,9 +545,12 @@ impl GraphView {
         Some(self.graph.node(idx)?.payload().id.clone())
     }
 
-    /// Where a new node starts: next to its coordinator, its run's other nodes or its parent
-    /// edge; otherwise near the layout center.
+    /// Where a new node starts: the queen at the layout center; others next to their
+    /// coordinator, their run's other nodes or their parent edge, else near the layout center.
     fn spawn_position(&self, node: &Node, snapshot: &FleetSnapshot) -> Pos2 {
+        if node.kind == NodeKind::Queen {
+            return self.anchor;
+        }
         let near = self.relative_position(node, snapshot);
         let radius = if near.is_some() {
             SPAWN_NEAR
@@ -583,7 +586,7 @@ impl GraphView {
         let parent = snapshot
             .edges
             .iter()
-            .filter(|e| e.to == node.id)
+            .filter(|e| e.to == node.id && e.kind != EdgeKind::Queen)
             .find_map(|e| placed(&e.from));
         if parent.is_some() || node.run_id.is_some() {
             return parent;

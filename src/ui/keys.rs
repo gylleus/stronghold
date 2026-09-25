@@ -100,7 +100,8 @@ pub struct NavGroup {
     pub nodes: Vec<NodeId>,
 }
 
-/// Visible nodes grouped for navigation: runs in sidebar order, each with its coordinator
+/// Visible nodes grouped for navigation: the queen first (in a group of its own), then runs
+/// in sidebar order, each with its coordinator
 /// first, then workers by label; then nodes outside the listed runs with loose terminals
 /// last. Every node is followed by its subagents (by label). Hidden nodes are skipped and
 /// empty groups dropped.
@@ -146,6 +147,14 @@ pub fn nav_groups(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<Na
     };
 
     let mut groups = Vec::new();
+    let mut queen = Vec::new();
+    for node in snapshot.nodes.iter().filter(|n| n.kind == NodeKind::Queen) {
+        visit(&node.id, &mut queen);
+    }
+    groups.push(NavGroup {
+        run_id: None,
+        nodes: queen,
+    });
     for row in run_rows(snapshot) {
         let mut members: Vec<&crate::model::Node> = snapshot
             .nodes
@@ -438,6 +447,23 @@ mod tests {
         // Run `old` has no visible node left and drops out.
         let runs: Vec<Option<&str>> = groups.iter().map(|g| g.run_id.as_deref()).collect();
         assert_eq!(runs, [Some("new"), None]);
+    }
+
+    #[test]
+    fn queen_comes_first_and_runs_still_step() {
+        let mut s = snapshot();
+        s.add_queen();
+        let order = nav_order(&s, &BTreeSet::new());
+        assert_eq!(order.first(), Some(&NodeId::queen()));
+        assert_eq!(order.len(), 11);
+        let groups = nav_groups(&s, &BTreeSet::new());
+        let runs: Vec<Option<&str>> = groups.iter().map(|g| g.run_id.as_deref()).collect();
+        assert_eq!(runs, [None, Some("new"), Some("old"), None]);
+        assert_eq!(step_run(&groups, None, 1), Some(id("c_new")));
+        assert_eq!(
+            step_node(&order, Some(&id("sub_loose")), 1),
+            Some(NodeId::queen())
+        );
     }
 
     #[test]

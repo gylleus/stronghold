@@ -2,6 +2,9 @@
 //!
 //! Each run forms a cluster around its coordinator; clusters are kept apart and pulled toward
 //! the view center as rigid groups; loose terminals gather in their own group left of the runs.
+//! The queen sits at the view center with the clusters arranged around it: its edges do not
+//! attract (they would pull every cluster into one knot) and clusters keep a ring of space
+//! around it.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -69,6 +72,8 @@ pub enum Membership {
     Member(u32),
     /// Part of the group of terminals that belong to no run.
     Loose,
+    /// The queen, anchored at the view center.
+    Queen,
 }
 
 impl Membership {
@@ -76,6 +81,7 @@ impl Membership {
         match self {
             Self::Coordinator(c) | Self::Member(c) => GroupKey::Run(c),
             Self::Loose => GroupKey::Loose,
+            Self::Queen => GroupKey::Queen,
         }
     }
 }
@@ -113,7 +119,11 @@ pub fn memberships(nodes: &[ClusterNode]) -> Vec<Option<Membership>> {
         });
     }
     for n in nodes.iter().filter(|n| n.run.is_none()) {
-        out[n.index] = Some(parent_membership(nodes, &out, n.parent));
+        out[n.index] = Some(if n.kind == NodeKind::Queen {
+            Membership::Queen
+        } else {
+            parent_membership(nodes, &out, n.parent)
+        });
     }
     out
 }
@@ -138,8 +148,10 @@ fn parent_membership(
 
 /// Cluster forces: (a) run members are pulled toward their coordinator, (b) overlapping
 /// clusters push each other apart, (c) a coordinator is pulled toward its members' centroid,
-/// (d) loose terminals are pulled into a compact group left of the runs, and (e) run clusters
-/// drift toward the view center as a whole.
+/// (d) loose terminals are pulled into a compact group left of the runs, (e) run clusters
+/// drift toward the view center as a whole, and (f) the queen is held at the view center, its
+/// edges' base attraction is cancelled and clusters keep [`RunClustersParams::queen_gap`] from
+/// it, so they ring around it.
 #[derive(Debug, Default)]
 pub struct RunClusters;
 
@@ -164,6 +176,12 @@ pub struct RunClustersParams {
     /// Share of the base node-to-node repulsion kept between nodes of different clusters;
     /// the rest is cancelled so clusters pack by (b) instead of drifting far apart.
     pub cross_repulsion: f32,
+    /// (f) Spring constant pulling the queen to the view center (capped like `max_gravity`).
+    pub queen_pull: f32,
+    /// (f) Free space kept between the queen and each cluster.
+    pub queen_gap: f32,
+    /// (f) The base layout's attraction constant, cancelled along the queen's edges.
+    pub base_attract: f32,
 }
 
 impl Default for RunClustersParams {
@@ -178,6 +196,9 @@ impl Default for RunClustersParams {
             gravity: 0.5,
             max_gravity: 150.0,
             cross_repulsion: 0.1,
+            queen_pull: 0.5,
+            queen_gap: 60.0,
+            base_attract: FruchtermanReingoldState::default().c_attract,
         }
     }
 }
@@ -186,6 +207,7 @@ impl Default for RunClustersParams {
 enum GroupKey {
     Run(u32),
     Loose,
+    Queen,
 }
 
 #[derive(Debug)]
@@ -224,20 +246,38 @@ impl ExtraForce for RunClusters {
             .iter()
             .map(|i| params.members.get(i.index()).copied().flatten())
             .collect();
-        apply_cluster_forces(params, &pos, &roles, disp, area.center(), k);
+        let links = roles
+            .iter()
+            .position(|r| *r == Some(Membership::Queen))
+            .map(|q| {
+                let slot: HashMap<NodeIndex<Ix>, usize> =
+                    indices.iter().enumerate().map(|(i, &n)| (n, i)).collect();
+                g.g()
+                    .neighbors_undirected(indices[q])
+                    .filter_map(|n| slot.get(&n).copied())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        apply_cluster_forces(params, &pos, &roles, &links, disp, area.center(), k);
     }
 }
 
-/// [`RunClusters`] on plain positions; `roles[i]` and `disp[i]` belong to `pos[i]`.
+/// [`RunClusters`] on plain positions; `roles[i]` and `disp[i]` belong to `pos[i]`;
+/// `queen_links` are the positions of the queen's neighbors.
 fn apply_cluster_forces(
     params: &RunClustersParams,
     pos: &[Pos2],
     roles: &[Option<Membership>],
+    queen_links: &[usize],
     disp: &mut [Vec2],
     center: Pos2,
     k: f32,
 ) {
     cancel_cross_repulsion(params, pos, roles, disp, k);
+    let queen = roles.iter().position(|r| *r == Some(Membership::Queen));
+    if let Some(q) = queen {
+        cancel_queen_attraction(params, pos, q, queen_links, disp, k);
+    }
     let groups = groups(pos, roles);
     let loose_target = loose_target(&groups, params.gap, center);
 
@@ -272,6 +312,7 @@ fn apply_cluster_forces(
                     disp[i] += (loose_target - pos[i]) * params.loose_pull;
                 }
             }
+            GroupKey::Queen => {}
         }
     }
 
@@ -279,7 +320,13 @@ fn apply_cluster_forces(
         for gb in &groups[a + 1..] {
             let delta = ga.centroid - gb.centroid;
             let distance = delta.length();
-            let overlap = ga.radius + gb.radius + params.gap - distance;
+            let with_queen = ga.key == GroupKey::Queen || gb.key == GroupKey::Queen;
+            let gap = if with_queen {
+                params.queen_gap
+            } else {
+                params.gap
+            };
+            let overlap = ga.radius + gb.radius + gap - distance;
             if overlap <= 0.0 {
                 continue;
             }
@@ -296,6 +343,31 @@ fn apply_cluster_forces(
                 disp[i] -= push;
             }
         }
+    }
+
+    // The queen ignores every other force: it only heads for the view center.
+    if let Some(q) = queen {
+        let pull = (center - pos[q]) * params.queen_pull;
+        disp[q] = pull * (params.max_gravity / pull.length().max(1e-3)).min(1.0);
+    }
+}
+
+/// Takes back the base FR attraction `c · d² / k` along the queen's edges, which would pull
+/// every coordinator and loose terminal into one knot around it.
+fn cancel_queen_attraction(
+    params: &RunClustersParams,
+    pos: &[Pos2],
+    queen: usize,
+    links: &[usize],
+    disp: &mut [Vec2],
+    k: f32,
+) {
+    for &j in links {
+        let delta = pos[j] - pos[queen];
+        let distance = delta.length().max(FR_EPSILON);
+        let pull = delta / distance * (params.base_attract * distance * distance / k);
+        disp[queen] -= pull;
+        disp[j] += pull;
     }
 }
 

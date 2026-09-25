@@ -1,4 +1,5 @@
-//! "Broadcast…" window: pick runs, write one message, confirm, send to their coordinators.
+//! Broadcast composer, shown in the queen's panel: pick runs, write one message, confirm, send
+//! to their coordinators.
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -21,10 +22,9 @@ enum Stage {
     },
 }
 
-/// State of the broadcast window. Runs are checked by default; the window remembers which
+/// State of the broadcast composer. Runs are checked by default; the composer remembers which
 /// ones the user unticked.
-pub struct BroadcastWindow {
-    pub open: bool,
+pub struct BroadcastComposer {
     text: String,
     unchecked: HashSet<String>,
     /// `None` shows every repo.
@@ -32,10 +32,9 @@ pub struct BroadcastWindow {
     stage: Stage,
 }
 
-impl Default for BroadcastWindow {
+impl Default for BroadcastComposer {
     fn default() -> Self {
         Self {
-            open: false,
             text: String::new(),
             unchecked: HashSet::new(),
             repo_filter: None,
@@ -44,41 +43,13 @@ impl Default for BroadcastWindow {
     }
 }
 
-impl BroadcastWindow {
+impl BroadcastComposer {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Draws the window if open. `make_sender` is called once, when the user confirms.
-    pub fn show(
-        &mut self,
-        ctx: &egui::Context,
-        snapshot: Option<&FleetSnapshot>,
-        make_sender: impl FnOnce() -> Box<dyn BroadcastSender>,
-    ) {
-        if !self.open {
-            return;
-        }
-        let mut open = true;
-        egui::Window::new("Broadcast to coordinators")
-            .open(&mut open)
-            .default_width(520.0)
-            .collapsible(false)
-            .show(ctx, |ui| self.contents(ui, snapshot, make_sender));
-        if !open {
-            self.close();
-        }
-    }
-
-    fn close(&mut self) {
-        self.open = false;
-        // A running job keeps sending in the background; only its results are dropped.
-        if !matches!(self.stage, Stage::Compose) {
-            self.stage = Stage::Compose;
-        }
-    }
-
-    fn contents(
+    /// Draws the composer. `make_sender` is called once, when the user confirms a send.
+    pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
         snapshot: Option<&FleetSnapshot>,
@@ -182,6 +153,7 @@ impl BroadcastWindow {
 
         let dark = ui.visuals().dark_mode;
         egui::ScrollArea::vertical()
+            .id_salt("broadcast_runs")
             .max_height(260.0)
             .auto_shrink([false, true])
             .show(ui, |ui| {
@@ -352,9 +324,9 @@ mod tests {
         }
     }
 
-    /// Draws every compose-stage frame path headlessly; nothing is sent.
+    /// Draws every stage's frame path headlessly; nothing is sent.
     #[test]
-    fn window_draws_without_panicking() {
+    fn composer_draws_without_panicking() {
         let data = FleetData {
             terminals: vec![Terminal {
                 handle: "c1".into(),
@@ -370,13 +342,12 @@ mod tests {
             ..FleetData::default()
         };
         let snapshot = FleetSnapshot::build(&data, 0);
-        let mut window = BroadcastWindow::new();
-        window.open = true;
-        window.text = "hello".into();
+        let mut composer = BroadcastComposer::new();
+        composer.text = "hello".into();
         let ctx = egui::Context::default();
         for stage in 0..3 {
             if stage == 1 {
-                window.stage = Stage::Confirm(plan_broadcast(
+                composer.stage = Stage::Confirm(plan_broadcast(
                     &snapshot,
                     &BroadcastSelection::new(["r1"]),
                     "hello",
@@ -384,10 +355,10 @@ mod tests {
             }
             let snap = (stage != 2).then_some(&snapshot);
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                window.show(ui.ctx(), snap, || Box::new(NeverSender));
+                composer.ui(ui, snap, || Box::new(NeverSender));
             });
             output.textures_delta.clear();
         }
-        assert!(window.open);
+        assert!(matches!(composer.stage, Stage::Confirm(_)));
     }
 }
