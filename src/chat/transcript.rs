@@ -1,0 +1,333 @@
+//! The conversation as the pane shows it, built by applying CLI messages in order: user
+//! bubbles, assistant text streaming in from deltas, tool calls paired with their results,
+//! permission cards and inline notices.
+
+use std::collections::{HashMap, VecDeque};
+
+use serde_json::Value;
+
+use super::protocol::{
+    BlockKind, ContentBlock, Incoming, Init, PermissionRequest, StreamEvent, TurnResult,
+};
+
+/// Text the CLI puts in a user message when the host interrupts a turn.
+const INTERRUPTED_NOTE: &str = "[Request interrupted by user]";
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ChatItem {
+    User(String),
+    Assistant { text: String, streaming: bool },
+    Tool(ToolCall),
+    Permission(PermissionCard),
+    Notice(String),
+    Error(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    /// `None` until the finished assistant message carries it.
+    pub input: Option<Value>,
+    pub result: Option<ToolOutcome>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolOutcome {
+    pub text: String,
+    pub is_error: bool,
+}
+
+/// A permission prompt; `decision` is `None` while it waits for the user.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PermissionCard {
+    pub request: PermissionRequest,
+    pub decision: Option<Decision>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    Allow,
+    /// Allow, and every later call of this tool in this chat.
+    AlwaysAllow,
+    Deny,
+    /// The session ended before an answer.
+    Cancelled,
+}
+
+#[derive(Debug, Default)]
+pub struct Transcript {
+    pub items: Vec<ChatItem>,
+    /// From the newest `system/init`.
+    pub session_id: Option<String>,
+    pub model: Option<String>,
+    pub tools: Vec<String>,
+    /// A turn is running (a message was sent and its `result` has not arrived).
+    pub running: bool,
+    /// The newest turn's result.
+    pub last_result: Option<TurnResult>,
+    /// Summed cost of the turns seen in this pane.
+    pub cost_usd: f64,
+    /// Message id of the message being streamed.
+    current_message: Option<String>,
+    /// Stream block index → item index, for the message being streamed.
+    stream_blocks: HashMap<u64, usize>,
+    /// Per message id, streamed text items not yet replaced by their finished block.
+    unfinished_text: HashMap<String, VecDeque<usize>>,
+    /// Tool use id → item index.
+    tools_by_id: HashMap<String, usize>,
+}
+
+impl Transcript {
+    pub fn push_user(&mut self, text: &str) {
+        self.items.push(ChatItem::User(text.to_owned()));
+        self.running = true;
+    }
+
+    pub fn push_notice(&mut self, text: impl Into<String>) {
+        self.items.push(ChatItem::Notice(text.into()));
+    }
+
+    pub fn push_error(&mut self, text: impl Into<String>) {
+        self.items.push(ChatItem::Error(text.into()));
+    }
+
+    /// The first permission card still waiting for an answer.
+    pub fn pending_permission(&self) -> Option<&PermissionCard> {
+        self.items.iter().find_map(|item| match item {
+            ChatItem::Permission(card) if card.decision.is_none() => Some(card),
+            _ => None,
+        })
+    }
+
+    pub fn push_permission(&mut self, request: PermissionRequest) {
+        self.items.push(ChatItem::Permission(PermissionCard {
+            request,
+            decision: None,
+        }));
+    }
+
+    /// Records the answer to the card of `request_id`; false if there is no such open card.
+    pub fn decide(&mut self, request_id: &str, decision: Decision) -> bool {
+        for item in self.items.iter_mut().rev() {
+            if let ChatItem::Permission(card) = item
+                && card.request.request_id == request_id
+                && card.decision.is_none()
+            {
+                card.decision = Some(decision);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// The session went away mid-turn: open cards are cancelled, streaming text is final and
+    /// the turn is over.
+    pub fn session_ended(&mut self) {
+        for item in &mut self.items {
+            match item {
+                ChatItem::Permission(card) if card.decision.is_none() => {
+                    card.decision = Some(Decision::Cancelled);
+                }
+                ChatItem::Assistant { streaming, .. } => *streaming = false,
+                _ => {}
+            }
+        }
+        self.running = false;
+        self.current_message = None;
+        self.stream_blocks.clear();
+        self.unfinished_text.clear();
+    }
+
+    /// Applies one message from the CLI.
+    pub fn apply(&mut self, message: &Incoming) {
+        match message {
+            Incoming::Init(init) => self.apply_init(init),
+            // Subagent traffic stays inside its Task tool row.
+            Incoming::Stream {
+                parent: Some(_), ..
+            }
+            | Incoming::Assistant {
+                parent: Some(_), ..
+            }
+            | Incoming::User {
+                parent: Some(_), ..
+            } => {}
+            Incoming::Stream { event, .. } => self.apply_stream(event),
+            Incoming::Assistant {
+                message_id,
+                content,
+                ..
+            } => self.apply_assistant(message_id, content),
+            Incoming::User { content, .. } => self.apply_user(content),
+            Incoming::Result(result) => self.apply_result(result),
+            Incoming::Status(_)
+            | Incoming::ControlRequest { .. }
+            | Incoming::ControlResponse { .. }
+            | Incoming::Other(_) => {}
+        }
+    }
+
+    fn apply_init(&mut self, init: &Init) {
+        self.session_id = Some(init.session_id.clone());
+        if init.model.is_some() {
+            self.model = init.model.clone();
+        }
+        self.tools = init.tools.clone();
+    }
+
+    fn apply_stream(&mut self, event: &StreamEvent) {
+        match event {
+            StreamEvent::MessageStart { message_id } => {
+                self.current_message = Some(message_id.clone());
+                self.stream_blocks.clear();
+            }
+            StreamEvent::BlockStart { index, block } => match block {
+                BlockKind::Text => {
+                    let at = self.items.len();
+                    self.items.push(ChatItem::Assistant {
+                        text: String::new(),
+                        streaming: true,
+                    });
+                    self.stream_blocks.insert(*index, at);
+                    if let Some(id) = &self.current_message {
+                        self.unfinished_text
+                            .entry(id.clone())
+                            .or_default()
+                            .push_back(at);
+                    }
+                }
+                BlockKind::ToolUse { id, name } => self.tool_item(id, name),
+                BlockKind::Thinking | BlockKind::Other => {}
+            },
+            StreamEvent::TextDelta { index, text } => {
+                if let Some(&at) = self.stream_blocks.get(index)
+                    && let Some(ChatItem::Assistant { text: t, .. }) = self.items.get_mut(at)
+                {
+                    t.push_str(text);
+                }
+            }
+            StreamEvent::BlockStop { .. } | StreamEvent::MessageStop | StreamEvent::Other => {}
+        }
+    }
+
+    fn apply_assistant(&mut self, message_id: &str, content: &[ContentBlock]) {
+        for block in content {
+            match block {
+                ContentBlock::Text(text) => {
+                    let streamed = self
+                        .unfinished_text
+                        .get_mut(message_id)
+                        .and_then(VecDeque::pop_front);
+                    match streamed.and_then(|at| self.items.get_mut(at)) {
+                        Some(ChatItem::Assistant {
+                            text: t, streaming, ..
+                        }) => {
+                            *t = text.clone();
+                            *streaming = false;
+                        }
+                        _ => self.items.push(ChatItem::Assistant {
+                            text: text.clone(),
+                            streaming: false,
+                        }),
+                    }
+                }
+                ContentBlock::ToolUse { id, name, input } => {
+                    self.tool_item(id, name);
+                    if let Some(ChatItem::Tool(call)) = self
+                        .tools_by_id
+                        .get(id)
+                        .and_then(|&at| self.items.get_mut(at))
+                    {
+                        call.input = Some(input.clone());
+                    }
+                }
+                ContentBlock::Thinking | ContentBlock::ToolResult { .. } | ContentBlock::Other => {}
+            }
+        }
+    }
+
+    /// The tool row of `id`, created if new.
+    fn tool_item(&mut self, id: &str, name: &str) {
+        if self.tools_by_id.contains_key(id) {
+            return;
+        }
+        self.tools_by_id.insert(id.to_owned(), self.items.len());
+        self.items.push(ChatItem::Tool(ToolCall {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            input: None,
+            result: None,
+        }));
+    }
+
+    fn apply_user(&mut self, content: &[ContentBlock]) {
+        for block in content {
+            match block {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    text,
+                    is_error,
+                } => {
+                    if let Some(ChatItem::Tool(call)) = self
+                        .tools_by_id
+                        .get(tool_use_id)
+                        .and_then(|&at| self.items.get_mut(at))
+                    {
+                        call.result = Some(ToolOutcome {
+                            text: text.clone(),
+                            is_error: *is_error,
+                        });
+                    }
+                }
+                ContentBlock::Text(text) if text.trim() == INTERRUPTED_NOTE => {
+                    self.push_notice("Interrupted");
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn apply_result(&mut self, result: &TurnResult) {
+        for item in &mut self.items {
+            if let ChatItem::Assistant { streaming, .. } = item {
+                *streaming = false;
+            }
+        }
+        self.unfinished_text.clear();
+        self.stream_blocks.clear();
+        self.current_message = None;
+        if result.is_error && !result.interrupted() {
+            let detail = if result.errors.is_empty() {
+                result
+                    .result
+                    .clone()
+                    .unwrap_or_else(|| result.subtype.clone())
+            } else {
+                result.errors.join("\n")
+            };
+            self.push_error(format!("Turn failed: {detail}"));
+        }
+        self.cost_usd += result.cost_usd.unwrap_or_default();
+        self.last_result = Some(result.clone());
+        self.running = false;
+    }
+
+    /// Text of all assistant items, for logging and tests.
+    pub fn assistant_text(&self) -> Vec<&str> {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                ChatItem::Assistant { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn tool_calls(&self) -> impl Iterator<Item = &ToolCall> {
+        self.items.iter().filter_map(|item| match item {
+            ChatItem::Tool(call) => Some(call),
+            _ => None,
+        })
+    }
+}
