@@ -4,8 +4,9 @@
 //! pure functions so they can be tested and previewed. Every nudge starts with `Myrstack:` so
 //! agents can recognise it (see `docs/heartbeat-convention.md`).
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use crate::notify::{Notifier, whip_request};
 use crate::orca::{OrcaClient, OutgoingMessage, TerminalInput};
 use crate::whip::rules::{StallReason, StallTarget};
 
@@ -221,10 +222,11 @@ pub trait WhipExecutor {
     fn notify(&self, title: &str, body: &str);
 }
 
-/// Sends through the `orca` CLI. Notifications are log lines for now.
+/// Sends through the `orca` CLI; notifications go to the [`Notifier`] when one is attached.
 #[derive(Debug)]
 pub struct OrcaExecutor {
     client: OrcaClient,
+    notifier: Option<Arc<Notifier>>,
 }
 
 /// A client that runs `orca` without the launching terminal's identity, so nudges are not
@@ -237,7 +239,16 @@ impl Default for OrcaExecutor {
 
 impl OrcaExecutor {
     pub fn new(client: OrcaClient) -> Self {
-        Self { client }
+        Self {
+            client,
+            notifier: None,
+        }
+    }
+
+    /// Posts notifications through `notifier` instead of only logging them.
+    pub fn with_notifier(mut self, notifier: Arc<Notifier>) -> Self {
+        self.notifier = Some(notifier);
+        self
     }
 }
 
@@ -259,6 +270,9 @@ impl WhipExecutor for OrcaExecutor {
 
     fn notify(&self, title: &str, body: &str) {
         log::warn!("whip notification: {title}: {body}");
+        if let Some(notifier) = &self.notifier {
+            notifier.notify(whip_request(title, body));
+        }
     }
 }
 
