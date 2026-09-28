@@ -127,11 +127,17 @@ pub enum ControlCommand {
         agents: Vec<String>,
         stalled: bool,
     },
+    /// Review queue methods (`pr_ready`, `review_queue`, …), answered by the app.
+    Review(crate::review::ReviewCommand),
 }
 
 impl ControlCommand {
     /// The command for an action method; `None` when `method` is not an action.
     pub fn parse(method: &str, params: &Value) -> Option<Result<Self, ControlError>> {
+        let now = crate::control::server::now_ms();
+        if let Some(review) = crate::review::ReviewCommand::parse(method, params, now) {
+            return Some(review.map(Self::Review));
+        }
         let p = Params::new(params);
         let agent = || p.required_str("id").map(str::to_owned);
         let key = |key| {

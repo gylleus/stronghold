@@ -17,6 +17,7 @@ pub enum ActionId {
     WhipStalled,
     CloseSelected,
     Broadcast,
+    ReviewQueue,
     WhipSettings,
     Settings,
     ToggleDryRun,
@@ -119,6 +120,13 @@ pub const ACTIONS: &[Action] = &[
         "broadcast",
         "Broadcast…",
         "message coordinators send all queen",
+        None,
+    ),
+    action(
+        ActionId::ReviewQueue,
+        "review_queue",
+        "Review queue",
+        "pr pull request ready review github merge ankra queue",
         None,
     ),
     action(
@@ -383,6 +391,8 @@ pub enum Dispatch {
     WhipStalled,
     /// Select the Queen and open her broadcast section.
     Broadcast,
+    /// Select the Queen and open her "Ready for review" section.
+    ReviewQueue,
     /// Open the Settings window on its Whip section.
     WhipSettings,
     /// Open the Settings window (⌘,).
@@ -406,6 +416,7 @@ pub fn dispatch(id: ActionId) -> Dispatch {
         A::WhipStalled => Dispatch::WhipStalled,
         A::CloseSelected => Dispatch::Key(KeyCommand::CloseSession),
         A::Broadcast => Dispatch::Broadcast,
+        A::ReviewQueue => Dispatch::ReviewQueue,
         A::WhipSettings => Dispatch::WhipSettings,
         A::Settings => Dispatch::OpenSettings,
         A::ToggleDryRun => Dispatch::ToggleDryRun,
@@ -536,6 +547,7 @@ mod tests {
             (A::WhipStalled, Dispatch::WhipStalled),
             (A::CloseSelected, Dispatch::Key(KeyCommand::CloseSession)),
             (A::Broadcast, Dispatch::Broadcast),
+            (A::ReviewQueue, Dispatch::ReviewQueue),
             (A::WhipSettings, Dispatch::WhipSettings),
             (A::Settings, Dispatch::OpenSettings),
             (A::ToggleDryRun, Dispatch::ToggleDryRun),

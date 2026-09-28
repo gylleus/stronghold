@@ -11,6 +11,7 @@ pub mod keys;
 pub mod playbook;
 pub mod queen;
 pub mod quota;
+pub mod review;
 pub mod search;
 pub mod selection;
 pub mod settings;

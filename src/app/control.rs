@@ -312,6 +312,7 @@ impl MyrstackApp {
             ControlCommand::Whip { agents, stalled } => {
                 return self.control_whip(&agents, stalled, reply);
             }
+            ControlCommand::Review(command) => self.control_review(command),
         };
         let error = result.as_ref().err().cloned();
         reply.send(result);
