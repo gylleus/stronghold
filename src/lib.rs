@@ -23,6 +23,7 @@ pub mod playbook;
 pub mod poller;
 pub mod quota;
 pub mod ui;
+pub mod voice;
 pub mod whip;
 
 pub use app::MyrstackApp;
