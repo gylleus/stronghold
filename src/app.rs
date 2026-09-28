@@ -9,6 +9,7 @@ use crate::APP_NAME;
 
 mod chat;
 mod control;
+mod palette;
 mod playbook;
 mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
@@ -405,16 +406,19 @@ impl MyrstackApp {
         }
     }
 
-    /// Opens the search palette on its shortcut, draws it and applies the picked node.
+    /// Opens the command palette on its shortcut, draws it and applies the picked node or
+    /// action.
     fn search_palette(&mut self, ctx: &egui::Context) {
         if ui::search::take_open_shortcut(ctx) {
             self.search.open();
         }
+        let cx = self.palette_context();
         let outcome = self.search.show(
             ctx,
             self.snapshot.as_ref(),
             self.data.as_ref(),
             self.graph.hidden(),
+            &cx,
         );
         match outcome {
             Some(ui::search::SearchOutcome::Select(id)) => self.select_and_focus(id),
@@ -422,6 +426,7 @@ impl MyrstackApp {
                 self.clear_filters();
                 self.select_and_focus(id);
             }
+            Some(ui::search::SearchOutcome::Run(action)) => self.run_palette_action(ctx, action),
             None => {}
         }
     }
@@ -793,6 +798,8 @@ impl MyrstackApp {
         self.filter = state.filter;
         self.selected = state.layout.selected.clone();
         self.graph.import_layout(state.layout);
+        self.search
+            .set_recents(ui::commands::Recents::from_keys(&state.recent_actions));
     }
 
     fn persisted_state(&self) -> PersistedState {
@@ -800,6 +807,7 @@ impl MyrstackApp {
             view: self.view,
             filter: self.filter.clone(),
             layout: self.graph.export_layout(),
+            recent_actions: self.search.recents().keys(),
             ..PersistedState::default()
         }
     }

@@ -3,7 +3,7 @@
 use eframe::egui;
 
 use super::{MyrstackApp, repaint_once};
-use crate::chat::{ChatConfig, ChatSession};
+use crate::chat::{ChatConfig, ChatSession, STATUS_REPORT_PROMPT};
 use crate::model::{FleetSnapshot, NodeId};
 use crate::ui::chat::{ChatAction, ChatPanelState, ChatView, chat_ui};
 
@@ -66,8 +66,25 @@ impl MyrstackApp {
             self.selected = None;
             self.graph.set_selected(None);
         } else {
-            self.select_queen();
-            self.chat.panel.focus_input = true;
+            self.open_chat();
         }
+    }
+
+    /// Selects the Queen and focuses the chat's input.
+    pub(super) fn open_chat(&mut self) {
+        self.select_queen();
+        self.chat.panel.focus_input = true;
+    }
+
+    /// Whether the chat can take a message now.
+    pub(super) fn chat_ready(&self) -> bool {
+        self.chat.session.can_send()
+    }
+
+    /// Opens the chat and sends the Status report prompt, as its button's `ChatAction::Send`
+    /// does.
+    pub(super) fn status_report(&mut self) {
+        self.open_chat();
+        self.chat.session.send(STATUS_REPORT_PROMPT);
     }
 }
