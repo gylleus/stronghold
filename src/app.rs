@@ -11,6 +11,7 @@ mod chat;
 mod control;
 mod palette;
 mod playbook;
+mod settings;
 mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
@@ -84,7 +85,8 @@ pub struct MyrstackApp {
     whip_log: ui::whip_log::WhipLog,
     /// Sidebar rows and counts derived from `snapshot`.
     sidebar_cache: ui::sidebar::SidebarCache,
-    whip_window: ui::settings::WhipSettingsWindow,
+    /// The Settings window (Queen, Whip, Voice, General); owns `settings.json`.
+    whip_window: ui::settings::SettingsPane,
     /// Rate-limited macOS notifications, shared with the whip's executors.
     notifier: Arc<Notifier>,
     needs_input_detector: NeedsInputDetector,
@@ -123,7 +125,7 @@ impl MyrstackApp {
             PollerConfig::default(),
             Some(repaint_once(ctx)),
         );
-        let whip_window = ui::settings::WhipSettingsWindow::load(whip::Settings::path());
+        let whip_window = ui::settings::SettingsPane::load(whip::Settings::path());
         let notifier = Arc::new(Notifier::spawn(Some(repaint_once(ctx))));
         let whip_notifier = notifier.clone();
         let whip = WhipRunner::spawn(
@@ -138,6 +140,7 @@ impl MyrstackApp {
             crate::quota::POLL_INTERVAL,
             Some(repaint_once(ctx)),
         );
+        let chat = chat::AppChat::start(ctx, whip_window.queen());
         let mut app = Self {
             control: control::AppControl::start(ctx),
             quota,
@@ -171,7 +174,7 @@ impl MyrstackApp {
             frame_stats: ui::frame_stats::FrameStats::default(),
             close: ui::close::CloseDialog::default(),
             playbook_watch: playbook::PlaybookWatch::spawn(repaint_once(ctx)),
-            chat: chat::AppChat::start(ctx),
+            chat,
             whip_now: whip_now::WhipNowState::default(),
         };
         app.restore_state(cc.storage);
@@ -448,6 +451,10 @@ impl MyrstackApp {
             self.toggle_chat();
             return;
         }
+        if command == KeyCommand::OpenSettings {
+            self.open_settings();
+            return;
+        }
         let Some(snapshot) = &self.snapshot else {
             return;
         };
@@ -534,7 +541,7 @@ impl MyrstackApp {
                 self.help_open = !self.help_open;
                 None
             }
-            KeyCommand::ToggleChat => None,
+            KeyCommand::ToggleChat | KeyCommand::OpenSettings => None,
             KeyCommand::CloseSession => {
                 let ids = ui::selection::close_targets(current, &self.graph.selection());
                 if !ids.is_empty() {
@@ -626,6 +633,7 @@ impl MyrstackApp {
             {
                 self.toggle_chat();
             }
+            self.whip_window.gear_button(ui);
             self.whip_window.button(ui);
             self.alerts_menu(ui);
             self.close.log_menu(ui, now_ms);
@@ -1013,9 +1021,7 @@ impl eframe::App for MyrstackApp {
             },
         });
         self.close_dialog(ui.ctx());
-        if let Some(settings) = self.whip_window.show(ui.ctx(), &self.whip_status, now_ms) {
-            self.whip.update_settings(settings);
-        }
+        self.settings_window(ui.ctx(), now_ms);
         if self.whip_window.take_whip_stalled() {
             self.request_whip_stalled(None);
         }

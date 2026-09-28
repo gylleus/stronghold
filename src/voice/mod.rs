@@ -3,5 +3,6 @@
 pub mod audio_in;
 pub mod audio_out;
 pub mod models;
+pub mod settings;
 pub mod stt;
 pub mod tts;

@@ -17,6 +17,7 @@ pub enum ActionId {
     CloseSelected,
     Broadcast,
     WhipSettings,
+    Settings,
     ToggleDryRun,
     FitGraph,
     ResetLayout,
@@ -118,6 +119,13 @@ pub const ACTIONS: &[Action] = &[
         "Whip settings…",
         "configure rules thresholds preferences options",
         None,
+    ),
+    action(
+        ActionId::Settings,
+        "settings",
+        "Settings…",
+        "preferences options configure queen model effort voice whip data dir socket version",
+        Some("⌘,"),
     ),
     action(
         ActionId::ToggleDryRun,
@@ -365,7 +373,10 @@ pub enum Dispatch {
     WhipStalled,
     /// Select the Queen and open her broadcast section.
     Broadcast,
+    /// Open the Settings window on its Whip section.
     WhipSettings,
+    /// Open the Settings window (⌘,).
+    OpenSettings,
     ToggleDryRun,
     ResetLayout,
     SetView(View),
@@ -385,6 +396,7 @@ pub fn dispatch(id: ActionId) -> Dispatch {
         A::CloseSelected => Dispatch::Key(KeyCommand::CloseSession),
         A::Broadcast => Dispatch::Broadcast,
         A::WhipSettings => Dispatch::WhipSettings,
+        A::Settings => Dispatch::OpenSettings,
         A::ToggleDryRun => Dispatch::ToggleDryRun,
         A::FitGraph => Dispatch::Key(KeyCommand::Fit),
         A::ResetLayout => Dispatch::ResetLayout,
@@ -477,6 +489,7 @@ mod tests {
             let action = ACTIONS.iter().find(|a| match dispatch(a.id) {
                 Dispatch::Key(c) => c == command,
                 Dispatch::OpenChat => command == KeyCommand::ToggleChat,
+                Dispatch::OpenSettings => command == KeyCommand::OpenSettings,
                 _ => false,
             });
             let action = action.unwrap_or_else(|| panic!("no palette action for {command:?}"));
@@ -512,6 +525,7 @@ mod tests {
             (A::CloseSelected, Dispatch::Key(KeyCommand::CloseSession)),
             (A::Broadcast, Dispatch::Broadcast),
             (A::WhipSettings, Dispatch::WhipSettings),
+            (A::Settings, Dispatch::OpenSettings),
             (A::ToggleDryRun, Dispatch::ToggleDryRun),
             (A::FitGraph, Dispatch::Key(KeyCommand::Fit)),
             (A::ResetLayout, Dispatch::ResetLayout),
