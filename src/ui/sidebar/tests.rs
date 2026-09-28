@@ -460,3 +460,14 @@ fn clicking_a_loose_terminal_selects_and_pans_to_it() {
     assert_eq!(response.select, Some(id("loose")));
     assert_eq!(response.focus_node, Some(id("loose")));
 }
+
+#[test]
+fn repo_plus_button_asks_for_a_new_session_in_that_repo() {
+    let s = snapshot();
+    let mut filter = FleetFilter::default();
+    let response = crate::ui::test_util::click_label("+", |ui| sidebar(ui, &s, &mut filter));
+    let repo = response.new_session_repo.expect("a repo");
+    assert_ne!(repo, NO_REPO);
+    assert!(repo_groups(&s).iter().any(|g| g.repo == repo));
+    assert_eq!(response.focus_repo, None);
+}

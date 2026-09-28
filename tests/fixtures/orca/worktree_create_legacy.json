@@ -1,0 +1,20 @@
+{
+  "id": "6a1c8b9f-2d2e-4a8f-8e2f-3b5c7d9e1f20",
+  "ok": true,
+  "result": {
+    "worktree": {
+      "id": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/gylleus/orca/workspaces/depict/spawn-old",
+      "repoId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f",
+      "path": "/Users/gylleus/orca/workspaces/depict/spawn-old",
+      "branch": "refs/heads/gylleus/spawn-old",
+      "isMainWorktree": false,
+      "displayName": "spawn-old"
+    },
+    "warning": "Setup hook skipped: no setup script configured.",
+    "startupTerminal": {
+      "spawned": true,
+      "handle": "term_1b2c3d4e-5f60-4718-8a9b-0c1d2e3f4a5b",
+      "surface": "background"
+    }
+  }
+}

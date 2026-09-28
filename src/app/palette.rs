@@ -54,6 +54,7 @@ impl MyrstackApp {
                 self.select_queen();
                 self.queen.open_broadcast = true;
             }
+            Dispatch::ReviewQueue => self.open_review_queue(),
             Dispatch::WhipSettings => self.whip_window.open_window(),
             Dispatch::OpenSettings => self.open_settings(),
             Dispatch::ToggleDryRun => self.toggle_whip_dry_run(),
@@ -71,6 +72,7 @@ impl MyrstackApp {
                 self.filter.show_loose = !self.filter.show_loose;
                 self.apply_filter();
             }
+            Dispatch::NewSession => self.open_spawn_dialog(None),
             Dispatch::ToggleReleased => {
                 self.filter.show_released = !self.filter.show_released;
                 self.apply_filter();

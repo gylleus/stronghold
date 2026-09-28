@@ -9,6 +9,7 @@
 
 pub mod backend;
 pub mod playbook;
+pub mod review;
 pub mod server;
 #[cfg(test)]
 mod tests;

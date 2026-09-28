@@ -433,6 +433,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "whip_status",
         "set_whip",
         "whip_agents",
+        "spawn_session",
         "focus_agent",
         "set_filter",
         "set_view",
@@ -444,6 +445,8 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "list_playbook",
         "attendant_brief",
         "kickoff",
+        "mark_pr_ready",
+        "review_queue",
     ];
     assert_eq!(names, expected);
     let reads = [
@@ -457,6 +460,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "list_playbook",
         "attendant_brief",
         "kickoff",
+        "review_queue",
     ];
     let destructive = [
         "send_to_agent",
@@ -465,6 +469,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "broadcast_to_coordinators",
         "set_whip",
         "whip_agents",
+        "spawn_session",
     ];
     for tool in tools {
         let name = tool["name"].as_str().unwrap();
@@ -582,6 +587,24 @@ fn each_tool_maps_to_its_control_request() {
             vec![("whip", json!({"stalled": true}))],
         ),
         (
+            "spawn_session",
+            json!({"mode": "worktree", "worktree": "depict/main", "prompt": " Fix it ", "bogus": 1}),
+            vec![(
+                "spawn",
+                json!({"mode": "worktree", "worktree": "depict/main", "prompt": "Fix it", "agent": "claude"}),
+            )],
+        ),
+        (
+            "spawn_session",
+            json!({"mode": "worker", "run_id": "run_1", "repo": "depict", "name": "w1",
+                   "prompt": "spec", "agent": "codex", "model": "gpt-6-astra"}),
+            vec![(
+                "spawn",
+                json!({"mode": "worker", "run_id": "run_1", "repo": "depict", "name": "w1",
+                       "prompt": "spec", "agent": "codex", "model": "gpt-6-astra"}),
+            )],
+        ),
+        (
             "focus_agent",
             json!({"id": "queen", "raise_window": true}),
             vec![("focus", json!({"id": "queen", "raise": true}))],
@@ -683,6 +706,29 @@ fn invalid_arguments_are_tool_errors_and_call_nothing() {
         ),
         ("set_whip", json!({})),
         ("list_agents", json!({"live": "yes"})),
+        ("spawn_session", json!({"prompt": "x"})),
+        ("spawn_session", json!({"mode": "later", "prompt": "x"})),
+        ("spawn_session", json!({"mode": "worktree", "prompt": "x"})),
+        (
+            "spawn_session",
+            json!({"mode": "new_worktree", "repo": "r", "prompt": "x"}),
+        ),
+        (
+            "spawn_session",
+            json!({"mode": "worker", "run_id": "r", "prompt": "x"}),
+        ),
+        (
+            "spawn_session",
+            json!({"mode": "worker", "run_id": "r", "worktree": "w", "terminal": "t", "prompt": "x"}),
+        ),
+        (
+            "spawn_session",
+            json!({"mode": "worker", "run_id": "r", "worktree": "w"}),
+        ),
+        (
+            "spawn_session",
+            json!({"mode": "worktree", "worktree": "w", "agent": "gemini"}),
+        ),
     ];
     for (tool, args) in cases {
         let mut server = McpServer::new(FakeControl::default());
@@ -1352,4 +1398,38 @@ fn close_agents_stays_a_dry_run_by_default() {
     );
     call(&mut server, "close_agents", json!({"ids": ["term:a"]}));
     assert_eq!(server.control().calls[0].1["dry_run"], true);
+}
+
+#[test]
+fn spawn_session_reports_the_new_session() {
+    let reply = json!({
+        "handle": "term_new", "node": "term:term_new",
+        "worktree_id": "r::/wt", "worktree_path": "/wt",
+        "task_id": null, "dispatch_id": null,
+        "verified": true, "notes": ["accepted the Bypass Permissions warning (2)"],
+    });
+    let mut server = McpServer::new(FakeControl::default().reply("spawn", Ok(reply)));
+    let r = call(
+        &mut server,
+        "spawn_session",
+        json!({"mode": "new_worktree", "repo": "depict", "name": "x", "prompt": "go"}),
+    );
+    assert!(!is_error(&r), "{}", text(&r));
+    let t = text(&r);
+    assert!(t.starts_with("Started Claude in term_new (/wt)."), "{t}");
+    assert!(t.contains("Node: term:term_new"));
+    assert!(t.contains("The prompt shows as started."));
+    assert!(t.contains("- accepted the Bypass Permissions warning (2)"));
+
+    let failed = CallError::Control(crate::control::ControlError::failed(
+        "Start worker: worker failed at agent_readiness",
+    ));
+    let mut server = McpServer::new(FakeControl::default().reply("spawn", Err(failed)));
+    let r = call(
+        &mut server,
+        "spawn_session",
+        json!({"mode": "worktree", "worktree": "w", "prompt": "go"}),
+    );
+    assert!(is_error(&r));
+    assert!(text(&r).contains("agent_readiness"), "{}", text(&r));
 }

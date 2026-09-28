@@ -66,6 +66,15 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `list_playbook` | – | – (reads the playbook) | read-only |
 | `attendant_brief` | `run_id` | `fleet_data` (headless fallback) | read-only |
 | `kickoff` | `task_id` | `fleet_data` (headless fallback) | read-only |
+| `mark_pr_ready` | `pr_url`, `title`, `summary` | `pr_ready` (queued in `pr-ready.jsonl` when the app is down) | not destructive, idempotent |
+| `review_queue` | – | `review_queue` (the saved queue when the app is down) | read-only |
+
+`mark_pr_ready` is for fleet agents: the server is registered at user scope, so every Claude
+session (fleet agents in Orca terminals included) has it. It sends the caller's Orca identity
+(`ORCA_TERMINAL_HANDLE`, `ORCA_PANE_KEY`, `ORCA_TAB_ID` from the `myrstack mcp` process's
+environment, which it inherits from the agent's terminal) so the PR shows under the agent's
+node. Agents without MCP (Codex) run `myrstack pr-ready <url> [--title …] [--summary …]`,
+which does the same. See the control API's [Review queue](control-api.md#review-queue).
 
 All tools set `openWorldHint: false`. Agent ids are node ids from `list_agents` or
 `fleet_status` (`term:…`, `dispatch:…`, `sub:…`). A terminal handle or an exact label also

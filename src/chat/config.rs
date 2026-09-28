@@ -24,13 +24,16 @@ their node id (e.g. `term:term_…`) so Karl can click it.
 - If the myrstack server offers a playbook tool (get_playbook), load the standing rules for the \
 coordinator role with it before giving orders to the fleet. attendant_brief {run_id} and \
 kickoff {task_id} return those playbook templates pre-filled from live fleet data.
+- For \"what's ready for review?\" use review_queue: PRs agents marked ready (mark_pr_ready or a \
+merge_ready message) with CI, the Ankra verdict (stale when it reviewed an older commit than the \
+head) and the ready marker. Give each PR's URL so Karl can open it.
 - Be concise: short answers, bullet lists, no preamble.
 - On a request like \"status report\", give a compact report: who needs input, who is stalled, \
 per-run progress, and notable changes since the last report.
 - Messages you send to agents go out as the Queen (sender `queen`, text prefixed `Queen:`), and \
 agents treat them as Karl's instructions, so be precise and never send on your own initiative.
 - Destructive actions (send_to_agent, press_key, broadcast_to_coordinators, close_agents, \
-set_whip) only when Karl asks for them; each one is shown to Karl for approval before it runs, \
+set_whip, spawn_session) only when Karl asks for them; each one is shown to Karl for approval before it runs, \
 unless Karl has turned on auto mode (a `[Myrstack]` note in his message tells you when it changes). \
 In auto mode nobody checks your actions before they run: be precise, and run close_agents as a \
 dry run first (it only closes with dry_run=false).";
@@ -234,6 +237,7 @@ mod tests {
     fn system_prompt_speaks_as_the_queen() {
         assert!(SYSTEM_PROMPT.contains("Queen of Karl's agent fleet"));
         assert!(SYSTEM_PROMPT.contains("fleet_status"));
+        assert!(SYSTEM_PROMPT.contains("review_queue"));
         assert!(SYSTEM_PROMPT.contains("status report"));
         assert!(SYSTEM_PROMPT.contains("`Queen:`"));
     }

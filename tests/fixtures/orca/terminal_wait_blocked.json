@@ -1,0 +1,14 @@
+{
+  "id": "4a9b3c5d-6e7f-4a8b-8c9d-1e2f3a4b5c6d",
+  "ok": true,
+  "result": {
+    "wait": {
+      "handle": "term_9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+      "condition": "tui-idle",
+      "satisfied": false,
+      "status": "running",
+      "exitCode": null,
+      "blockedReason": "codex-trust-workspace"
+    }
+  }
+}

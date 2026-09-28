@@ -1,0 +1,214 @@
+{
+  "body": "## Why\n\n(body trimmed for the fixture)\n",
+  "comments": [
+    {
+      "author": {
+        "login": "linear-code"
+      },
+      "authorAssociation": "NONE",
+      "body": "<!-- linear-linkback --> (trimmed)",
+      "createdAt": "2026-09-28T12:24:08Z",
+      "id": "IC_kwDOKwOQwM8AAAABXd2OZg",
+      "url": "https://github.com/depict-org/depict/pull/8118#issuecomment-5869768294"
+    },
+    {
+      "author": {
+        "login": "ankra-platform"
+      },
+      "authorAssociation": "NONE",
+      "body": "<!-- ankra-ai:section:review -->\n\n## Ankra AI review\n\n**Verdict: comments.**\n\n(review text trimmed for the fixture)\n\n_Reviewed commit da939d40e863. This review is read-only and advisory._",
+      "createdAt": "2026-09-28T12:26:18Z",
+      "id": "IC_kwDOKwOQwM8AAAABXd4J4g",
+      "url": "https://github.com/depict-org/depict/pull/8118#issuecomment-5869799906"
+    },
+    {
+      "author": {
+        "login": "cloudflare-workers-and-pages"
+      },
+      "authorAssociation": "NONE",
+      "body": "## Deploying before-after-4 with &nbsp;<a href=\"https://pages.dev\"><img alt=\"Clo (trimmed)",
+      "createdAt": "2026-09-28T12:28:57Z",
+      "id": "IC_kwDOKwOQwM8AAAABXd6ftg",
+      "url": "https://github.com/depict-org/depict/pull/8118#issuecomment-5869838262"
+    },
+    {
+      "author": {
+        "login": "github-actions"
+      },
+      "authorAssociation": "NONE",
+      "body": "<!-- portal-app-next-preview --> (trimmed)",
+      "createdAt": "2026-09-28T12:32:45Z",
+      "id": "IC_kwDOKwOQwM8AAAABXd95dA",
+      "url": "https://github.com/depict-org/depict/pull/8118#issuecomment-5869894004"
+    }
+  ],
+  "headRefOid": "da939d40e8638a3ae4b2066a0ff2116c18504060",
+  "isDraft": true,
+  "mergedAt": null,
+  "number": 8118,
+  "reviewDecision": "",
+  "state": "OPEN",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:34:54Z",
+      "conclusion": "SKIPPED",
+      "name": "battery",
+      "startedAt": "2026-09-28T12:34:55Z",
+      "status": "COMPLETED",
+      "workflowName": "Foundation eval gate (label-triggered)"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:34:54Z",
+      "conclusion": "SKIPPED",
+      "name": "create-deployment",
+      "startedAt": "2026-09-28T12:34:55Z",
+      "status": "COMPLETED",
+      "workflowName": "Remote Dev"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:35:31Z",
+      "conclusion": "SUCCESS",
+      "name": "typecheck",
+      "startedAt": "2026-09-28T12:34:51Z",
+      "status": "COMPLETED",
+      "workflowName": "Before-after typecheck"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:35:31Z",
+      "conclusion": "SUCCESS",
+      "name": "run-danger",
+      "startedAt": "2026-09-28T12:34:56Z",
+      "status": "COMPLETED",
+      "workflowName": "Danger Job"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:35:25Z",
+      "conclusion": "SUCCESS",
+      "name": "typecheck",
+      "startedAt": "2026-09-28T12:34:51Z",
+      "status": "COMPLETED",
+      "workflowName": "Depict-search typecheck"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:37:26Z",
+      "conclusion": "SUCCESS",
+      "name": "format",
+      "startedAt": "2026-09-28T12:34:51Z",
+      "status": "COMPLETED",
+      "workflowName": "Portal App format"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:39:29Z",
+      "conclusion": "SUCCESS",
+      "name": "build-deploy",
+      "startedAt": "2026-09-28T12:34:56Z",
+      "status": "COMPLETED",
+      "workflowName": "Portal app worker"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:35:37Z",
+      "conclusion": "SUCCESS",
+      "name": "build-theme-consumer / build-image",
+      "startedAt": "2026-09-28T12:34:57Z",
+      "status": "COMPLETED",
+      "workflowName": "Theme Consumer"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:35:14Z",
+      "conclusion": "SUCCESS",
+      "name": "check_commit_status",
+      "startedAt": "2026-09-28T12:34:56Z",
+      "status": "COMPLETED",
+      "workflowName": "no_workflow_failed"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:36:10Z",
+      "conclusion": "SUCCESS",
+      "name": "pyright repo-wide (advisory)",
+      "startedAt": "2026-09-28T12:34:56Z",
+      "status": "COMPLETED",
+      "workflowName": "pyright repo-wide (advisory)"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:34:54Z",
+      "conclusion": "SKIPPED",
+      "name": "build-devenv",
+      "startedAt": "2026-09-28T12:35:02Z",
+      "status": "COMPLETED",
+      "workflowName": "Remote Dev"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:36:06Z",
+      "conclusion": "SUCCESS",
+      "name": "test-theme-consumer / build-image",
+      "startedAt": "2026-09-28T12:34:57Z",
+      "status": "COMPLETED",
+      "workflowName": "Theme Consumer"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:34:55Z",
+      "conclusion": "SKIPPED",
+      "name": "apply-remote-dev",
+      "startedAt": "2026-09-28T12:34:55Z",
+      "status": "COMPLETED",
+      "workflowName": "Remote Dev"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:36:18Z",
+      "conclusion": "SUCCESS",
+      "name": "typecheck-theme-consumer / build-image",
+      "startedAt": "2026-09-28T12:34:57Z",
+      "status": "COMPLETED",
+      "workflowName": "Theme Consumer"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:34:55Z",
+      "conclusion": "SKIPPED",
+      "name": "resolve-deployment",
+      "startedAt": "2026-09-28T12:34:55Z",
+      "status": "COMPLETED",
+      "workflowName": "Remote Dev"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:36:32Z",
+      "conclusion": "SUCCESS",
+      "name": "bump-gitops-tag",
+      "startedAt": "2026-09-28T12:36:20Z",
+      "status": "COMPLETED",
+      "workflowName": "Theme Consumer"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T12:37:51Z",
+      "conclusion": "NEUTRAL",
+      "name": "Ankra AI review",
+      "startedAt": "2026-09-28T12:34:51Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "Danger",
+      "startedAt": "2026-09-28T12:35:28Z",
+      "state": "SUCCESS"
+    }
+  ],
+  "title": "VROOM-1496: Hydrate live storefront recommendations with Shopify sections",
+  "url": "https://github.com/depict-org/depict/pull/8118"
+}

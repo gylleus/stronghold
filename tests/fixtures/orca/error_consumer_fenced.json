@@ -1,0 +1,8 @@
+{
+  "id": "8e3f7a9b-0c1d-4e2f-8a3b-5c6d7e8f9a0b",
+  "ok": false,
+  "error": {
+    "code": "consumer_fenced",
+    "message": "worker-start requires the coordinator terminal currently bound to the Task Run."
+  }
+}

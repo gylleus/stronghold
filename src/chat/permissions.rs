@@ -16,6 +16,7 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "whip_status",
     "alerts",
     "quotas",
+    "review_queue",
     "get_playbook",
     "list_playbook",
     "attendant_brief",
@@ -35,6 +36,7 @@ pub const DESTRUCTIVE_TOOLS: &[&str] = &[
     "close_agents",
     "broadcast_to_coordinators",
     "set_whip",
+    "spawn_session",
 ];
 
 /// Whether `tool` (as named in a `can_use_tool` request) runs without asking.

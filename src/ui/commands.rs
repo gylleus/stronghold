@@ -16,10 +16,12 @@ pub enum ActionId {
     StopSpeaking,
     ToggleSpeakReplies,
     StatusReport,
+    NewSession,
     WhipSelected,
     WhipStalled,
     CloseSelected,
     Broadcast,
+    ReviewQueue,
     WhipSettings,
     Settings,
     ToggleDryRun,
@@ -97,24 +99,17 @@ pub const ACTIONS: &[Action] = &[
         None,
     ),
     action(
-        ActionId::StopSpeaking,
-        "stop_speaking",
-        "Stop speaking",
-        "voice quiet silence mute reply queen audio",
-        None,
-    ),
-    action(
-        ActionId::ToggleSpeakReplies,
-        "toggle_speak_replies",
-        "Speak replies on/off",
-        "voice read aloud tts queen audio",
-        None,
-    ),
-    action(
         ActionId::StatusReport,
         "status_report",
         "Status report",
         "queen chat ask summary fleet overview",
+        None,
+    ),
+    action(
+        ActionId::NewSession,
+        "new_session",
+        "New session…",
+        "spawn start launch agent claude codex worktree worker prompt",
         None,
     ),
     action(
@@ -146,6 +141,13 @@ pub const ACTIONS: &[Action] = &[
         None,
     ),
     action(
+        ActionId::ReviewQueue,
+        "review_queue",
+        "Review queue",
+        "pr pull request ready review github merge ankra queue",
+        None,
+    ),
+    action(
         ActionId::WhipSettings,
         "whip_settings",
         "Whip settings…",
@@ -164,6 +166,20 @@ pub const ACTIONS: &[Action] = &[
         "toggle_dry_run",
         "Toggle whip dry-run",
         "whip dry run live mode",
+        None,
+    ),
+    action(
+        ActionId::StopSpeaking,
+        "stop_speaking",
+        "Stop speaking",
+        "voice quiet silence mute reply queen audio",
+        None,
+    ),
+    action(
+        ActionId::ToggleSpeakReplies,
+        "toggle_speak_replies",
+        "Speak replies on/off",
+        "voice read aloud tts queen audio",
         None,
     ),
     action(
@@ -425,6 +441,8 @@ pub enum Dispatch {
     WhipStalled,
     /// Select the Queen and open her broadcast section.
     Broadcast,
+    /// Select the Queen and open her "Ready for review" section.
+    ReviewQueue,
     /// Open the Settings window on its Whip section.
     WhipSettings,
     /// Open the Settings window (⌘,).
@@ -436,6 +454,8 @@ pub enum Dispatch {
     ShowOnly(NodeState),
     ToggleLoose,
     ToggleReleased,
+    /// Open the "New session…" dialog.
+    NewSession,
 }
 
 pub fn dispatch(id: ActionId) -> Dispatch {
@@ -447,10 +467,12 @@ pub fn dispatch(id: ActionId) -> Dispatch {
         A::StopSpeaking => Dispatch::StopSpeaking,
         A::ToggleSpeakReplies => Dispatch::ToggleSpeakReplies,
         A::StatusReport => Dispatch::StatusReport,
+        A::NewSession => Dispatch::NewSession,
         A::WhipSelected => Dispatch::Key(KeyCommand::Whip),
         A::WhipStalled => Dispatch::WhipStalled,
         A::CloseSelected => Dispatch::Key(KeyCommand::CloseSession),
         A::Broadcast => Dispatch::Broadcast,
+        A::ReviewQueue => Dispatch::ReviewQueue,
         A::WhipSettings => Dispatch::WhipSettings,
         A::Settings => Dispatch::OpenSettings,
         A::ToggleDryRun => Dispatch::ToggleDryRun,
@@ -580,10 +602,12 @@ mod tests {
             (A::StopSpeaking, Dispatch::StopSpeaking),
             (A::ToggleSpeakReplies, Dispatch::ToggleSpeakReplies),
             (A::StatusReport, Dispatch::StatusReport),
+            (A::NewSession, Dispatch::NewSession),
             (A::WhipSelected, Dispatch::Key(KeyCommand::Whip)),
             (A::WhipStalled, Dispatch::WhipStalled),
             (A::CloseSelected, Dispatch::Key(KeyCommand::CloseSession)),
             (A::Broadcast, Dispatch::Broadcast),
+            (A::ReviewQueue, Dispatch::ReviewQueue),
             (A::WhipSettings, Dispatch::WhipSettings),
             (A::Settings, Dispatch::OpenSettings),
             (A::ToggleDryRun, Dispatch::ToggleDryRun),

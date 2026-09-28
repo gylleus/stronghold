@@ -1,0 +1,63 @@
+{
+  "id": "54e5b976-2089-4d02-97cc-c45f9edb2c2b",
+  "ok": true,
+  "result": {
+    "messages": [
+      {
+        "id": "msg_93fb229edbe8",
+        "run_id": "run_7c25cdcf46e0",
+        "delivery_contract": "current_delivery",
+        "from_handle": "term_442fcb9f-3706-481e-a4c9-acc9707bc9e6",
+        "to_handle": "run:run_7c25cdcf46e0",
+        "subject": "PR #249 green: empty 'changes' review counts as pass",
+        "body": "https://github.com/depict-org/commerce-platform/pull/249 at 72c51c3e: MERGEABLE, all CI passes. (body trimmed for the fixture)",
+        "type": "merge_ready",
+        "priority": "normal",
+        "thread_id": null,
+        "payload": "{\"taskId\":\"task_71dbd1cd8e5c\",\"dispatchId\":\"ctx_fe699c81ec5e\"}",
+        "read": 1,
+        "sequence": 2179,
+        "created_at": "2026-09-25T13:41:32Z",
+        "delivered_at": null,
+        "sender_pane_key": "16b3a609-4e45-473e-8591-d16268efecb6:e499ad8b-3ccd-4702-87d8-443423aad46f"
+      },
+      {
+        "id": "msg_b81a45da2e45",
+        "run_id": "run_7c25cdcf46e0",
+        "delivery_contract": "current_delivery",
+        "from_handle": "term_442fcb9f-3706-481e-a4c9-acc9707bc9e6",
+        "to_handle": "run:run_7c25cdcf46e0",
+        "subject": "PR #248 green: the real build error reaches coder and owner",
+        "body": "https://github.com/depict-org/commerce-platform/pull/248 at 72c51c3e: MERGEABLE, all CI passes. (body trimmed for the fixture)",
+        "type": "merge_ready",
+        "priority": "normal",
+        "thread_id": null,
+        "payload": "{\"taskId\":\"task_a4104a5f30cc\",\"dispatchId\":\"ctx_511cefe736f6\"}",
+        "read": 1,
+        "sequence": 2177,
+        "created_at": "2026-09-25T13:33:50Z",
+        "delivered_at": null,
+        "sender_pane_key": "16b3a609-4e45-473e-8591-d16268efecb6:e499ad8b-3ccd-4702-87d8-443423aad46f"
+      },
+      {
+        "id": "msg_0c474808a3a6",
+        "run_id": "run_57c04fae0941",
+        "delivery_contract": "current_delivery",
+        "from_handle": "term_8d3cf52e-54d4-48a6-8ed3-dcc0ed8725f3",
+        "to_handle": "run:run_57c04fae0941",
+        "subject": "Rejected heartbeat: alive",
+        "body": "Orca rejected this heartbeat: Dispatch ctx_0f03bacd2b30 capability is revoked.",
+        "type": "heartbeat",
+        "priority": "high",
+        "thread_id": null,
+        "payload": "{\"taskId\":\"task_35c666f9747d\",\"dispatchId\":\"ctx_0f03bacd2b30\",\"phase\":\"investigating\",\"_orcaLifecycleRejection\":{\"code\":\"dispatch_capability_invalid\",\"reason\":\"Dispatch ctx_0f03bacd2b30 capability is revoked.\"}}",
+        "read": 0,
+        "sequence": 2193,
+        "created_at": "2026-09-28T11:28:44Z",
+        "delivered_at": "2026-09-28T11:29:14Z",
+        "sender_pane_key": "bd2c84fd-2570-42ac-9193-d1895135ec29:8d849d63-1fd2-42e7-afa3-794641cc310b"
+      }
+    ],
+    "count": 3
+  }
+}

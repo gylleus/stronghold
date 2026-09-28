@@ -1,0 +1,9 @@
+ ▐▛███▜▌   Claude Code v2.3.1
+▝▜█████▛▘  Opus 4.8 (1M context) · Claude Max
+  ▘▘ ▝▝    ~/orca/workspaces/commerce-platform/spawn-test
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Fix the flaky checkout test in packages/platform: it times out on CI about one run in
+  five. Find the cause, fix it, and add a regression test.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

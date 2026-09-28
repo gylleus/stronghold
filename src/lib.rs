@@ -22,6 +22,8 @@ pub mod persist;
 pub mod playbook;
 pub mod poller;
 pub mod quota;
+pub mod review;
+pub mod spawn;
 pub mod ui;
 pub mod voice;
 pub mod whip;

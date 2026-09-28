@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use serde_json::{Value, json};
 
 use crate::mcp::backend::Control;
-use crate::mcp::{playbook, tools};
+use crate::mcp::{playbook, review, tools};
 use crate::playbook::Playbook;
 
 /// Protocol versions this server speaks, newest first. `initialize` echoes the client's version
@@ -38,8 +38,9 @@ prompt), stalled (the whip escalated it), done, failed.
 
 Start with fleet_status. Agent ids (term:…, dispatch:…, sub:…) come from list_agents or \
 fleet_status; a terminal handle or an exact label also works. send_to_agent, press_key, \
-close_agents, broadcast_to_coordinators and set_whip act on real agents, so confirm with Karl \
-first. close_agents only shows the plan unless dry_run=false is passed.
+close_agents, broadcast_to_coordinators, set_whip and spawn_session act on real agents, so confirm \
+with Karl first. close_agents only shows the plan unless dry_run=false is passed. spawn_session \
+starts a new session (existing worktree, new worktree, or a run's worker) with a prompt.
 
 This server also serves the fleet playbook, the standing rules the fleet runs by, read from disk \
 (no app needed): the prompts coordinator, attendant and worker (slash commands such as \
@@ -47,7 +48,11 @@ This server also serves the fleet playbook, the standing rules the fleet runs by
 file or one section; resources myrstack://playbook/<file> hold each file. attendant_brief \
 {run_id} and kickoff {task_id} (also prompts attendant-brief and kickoff) return those templates \
 pre-filled from live fleet data. Every answer starts with the playbook version (git commit, dirty \
-flag, content hash).";
+flag, content hash).
+
+Review queue: an agent whose PR is ready for Karl's review calls mark_pr_ready {pr_url} (right \
+after merge_ready); it only records in Myrstack, attributed to the agent's Orca terminal. \
+review_queue lists what is waiting, with CI, Ankra and ready-marker state.";
 
 /// The MCP session state over one [`Control`].
 pub struct McpServer<C: Control> {
@@ -58,6 +63,8 @@ pub struct McpServer<C: Control> {
     playbook_dir: Option<PathBuf>,
     /// Where playbook fetches are logged; `None` logs nothing.
     fetch_log: Option<PathBuf>,
+    /// The caller's identity and files for the review queue tools.
+    review: review::ReviewEnv,
 }
 
 impl<C: Control> McpServer<C> {
@@ -67,7 +74,14 @@ impl<C: Control> McpServer<C> {
             protocol: None,
             playbook_dir: None,
             fetch_log: crate::playbook::fetches::default_path(),
+            review: review::ReviewEnv::from_env(),
         }
+    }
+
+    /// Uses `env` (caller identity, pending and queue files) for the review queue tools.
+    pub fn with_review_env(mut self, env: review::ReviewEnv) -> Self {
+        self.review = env;
+        self
     }
 
     /// Logs playbook fetches to `path` instead of the data dir's log.
@@ -177,6 +191,7 @@ impl<C: Control> McpServer<C> {
             "tools/list" => {
                 let mut all = tools::definitions();
                 all.extend(playbook::tool_definitions());
+                all.extend(review::definitions());
                 Ok(json!({ "tools": all }))
             }
             "tools/call" => self.call_tool(params),
@@ -236,6 +251,7 @@ impl<C: Control> McpServer<C> {
                     log.as_deref(),
                 )
             })
+            .or_else(|| review::call(&mut self.control, &self.review, name, &args))
             .or_else(|| tools::call(&mut self.control, name, &args))
             .ok_or_else(|| (INVALID_PARAMS, format!("unknown tool: {name}")))?;
         let mut result = json!({

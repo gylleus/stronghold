@@ -45,6 +45,7 @@ pub const READ_METHODS: &[&str] = &[
     "quotas",
     "alerts",
     "fleet_data",
+    "review_queue",
 ];
 /// Action methods, in the order `ping` lists them.
 pub const ACTION_METHODS: &[&str] = &[
@@ -62,6 +63,10 @@ pub const ACTION_METHODS: &[&str] = &[
     "open_whip_settings",
     "close",
     "whip",
+    "spawn",
+    "pr_ready",
+    "review_dismiss",
+    "review_done",
 ];
 
 /// One read of a terminal's screen.

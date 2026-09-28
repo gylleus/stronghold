@@ -12,7 +12,9 @@ mod control;
 mod dictation;
 mod palette;
 mod playbook;
+mod review;
 mod settings;
+mod spawn;
 mod talk;
 mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
@@ -109,10 +111,14 @@ pub struct MyrstackApp {
     chat: chat::AppChat,
     /// Manual whips in flight, their confirmation popover and result toast.
     whip_now: whip_now::WhipNowState,
+    /// "New session…" dialog, spawns in flight and the new node to select.
+    spawn: spawn::AppSpawn,
     /// ⌘E push-to-talk dictation.
     dictation: dictation::AppDictation,
     /// Hold-to-talk to the Queen (global hotkey) and her spoken replies.
     talk: talk::AppTalk,
+    /// PRs agents marked ready for review, their GitHub state and the poller reading it.
+    review: review::AppReview,
 }
 
 /// How many posted notifications the alerts menu keeps.
@@ -183,8 +189,10 @@ impl MyrstackApp {
             playbook_watch: playbook::PlaybookWatch::spawn(repaint_once(ctx)),
             chat,
             whip_now: whip_now::WhipNowState::default(),
+            spawn: spawn::AppSpawn::start(ctx),
             dictation: dictation::AppDictation::new(ctx),
             talk,
+            review: review::AppReview::start(ctx),
         };
         app.talk_startup();
         app.restore_state(cc.storage);
@@ -358,6 +366,7 @@ impl MyrstackApp {
             return false;
         }
         let default_width = ui.ctx().content_rect().width() * 0.45;
+        let (review_rows, review_note, review_state) = self.review_view(now_ms);
         let playbook = self.playbook_status();
         let snapshot = self.snapshot.as_ref();
         let inputs = ui::queen::QueenInputs {
@@ -367,6 +376,7 @@ impl MyrstackApp {
             now_ms,
             playbook: playbook.as_ref(),
         };
+        let mut review_action = None;
         let (queen, chat) = (&mut self.queen, &mut self.chat);
         let mut chat_select = None;
         let response = egui::Panel::right("terminal")
@@ -374,6 +384,13 @@ impl MyrstackApp {
             .default_size(default_width)
             .min_size(240.0)
             .show(ui, |ui| {
+                review_action = ui::review::review_section(
+                    ui,
+                    &review_rows,
+                    review_note.as_deref(),
+                    now_ms,
+                    review_state,
+                );
                 ui::queen::queen_panel(
                     ui,
                     queen,
@@ -386,7 +403,8 @@ impl MyrstackApp {
         if response.whip_stalled {
             self.request_whip_stalled(None);
         }
-        if let Some(id) = response.select.or(chat_select) {
+        let review_select = review_action.and_then(|a| self.apply_review_action(a));
+        if let Some(id) = response.select.or(chat_select).or(review_select) {
             self.select_and_focus(id);
         } else if response.close {
             self.selected = None;
@@ -646,6 +664,7 @@ impl MyrstackApp {
             self.whip_window.gear_button(ui);
             self.whip_window.button(ui);
             self.alerts_menu(ui);
+            self.review_badge(ui);
             self.close.log_menu(ui, now_ms);
             self.quota_chips(ui, now_ms);
             if let Some(data) = &self.data
@@ -721,10 +740,15 @@ impl MyrstackApp {
             return;
         };
         let mut select = None;
+        let mut review = false;
         for targets in self.notifier.clicked() {
             self.alerts.retain(|a| a.targets != targets);
             select = notify::click_target(snapshot, &targets).or(select);
+            review |= self.is_review_alert(&targets);
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        if review && select.is_none() {
+            self.open_review_queue();
         }
         if let Some(id) = select {
             self.select_and_focus(id);
@@ -783,6 +807,8 @@ impl MyrstackApp {
                     .and_then(|snapshot| notify::click_target(snapshot, &alert.targets));
                 if let Some(id) = target {
                     self.select_and_focus(id);
+                } else if self.is_review_alert(&alert.targets) {
+                    self.open_review_queue();
                 }
             }
             None => {}
@@ -945,13 +971,16 @@ impl eframe::App for MyrstackApp {
             self.whip_log.snapshot_changed();
             self.feed_whip();
             self.notify_needs_input();
+            self.spawn_select_pending();
         }
         self.take_alerts();
         self.open_clicked_notifications(ctx);
         self.poll_chat();
         self.talk_logic(ctx);
         self.poll_control(ctx);
+        self.poll_review();
         self.poll_whip_now();
+        self.poll_spawn();
         for result in self.actions.poll() {
             self.control_action_done(&result);
             if self.input.on_result(&result, now_ms()) {
@@ -1010,6 +1039,9 @@ impl eframe::App for MyrstackApp {
             if response.close_shown {
                 self.close.request(ui::close::CloseRequest::Shown);
             }
+            if let Some(repo) = &response.new_session_repo {
+                self.open_spawn_dialog(Some(repo));
+            }
         }
         if let Some(id) = whip_pick {
             self.select_and_focus(id);
@@ -1055,6 +1087,7 @@ impl eframe::App for MyrstackApp {
             self.request_whip_stalled(None);
         }
         self.whip_now_dialogs(ui.ctx(), now_ms);
+        self.spawn_dialog(ui.ctx());
         self.sync_screen_watch();
     }
 }
