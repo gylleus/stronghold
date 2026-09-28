@@ -41,6 +41,7 @@ impl MyrstackApp {
         match commands::dispatch(id) {
             Dispatch::Key(command) => self.run_key_command(ctx, command),
             Dispatch::OpenChat => self.open_chat(),
+            Dispatch::Dictate => self.start_dictation(),
             Dispatch::StatusReport => self.status_report(),
             Dispatch::WhipStalled => self.request_whip_stalled(None),
             Dispatch::Broadcast => {
