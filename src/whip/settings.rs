@@ -1,8 +1,10 @@
-//! Whip settings: stall threshold, cooldown, max nudges, dry-run.
+//! The app's settings file, and the whip's section of it: stall threshold, cooldown, max
+//! nudges, dry-run.
 //!
 //! Stored as JSON in the user's config dir (`~/Library/Application Support/Myrstack/settings.json`
-//! on macOS) under a top-level `whip` key, so other settings can share the file later. A missing
-//! file gives the defaults; an unreadable or invalid one gives the defaults plus a warning.
+//! on macOS) with one top-level key per section (`whip`, `queen`, `voice`). Missing sections and
+//! fields take their defaults, so older files load. A missing file gives the defaults; an
+//! unreadable or invalid one gives the defaults plus a warning.
 
 use std::fs;
 use std::io::{self, Write};
@@ -10,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::chat::settings::QueenSettings;
+use crate::voice::settings::VoiceSettings;
 use crate::whip::rules::{DEFAULT_ABANDON_AFTER_MS, DEFAULT_THRESHOLD_MS};
 
 const MIN: i64 = 60_000;
@@ -23,6 +27,9 @@ pub const SETTINGS_ENV: &str = "MYRSTACK_SETTINGS";
 #[serde(default)]
 pub struct Settings {
     pub whip: WhipSettings,
+    /// The Queen's chat process: model and effort.
+    pub queen: QueenSettings,
+    pub voice: VoiceSettings,
 }
 
 /// Global whip configuration. Durations are in ms.
@@ -128,12 +135,23 @@ impl Settings {
             Ok(s) => s,
             Err(e) => return Self::fallback(format!("invalid {}: {e}", path.display())),
         };
-        match settings.whip.validate() {
-            Ok(()) => Loaded {
+        let checks = [
+            ("whip", settings.whip.validate()),
+            ("queen", settings.queen.validate()),
+            ("voice", settings.voice.validate()),
+        ];
+        match checks
+            .into_iter()
+            .find_map(|(k, r)| r.err().map(|e| (k, e)))
+        {
+            None => Loaded {
                 settings,
                 warning: None,
             },
-            Err(e) => Self::fallback(format!("invalid whip settings in {}: {e}", path.display())),
+            Some((section, e)) => Self::fallback(format!(
+                "invalid {section} settings in {}: {e}",
+                path.display()
+            )),
         }
     }
 
@@ -281,6 +299,49 @@ mod tests {
     }
 
     #[test]
+    fn queen_and_voice_sections_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = path_in(&dir);
+        let mut s = Settings::default();
+        s.queen.model = Some("opus".into());
+        s.queen.effort = Some("high".into());
+        s.whip.dry_run = false;
+        s.save_to(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(json["queen"]["model"], "opus");
+        assert_eq!(json["queen"]["effort"], "high");
+        assert!(json["voice"].is_object());
+        assert_eq!(Settings::load_from(&path).settings, s);
+    }
+
+    #[test]
+    fn old_file_without_queen_or_voice_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE);
+        // A file as written before the queen and voice sections existed.
+        fs::write(
+            &path,
+            r#"{"whip": {"enabled": true, "dry_run": false, "threshold_ms": 900000,
+                "cooldown_ms": 600000, "max_nudges": 2, "tick_ms": 60000, "notify": true,
+                "abandon_after_ms": 86400000}}"#,
+        )
+        .unwrap();
+        let loaded = Settings::load_from(&path);
+        assert_eq!(loaded.warning, None);
+        assert!(!loaded.settings.whip.dry_run);
+        assert_eq!(loaded.settings.queen, QueenSettings::default());
+        assert_eq!(loaded.settings.voice, VoiceSettings::default());
+
+        // A queen section with only some fields.
+        fs::write(&path, r#"{"queen": {"model": "sonnet"}}"#).unwrap();
+        let loaded = Settings::load_from(&path).settings;
+        assert_eq!(loaded.queen.model.as_deref(), Some("sonnet"));
+        assert_eq!(loaded.queen.effort, None);
+        assert_eq!(loaded.whip, WhipSettings::default());
+    }
+
+    #[test]
     fn invalid_file_gives_defaults_with_warning() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(SETTINGS_FILE);
@@ -290,6 +351,8 @@ mod tests {
             r#"{"whip": {"threshold_ms": 0}}"#,
             r#"{"whip": {"tick_ms": -5}}"#,
             r#"{"whip": {"abandon_after_ms": 0}}"#,
+            r#"{"queen": {"effort": "turbo"}}"#,
+            r#"{"queen": {"model": 5}}"#,
         ] {
             fs::write(&path, bad).unwrap();
             let loaded = Settings::load_from(&path);

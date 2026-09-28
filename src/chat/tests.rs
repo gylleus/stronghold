@@ -318,6 +318,7 @@ impl Fake {
             binary: Some(self.root.join("claude")),
             dir: self.root.join("chat"),
             model: None,
+            effort: None,
             system_prompt: "test".into(),
             env: env
                 .iter()
@@ -641,4 +642,52 @@ fn auto_approved_tool_rows_get_the_marker_whenever_the_row_appears() {
         marks,
         vec![("a".into(), true), ("b".into(), true), ("c".into(), false)]
     );
+}
+
+#[test]
+fn model_change_restarts_with_model_and_resume_keeping_the_transcript() {
+    let fake = Fake::new();
+    let mut chat = ChatSession::spawn(fake.config(&[]), None);
+    wait_until(&mut chat, "ready", |c| c.state == SessionState::Ready);
+    assert!(chat.send("ping"));
+    wait_until(&mut chat, "reply", |c| !c.transcript.running);
+    let session = session::SessionStore::open(&fake.root.join("chat")).record;
+    assert!(!chat.set_model(None, None), "unchanged: no restart");
+
+    assert!(chat.set_model(Some("opus".into()), Some("high".into())));
+    assert_eq!(chat.model(), Some("opus"));
+    assert_eq!(chat.transcript.model.as_deref(), Some("opus"));
+    assert!(!chat.can_send(), "no sends while restarting");
+    wait_until(&mut chat, "restart", |c| {
+        c.state == SessionState::Ready && fake.args_log().len() == 2
+    });
+    let args = fake.args_log();
+    assert!(!args[0].contains("--model"), "{args:?}");
+    assert!(args[1].contains(&format!("--resume {}", session.session_id)));
+    assert!(args[1].contains("--model opus"), "{args:?}");
+    assert!(args[1].contains("--effort high"), "{args:?}");
+    assert_eq!(
+        chat.transcript.assistant_text(),
+        vec!["pong"],
+        "transcript kept"
+    );
+    assert!(chat.transcript.items.iter().any(|i| matches!(
+        i,
+        ChatItem::System(t) if t.contains("model opus")
+    )));
+
+    // The next reply's init reports the resolved model.
+    assert!(chat.send("ping"));
+    wait_until(&mut chat, "reply", |c| !c.transcript.running);
+    assert_eq!(chat.transcript.model.as_deref(), Some("fake-model"));
+    assert_eq!(chat.transcript.assistant_text(), vec!["pong", "pong"]);
+
+    // Back to the CLI default: no --model at all.
+    assert!(chat.set_model(None, None));
+    wait_until(&mut chat, "restart", |c| {
+        c.state == SessionState::Ready && fake.args_log().len() == 3
+    });
+    let args = fake.args_log();
+    assert!(!args[2].contains("--model") && !args[2].contains("--effort"));
+    assert!(args[2].contains(&format!("--resume {}", session.session_id)));
 }

@@ -29,6 +29,16 @@ env_logger = "0.11"
 jiff = "0.2"
 global-hotkey = "0.8"
 egui_extras = "0.36"
+sherpa-rs = { version = "0.6.8", features = ["static"] }
+cpal = "0.18"
+sha2 = "0.10"
+
+# Native notifications when running from Myrstack.app (see src/notify/native.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSDictionary", "NSError", "NSObject", "NSString"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "bitflags", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 
 [dev-dependencies]
 tempfile = "3"

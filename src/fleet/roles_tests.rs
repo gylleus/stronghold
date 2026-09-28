@@ -85,8 +85,58 @@ fn plain_declared_coordinator_is_the_coordinator() {
     assert_eq!(data.effective_coordinator(RUN).as_deref(), Some(DECLARED));
 }
 
+/// `run_47095bd70a19`: the coordinator's topic is the attendant brief. It created the Run's
+/// only task, so it is the coordinator whatever its title says.
 #[test]
-fn title_marks_the_attendant() {
+fn title_only_terminal_that_creates_tasks_is_the_coordinator() {
+    let mut data = base();
+    data.terminals[0].title = Some("◑ Attendant brief review".into());
+    data.tasks
+        .get_mut(RUN)
+        .unwrap()
+        .push(task("t1", DECLARED, NOW));
+    let r = roles(&data);
+    assert_eq!(r.attendant, None);
+    assert_eq!(r.signal, None);
+    assert_eq!(r.coordinator.as_deref(), Some(DECLARED));
+    assert!(!r.maybe_attendant, "creating tasks is strong evidence");
+}
+
+/// `run_08cec705f56e`: the coordinator created the task and once forwarded to a terminal that
+/// is gone now.
+#[test]
+fn creator_with_forwards_only_to_dead_terminals_is_the_coordinator() {
+    let mut data = base();
+    data.terminals[0].title = Some("✳ Attendant degraded handling".into());
+    data.tasks
+        .get_mut(RUN)
+        .unwrap()
+        .push(task("t1", DECLARED, NOW));
+    data.forwards
+        .insert(DECLARED.into(), vec![forward("term_gone", NOW)]);
+    let r = roles(&data);
+    assert_eq!(r.attendant, None);
+    assert_eq!(r.coordinator.as_deref(), Some(DECLARED));
+}
+
+#[test]
+fn title_without_behaviour_is_a_low_confidence_coordinator() {
+    let mut data = base();
+    data.terminals[0].title = Some("✳ cp-wave-0923-ATTENDANT brief".into());
+    let r = roles(&data);
+    assert_eq!(r.attendant, None);
+    assert_eq!(r.coordinator.as_deref(), Some(DECLARED));
+    assert!(r.maybe_attendant);
+
+    // Messaging the Run's workers is coordinating: no longer a maybe.
+    data.inbox = vec![msg("m1", DECLARED, "dispatch:ctx_1", "status", NOW)];
+    let r = roles(&data);
+    assert_eq!(r.coordinator.as_deref(), Some(DECLARED));
+    assert!(!r.maybe_attendant);
+}
+
+#[test]
+fn title_and_others_creating_tasks_mark_the_attendant() {
     let mut data = base();
     data.terminals[0].title = Some("✳ cp-wave-0923-ATTENDANT brief".into());
     data.tasks
@@ -94,10 +144,40 @@ fn title_marks_the_attendant() {
         .unwrap()
         .push(task("t1", COORD, NOW - MIN));
     let r = roles(&data);
-    assert_eq!(r.signal, Some(AttendantSignal::Title));
+    assert_eq!(r.signal, Some(AttendantSignal::OthersCoordinate));
     assert_eq!(r.attendant.as_deref(), Some(DECLARED));
     assert_eq!(r.coordinator.as_deref(), Some(COORD));
     assert_eq!(r.declared.as_deref(), Some(DECLARED));
+    assert!(!r.maybe_attendant);
+}
+
+#[test]
+fn title_and_forwards_mark_the_attendant() {
+    let mut data = base();
+    data.terminals[0].title = Some("attendant".into());
+    data.forwards
+        .insert(DECLARED.into(), vec![forward(COORD, NOW)]);
+    let r = roles(&data);
+    assert_eq!(r.signal, Some(AttendantSignal::Forwards));
+    assert_eq!(r.attendant.as_deref(), Some(DECLARED));
+    assert_eq!(r.coordinator.as_deref(), Some(COORD));
+}
+
+/// An attendant that ran `task-create` for its coordinator stays the attendant while it
+/// forwards to that live coordinator.
+#[test]
+fn creator_forwarding_to_a_live_terminal_is_the_attendant() {
+    let mut data = base();
+    data.tasks
+        .get_mut(RUN)
+        .unwrap()
+        .push(task("t1", DECLARED, NOW));
+    data.forwards
+        .insert(DECLARED.into(), vec![forward(COORD, NOW - 5 * MIN)]);
+    let r = roles(&data);
+    assert_eq!(r.signal, Some(AttendantSignal::Forwards));
+    assert_eq!(r.attendant.as_deref(), Some(DECLARED));
+    assert_eq!(r.coordinator.as_deref(), Some(COORD));
 }
 
 #[test]
@@ -171,7 +251,8 @@ fn coordinator_bus_senders_mark_the_attendant() {
 #[test]
 fn bus_senders_skip_workers_services_and_worker_messages() {
     let mut data = base();
-    data.terminals[0].title = Some("attendant".into());
+    data.forwards
+        .insert(DECLARED.into(), vec![forward("term_gone", NOW - 60 * MIN)]);
     data.inbox = vec![
         msg("m1", COORD, &format!("run:{RUN}"), "status", NOW - 30 * MIN),
         msg("m2", WORKER, &format!("run:{RUN}"), "status", NOW),
@@ -232,6 +313,7 @@ fn attendant_without_live_coordinator() {
         .unwrap()
         .push(task("t1", "term_gone", NOW));
     let r = roles(&data);
+    assert_eq!(r.signal, Some(AttendantSignal::Forwards));
     assert_eq!(r.attendant.as_deref(), Some(DECLARED));
     assert_eq!(r.coordinator, None);
     assert_eq!(data.effective_coordinator(RUN), None);
@@ -296,7 +378,9 @@ fn live_run_roles() {
         }
         None => "-".into(),
     };
-    println!("run | declared | attendant (signal) | coordinator | newest forward");
+    println!(
+        "run | declared | attendant (signal) | coordinator | maybe attendant | newest forward"
+    );
     for run_id in &active {
         let roles = data.run_roles(run_id);
         let newest = roles
@@ -306,11 +390,12 @@ fn live_run_roles() {
             .map(|f| short(&Some(f.target.clone())))
             .unwrap_or_else(|| "-".into());
         println!(
-            "{run_id} | {} | {} ({:?}) | {} | {newest}",
+            "{run_id} | {} | {} ({:?}) | {} | {} | {newest}",
             short(&roles.declared),
             short(&roles.attendant),
             roles.signal,
             short(&roles.coordinator),
+            roles.maybe_attendant,
         );
     }
 }

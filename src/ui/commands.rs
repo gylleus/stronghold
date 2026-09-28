@@ -11,6 +11,7 @@ use crate::ui::keys::KeyCommand;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActionId {
     OpenChat,
+    Dictate,
     StatusReport,
     NewSession,
     WhipSelected,
@@ -18,6 +19,7 @@ pub enum ActionId {
     CloseSelected,
     Broadcast,
     WhipSettings,
+    Settings,
     ToggleDryRun,
     FitGraph,
     ResetLayout,
@@ -79,6 +81,13 @@ pub const ACTIONS: &[Action] = &[
         Some("⌘J"),
     ),
     action(
+        ActionId::Dictate,
+        "dictate",
+        "Dictate (hold ⌘E)",
+        "voice speech talk microphone dictation transcribe speak",
+        Some("⌘E"),
+    ),
+    action(
         ActionId::StatusReport,
         "status_report",
         "Status report",
@@ -126,6 +135,13 @@ pub const ACTIONS: &[Action] = &[
         "Whip settings…",
         "configure rules thresholds preferences options",
         None,
+    ),
+    action(
+        ActionId::Settings,
+        "settings",
+        "Settings…",
+        "preferences options configure queen model effort voice whip data dir socket version",
+        Some("⌘,"),
     ),
     action(
         ActionId::ToggleDryRun,
@@ -368,12 +384,17 @@ pub enum Dispatch {
     Key(KeyCommand),
     /// Select the Queen and focus her chat (unlike ⌘J, never closes it).
     OpenChat,
+    /// Record until ⌘E or Stop, then put the text into the Queen's chat.
+    Dictate,
     /// Open the chat and send the Status report prompt, like its button.
     StatusReport,
     WhipStalled,
     /// Select the Queen and open her broadcast section.
     Broadcast,
+    /// Open the Settings window on its Whip section.
     WhipSettings,
+    /// Open the Settings window (⌘,).
+    OpenSettings,
     ToggleDryRun,
     ResetLayout,
     SetView(View),
@@ -389,6 +410,7 @@ pub fn dispatch(id: ActionId) -> Dispatch {
     use ActionId as A;
     match id {
         A::OpenChat => Dispatch::OpenChat,
+        A::Dictate => Dispatch::Dictate,
         A::StatusReport => Dispatch::StatusReport,
         A::NewSession => Dispatch::NewSession,
         A::WhipSelected => Dispatch::Key(KeyCommand::Whip),
@@ -396,6 +418,7 @@ pub fn dispatch(id: ActionId) -> Dispatch {
         A::CloseSelected => Dispatch::Key(KeyCommand::CloseSession),
         A::Broadcast => Dispatch::Broadcast,
         A::WhipSettings => Dispatch::WhipSettings,
+        A::Settings => Dispatch::OpenSettings,
         A::ToggleDryRun => Dispatch::ToggleDryRun,
         A::FitGraph => Dispatch::Key(KeyCommand::Fit),
         A::ResetLayout => Dispatch::ResetLayout,
@@ -488,6 +511,7 @@ mod tests {
             let action = ACTIONS.iter().find(|a| match dispatch(a.id) {
                 Dispatch::Key(c) => c == command,
                 Dispatch::OpenChat => command == KeyCommand::ToggleChat,
+                Dispatch::OpenSettings => command == KeyCommand::OpenSettings,
                 _ => false,
             });
             let action = action.unwrap_or_else(|| panic!("no palette action for {command:?}"));
@@ -517,6 +541,7 @@ mod tests {
         use ActionId as A;
         let cases = [
             (A::OpenChat, Dispatch::OpenChat),
+            (A::Dictate, Dispatch::Dictate),
             (A::StatusReport, Dispatch::StatusReport),
             (A::NewSession, Dispatch::NewSession),
             (A::WhipSelected, Dispatch::Key(KeyCommand::Whip)),
@@ -524,6 +549,7 @@ mod tests {
             (A::CloseSelected, Dispatch::Key(KeyCommand::CloseSession)),
             (A::Broadcast, Dispatch::Broadcast),
             (A::WhipSettings, Dispatch::WhipSettings),
+            (A::Settings, Dispatch::OpenSettings),
             (A::ToggleDryRun, Dispatch::ToggleDryRun),
             (A::FitGraph, Dispatch::Key(KeyCommand::Fit)),
             (A::ResetLayout, Dispatch::ResetLayout),

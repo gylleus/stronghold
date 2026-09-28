@@ -3,10 +3,12 @@
 use std::path::{Component, Path, PathBuf};
 
 use super::permissions;
+use super::settings::{QueenSettings, resolve_model_from_env};
 
 /// Environment variable naming the `claude` binary.
 pub const CLAUDE_BIN_ENV: &str = "MYRSTACK_CLAUDE_BIN";
-/// Environment variable choosing the chat's model (e.g. `sonnet`); the CLI default otherwise.
+/// Environment variable choosing the chat's model (e.g. `sonnet`); overrides the model saved
+/// in the settings (see [`super::settings::resolve_model`]).
 pub const MODEL_ENV: &str = "MYRSTACK_CHAT_MODEL";
 /// Unix socket paths longer than this are passed relative to the chat directory.
 const MAX_SOCKET_PATH: usize = 100;
@@ -41,6 +43,8 @@ pub struct ChatConfig {
     /// Working directory of the process and home of `session.json`.
     pub dir: PathBuf,
     pub model: Option<String>,
+    /// `--effort` level.
+    pub effort: Option<String>,
     pub system_prompt: String,
     /// Extra environment for the process (and so for the MCP servers it starts).
     pub env: Vec<(String, String)>,
@@ -49,9 +53,10 @@ pub struct ChatConfig {
 }
 
 impl ChatConfig {
-    /// The app's configuration: `<data dir>/chat`, the binary from [`find_claude`], and the
-    /// data dir and control socket passed on so `myrstack mcp` reaches this app.
-    pub fn from_env() -> Self {
+    /// The app's configuration: `<data dir>/chat`, the binary from [`find_claude`], the model
+    /// and effort from `queen` (with the `MYRSTACK_CHAT_MODEL` override), and the data dir and
+    /// control socket passed on so `myrstack mcp` reaches this app.
+    pub fn from_env(queen: &QueenSettings) -> Self {
         let data_dir = crate::claude::hook::data_dir();
         let dir = data_dir.join("chat");
         let cwd = std::env::current_dir().unwrap_or_default();
@@ -69,7 +74,8 @@ impl ChatConfig {
         Self {
             binary: find_claude(),
             dir,
-            model: std::env::var(MODEL_ENV).ok().filter(|m| !m.is_empty()),
+            model: resolve_model_from_env(queen).model().map(str::to_owned),
+            effort: queen.normalized().effort,
             system_prompt: SYSTEM_PROMPT.to_owned(),
             env,
             extra_args: Vec::new(),
@@ -105,6 +111,10 @@ impl ChatConfig {
         if let Some(model) = &self.model {
             args.push("--model".into());
             args.push(model.clone());
+        }
+        if let Some(effort) = &self.effort {
+            args.push("--effort".into());
+            args.push(effort.clone());
         }
         args.extend(self.extra_args.iter().cloned());
         args
@@ -194,6 +204,7 @@ mod tests {
             binary: None,
             dir: "/d/chat".into(),
             model: Some("sonnet".into()),
+            effort: None,
             system_prompt: "be the queen".into(),
             env: Vec::new(),
             extra_args: Vec::new(),
@@ -207,6 +218,16 @@ mod tests {
         assert!(joined.contains("--append-system-prompt be the queen"));
         assert!(joined.ends_with("--model sonnet"));
         assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
+        assert!(!args.iter().any(|a| a == "--effort"));
+
+        let config = ChatConfig {
+            model: None,
+            effort: Some("high".into()),
+            ..config
+        };
+        let args = config.args(&[]);
+        assert!(args.join(" ").ends_with("--effort high"));
+        assert!(!args.iter().any(|a| a == "--model"));
     }
 
     #[test]

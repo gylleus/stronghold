@@ -33,11 +33,13 @@ pub enum KeyCommand {
     ToggleChat,
     /// Nudge the selected agents now (manual whip).
     Whip,
+    /// Open the Settings window (⌘,).
+    OpenSettings,
 }
 
 impl KeyCommand {
     /// Every command, for checks that each one is reachable from the command palette.
-    pub const ALL: [KeyCommand; 15] = [
+    pub const ALL: [KeyCommand; 16] = [
         KeyCommand::NextNode,
         KeyCommand::PrevNode,
         KeyCommand::NextRun,
@@ -53,6 +55,7 @@ impl KeyCommand {
         KeyCommand::CloseSession,
         KeyCommand::ToggleChat,
         KeyCommand::Whip,
+        KeyCommand::OpenSettings,
     ];
 }
 
@@ -63,6 +66,11 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
         "Command palette: nodes and actions (> for actions only)",
     ),
     ("⌘J", "Open / close the Queen's chat"),
+    ("⌘,", "Settings: Queen model, whip, voice, paths"),
+    (
+        "hold ⌘E",
+        "Dictate: speak, release to insert the text at the cursor (Esc cancels)",
+    ),
     ("j  k", "Next / previous node"),
     ("J  K", "Next / previous run"),
     ("]  [", "Next / previous repo"),
@@ -82,7 +90,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("?", "Toggle this help"),
 ];
 
-/// The command `event` triggers. Only Esc and ⌘J work while a text field has focus; the letter
+/// The command `event` triggers. Only Esc, ⌘J and ⌘, work while a text field has focus; the letter
 /// commands come from text events so they follow the keyboard layout.
 pub fn command_for_event(event: &Event, text_focused: bool) -> Option<KeyCommand> {
     match event {
@@ -98,6 +106,12 @@ pub fn command_for_event(event: &Event, text_focused: bool) -> Option<KeyCommand
             modifiers,
             ..
         } if modifiers.command_only() => Some(KeyCommand::ToggleChat),
+        Event::Key {
+            key: Key::Comma,
+            pressed: true,
+            modifiers,
+            ..
+        } if modifiers.command_only() => Some(KeyCommand::OpenSettings),
         _ if text_focused => None,
         Event::Key {
             key: Key::Enter,
@@ -419,6 +433,17 @@ mod tests {
                 "Cmd+J works in text fields too"
             );
         }
+        for focused in [false, true] {
+            assert_eq!(
+                command_for_event(&key(Key::Comma, Modifiers::COMMAND), focused),
+                Some(OpenSettings),
+                "Cmd+, works in text fields too"
+            );
+        }
+        assert_eq!(
+            command_for_event(&key(Key::Comma, Modifiers::NONE), false),
+            None
+        );
         assert_eq!(
             command_for_event(&key(Key::J, Modifiers::NONE), false),
             None
