@@ -73,6 +73,12 @@ impl MyrstackApp {
         self.playbook_watch.poll();
     }
 
+    /// The playbook's current version, as the reader thread last saw it.
+    pub(super) fn playbook_version(&self) -> Option<String> {
+        let current = self.playbook_watch.summary.current.as_ref()?;
+        Some(current.to_string())
+    }
+
     /// Fetches mapped onto the current snapshot's nodes.
     pub(super) fn playbook_status(&self) -> Option<PlaybookStatus> {
         let snapshot = self.snapshot.as_ref()?;

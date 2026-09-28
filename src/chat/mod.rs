@@ -8,6 +8,7 @@ pub mod permissions;
 pub mod process;
 pub mod protocol;
 pub mod session;
+pub mod settings;
 pub mod transcript;
 
 pub use config::ChatConfig;
@@ -31,6 +32,9 @@ pub struct ChatSession {
     auto_mode: bool,
     /// The auto mode the Queen was last told about in this conversation.
     told_auto: Option<bool>,
+    /// `--model` / `--effort` the process runs with.
+    model: Option<String>,
+    effort: Option<String>,
 }
 
 /// Environment variable with a message the chat sends as soon as it is ready; with it the
@@ -46,6 +50,7 @@ impl ChatSession {
             .collect();
         let dir = config.dir.clone();
         let auto_mode = auto_mode::load(&dir);
+        let (model, effort) = (config.model.clone(), config.effort.clone());
         let handle = ChatHandle::spawn(config, repaint);
         handle.send(ChatCommand::SetAuto(auto_mode));
         Self {
@@ -56,7 +61,46 @@ impl ChatSession {
             dir,
             auto_mode,
             told_auto: None,
+            model,
+            effort,
         }
+    }
+
+    /// The `--model` the process was started with (`None`: the CLI default).
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
+    pub fn effort(&self) -> Option<&str> {
+        self.effort.as_deref()
+    }
+
+    /// Restarts the process with a new `--model` / `--effort`, resuming the same conversation
+    /// (the transcript stays). A running turn ends and waiting cards are cancelled. Returns
+    /// false when nothing changed.
+    pub fn set_model(&mut self, model: Option<String>, effort: Option<String>) -> bool {
+        if model == self.model && effort == self.effort {
+            return false;
+        }
+        let mut notice = format!(
+            "Restarting the Queen with model {}",
+            model.as_deref().unwrap_or("CLI default")
+        );
+        if let Some(effort) = &effort {
+            notice.push_str(&format!(" (effort {effort})"));
+        }
+        notice.push('…');
+        self.transcript.session_ended();
+        self.transcript.push_system(notice);
+        // The header shows the requested model until the CLI reports the resolved one.
+        self.transcript.model = model.clone();
+        self.model = model.clone();
+        self.effort = effort.clone();
+        if self.state == SessionState::Ready {
+            self.state = SessionState::Starting;
+        }
+        self.handle.send(ChatCommand::SetModel { model, effort });
+        true
     }
 
     /// Whether the Queen's Myrstack tool calls run without asking.

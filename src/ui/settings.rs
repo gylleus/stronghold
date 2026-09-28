@@ -1,31 +1,93 @@
-//! "Whip…" top-bar button with its DRY RUN / LIVE badge, and the whip settings window.
+//! The Settings window: a section list on the left (Queen, Whip, Voice, General) and the
+//! chosen section's form. It owns the settings file: every save writes the whole file with the
+//! edited section replaced. Opened from the top bar's gear, the palette's "Settings…" and ⌘,;
+//! the "Whip…" button and "Whip settings…" open it on the Whip section.
+
+pub mod general;
+pub mod queen;
+pub mod voice;
+pub mod whip;
 
 use std::path::PathBuf;
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 
-use crate::ui::table::format_age;
+use crate::chat::settings::QueenSettings;
+use crate::voice::settings::VoiceSettings;
 use crate::whip::{Settings, WhipSettings, WhipStatus};
 
-const SEC: i64 = 1_000;
-const HOUR: i64 = 60 * 60 * SEC;
-/// Longest abandon window the form offers: 30 days.
-const MAX_ABANDON_HOURS: i64 = 30 * 24;
+pub use general::GeneralInfo;
+pub use queen::QueenStatus;
 
-/// Settings window state: the applied settings, the edited draft and the file they live in.
-pub struct WhipSettingsWindow {
+/// A section of the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Section {
+    #[default]
+    Queen,
+    Whip,
+    Voice,
+    General,
+}
+
+impl Section {
+    pub const ALL: [Section; 4] = [
+        Section::Queen,
+        Section::Whip,
+        Section::Voice,
+        Section::General,
+    ];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Section::Queen => "Queen",
+            Section::Whip => "Whip",
+            Section::Voice => "Voice",
+            Section::General => "General",
+        }
+    }
+}
+
+/// What the window shows besides the settings themselves.
+pub struct PaneContext<'a> {
+    pub whip_status: &'a WhipStatus,
+    pub now_ms: i64,
+    pub queen: QueenStatus<'a>,
+    /// Paths and versions for the General section.
+    pub general: &'a GeneralInfo,
+}
+
+/// What the user changed this frame.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct PaneOutput {
+    /// Saved whip settings.
+    pub whip: Option<WhipSettings>,
+    /// Saved Queen settings (the Queen restarts when her model or effort changed).
+    pub queen: Option<QueenSettings>,
+    /// The Queen's auto mode switch was flipped (applies at once, like the chat header's).
+    pub auto_mode: Option<bool>,
+    /// Saved voice settings.
+    pub voice: Option<VoiceSettings>,
+    /// "Whip all stalled now" was clicked.
+    pub whip_stalled: bool,
+}
+
+/// Window state: the applied settings, a draft per section and the file they live in.
+pub struct SettingsPane {
     pub open: bool,
-    /// Settings as loaded or last saved; `whip` is what the runner uses.
+    pub section: Section,
+    /// Settings as loaded or last saved.
     applied: Settings,
-    draft: WhipSettings,
     path: Option<PathBuf>,
     /// Result of the last load or save: `(is_error, text)`.
     message: Option<(bool, String)>,
-    /// "Whip all stalled now" was clicked; see [`WhipSettingsWindow::take_whip_stalled`].
+    whip_draft: WhipSettings,
+    queen_draft: queen::QueenDraft,
+    voice_draft: VoiceSettings,
+    /// "Whip all stalled now" was clicked; see [`SettingsPane::take_whip_stalled`].
     whip_stalled: bool,
 }
 
-impl WhipSettingsWindow {
+impl SettingsPane {
     /// Loads the settings from `path` (defaults when `None` or missing).
     pub fn load(path: Option<PathBuf>) -> Self {
         let (applied, message) = match &path {
@@ -40,7 +102,10 @@ impl WhipSettingsWindow {
         };
         Self {
             open: false,
-            draft: applied.whip.clone(),
+            section: Section::default(),
+            whip_draft: applied.whip.clone(),
+            queen_draft: queen::QueenDraft::new(&applied.queen),
+            voice_draft: applied.voice.clone(),
             applied,
             path,
             message,
@@ -48,34 +113,60 @@ impl WhipSettingsWindow {
         }
     }
 
-    /// Whether "Whip all stalled now" was clicked since the last call.
-    pub fn take_whip_stalled(&mut self) -> bool {
-        std::mem::take(&mut self.whip_stalled)
-    }
-
     /// The whip settings in effect.
     pub fn whip(&self) -> &WhipSettings {
         &self.applied.whip
     }
 
-    /// Opens the window with a fresh draft of the applied settings.
-    pub fn open_window(&mut self) {
-        self.draft = self.applied.whip.clone();
+    /// The saved Queen settings.
+    pub fn queen(&self) -> &QueenSettings {
+        &self.applied.queen
+    }
+
+    pub fn voice(&self) -> &VoiceSettings {
+        &self.applied.voice
+    }
+
+    pub fn path(&self) -> Option<&std::path::Path> {
+        self.path.as_deref()
+    }
+
+    /// Opens the window on `section` with fresh drafts of the applied settings.
+    pub fn open_section(&mut self, section: Section) {
+        self.whip_draft = self.applied.whip.clone();
+        self.queen_draft = queen::QueenDraft::new(&self.applied.queen);
+        self.voice_draft = self.applied.voice.clone();
+        self.section = section;
         self.open = true;
+    }
+
+    /// Opens the window on the Whip section (the old whip window's entry points).
+    pub fn open_window(&mut self) {
+        self.open_section(Section::Whip);
+    }
+
+    /// Opens the window on the section it showed last (gear button, ⌘,, "Settings…").
+    pub fn open_settings(&mut self) {
+        self.open_section(self.section);
+    }
+
+    /// Whether "Whip all stalled now" was clicked since the last call.
+    pub fn take_whip_stalled(&mut self) -> bool {
+        std::mem::take(&mut self.whip_stalled)
     }
 
     /// Validates, saves and applies `whip` as if saved from the window. Returns the status
     /// message on success; on a validation error nothing changes.
     pub fn apply(&mut self, whip: WhipSettings) -> Result<String, String> {
-        let draft = std::mem::replace(&mut self.draft, whip);
-        if self.save().is_some() {
+        let draft = std::mem::replace(&mut self.whip_draft, whip);
+        if self.save_whip().is_some() {
             Ok(self
                 .message
                 .as_ref()
                 .map(|m| m.1.clone())
                 .unwrap_or_default())
         } else {
-            self.draft = draft;
+            self.whip_draft = draft;
             Err(self
                 .message
                 .as_ref()
@@ -83,99 +174,91 @@ impl WhipSettingsWindow {
         }
     }
 
-    /// Top-bar button plus mode badge; opens the window on click.
+    /// Top-bar gear that opens the window.
+    pub fn gear_button(&mut self, ui: &mut egui::Ui) {
+        if ui
+            .button("⚙")
+            .on_hover_text("Settings: Queen model, whip, voice, paths (⌘,)")
+            .clicked()
+        {
+            self.open_settings();
+        }
+    }
+
+    /// Top-bar "Whip…" button plus mode badge; opens the window on the Whip section.
     pub fn button(&mut self, ui: &mut egui::Ui) {
         if ui.button("Whip…").clicked() {
-            self.draft = self.applied.whip.clone();
-            self.open = true;
+            self.open_window();
         }
-        let whip = &self.applied.whip;
-        let (text, color) = if !whip.enabled {
-            ("OFF", ui.visuals().weak_text_color())
-        } else if whip.dry_run {
-            ("DRY RUN", Color32::from_rgb(0xd0, 0x9a, 0x2a))
-        } else {
-            ("LIVE", Color32::from_rgb(0xd0, 0x40, 0x40))
-        };
-        ui.label(RichText::new(text).strong().small().color(color))
-            .on_hover_text(match text {
-                "LIVE" => "The whip sends nudges and notifications",
-                "DRY RUN" => "The whip only logs what it would do",
-                _ => "The whip is disabled",
-            });
+        whip::mode_badge(ui, &self.applied.whip);
     }
 
-    /// Draws the window if open. Returns the new settings when the user saved them.
-    pub fn show(
-        &mut self,
-        ctx: &egui::Context,
-        status: &WhipStatus,
-        now_ms: i64,
-    ) -> Option<WhipSettings> {
+    /// Draws the window if open.
+    pub fn show(&mut self, ctx: &egui::Context, cx: &PaneContext<'_>) -> PaneOutput {
+        let mut out = PaneOutput::default();
         if !self.open {
-            return None;
+            return out;
         }
         let mut open = true;
-        let mut saved = None;
-        egui::Window::new("Whip")
+        egui::Window::new("Settings")
             .open(&mut open)
-            .default_width(560.0)
+            .default_width(680.0)
+            .default_height(460.0)
             .collapsible(false)
             .show(ctx, |ui| {
-                saved = self.form(ui);
-                ui.separator();
-                status_view(ui, status, now_ms);
-                self.whip_stalled |= crate::ui::whip_now::whip_stalled_button(ui);
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(110.0);
+                        for section in Section::ALL {
+                            let text = RichText::new(section.title()).size(15.0);
+                            ui.selectable_value(&mut self.section, section, text);
+                        }
+                    });
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| self.section_ui(ui, cx, &mut out));
+                    });
+                });
             });
         self.open = open;
-        saved
+        out
     }
 
-    fn form(&mut self, ui: &mut egui::Ui) -> Option<WhipSettings> {
-        let d = &mut self.draft;
-        ui.checkbox(&mut d.enabled, "Enabled");
-        ui.checkbox(&mut d.dry_run, "Dry run (log only, send nothing)");
-        if d.enabled && !d.dry_run {
-            ui.colored_label(
-                ui.visuals().warn_fg_color,
-                "Live: nudges are sent to agents on the bus and typed into idle terminals.",
-            );
+    fn section_ui(&mut self, ui: &mut egui::Ui, cx: &PaneContext<'_>, out: &mut PaneOutput) {
+        ui.heading(self.section.title());
+        ui.add_space(4.0);
+        match self.section {
+            Section::Queen => queen::section(self, ui, &cx.queen, out),
+            Section::Whip => {
+                out.whip = whip::form(self, ui);
+                ui.separator();
+                whip::status_view(ui, cx.whip_status, cx.now_ms);
+                if crate::ui::whip_now::whip_stalled_button(ui) {
+                    self.whip_stalled = true;
+                    out.whip_stalled = true;
+                }
+            }
+            Section::Voice => {
+                voice::voice_section(ui, &mut self.voice_draft);
+                // No Save row while there is nothing to edit.
+                if self.voice_draft != self.applied.voice {
+                    let (save, revert) = save_row(ui, self, true, "Save");
+                    if save {
+                        out.voice = self.save_voice();
+                    }
+                    if revert {
+                        self.voice_draft = self.applied.voice.clone();
+                    }
+                }
+            }
+            Section::General => general::section(ui, cx.general, self.path.as_deref()),
         }
-        egui::Grid::new("whip_settings")
-            .num_columns(2)
-            .show(ui, |ui| {
-                secs_row(ui, "Stall threshold", &mut d.threshold_ms);
-                secs_row(ui, "Nudge cooldown", &mut d.cooldown_ms);
-                ui.label("Nudges before escalating");
-                ui.add(egui::DragValue::new(&mut d.max_nudges).range(0..=20));
-                ui.end_row();
-                secs_row(ui, "Tick every", &mut d.tick_ms);
-                hours_row(ui, "Leave runs alone after", &mut d.abandon_after_ms).on_hover_text(
-                    "A Run with no activity (bus messages, task changes, worker progress) \
-                         for this long is abandoned and never nudged",
-                );
-            });
-        ui.checkbox(
-            &mut d.notify,
-            "Notify on escalation and long NeedsInput waits",
-        );
+        self.message_ui(ui);
+    }
 
-        let mut saved = None;
-        ui.horizontal(|ui| {
-            let changed = self.draft != self.applied.whip;
-            if ui.add_enabled(changed, egui::Button::new("Save")).clicked() {
-                saved = self.save();
-            }
-            if ui
-                .add_enabled(changed, egui::Button::new("Revert"))
-                .clicked()
-            {
-                self.draft = self.applied.whip.clone();
-            }
-            if let Some(path) = &self.path {
-                ui.weak(path.display().to_string());
-            }
-        });
+    fn message_ui(&self, ui: &mut egui::Ui) {
         if let Some((is_error, text)) = &self.message {
             let color = if *is_error {
                 ui.visuals().error_fg_color
@@ -184,17 +267,10 @@ impl WhipSettingsWindow {
             };
             ui.colored_label(color, text);
         }
-        saved
     }
 
-    /// Validates and writes the draft, then makes it the applied settings.
-    fn save(&mut self) -> Option<WhipSettings> {
-        if let Err(e) = validate_draft(&self.draft) {
-            self.message = Some((true, e));
-            return None;
-        }
-        let mut next = self.applied.clone();
-        next.whip = self.draft.clone();
+    /// Writes `next` to the file and makes it the applied settings.
+    fn commit(&mut self, next: Settings) {
         self.message = match &self.path {
             Some(path) => match next.save_to(path) {
                 Ok(()) => Some((false, "Saved.".into())),
@@ -206,186 +282,68 @@ impl WhipSettingsWindow {
             )),
         };
         self.applied = next;
+    }
+
+    /// Validates and writes the whip draft, then makes it the applied settings.
+    fn save_whip(&mut self) -> Option<WhipSettings> {
+        if let Err(e) = whip::validate_draft(&self.whip_draft) {
+            self.message = Some((true, e));
+            return None;
+        }
+        let mut next = self.applied.clone();
+        next.whip = self.whip_draft.clone();
+        self.commit(next);
         Some(self.applied.whip.clone())
     }
+
+    /// Validates and writes the Queen draft, then makes it the applied settings.
+    fn save_queen(&mut self) -> Option<QueenSettings> {
+        let queen = self.queen_draft.settings.normalized();
+        if let Err(e) = queen.validate() {
+            self.message = Some((true, e));
+            return None;
+        }
+        let mut next = self.applied.clone();
+        next.queen = queen;
+        self.commit(next);
+        self.queen_draft = queen::QueenDraft::new(&self.applied.queen);
+        Some(self.applied.queen.clone())
+    }
+
+    fn save_voice(&mut self) -> Option<VoiceSettings> {
+        if let Err(e) = self.voice_draft.validate() {
+            self.message = Some((true, e));
+            return None;
+        }
+        let mut next = self.applied.clone();
+        next.voice = self.voice_draft.clone();
+        self.commit(next);
+        Some(self.applied.voice.clone())
+    }
 }
 
-/// A duration setting edited in whole seconds.
-fn secs_row(ui: &mut egui::Ui, label: &str, ms: &mut i64) {
-    ui.label(label);
-    let mut secs = *ms / SEC;
-    if ui
-        .add(
-            egui::DragValue::new(&mut secs)
-                .range(1..=24 * 60 * 60)
-                .suffix(" s"),
-        )
-        .changed()
-    {
-        *ms = secs * SEC;
-    }
-    ui.end_row();
-}
-
-/// A duration setting edited in whole hours. A value that is not a whole number of hours (set
-/// in the file) is kept until the field is edited.
-fn hours_row(ui: &mut egui::Ui, label: &str, ms: &mut i64) -> egui::Response {
-    ui.label(label);
-    let mut hours = (*ms + HOUR - 1) / HOUR;
-    let response = ui.add(
-        egui::DragValue::new(&mut hours)
-            .range(1..=MAX_ABANDON_HOURS)
-            .suffix(" h"),
-    );
-    if response.changed() {
-        *ms = hours * HOUR;
-    }
-    ui.end_row();
-    response
-}
-
-/// The settings file's own checks plus the form's: the abandon window must be longer than the
-/// stall threshold, or nothing could ever stall before being abandoned.
-fn validate_draft(draft: &WhipSettings) -> Result<(), String> {
-    draft.validate()?;
-    if draft.abandon_after_ms <= draft.threshold_ms {
-        return Err(format!(
-            "abandon window ({}) must be longer than the stall threshold ({})",
-            format_age(draft.abandon_after_ms),
-            format_age(draft.threshold_ms)
-        ));
-    }
-    if draft.abandon_after_ms > MAX_ABANDON_HOURS * HOUR {
-        return Err(format!(
-            "abandon window must be at most {MAX_ABANDON_HOURS} h"
-        ));
-    }
-    Ok(())
-}
-
-fn status_view(ui: &mut egui::Ui, status: &WhipStatus, now_ms: i64) {
+/// A Save / Revert row, enabled when `changed`, with the settings path. Returns
+/// `(save clicked, revert clicked)`.
+fn save_row(
+    ui: &mut egui::Ui,
+    pane: &SettingsPane,
+    changed: bool,
+    save_label: &str,
+) -> (bool, bool) {
     ui.horizontal(|ui| {
-        match status.last_tick_ms {
-            Some(t) => ui.label(format!("Last tick {} ago", format_age(now_ms - t))),
-            None => ui.label("Waiting for the first tick"),
-        };
-        ui.separator();
-        ui.label(format!("{} stall findings", status.findings));
-        ui.separator();
-        ui.label(format!("{} actions logged", status.actions_logged));
-    });
-    if !status.escalated.is_empty() {
-        let list: Vec<&str> = status.escalated.iter().map(String::as_str).collect();
-        ui.colored_label(
-            ui.visuals().error_fg_color,
-            format!("Escalated: {}", list.join(", ")),
-        );
-    }
-    ui.weak("The action log is in the sidebar's Whip section.");
+        let save = ui
+            .add_enabled(changed, egui::Button::new(save_label))
+            .clicked();
+        let revert = ui
+            .add_enabled(changed, egui::Button::new("Revert"))
+            .clicked();
+        if let Some(path) = &pane.path {
+            ui.weak(path.display().to_string());
+        }
+        (save, revert)
+    })
+    .inner
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn whip_all_stalled_now_is_taken_once() {
-        let mut window = WhipSettingsWindow::load(None);
-        window.open_window();
-        let status = WhipStatus::default();
-        crate::ui::test_util::click_label("Whip all stalled now", |ui| {
-            window.show(ui.ctx(), &status, 0)
-        });
-        assert!(window.take_whip_stalled());
-        assert!(!window.take_whip_stalled());
-    }
-
-    #[test]
-    fn save_writes_the_file_and_applies() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.json");
-        let mut window = WhipSettingsWindow::load(Some(path.clone()));
-        assert!(window.whip().dry_run);
-        assert_eq!(window.message, None);
-
-        window.draft.dry_run = false;
-        window.draft.threshold_ms = 60 * SEC;
-        let saved = window.save().unwrap();
-        assert!(!saved.dry_run);
-        assert_eq!(window.whip(), &saved);
-        assert_eq!(Settings::load_from(&path).settings.whip, saved);
-    }
-
-    #[test]
-    fn abandon_window_validation() {
-        let ok = WhipSettings::default();
-        let cases: Vec<(&str, WhipSettings, bool)> = vec![
-            ("defaults", ok.clone(), true),
-            (
-                "one hour",
-                WhipSettings {
-                    abandon_after_ms: HOUR,
-                    ..ok.clone()
-                },
-                true,
-            ),
-            (
-                "zero",
-                WhipSettings {
-                    abandon_after_ms: 0,
-                    ..ok.clone()
-                },
-                false,
-            ),
-            (
-                "not longer than the threshold",
-                WhipSettings {
-                    abandon_after_ms: HOUR,
-                    threshold_ms: HOUR,
-                    ..ok.clone()
-                },
-                false,
-            ),
-            (
-                "over 30 days",
-                WhipSettings {
-                    abandon_after_ms: (MAX_ABANDON_HOURS + 1) * HOUR,
-                    ..ok.clone()
-                },
-                false,
-            ),
-        ];
-        for (name, draft, valid) in cases {
-            assert_eq!(validate_draft(&draft).is_ok(), valid, "case: {name}");
-        }
-    }
-
-    #[test]
-    fn saved_abandon_window_round_trips() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.json");
-        let mut window = WhipSettingsWindow::load(Some(path.clone()));
-        window.draft.abandon_after_ms = 6 * HOUR;
-        assert_eq!(window.save().unwrap().abandon_after_ms, 6 * HOUR);
-        assert_eq!(
-            Settings::load_from(&path).settings.whip.abandon_after_ms,
-            6 * HOUR
-        );
-
-        window.draft.abandon_after_ms = window.draft.threshold_ms;
-        assert_eq!(window.save(), None);
-        assert_eq!(window.whip().abandon_after_ms, 6 * HOUR);
-    }
-
-    #[test]
-    fn invalid_draft_is_not_saved() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.json");
-        let mut window = WhipSettingsWindow::load(Some(path.clone()));
-        window.draft.tick_ms = 0;
-        assert_eq!(window.save(), None);
-        assert!(window.message.as_ref().unwrap().0);
-        assert!(!path.exists());
-        assert_eq!(window.whip(), &WhipSettings::default());
-    }
-}
+mod tests;

@@ -3,6 +3,7 @@
 use eframe::egui;
 
 use super::{MyrstackApp, repaint_once};
+use crate::chat::settings::{QueenSettings, resolve_model_from_env};
 use crate::chat::{ChatConfig, ChatSession, STATUS_REPORT_PROMPT};
 use crate::model::{FleetSnapshot, NodeId};
 use crate::ui::chat::{ChatAction, ChatPanelState, ChatView, chat_ui};
@@ -13,10 +14,10 @@ pub(super) struct AppChat {
 }
 
 impl AppChat {
-    /// Spawns the chat's `claude` process (or notes that it is missing).
-    pub(super) fn start(ctx: &egui::Context) -> Self {
+    /// Spawns the chat's `claude` process (or notes that it is missing) with the saved model.
+    pub(super) fn start(ctx: &egui::Context, queen: &QueenSettings) -> Self {
         Self {
-            session: ChatSession::spawn(ChatConfig::from_env(), Some(repaint_once(ctx))),
+            session: ChatSession::spawn(ChatConfig::from_env(queen), Some(repaint_once(ctx))),
             panel: ChatPanelState::default(),
         }
     }
@@ -66,6 +67,25 @@ impl AppChat {
     /// Read-only: the control API and MCP report it, nothing outside the header sets it.
     pub(super) fn auto_mode(&self) -> bool {
         self.session.auto_mode()
+    }
+
+    /// The model the chat header shows.
+    pub(super) fn running_model(&self) -> Option<&str> {
+        self.session.transcript.model.as_deref()
+    }
+
+    /// Applies saved Queen settings: restarts her process (same conversation) when the
+    /// effective model (`MYRSTACK_CHAT_MODEL` still wins) or the effort changed.
+    pub(super) fn apply_queen_settings(&mut self, queen: &QueenSettings) {
+        let model = resolve_model_from_env(queen).model().map(str::to_owned);
+        let effort = queen.normalized().effort;
+        if self.session.set_model(model, effort) {
+            log::info!("chat: restarting the Queen with new settings");
+        }
+    }
+
+    pub(super) fn set_auto_mode(&mut self, on: bool) {
+        self.session.set_auto_mode(on);
     }
 }
 

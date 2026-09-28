@@ -97,6 +97,13 @@ impl AppControl {
     }
 }
 
+impl AppControl {
+    /// Whether the control API is serving its socket.
+    pub(super) fn listening(&self) -> bool {
+        self._server.is_some()
+    }
+}
+
 impl MyrstackApp {
     fn control_fingerprint(&self) -> Fingerprint {
         Fingerprint {
