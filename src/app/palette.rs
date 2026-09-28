@@ -48,6 +48,7 @@ impl MyrstackApp {
                 self.select_queen();
                 self.queen.open_broadcast = true;
             }
+            Dispatch::ReviewQueue => self.open_review_queue(),
             Dispatch::WhipSettings => self.whip_window.open_window(),
             Dispatch::OpenSettings => self.open_settings(),
             Dispatch::ToggleDryRun => self.toggle_whip_dry_run(),

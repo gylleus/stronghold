@@ -46,7 +46,7 @@ pub use saved::{MAX_SAVED_POSITIONS, SavedLayout, SavedView};
 pub use select::{circle_intersects_rect, is_additive};
 pub use shape::{
     ALL_STATES, FleetNodeShape, NodePayload, StateGlyph, agent_marker, contrast_ratio, fade_alpha,
-    hexagon, legend, node_radius, queen_color, state_color, state_glyph,
+    hexagon, legend, node_radius, pr_color, queen_color, state_color, state_glyph,
 };
 pub use tooltip::{coordinator_gone_note, format_ago, kind_label, preview_line, state_label};
 
@@ -113,6 +113,8 @@ pub struct GraphView {
     repos: HashMap<NodeId, String>,
     /// Claude token usage per node, for tooltips.
     usage: HashMap<NodeId, Usage>,
+    /// Nodes whose agent has a PR in the review queue; drawn with a "PR" badge.
+    pr_ready: HashSet<NodeId>,
     id: String,
     /// Canvas point new unrelated nodes spawn around (the layout's gravity center).
     anchor: Pos2,
@@ -170,6 +172,7 @@ impl GraphView {
             objectives: HashMap::new(),
             repos: HashMap::new(),
             usage: HashMap::new(),
+            pr_ready: HashSet::new(),
             id: id.into(),
             anchor: Pos2::new(640.0, 400.0),
             layout_initialized: false,
@@ -194,6 +197,22 @@ impl GraphView {
     /// Claude token usage per node, shown in tooltips.
     pub fn set_usage(&mut self, usage: HashMap<NodeId, Usage>) {
         self.usage = usage;
+    }
+
+    /// Marks the nodes with a PR ready for review (a "PR" badge), updating drawn nodes in place.
+    pub fn set_pr_ready(&mut self, nodes: HashSet<NodeId>) {
+        if nodes == self.pr_ready {
+            return;
+        }
+        for (id, &idx) in &self.index {
+            let want = nodes.contains(id);
+            if let Some(node) = self.graph.node_mut(idx)
+                && node.payload().pr_ready != want
+            {
+                node.payload_mut().pr_ready = want;
+            }
+        }
+        self.pr_ready = nodes;
     }
 
     /// Applies a snapshot: adds new nodes and edges, removes vanished ones and updates the rest
@@ -244,7 +263,8 @@ impl GraphView {
             match self.index.get(&node.id) {
                 Some(&idx) => {
                     if let Some(graph_node) = self.graph.node_mut(idx) {
-                        let payload = payload(node, snapshot);
+                        let mut payload = payload(node, snapshot);
+                        payload.pr_ready = self.pr_ready.contains(&node.id);
                         if *graph_node.payload() != payload {
                             *graph_node.payload_mut() = payload;
                         }
@@ -268,7 +288,9 @@ impl GraphView {
                 None => self.spawn_position(node, snapshot),
             };
             let label = node.label.clone();
-            let idx = self.graph.add_node_custom(payload(node, snapshot), |n| {
+            let mut payload = payload(node, snapshot);
+            payload.pr_ready = self.pr_ready.contains(&node.id);
+            let idx = self.graph.add_node_custom(payload, |n| {
                 n.set_location(location);
                 n.set_label(label);
             });
@@ -900,6 +922,7 @@ fn payload(node: &Node, snapshot: &FleetSnapshot) -> NodePayload {
             .terminal_handle
             .as_ref()
             .and_then(|_| agent_marker(node.agent.as_ref())),
+        pr_ready: false,
     }
 }
 

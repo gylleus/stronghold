@@ -234,6 +234,30 @@ inbox}` in Orca's own field names, without terminal previews or message bodies. 
 templates (`myrstack playbook attendant-brief`, MCP `attendant_brief`/`kickoff`) read it.
 `unavailable` before the first poll.
 
+### `review_queue`
+
+The PRs waiting for Karl's review, newest mark first (see [Review queue](#review-queue)).
+Each entry has the PR (`url`, `repo` as `owner/repo`, `number`, `title`), the agent that
+marked it (`agent: {id, label, live}` when its terminal is a node, else `agent_handle`), the
+mark (`source`: `tool` \| `cli` \| `bus`, `summary`, `marked_ms`) and GitHub's state as last
+read: `state` (`open` \| `draft` \| `merged` \| `closed`, `null` before the first read), `ci`,
+`head_sha`, `ankra_verdict` with `ankra_on_head` (`false`: Ankra reviewed an older commit),
+`marker` (`ready` \| `not_ready`, the description's first line) with `marker_on_head`,
+`review_decision`, `error` (this PR could not be read) and `updated_since_review`.
+`github.available` is `false` when `gh` is missing or logged out.
+
+```json
+{"v":1,"method":"review_queue"}
+→ {"ok":true,"result":{"count":1,"github":{"available":true,"error":null},"entries":[
+    {"url":"https://github.com/depict-org/realtime/pull/255","repo":"depict-org/realtime",
+     "number":255,"title":"recs: gate legacy config retirement","summary":null,
+     "agent":{"id":"term:term_…","label":"…","live":true},"agent_handle":null,
+     "source":"cli","marked_ms":…,"state":"open","ci":{"state":"passing","total":9},
+     "head_sha":"92b1c94…","ankra_verdict":"comments","ankra_on_head":false,
+     "marker":"ready","marker_on_head":false,"review_decision":null,"error":null,
+     "updated_since_review":false}]}}
+```
+
 ## Action methods
 
 These methods change things. The terminal ones type into agents' terminals and the whip
@@ -458,6 +482,47 @@ the automatic whip's dry-run setting. The next periodic tick comes one period la
 ```
 
 `ran` is `false` before the first poll.
+
+### `pr_ready`
+
+Records that a PR is ready for review. Agents call it through the `mark_pr_ready` MCP tool or
+`myrstack pr-ready`, which fill in `origin` from the caller's Orca environment
+(`ORCA_TERMINAL_HANDLE`, `ORCA_PANE_KEY`, `ORCA_TAB_ID`). It only records in Myrstack; nothing
+goes to GitHub or the bus.
+
+| param | type | meaning |
+|---|---|---|
+| `url` | string | the PR URL, `https://github.com/<owner>/<repo>/pull/<n>` (required) |
+| `title` | string | optional; GitHub's title replaces it once read |
+| `summary` | string | optional one line |
+| `via` | `tool` \| `cli` | where the mark came from (default `tool`) |
+| `origin` | `{terminal_handle, pane_key, tab_id}` | the marking agent's Orca identity |
+
+```json
+{"v":1,"method":"pr_ready","params":{"url":"https://github.com/o/r/pull/7","via":"cli",
+  "origin":{"terminal_handle":"term_…"}}}
+→ {"ok":true,"result":{"url":"https://github.com/o/r/pull/7","outcome":"new",
+   "agent":{"id":"term:term_…","label":"…","live":true},"origin":{…},"count":3}}
+```
+
+`outcome` is `new`, `updated` (a newer mark of a known PR; it shows again if Karl had
+dismissed it) or `unchanged`.
+
+### `review_dismiss`, `review_done`
+
+`{"url": …}`. Hide a PR from the queue: `review_dismiss` until it is marked ready again,
+`review_done` (reviewed) until it is marked again or its head moves. `not_found` when the PR
+is not in the queue.
+
+## Review queue
+
+PRs reach the queue from `pr_ready` and from `merge_ready` bus messages in the inbox the app
+polls (every PR URL in the subject, body or payload, attributed to the sender). A mark made
+while the app is down waits in `<data dir>/pr-ready.jsonl` (0600) and is taken on start. The
+app reads each queued PR with `gh pr view --json …` (read-only) every 3 minutes and at once
+when it joins. Bus entries show only once GitHub has been read (so old `merge_ready` messages
+about merged PRs never show); merged or closed PRs leave after 5 minutes. The queue is saved
+in `<data dir>/review-queue.json` (0600).
 
 ## `myrstack ctl`
 

@@ -445,6 +445,8 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "list_playbook",
         "attendant_brief",
         "kickoff",
+        "mark_pr_ready",
+        "review_queue",
     ];
     assert_eq!(names, expected);
     let reads = [
@@ -458,6 +460,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "list_playbook",
         "attendant_brief",
         "kickoff",
+        "review_queue",
     ];
     let destructive = [
         "send_to_agent",

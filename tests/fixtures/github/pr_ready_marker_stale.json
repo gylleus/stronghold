@@ -1,0 +1,185 @@
+{
+  "body": "✅ **Ready for review** — 72179e7\n\n(body trimmed for the fixture)\n",
+  "comments": [
+    {
+      "author": {
+        "login": "ankra-platform"
+      },
+      "authorAssociation": "NONE",
+      "body": "## Ankra AI review\n\n**Verdict: comments.**\n\n(review text trimmed for the fixture)\n\n_Reviewed commit 42ee4463fb6c. This review is read-only and advisory._",
+      "createdAt": "2026-09-02T11:52:39Z",
+      "id": "IC_kwDOQ-GZiM8AAAABSF4Dkw",
+      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509088147"
+    },
+    {
+      "author": {
+        "login": "gylleus"
+      },
+      "authorAssociation": "MEMBER",
+      "body": "Karl's AI agent completed the R5 review batch on exact head defbc46. The retirem (trimmed)",
+      "createdAt": "2026-09-02T12:03:28Z",
+      "id": "IC_kwDOQ-GZiM8AAAABSF_9hg",
+      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509217670"
+    },
+    {
+      "author": {
+        "login": "claude"
+      },
+      "authorAssociation": "NONE",
+      "body": "**Claude encountered an error after 3m 5s** —— [View job](https://github.com/dep (trimmed)",
+      "createdAt": "2026-09-02T12:03:46Z",
+      "id": "IC_kwDOQ-GZiM8AAAABSGALOA",
+      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509221176"
+    },
+    {
+      "author": {
+        "login": "gylleus"
+      },
+      "authorAssociation": "MEMBER",
+      "body": "Karl's AI agent completed the final R5 batch on exact head 42ee446. Each selecte (trimmed)",
+      "createdAt": "2026-09-02T12:10:00Z",
+      "id": "IC_kwDOQ-GZiM8AAAABSGEstw",
+      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509295287"
+    },
+    {
+      "author": {
+        "login": "claude"
+      },
+      "authorAssociation": "NONE",
+      "body": "**Claude encountered an error after 2m 47s** —— [View job](https://github.com/de (trimmed)",
+      "createdAt": "2026-09-02T12:10:37Z",
+      "id": "IC_kwDOQ-GZiM8AAAABSGFJxQ",
+      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509302725"
+    },
+    {
+      "author": {
+        "login": "gylleus"
+      },
+      "authorAssociation": "MEMBER",
+      "body": "Karl's AI agent addressed the coordinator-lane bounce in one push at exact head  (trimmed)",
+      "createdAt": "2026-09-02T12:40:25Z",
+      "id": "IC_kwDOQ-GZiM8AAAABSGbsEQ",
+      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509671953"
+    },
+    {
+      "author": {
+        "login": "gylleus"
+      },
+      "authorAssociation": "MEMBER",
+      "body": "Karl's AI agent mechanically restacked R5 onto the bounced-fix R4 head so the PR (trimmed)",
+      "createdAt": "2026-09-02T12:52:31Z",
+      "id": "IC_kwDOQ-GZiM8AAAABSGlI_w",
+      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509826815"
+    },
+    {
+      "author": {
+        "login": "gylleus"
+      },
+      "authorAssociation": "MEMBER",
+      "body": "Karl's AI agent completed the final R5 gate batch and restacked it on R4 exact h (trimmed)",
+      "createdAt": "2026-09-02T13:13:31Z",
+      "id": "IC_kwDOQ-GZiM8AAAABSG1_Jw",
+      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5510102823"
+    }
+  ],
+  "headRefOid": "92b1c9463bf2ddf30382046261754d7005b753e3",
+  "isDraft": false,
+  "mergedAt": null,
+  "number": 255,
+  "reviewDecision": "",
+  "state": "OPEN",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T13:19:37Z",
+      "conclusion": "SUCCESS",
+      "name": "test",
+      "startedAt": "2026-09-04T13:18:00Z",
+      "status": "COMPLETED",
+      "workflowName": "Build and Deploy Realtime"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T13:18:14Z",
+      "conclusion": "SUCCESS",
+      "name": "generate-types",
+      "startedAt": "2026-09-04T13:17:58Z",
+      "status": "COMPLETED",
+      "workflowName": "edge-router Generate types and format"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T13:18:19Z",
+      "conclusion": "SUCCESS",
+      "name": "typecheck",
+      "startedAt": "2026-09-04T13:17:58Z",
+      "status": "COMPLETED",
+      "workflowName": "edge-router Typecheck and test"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T13:18:48Z",
+      "conclusion": "SUCCESS",
+      "name": "search-contract",
+      "startedAt": "2026-09-04T13:18:00Z",
+      "status": "COMPLETED",
+      "workflowName": "Build and Deploy Realtime"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T13:18:17Z",
+      "conclusion": "SUCCESS",
+      "name": "recs-wheel",
+      "startedAt": "2026-09-04T13:18:00Z",
+      "status": "COMPLETED",
+      "workflowName": "Build and Deploy Realtime"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T13:19:37Z",
+      "conclusion": "SKIPPED",
+      "name": "build",
+      "startedAt": "2026-09-04T13:19:38Z",
+      "status": "COMPLETED",
+      "workflowName": "Build and Deploy Realtime"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T13:19:37Z",
+      "conclusion": "SKIPPED",
+      "name": "update-gitops",
+      "startedAt": "2026-09-04T13:19:38Z",
+      "status": "COMPLETED",
+      "workflowName": "Build and Deploy Realtime"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T13:19:37Z",
+      "conclusion": "SKIPPED",
+      "name": "update-multiaz",
+      "startedAt": "2026-09-04T13:19:38Z",
+      "status": "COMPLETED",
+      "workflowName": "Build and Deploy Realtime"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T13:19:38Z",
+      "conclusion": "SKIPPED",
+      "name": "notify-failure",
+      "startedAt": "2026-09-04T13:19:38Z",
+      "status": "COMPLETED",
+      "workflowName": "Build and Deploy Realtime"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-04T13:17:57Z",
+      "conclusion": "NEUTRAL",
+      "name": "Ankra AI review",
+      "startedAt": "2026-09-04T13:17:55Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    }
+  ],
+  "title": "recs: gate legacy config retirement",
+  "url": "https://github.com/depict-org/realtime/pull/255"
+}

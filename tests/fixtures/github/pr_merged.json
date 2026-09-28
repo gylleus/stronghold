@@ -1,0 +1,112 @@
+{
+  "body": "✅ **Ready for review** — stashed liquid schemas now land before the JSON that references them; heals existing stashes on the next button press (50e7dbc14b57afb25df977b6f830dd10a667d2d8)\n\n(body trimmed for the fixture)\n",
+  "comments": [
+    {
+      "author": {
+        "login": "ankra-platform"
+      },
+      "authorAssociation": "NONE",
+      "body": "<!-- ankra-ai:section:review -->\n\n## Ankra AI review\n\n**Verdict: looks good.**\n\n(review text trimmed for the fixture)\n\n_Reviewed commit 50e7dbc14b57. This review is read-only and advisory._",
+      "createdAt": "2026-09-28T13:11:15Z",
+      "id": "IC_kwDOKwOQwM8AAAABXela4g",
+      "url": "https://github.com/depict-org/depict/pull/8124#issuecomment-5870541538"
+    }
+  ],
+  "headRefOid": "50e7dbc14b57afb25df977b6f830dd10a667d2d8",
+  "isDraft": false,
+  "mergedAt": "2026-09-28T13:34:23Z",
+  "number": 8124,
+  "reviewDecision": "",
+  "state": "MERGED",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T13:34:28Z",
+      "conclusion": "SKIPPED",
+      "name": "delete-remote-dev",
+      "startedAt": "2026-09-28T13:34:29Z",
+      "status": "COMPLETED",
+      "workflowName": "Remote Dev Cleanup"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T13:10:57Z",
+      "conclusion": "SUCCESS",
+      "name": "run-danger",
+      "startedAt": "2026-09-28T13:10:27Z",
+      "status": "COMPLETED",
+      "workflowName": "Danger Job"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T13:12:09Z",
+      "conclusion": "SUCCESS",
+      "name": "build-theme-consumer / build-image",
+      "startedAt": "2026-09-28T13:10:28Z",
+      "status": "COMPLETED",
+      "workflowName": "Theme Consumer"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T13:13:47Z",
+      "conclusion": "SUCCESS",
+      "name": "check_commit_status",
+      "startedAt": "2026-09-28T13:10:27Z",
+      "status": "COMPLETED",
+      "workflowName": "no_workflow_failed"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T13:11:34Z",
+      "conclusion": "SUCCESS",
+      "name": "pyright repo-wide (advisory)",
+      "startedAt": "2026-09-28T13:10:27Z",
+      "status": "COMPLETED",
+      "workflowName": "pyright repo-wide (advisory)"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T13:12:40Z",
+      "conclusion": "SUCCESS",
+      "name": "test-theme-consumer / build-image",
+      "startedAt": "2026-09-28T13:10:28Z",
+      "status": "COMPLETED",
+      "workflowName": "Theme Consumer"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T13:12:58Z",
+      "conclusion": "SUCCESS",
+      "name": "typecheck-theme-consumer / build-image",
+      "startedAt": "2026-09-28T13:10:28Z",
+      "status": "COMPLETED",
+      "workflowName": "Theme Consumer"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T13:13:13Z",
+      "conclusion": "SUCCESS",
+      "name": "bump-gitops-tag",
+      "startedAt": "2026-09-28T13:13:01Z",
+      "status": "COMPLETED",
+      "workflowName": "Theme Consumer"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-28T13:11:17Z",
+      "conclusion": "NEUTRAL",
+      "name": "Ankra AI review",
+      "startedAt": "2026-09-28T13:10:24Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "Danger",
+      "startedAt": "2026-09-28T13:10:52Z",
+      "state": "SUCCESS"
+    }
+  ],
+  "title": "VROOM-TBD: search go-live writes schema-bearing liquid before dependent JSON",
+  "url": "https://github.com/depict-org/depict/pull/8124"
+}

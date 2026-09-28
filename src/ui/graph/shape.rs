@@ -34,6 +34,8 @@ pub struct NodePayload {
     pub agent_marker: Option<char>,
     /// An attendant whose run has no live coordinator: drawn with a dashed warning ring.
     pub coordinator_gone: bool,
+    /// The agent has a PR in the review queue: drawn with a "PR" badge.
+    pub pr_ready: bool,
 }
 
 /// Label font size in canvas units; scaled by zoom and clamped on screen.
@@ -437,6 +439,7 @@ pub struct FleetNodeShape {
     released_at_ms: Option<i64>,
     agent_marker: Option<char>,
     coordinator_gone: bool,
+    pr_ready: bool,
     selected: bool,
     dragged: bool,
     hovered: bool,
@@ -454,6 +457,7 @@ impl From<NodeProps<NodePayload>> for FleetNodeShape {
             released_at_ms: None,
             agent_marker: None,
             coordinator_gone: false,
+            pr_ready: false,
             selected: false,
             dragged: false,
             hovered: false,
@@ -479,6 +483,7 @@ impl FleetNodeShape {
         self.released_at_ms = props.payload.released_at_ms;
         self.agent_marker = props.payload.agent_marker;
         self.coordinator_gone = props.payload.coordinator_gone;
+        self.pr_ready = props.payload.pr_ready;
         self.selected = props.selected;
         self.dragged = props.dragged;
         self.hovered = props.hovered;
@@ -622,6 +627,49 @@ impl FleetNodeShape {
     }
 }
 
+/// GitHub's pull request purple, for the "PR" badge.
+pub fn pr_color(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgb(0xa3, 0x71, 0xf7)
+    } else {
+        Color32::from_rgb(0x82, 0x50, 0xdf)
+    }
+}
+
+/// A "PR" pill below-right of a node whose agent has a PR ready for review.
+fn pr_badge(ctx: &DrawContext, center: Pos2, radius: f32, alpha: f32) -> Vec<Shape> {
+    let dark = ctx.ctx.global_style().visuals.dark_mode;
+    let height = (radius * 0.8).clamp(8.0, 14.0);
+    let galley = ctx.ctx.fonts_mut(|f| {
+        f.layout_no_wrap(
+            "PR".to_owned(),
+            FontId::new(height * 0.75, FontFamily::Proportional),
+            Color32::WHITE.gamma_multiply(alpha),
+        )
+    });
+    let size = Vec2::new(galley.size().x + height * 0.6, height);
+    let rect = Rect::from_center_size(center + Vec2::new(radius, radius) * 0.85, size);
+    let text_pos = rect.center() - galley.size() / 2.0;
+    vec![
+        RectShape::new(
+            rect,
+            CornerRadius::same((height / 2.0) as u8),
+            pr_color(dark).gamma_multiply(alpha),
+            Stroke::new(
+                1.0,
+                ctx.ctx
+                    .global_style()
+                    .visuals
+                    .panel_fill
+                    .gamma_multiply(alpha),
+            ),
+            StrokeKind::Outside,
+        )
+        .into(),
+        TextShape::new(text_pos, galley, Color32::WHITE.gamma_multiply(alpha)).into(),
+    ]
+}
+
 impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> for FleetNodeShape {
     fn closest_boundary_point(&self, dir: Vec2) -> Pos2 {
         self.pos + dir.normalized() * self.radius()
@@ -716,6 +764,9 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
                 glyph_color(opaque).gamma_multiply(alpha),
             ));
             shapes.extend(self.agent_badge(ctx, center, radius, alpha));
+            if self.pr_ready {
+                shapes.extend(pr_badge(ctx, center, radius, alpha));
+            }
         }
 
         let emphasized = self.selected || self.hovered || self.dragged;

@@ -24,6 +24,9 @@ their node id (e.g. `term:term_…`) so Karl can click it.
 - If the myrstack server offers a playbook tool (get_playbook), load the standing rules for the \
 coordinator role with it before giving orders to the fleet. attendant_brief {run_id} and \
 kickoff {task_id} return those playbook templates pre-filled from live fleet data.
+- For \"what's ready for review?\" use review_queue: PRs agents marked ready (mark_pr_ready or a \
+merge_ready message) with CI, the Ankra verdict (stale when it reviewed an older commit than the \
+head) and the ready marker. Give each PR's URL so Karl can open it.
 - Be concise: short answers, bullet lists, no preamble.
 - On a request like \"status report\", give a compact report: who needs input, who is stalled, \
 per-run progress, and notable changes since the last report.
@@ -234,6 +237,7 @@ mod tests {
     fn system_prompt_speaks_as_the_queen() {
         assert!(SYSTEM_PROMPT.contains("Queen of Karl's agent fleet"));
         assert!(SYSTEM_PROMPT.contains("fleet_status"));
+        assert!(SYSTEM_PROMPT.contains("review_queue"));
         assert!(SYSTEM_PROMPT.contains("status report"));
         assert!(SYSTEM_PROMPT.contains("`Queen:`"));
     }
