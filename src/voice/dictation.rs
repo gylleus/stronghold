@@ -190,6 +190,21 @@ impl<C: Capture, R: Recognize> Dictation<C, R> {
         }
     }
 
+    /// Loads the model in the background when it is on disk, so the first dictation is fast.
+    /// Returns whether it did (or already had).
+    pub fn prepare(&mut self) -> bool {
+        if !self.warmed && self.recognizer.model_available() {
+            self.recognizer.warm();
+            self.warmed = true;
+        }
+        self.warmed
+    }
+
+    /// Whether the model is on disk.
+    pub fn model_available(&self) -> bool {
+        self.recognizer.model_available()
+    }
+
     fn begin(&mut self, latched: bool) -> Result<(), DictationError> {
         if !self.recognizer.model_available() {
             return Err(DictationError::Stt(SttError::ModelMissing));
@@ -469,6 +484,19 @@ mod tests {
         d.recognizer.ready.push_back(transcript("new"));
         assert_eq!(d.tick(), Some(DictationOutput::Text("new".into())));
         assert_eq!(d.tick(), None);
+    }
+
+    #[test]
+    fn prepare_warms_once_and_only_with_a_model() {
+        let (mut d, log) = machine();
+        d.recognizer.available = false;
+        assert!(!d.prepare());
+        assert!(log.borrow().is_empty(), "nothing loads without a model");
+        d.recognizer.available = true;
+        assert!(d.prepare());
+        assert!(d.prepare());
+        d.press(false).unwrap();
+        assert_eq!(*log.borrow(), ["warm", "start"]);
     }
 
     #[test]

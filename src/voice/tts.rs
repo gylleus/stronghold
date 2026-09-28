@@ -227,6 +227,9 @@ pub struct SpeakerConfig {
     pub release: ModelRelease,
     /// onnxruntime threads for synthesis.
     pub threads: i32,
+    /// Download the model when it is missing. Off in the app, which asks Karl first; the
+    /// backend then fails with [`kokoro::NOT_INSTALLED`] until the model is installed.
+    pub allow_download: bool,
 }
 
 impl Default for SpeakerConfig {
@@ -235,6 +238,7 @@ impl Default for SpeakerConfig {
             models_root: kokoro::speech_models_dir(),
             release: kokoro::DEFAULT,
             threads: 4,
+            allow_download: true,
         }
     }
 }
@@ -422,6 +426,11 @@ impl Drop for Speaker {
 
 fn kokoro_backend(config: SpeakerConfig) -> BackendFactory {
     Box::new(move |status: &dyn Fn(SpeakerStatus)| {
+        if !config.allow_download
+            && kokoro::installed(&config.models_root, &config.release).is_none()
+        {
+            anyhow::bail!(kokoro::NOT_INSTALLED);
+        }
         let paths = kokoro::ensure(&config.models_root, &config.release, |p| {
             status(match p {
                 Progress::Downloading { done, total } => SpeakerStatus::Downloading { done, total },
@@ -693,6 +702,28 @@ mod tests {
             speaker.voices()[26].label(),
             "George (British English, male)"
         );
+    }
+
+    /// With downloads off (as in the app) a missing model fails fast and nothing is fetched.
+    #[test]
+    fn missing_model_is_not_downloaded_when_downloads_are_off() {
+        let root = tempfile::tempdir().unwrap();
+        let speaker = Speaker::new(SpeakerConfig {
+            models_root: root.path().to_owned(),
+            allow_download: false,
+            ..SpeakerConfig::default()
+        });
+        speaker.prepare();
+        speaker.speak("Hello.");
+        wait_until(|| matches!(speaker.status(), SpeakerStatus::Failed(_)));
+        assert_eq!(
+            speaker.status(),
+            SpeakerStatus::Failed(kokoro::NOT_INSTALLED.into())
+        );
+        wait_until(|| !speaker.is_speaking());
+        let entries: Vec<_> = std::fs::read_dir(root.path()).unwrap().collect();
+        assert!(entries.is_empty(), "nothing written: {entries:?}");
+        assert_eq!(speaker.voices().len(), 54, "the voice list is known anyway");
     }
 
     #[test]

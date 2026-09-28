@@ -270,7 +270,7 @@ fn pill_contents(ui: &mut egui::Ui, pill: &Pill<'_>, action: &mut Option<PillAct
 }
 
 /// Five bars lit by `level` (0..=1).
-fn level_meter(ui: &mut egui::Ui, level: f32) {
+pub fn level_meter(ui: &mut egui::Ui, level: f32) {
     const BARS: usize = 5;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(40.0, 14.0), egui::Sense::hover());
     let lit = (level.clamp(0.0, 1.0) * BARS as f32).ceil() as usize;

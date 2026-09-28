@@ -44,6 +44,15 @@ impl AppDictation {
         }
     }
 
+    /// The dictation machine, shared with talking to the Queen (one microphone, one model).
+    pub(super) fn machine_mut(&mut self) -> &mut MicDictation {
+        &mut self.machine
+    }
+
+    pub(super) fn machine(&self) -> &MicDictation {
+        &self.machine
+    }
+
     fn notify(&mut self, notice: Notice) {
         self.notice = Some((notice, Instant::now()));
     }
@@ -134,6 +143,20 @@ impl MyrstackApp {
     /// Runs dictation for this frame: takes ⌘E/Esc before other shortcuts see them, delivers a
     /// finished transcript and draws the pill. Call first in `ui`.
     pub(super) fn dictation_frame(&mut self, ctx: &egui::Context) {
+        if self.talk.owns_dictation() {
+            // Talking to the Queen has the machine: her talk code ticks it, and the window
+            // is usually not focused, so no focus-loss release either. Esc still cancels.
+            let busy = KeyState {
+                holding: false,
+                busy: true,
+            };
+            for key in ui_dictation::take_frame_keys(ctx, busy) {
+                if key == DictationKey::Cancel {
+                    self.cancel_talk();
+                }
+            }
+            return;
+        }
         let phase = self.dictation.machine.phase();
         let mut state = KeyState {
             holding: phase == (Phase::Recording { latched: false }),

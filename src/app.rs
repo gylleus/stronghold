@@ -13,6 +13,7 @@ mod dictation;
 mod palette;
 mod playbook;
 mod settings;
+mod talk;
 mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
@@ -110,6 +111,8 @@ pub struct MyrstackApp {
     whip_now: whip_now::WhipNowState,
     /// ⌘E push-to-talk dictation.
     dictation: dictation::AppDictation,
+    /// Hold-to-talk to the Queen (global hotkey) and her spoken replies.
+    talk: talk::AppTalk,
 }
 
 /// How many posted notifications the alerts menu keeps.
@@ -144,6 +147,7 @@ impl MyrstackApp {
             Some(repaint_once(ctx)),
         );
         let chat = chat::AppChat::start(ctx, whip_window.queen());
+        let talk = talk::AppTalk::new(ctx, whip_window.voice());
         let mut app = Self {
             control: control::AppControl::start(ctx),
             quota,
@@ -180,7 +184,9 @@ impl MyrstackApp {
             chat,
             whip_now: whip_now::WhipNowState::default(),
             dictation: dictation::AppDictation::new(ctx),
+            talk,
         };
+        app.talk_startup();
         app.restore_state(cc.storage);
         app
     }
@@ -943,6 +949,7 @@ impl eframe::App for MyrstackApp {
         self.take_alerts();
         self.open_clicked_notifications(ctx);
         self.poll_chat();
+        self.talk_logic(ctx);
         self.poll_control(ctx);
         self.poll_whip_now();
         for result in self.actions.poll() {
@@ -962,6 +969,7 @@ impl eframe::App for MyrstackApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let now_ms = now_ms();
+        self.talk_ui(ui.ctx());
         self.dictation_frame(ui.ctx());
         self.search_palette(ui.ctx());
         self.keyboard(ui.ctx());

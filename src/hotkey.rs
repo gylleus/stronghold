@@ -1,4 +1,5 @@
-//! System-wide hotkey that brings the Myrstack window to the front.
+//! System-wide hotkeys: one brings the Myrstack window to the front, the other (optional,
+//! configurable) is held to talk to the Queen ([`TalkKey`] press and release).
 //!
 //! The hotkey fires while another app has focus. Its event handler forwards the event
 //! to a channel and wakes egui, so [`Hotkey::poll`] runs even when the app is idle,
@@ -33,6 +34,21 @@ const FOCUS_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 pub enum HotkeyAction {
     ShowWindow,
     Ignore,
+}
+
+/// The talk-to-the-Queen hotkey went down or up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TalkKey {
+    Press,
+    Release,
+}
+
+/// Maps a hotkey event to a talk key event, if it is the talk hotkey's.
+pub fn talk_key_for(event_id: u32, state: HotKeyState, talk_id: Option<u32>) -> Option<TalkKey> {
+    (Some(event_id) == talk_id).then_some(match state {
+        HotKeyState::Pressed => TalkKey::Press,
+        HotKeyState::Released => TalkKey::Release,
+    })
 }
 
 /// Maps a hotkey event to an action. Only the press of our own hotkey shows the window.
@@ -78,6 +94,10 @@ pub struct Hotkey {
     hotkey: HotKey,
     events: Receiver<GlobalHotKeyEvent>,
     focus_retries_left: u32,
+    /// The registered talk hotkey.
+    talk: Option<HotKey>,
+    /// Talk key events not yet taken.
+    talk_keys: Vec<TalkKey>,
 }
 
 impl Hotkey {
@@ -103,6 +123,8 @@ impl Hotkey {
             hotkey,
             events,
             focus_retries_left: 0,
+            talk: None,
+            talk_keys: Vec::new(),
         })
     }
 
@@ -110,10 +132,14 @@ impl Hotkey {
     /// root window. Call once per frame from `App::logic`.
     pub fn poll(&mut self, ctx: &egui::Context) {
         let our_id = self.hotkey.id();
-        let fired = self
-            .events
-            .try_iter()
-            .any(|event| action_for(event.id(), event.state(), our_id) == HotkeyAction::ShowWindow);
+        let talk_id = self.talk.map(|h| h.id());
+        let mut fired = false;
+        for event in self.events.try_iter() {
+            fired |= action_for(event.id(), event.state(), our_id) == HotkeyAction::ShowWindow;
+            if let Some(key) = talk_key_for(event.id(), event.state(), talk_id) {
+                self.talk_keys.push(key);
+            }
+        }
         if fired {
             log::debug!("global hotkey fired, showing window");
         }
@@ -130,9 +156,44 @@ impl Hotkey {
     }
 }
 
+impl Hotkey {
+    /// Registers `hotkey` as the talk hotkey, replacing the previous one (`None` removes it).
+    /// On failure (e.g. another app holds the combination) no talk hotkey is registered.
+    pub fn set_talk_hotkey(&mut self, hotkey: Option<HotKey>) -> Result<()> {
+        if hotkey.map(|h| h.id()) == self.talk.map(|h| h.id()) {
+            return Ok(());
+        }
+        if let Some(old) = self.talk.take()
+            && let Err(err) = self.manager.unregister(old)
+        {
+            log::warn!("failed to unregister talk hotkey {old}: {err}");
+        }
+        self.talk_keys.clear();
+        let Some(hotkey) = hotkey else {
+            return Ok(());
+        };
+        self.manager
+            .register(hotkey)
+            .with_context(|| format!("registering talk hotkey {hotkey}"))?;
+        log::info!("registered talk hotkey {hotkey}");
+        self.talk = Some(hotkey);
+        Ok(())
+    }
+
+    /// Talk key events since the last call (filled by [`poll`](Self::poll)).
+    pub fn take_talk_keys(&mut self) -> Vec<TalkKey> {
+        std::mem::take(&mut self.talk_keys)
+    }
+}
+
 impl Drop for Hotkey {
     fn drop(&mut self) {
         GlobalHotKeyEvent::set_event_handler(None::<fn(GlobalHotKeyEvent)>);
+        if let Some(talk) = self.talk
+            && let Err(err) = self.manager.unregister(talk)
+        {
+            log::warn!("failed to unregister talk hotkey: {err}");
+        }
         if let Err(err) = self.manager.unregister(self.hotkey) {
             log::warn!("failed to unregister global hotkey: {err}");
         }
@@ -176,6 +237,29 @@ mod tests {
         #[cfg(target_os = "macos")]
         assert_eq!(default_hotkey().to_string(), "shift+super+KeyM");
         assert!(default_hotkey().matches(HOTKEY_MODIFIERS, Code::KeyM));
+    }
+
+    #[test]
+    fn talk_hotkey_maps_press_and_release() {
+        let talk: HotKey = crate::voice::settings::DEFAULT_TALK_HOTKEY.parse().unwrap();
+        let talk_id = Some(talk.id());
+        assert_eq!(
+            talk_key_for(talk.id(), HotKeyState::Pressed, talk_id),
+            Some(TalkKey::Press)
+        );
+        assert_eq!(
+            talk_key_for(talk.id(), HotKeyState::Released, talk_id),
+            Some(TalkKey::Release)
+        );
+        let show = default_hotkey().id();
+        assert_eq!(talk_key_for(show, HotKeyState::Pressed, talk_id), None);
+        assert_eq!(talk_key_for(talk.id(), HotKeyState::Pressed, None), None);
+        // The talk hotkey never shows the window.
+        assert_eq!(
+            action_for(talk.id(), HotKeyState::Pressed, show),
+            HotkeyAction::Ignore
+        );
+        assert!(talk.matches(HOTKEY_MODIFIERS, Code::KeyE));
     }
 
     #[test]

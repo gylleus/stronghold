@@ -10,10 +10,12 @@ pub mod protocol;
 pub mod session;
 pub mod settings;
 pub mod transcript;
+pub mod voice;
 
 pub use config::ChatConfig;
 pub use process::{ChatCommand, ChatEvent, ChatHandle, SessionState};
 pub use transcript::{ChatItem, Decision, Transcript};
+pub use voice::SpeechEvent;
 
 use protocol::Incoming;
 
@@ -35,6 +37,8 @@ pub struct ChatSession {
     /// `--model` / `--effort` the process runs with.
     model: Option<String>,
     effort: Option<String>,
+    /// Turn starts and reply text for the speaker, drained by [`take_speech`](Self::take_speech).
+    speech: Vec<SpeechEvent>,
 }
 
 /// Environment variable with a message the chat sends as soon as it is ready; with it the
@@ -63,6 +67,7 @@ impl ChatSession {
             told_auto: None,
             model,
             effort,
+            speech: Vec::new(),
         }
     }
 
@@ -90,6 +95,7 @@ impl ChatSession {
             notice.push_str(&format!(" (effort {effort})"));
         }
         notice.push('…');
+        self.end_speech_turn();
         self.transcript.session_ended();
         self.transcript.push_system(notice);
         // The header shows the requested model until the CLI reports the resolved one.
@@ -157,6 +163,7 @@ impl ChatSession {
         match event {
             ChatEvent::State(state) => {
                 if !matches!(state, SessionState::Ready | SessionState::Starting) {
+                    self.end_speech_turn();
                     self.transcript.session_ended();
                 }
                 if let SessionState::Crashed { reason, .. } = &state {
@@ -166,6 +173,7 @@ impl ChatSession {
                 self.state = state;
             }
             ChatEvent::Message(message) => {
+                voice::tap(&message, &mut self.speech);
                 if matches!(message, Incoming::Result(_)) {
                     self.log_turn();
                 }
@@ -217,14 +225,43 @@ impl ChatSession {
 
     /// Sends a user message; false when the session cannot take one now.
     pub fn send(&mut self, text: &str) -> bool {
+        self.send_as(text, false)
+    }
+
+    /// Sends a message Karl spoke: his bubble gets the voice marker and the Queen gets
+    /// [`voice::VOICE_NOTE`] with it (not shown), asking for a short spoken-style answer.
+    pub fn send_voice(&mut self, text: &str) -> bool {
+        self.send_as(text, true)
+    }
+
+    fn send_as(&mut self, text: &str, voice: bool) -> bool {
         let text = text.trim();
         if text.is_empty() || !self.can_send() {
             return false;
         }
-        self.transcript.push_user(text);
-        let outgoing = self.outgoing(text);
+        let mut outgoing = self.outgoing(text);
+        if voice {
+            self.transcript.push_voice_user(text);
+            outgoing = format!("{}\n\n{outgoing}", voice::VOICE_NOTE);
+        } else {
+            self.transcript.push_user(text);
+        }
+        self.speech.push(SpeechEvent::TurnStart { voice });
         self.handle.send(ChatCommand::Send(outgoing));
         true
+    }
+
+    /// Tells the speaker a running turn is over when it ends without a result (restart, crash,
+    /// new chat).
+    fn end_speech_turn(&mut self) {
+        if self.transcript.running {
+            self.speech.push(SpeechEvent::TurnEnd);
+        }
+    }
+
+    /// Turn starts and reply text since the last call, for the speaker.
+    pub fn take_speech(&mut self) -> Vec<SpeechEvent> {
+        std::mem::take(&mut self.speech)
     }
 
     pub fn interrupt(&self) {
@@ -252,6 +289,7 @@ impl ChatSession {
     }
 
     pub fn new_chat(&mut self) {
+        self.end_speech_turn();
         self.transcript = Transcript::default();
         self.told_auto = None;
         self.handle.send(ChatCommand::NewChat);

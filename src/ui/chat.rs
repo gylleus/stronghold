@@ -255,6 +255,7 @@ fn input_box(
 fn item_ui(ui: &mut Ui, item: &ChatItem, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
     match item {
         ChatItem::User(text) => user_bubble(ui, text),
+        ChatItem::VoiceUser(text) => user_bubble(ui, &voice_bubble_text(text)),
         ChatItem::Assistant { text, .. } => {
             if let Some(id) = markdown(ui, text, view.is_node) {
                 actions.push(ChatAction::SelectNode(id));
@@ -277,6 +278,14 @@ fn item_ui(ui: &mut Ui, item: &ChatItem, view: &ChatView<'_>, actions: &mut Vec<
             ui.colored_label(ui.visuals().error_fg_color, text);
         }
     }
+}
+
+/// Marker in front of a message Karl spoke (🎙 is not in egui's default fonts; 🎤 is).
+pub const VOICE_MARKER: &str = "🎤";
+
+/// A voice message's bubble text.
+pub fn voice_bubble_text(text: &str) -> String {
+    format!("{VOICE_MARKER} {text}")
 }
 
 fn user_bubble(ui: &mut Ui, text: &str) {
@@ -815,6 +824,35 @@ mod tests {
             }
         }
         assert!(!state.focus_input, "focus request consumed once ready");
+    }
+
+    /// A spoken message shows as Karl said it, with the voice marker.
+    #[test]
+    fn voice_messages_show_the_marker() {
+        let mut transcript = Transcript::default();
+        transcript.push_voice_user("How many agents need input?");
+        let ctx = egui::Context::default();
+        let mut state = ChatPanelState::default();
+        let mut output = None;
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                chat_ui(
+                    ui,
+                    &mut state,
+                    ChatView {
+                        transcript: &transcript,
+                        state: &SessionState::Ready,
+                        is_node: &any_node,
+                        auto_mode: false,
+                    },
+                );
+            });
+            out.textures_delta.clear();
+            output = Some(out);
+        }
+        let output = output.unwrap();
+        let text = voice_bubble_text("How many agents need input?");
+        assert!(crate::ui::test_util::text_center(&output, &text).is_some());
     }
 
     /// Enter in the focused input box sends the draft; Shift+Enter does not.

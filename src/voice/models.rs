@@ -641,6 +641,92 @@ pub mod kokoro {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
+    /// Why the app's Speaker has no model: it never downloads without Karl's go-ahead.
+    pub const NOT_INSTALLED: &str = "The Queen's voice is not downloaded";
+
+    /// Size of [`DEFAULT`]'s archive, for the download button.
+    pub const SIZE_LABEL: &str = "333 MB";
+
+    /// A download of the model started from a button, running [`ensure`] on its own thread.
+    pub struct Fetch {
+        status: std::sync::Arc<std::sync::Mutex<super::DownloadStatus>>,
+    }
+
+    impl Fetch {
+        /// Starts downloading `release` into `root`; `repaint` is called on every change.
+        pub fn start(
+            root: PathBuf,
+            release: ModelRelease,
+            repaint: Option<Box<dyn Fn() + Send + Sync>>,
+        ) -> Self {
+            use super::DownloadStatus as S;
+            let status = std::sync::Arc::new(std::sync::Mutex::new(S::Downloading {
+                done: 0,
+                total: Some(release.size),
+            }));
+            let shared = status.clone();
+            std::thread::Builder::new()
+                .name("kokoro-download".into())
+                .spawn(move || {
+                    let set = |s: S| {
+                        *shared.lock().unwrap_or_else(|e| e.into_inner()) = s;
+                        if let Some(repaint) = &repaint {
+                            repaint();
+                        }
+                    };
+                    let mut last_mb = u64::MAX;
+                    let result = ensure(&root, &release, |p| match p {
+                        Progress::Downloading { done, total } => {
+                            // Repaint once per MB, not per chunk.
+                            if done >> 20 != last_mb {
+                                last_mb = done >> 20;
+                                set(S::Downloading {
+                                    done,
+                                    total: Some(total),
+                                });
+                            }
+                        }
+                        Progress::Verifying | Progress::Unpacking => set(S::Extracting),
+                    });
+                    match result {
+                        Ok(_) => set(S::Done),
+                        Err(e) => {
+                            log::warn!("kokoro download failed: {e}");
+                            set(S::Failed(e.to_string()));
+                        }
+                    }
+                })
+                .expect("spawn the kokoro download thread");
+            Self { status }
+        }
+
+        pub fn status(&self) -> super::DownloadStatus {
+            self.status
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        }
+
+        /// Fraction done while downloading.
+        pub fn progress(&self) -> Option<f32> {
+            match self.status() {
+                super::DownloadStatus::Downloading {
+                    done,
+                    total: Some(total),
+                } if total > 0 => Some((done as f64 / total as f64) as f32),
+                super::DownloadStatus::Extracting | super::DownloadStatus::Done => Some(1.0),
+                _ => None,
+            }
+        }
+
+        pub fn is_running(&self) -> bool {
+            matches!(
+                self.status(),
+                super::DownloadStatus::Downloading { .. } | super::DownloadStatus::Extracting
+            )
+        }
+    }
+
     /// Speaker names from the model's ONNX metadata (`speaker_names`), in speaker-id order.
     /// The metadata sits at the end of the file, so only the tail is read.
     pub fn read_speaker_names(model: &Path) -> io::Result<Vec<String>> {

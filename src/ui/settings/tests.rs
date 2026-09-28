@@ -30,6 +30,7 @@ fn cx<'a>(
         now_ms: 0,
         queen,
         general,
+        voice: VoiceStatus::default(),
     }
 }
 
@@ -89,7 +90,16 @@ fn each_section_renders_headless() {
                 "Whip all stalled now",
             ],
         ),
-        (Section::Voice, &[voice::PLACEHOLDER]),
+        (
+            Section::Voice,
+            &[
+                "Talk to the Queen",
+                "⌘⇧E",
+                "Speak all of the Queen's replies",
+                "▶ Test voice",
+                "Speech recognition (Parakeet)",
+            ],
+        ),
         (
             Section::General,
             &[
@@ -318,4 +328,111 @@ fn invalid_draft_is_not_saved() {
     assert!(pane.message.as_ref().unwrap().0);
     assert!(!path.exists());
     assert_eq!(pane.whip(), &WhipSettings::default());
+}
+
+fn voices() -> Vec<crate::voice::tts::Voice> {
+    ["af_heart", "ff_siwis", "bm_george", "jf_alpha", "am_adam"]
+        .iter()
+        .enumerate()
+        .map(|(id, name)| crate::voice::tts::Voice {
+            id: id as i32,
+            name: (*name).into(),
+        })
+        .collect()
+}
+
+#[test]
+fn voices_list_english_first() {
+    let voices = voices();
+    let names: Vec<&str> = voice::ordered_voices(&voices)
+        .iter()
+        .map(|v| v.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["af_heart", "bm_george", "am_adam", "ff_siwis", "jf_alpha"]
+    );
+}
+
+/// The download buttons only report the click: nothing is fetched by the pane.
+#[test]
+fn missing_models_offer_downloads_without_starting_them() {
+    let status = WhipStatus::default();
+    let info = general();
+    let voices = voices();
+    let mut pane = SettingsPane::load(None);
+    pane.open_section(Section::Voice);
+    let mut c = cx(&status, &info, QueenStatus::default());
+    c.voice = VoiceStatus {
+        voices: &voices,
+        speech_model: ModelStatus::Installed("Orca's copy".into()),
+        voice_model: ModelStatus::Missing,
+        hotkey_error: Some("⌘⇧E is taken by another app"),
+    };
+    let labels = [
+        "Orca's copy",
+        "⌘⇧E is taken by another app",
+        "Heart (American English, female)",
+    ];
+    let want: Vec<&str> = labels.into_iter().collect();
+    let voice_label = voice::voice_download_label();
+    assert_eq!(voice_label, "Download Queen voice (333 MB)");
+    let mut want_all = want.clone();
+    want_all.push(&voice_label);
+    assert_eq!(drawn(&mut pane, &c, &want_all).len(), want_all.len());
+
+    let out = click_label(&voice_label, |ui| pane.show(ui.ctx(), &c));
+    assert_eq!(out.download, Some(VoiceModel::Voice));
+    assert_eq!(out.voice, None);
+
+    // Test voice needs the model.
+    let out = click_label("▶ Test voice", |ui| pane.show(ui.ctx(), &c));
+    assert_eq!(out.test_voice, None, "disabled without the voice model");
+    c.voice.voice_model = ModelStatus::Installed("Loaded".into());
+    c.voice.speech_model = ModelStatus::Missing;
+    pane.voice_draft.speed_percent = 130;
+    let out = click_label("▶ Test voice", |ui| pane.show(ui.ctx(), &c));
+    assert_eq!(out.test_voice.unwrap().speed_percent, 130);
+    let speech_label = voice::speech_download_label();
+    let out = click_label(&speech_label, |ui| pane.show(ui.ctx(), &c));
+    assert_eq!(out.download, Some(VoiceModel::Speech));
+}
+
+#[test]
+fn voice_settings_save_and_reload() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    let mut pane = SettingsPane::load(Some(path.clone()));
+    pane.open_section(Section::Voice);
+    pane.voice_draft.voice = "bm_george".into();
+    pane.voice_draft.talk_hotkey = "alt+Space".into();
+    pane.voice_draft.volume_percent = 35;
+    let status = WhipStatus::default();
+    let info = general();
+    let out = click_label("Save", |ui| {
+        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+    });
+    let saved = out.voice.expect("saved");
+    assert_eq!(saved.voice, "bm_george");
+    let reloaded = SettingsPane::load(Some(path));
+    assert_eq!(reloaded.voice(), &saved);
+    assert_eq!(reloaded.voice().talk_hotkey_label(), "⌥Space");
+}
+
+#[test]
+fn queen_speak_replies_applies_and_saves_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    let mut pane = SettingsPane::load(Some(path.clone()));
+    pane.open_section(Section::Queen);
+    let status = WhipStatus::default();
+    let info = general();
+    let out = click_label("Speak replies", |ui| {
+        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+    });
+    assert!(out.voice.expect("applied").speak_replies);
+    assert!(pane.voice().speak_replies);
+    assert!(SettingsPane::load(Some(path)).voice().speak_replies);
+    // The palette's toggle goes through the same call.
+    assert!(!pane.set_speak_replies(false).speak_replies);
 }

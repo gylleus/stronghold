@@ -12,6 +12,9 @@ use crate::ui::keys::KeyCommand;
 pub enum ActionId {
     OpenChat,
     Dictate,
+    TalkToQueen,
+    StopSpeaking,
+    ToggleSpeakReplies,
     StatusReport,
     WhipSelected,
     WhipStalled,
@@ -85,6 +88,27 @@ pub const ACTIONS: &[Action] = &[
         "Dictate (hold ⌘E)",
         "voice speech talk microphone dictation transcribe speak",
         Some("⌘E"),
+    ),
+    action(
+        ActionId::TalkToQueen,
+        "talk_to_queen",
+        "Talk to the Queen",
+        "voice speak ask microphone hold hotkey conversation",
+        None,
+    ),
+    action(
+        ActionId::StopSpeaking,
+        "stop_speaking",
+        "Stop speaking",
+        "voice quiet silence mute reply queen audio",
+        None,
+    ),
+    action(
+        ActionId::ToggleSpeakReplies,
+        "toggle_speak_replies",
+        "Speak replies on/off",
+        "voice read aloud tts queen audio",
+        None,
     ),
     action(
         ActionId::StatusReport,
@@ -309,6 +333,12 @@ pub struct ActionContext {
     pub show_released: bool,
     /// The Queen's chat can take a message now.
     pub chat_ready: bool,
+    /// The talk-to-the-Queen hotkey's label, e.g. `⌘⇧E`.
+    pub talk_hotkey: String,
+    /// The Queen is speaking.
+    pub speaking: bool,
+    /// Every reply is spoken.
+    pub speak_replies: bool,
 }
 
 impl Default for ActionContext {
@@ -324,6 +354,9 @@ impl Default for ActionContext {
             show_loose: true,
             show_released: true,
             chat_ready: false,
+            talk_hotkey: "⌘⇧E".into(),
+            speaking: false,
+            speak_replies: false,
         }
     }
 }
@@ -341,6 +374,10 @@ pub fn title(id: ActionId, cx: &ActionContext) -> String {
             "{} recently released",
             if cx.show_released { "Hide" } else { "Show" }
         ),
+        ActionId::TalkToQueen => format!("Talk to the Queen (hold {})", cx.talk_hotkey),
+        ActionId::ToggleSpeakReplies => {
+            format!("Speak replies on/off (now {})", on_off(cx.speak_replies))
+        }
         _ => id.def().title.to_string(),
     }
 }
@@ -355,6 +392,7 @@ pub fn disabled_reason(id: ActionId, cx: &ActionContext) -> Option<&'static str>
             "Select a node with a terminal first"
         }
         StatusReport if !cx.chat_ready => "The Queen's chat is busy or not ready",
+        StopSpeaking if !cx.speaking => "The Queen is not speaking",
         GraphView if cx.view == View::Graph => "Already in graph view",
         TableView if cx.view == View::Table => "Already in table view",
         ClearFilters if !cx.filters_active => "No filters are set",
@@ -378,6 +416,10 @@ pub enum Dispatch {
     OpenChat,
     /// Record until ⌘E or Stop, then put the text into the Queen's chat.
     Dictate,
+    /// Record until the talk hotkey or Send, then send it to the Queen as a voice message.
+    TalkToQueen,
+    StopSpeaking,
+    ToggleSpeakReplies,
     /// Open the chat and send the Status report prompt, like its button.
     StatusReport,
     WhipStalled,
@@ -401,6 +443,9 @@ pub fn dispatch(id: ActionId) -> Dispatch {
     match id {
         A::OpenChat => Dispatch::OpenChat,
         A::Dictate => Dispatch::Dictate,
+        A::TalkToQueen => Dispatch::TalkToQueen,
+        A::StopSpeaking => Dispatch::StopSpeaking,
+        A::ToggleSpeakReplies => Dispatch::ToggleSpeakReplies,
         A::StatusReport => Dispatch::StatusReport,
         A::WhipSelected => Dispatch::Key(KeyCommand::Whip),
         A::WhipStalled => Dispatch::WhipStalled,
@@ -531,6 +576,9 @@ mod tests {
         let cases = [
             (A::OpenChat, Dispatch::OpenChat),
             (A::Dictate, Dispatch::Dictate),
+            (A::TalkToQueen, Dispatch::TalkToQueen),
+            (A::StopSpeaking, Dispatch::StopSpeaking),
+            (A::ToggleSpeakReplies, Dispatch::ToggleSpeakReplies),
             (A::StatusReport, Dispatch::StatusReport),
             (A::WhipSelected, Dispatch::Key(KeyCommand::Whip)),
             (A::WhipStalled, Dispatch::WhipStalled),
@@ -582,6 +630,19 @@ mod tests {
         assert_eq!(disabled_reason(ActionId::TableView, &cx), None);
         assert!(disabled_reason(ActionId::ClearFilters, &cx).is_some());
         assert_eq!(disabled_reason(ActionId::OpenChat, &cx), None);
+        assert_eq!(
+            disabled_reason(ActionId::StopSpeaking, &cx),
+            Some("The Queen is not speaking")
+        );
+        assert_eq!(disabled_reason(ActionId::TalkToQueen, &cx), None);
+        assert_eq!(
+            title(ActionId::TalkToQueen, &cx),
+            "Talk to the Queen (hold ⌘⇧E)"
+        );
+        assert_eq!(
+            title(ActionId::ToggleSpeakReplies, &cx),
+            "Speak replies on/off (now off)"
+        );
         assert_eq!(disabled_reason(ActionId::Broadcast, &cx), None);
 
         cx.whip_targets = 1;

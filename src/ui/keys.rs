@@ -71,6 +71,10 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
         "hold ⌘E",
         "Dictate: speak, release to insert the text at the cursor (Esc cancels)",
     ),
+    (
+        "hold ⌘⇧E",
+        "Talk to the Queen from any app; she answers aloud (default key, see Settings › Voice)",
+    ),
     ("j  k", "Next / previous node"),
     ("J  K", "Next / previous run"),
     ("]  [", "Next / previous repo"),
