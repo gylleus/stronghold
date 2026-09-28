@@ -31,6 +31,7 @@ global-hotkey = "0.8"
 egui_extras = "0.36"
 sherpa-rs = { version = "0.6.8", features = ["static"] }
 cpal = "0.18"
+sha2 = "0.10"
 
 # Native notifications when running from Myrstack.app (see src/notify/native.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
