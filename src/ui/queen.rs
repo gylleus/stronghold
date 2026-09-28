@@ -79,6 +79,8 @@ impl FleetSummary {
 #[derive(Default)]
 pub struct QueenPanel {
     pub broadcast: BroadcastComposer,
+    /// Expand the broadcast section on the next frame (the palette's "Broadcast…").
+    pub open_broadcast: bool,
 }
 
 /// What the panel reads each frame.
@@ -191,6 +193,7 @@ pub fn queen_panel(
     egui::CollapsingHeader::new(RichText::new("Broadcast to coordinators").strong())
         .id_salt("queen_broadcast")
         .default_open(false)
+        .open(std::mem::take(&mut panel.open_broadcast).then_some(true))
         .show(ui, |ui| {
             panel.broadcast.ui(ui, inputs.snapshot, make_sender);
         });
