@@ -67,6 +67,10 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ),
     ("⌘J", "Open / close the Queen's chat"),
     ("⌘,", "Settings: Queen model, whip, voice, paths"),
+    (
+        "hold ⌘E",
+        "Dictate: speak, release to insert the text at the cursor (Esc cancels)",
+    ),
     ("j  k", "Next / previous node"),
     ("J  K", "Next / previous run"),
     ("]  [", "Next / previous repo"),

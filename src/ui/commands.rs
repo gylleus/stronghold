@@ -11,6 +11,7 @@ use crate::ui::keys::KeyCommand;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActionId {
     OpenChat,
+    Dictate,
     StatusReport,
     WhipSelected,
     WhipStalled,
@@ -77,6 +78,13 @@ pub const ACTIONS: &[Action] = &[
         "Open Queen chat",
         "queen chat talk ask message",
         Some("⌘J"),
+    ),
+    action(
+        ActionId::Dictate,
+        "dictate",
+        "Dictate (hold ⌘E)",
+        "voice speech talk microphone dictation transcribe speak",
+        Some("⌘E"),
     ),
     action(
         ActionId::StatusReport,
@@ -368,6 +376,8 @@ pub enum Dispatch {
     Key(KeyCommand),
     /// Select the Queen and focus her chat (unlike ⌘J, never closes it).
     OpenChat,
+    /// Record until ⌘E or Stop, then put the text into the Queen's chat.
+    Dictate,
     /// Open the chat and send the Status report prompt, like its button.
     StatusReport,
     WhipStalled,
@@ -390,6 +400,7 @@ pub fn dispatch(id: ActionId) -> Dispatch {
     use ActionId as A;
     match id {
         A::OpenChat => Dispatch::OpenChat,
+        A::Dictate => Dispatch::Dictate,
         A::StatusReport => Dispatch::StatusReport,
         A::WhipSelected => Dispatch::Key(KeyCommand::Whip),
         A::WhipStalled => Dispatch::WhipStalled,
@@ -519,6 +530,7 @@ mod tests {
         use ActionId as A;
         let cases = [
             (A::OpenChat, Dispatch::OpenChat),
+            (A::Dictate, Dispatch::Dictate),
             (A::StatusReport, Dispatch::StatusReport),
             (A::WhipSelected, Dispatch::Key(KeyCommand::Whip)),
             (A::WhipStalled, Dispatch::WhipStalled),

@@ -9,6 +9,7 @@ use crate::APP_NAME;
 
 mod chat;
 mod control;
+mod dictation;
 mod palette;
 mod playbook;
 mod settings;
@@ -107,6 +108,8 @@ pub struct MyrstackApp {
     chat: chat::AppChat,
     /// Manual whips in flight, their confirmation popover and result toast.
     whip_now: whip_now::WhipNowState,
+    /// ⌘E push-to-talk dictation.
+    dictation: dictation::AppDictation,
 }
 
 /// How many posted notifications the alerts menu keeps.
@@ -176,6 +179,7 @@ impl MyrstackApp {
             playbook_watch: playbook::PlaybookWatch::spawn(repaint_once(ctx)),
             chat,
             whip_now: whip_now::WhipNowState::default(),
+            dictation: dictation::AppDictation::new(ctx),
         };
         app.restore_state(cc.storage);
         app
@@ -942,6 +946,7 @@ impl eframe::App for MyrstackApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let now_ms = now_ms();
+        self.dictation_frame(ui.ctx());
         self.search_palette(ui.ctx());
         self.keyboard(ui.ctx());
         egui::Panel::top("top_bar").show(ui, |ui| self.top_bar(ui, now_ms));
