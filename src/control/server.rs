@@ -62,6 +62,7 @@ pub const ACTION_METHODS: &[&str] = &[
     "open_whip_settings",
     "close",
     "whip",
+    "spawn",
 ];
 
 /// One read of a terminal's screen.

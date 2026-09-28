@@ -11,6 +11,7 @@ mod chat;
 mod control;
 mod palette;
 mod playbook;
+mod spawn;
 mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
@@ -105,6 +106,8 @@ pub struct MyrstackApp {
     chat: chat::AppChat,
     /// Manual whips in flight, their confirmation popover and result toast.
     whip_now: whip_now::WhipNowState,
+    /// "New session…" dialog, spawns in flight and the new node to select.
+    spawn: spawn::AppSpawn,
 }
 
 /// How many posted notifications the alerts menu keeps.
@@ -173,6 +176,7 @@ impl MyrstackApp {
             playbook_watch: playbook::PlaybookWatch::spawn(repaint_once(ctx)),
             chat: chat::AppChat::start(ctx),
             whip_now: whip_now::WhipNowState::default(),
+            spawn: spawn::AppSpawn::start(ctx),
         };
         app.restore_state(cc.storage);
         app
@@ -912,11 +916,13 @@ impl eframe::App for MyrstackApp {
             self.whip_log.snapshot_changed();
             self.feed_whip();
             self.notify_needs_input();
+            self.spawn_select_pending();
         }
         self.take_alerts();
         self.poll_chat();
         self.poll_control(ctx);
         self.poll_whip_now();
+        self.poll_spawn();
         for result in self.actions.poll() {
             self.control_action_done(&result);
             if self.input.on_result(&result, now_ms()) {
@@ -973,6 +979,9 @@ impl eframe::App for MyrstackApp {
             if response.close_shown {
                 self.close.request(ui::close::CloseRequest::Shown);
             }
+            if let Some(repo) = &response.new_session_repo {
+                self.open_spawn_dialog(Some(repo));
+            }
         }
         if let Some(id) = whip_pick {
             self.select_and_focus(id);
@@ -1020,6 +1029,7 @@ impl eframe::App for MyrstackApp {
             self.request_whip_stalled(None);
         }
         self.whip_now_dialogs(ui.ctx(), now_ms);
+        self.spawn_dialog(ui.ctx());
         self.sync_screen_watch();
     }
 }

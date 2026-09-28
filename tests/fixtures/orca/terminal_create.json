@@ -1,0 +1,17 @@
+{
+  "id": "2e7f1a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b",
+  "ok": true,
+  "result": {
+    "terminal": {
+      "handle": "term_9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+      "tabId": "tab-77aa",
+      "paneKey": "tab-77aa:leaf-1",
+      "ptyId": "pty-92",
+      "worktreeId": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/orca/workspaces/commerce-platform/hack-77-admin-speed",
+      "title": null,
+      "executionHostId": "local",
+      "hostPlatform": "darwin",
+      "surface": "background"
+    }
+  }
+}

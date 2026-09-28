@@ -318,6 +318,37 @@ pub fn definitions() -> Vec<Value> {
             ACTS,
         ),
         tool(
+            "spawn_session",
+            "Start a new agent session",
+            "Starts a new Claude or Codex session in Orca with an initial prompt, and waits \
+             until the prompt visibly started (answering the Bypass Permissions / folder trust \
+             modals and submitting a parked prompt). Modes: \"worktree\" runs a fresh agent in \
+             an existing worktree (give worktree: id, path, <repo>/<name> or name); \
+             \"new_worktree\" creates an independent worktree off the repo's base ref (give \
+             repo and name); \"worker\" adds a task to run_id (as its coordinator) and starts a \
+             worker on it (give exactly one of: repo + name for a new worktree, worktree, or \
+             terminal to reuse an agent already running there); the prompt is the task spec. \
+             Only when Karl asks for a new session. Returns the new terminal and node id; the \
+             dashboard selects it once it appears.",
+            object(
+                json!({
+                    "mode": { "type": "string", "enum": ["worktree", "new_worktree", "worker"] },
+                    "prompt": { "type": "string", "description": "Initial prompt (for a worker: the task spec)." },
+                    "repo": { "type": "string", "description": "Repo name, id or path (new_worktree, or a worker's new worktree)." },
+                    "worktree": { "type": "string", "description": "Existing worktree: id, path, <repo>/<name> or name." },
+                    "name": { "type": "string", "description": "Name of the new worktree." },
+                    "base_branch": { "type": "string", "description": "Base ref of the new worktree (default: the repo's)." },
+                    "run_id": { "type": "string", "description": "Run to add a worker to (worker mode)." },
+                    "terminal": { "type": "string", "description": "Worker mode: agent id, handle or label of a live agent terminal to run the task in." },
+                    "title": { "type": "string", "description": "Worker task title (default: the prompt's first line)." },
+                    "agent": { "type": "string", "enum": ["claude", "codex"], "default": "claude" },
+                    "model": { "type": "string", "description": "Model alias or id, e.g. opus, sonnet, gpt-6-astra (default: the agent's)." },
+                }),
+                &["mode", "prompt"],
+            ),
+            ACTS,
+        ),
+        tool(
             "focus_agent",
             "Focus an agent",
             "Switches the dashboard to the graph, selects the node and zooms onto it. Pass \
@@ -411,6 +442,7 @@ pub fn call(control: &mut dyn Control, name: &str, args: &Value) -> Option<ToolO
         "whip_status" => whip_status(control, &p),
         "set_whip" => set_whip(control, &p),
         "whip_agents" => whip_agents(control, &p),
+        "spawn_session" => spawn_session(control, args),
         "focus_agent" => focus_agent(control, &p),
         "set_filter" => set_filter(control, args),
         "set_view" => set_view(control, &p),
@@ -1224,6 +1256,38 @@ fn whip_agents(control: &mut dyn Control, p: &Params) -> ToolResult {
         manual_whip_text(&result)
     };
     Ok(ToolOutput::ok(text, result))
+}
+
+fn spawn_session(control: &mut dyn Control, args: &Value) -> ToolResult {
+    let parsed = crate::spawn::SpawnArgs::parse(args)?;
+    let result = control.call("spawn", parsed.to_params())?;
+    Ok(ToolOutput::ok(spawn_text(&parsed, &result), result))
+}
+
+fn spawn_text(args: &crate::spawn::SpawnArgs, result: &Value) -> String {
+    let s = |k: &str| result.get(k).and_then(Value::as_str);
+    let agent = args.agent.label();
+    let place = s("worktree_path").or(s("worktree_id")).unwrap_or("?");
+    let mut out = vec![match s("handle") {
+        Some(handle) => format!("Started {agent} in {handle} ({place})."),
+        None => format!("Started {agent} ({place})."),
+    }];
+    if let Some(node) = s("node") {
+        out.push(format!("Node: {node}"));
+    }
+    if let (Some(task), Some(dispatch)) = (s("task_id"), s("dispatch_id")) {
+        out.push(format!("Task {task}, dispatch {dispatch}."));
+    }
+    let verified = result.get("verified").and_then(Value::as_bool) == Some(true);
+    out.push(if verified {
+        "The prompt shows as started.".into()
+    } else {
+        "Could not confirm the prompt started: check the terminal (get_agent).".into()
+    });
+    for note in strings(result.get("notes")) {
+        out.push(format!("- {note}"));
+    }
+    out.join("\n")
 }
 
 fn manual_whip_text(result: &Value) -> String {

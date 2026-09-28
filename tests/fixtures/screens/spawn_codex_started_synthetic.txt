@@ -1,0 +1,15 @@
+╭──────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.61.0)                    │
+╰──────────────────────────────────────────────╯
+
+› Fix the flaky checkout test in packages/platform: it times out on CI about one run in
+  five.
+
+• Explored
+  └ Search checkout.test in packages
+
+• Working (12s • esc to interrupt)
+
+› Ask Codex to do anything
+
+  gpt-6-astra high · ~/orca/workspaces/depict/spawn-old

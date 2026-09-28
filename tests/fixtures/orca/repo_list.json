@@ -1,0 +1,111 @@
+{
+  "id": "47919e25-5f67-424b-bff1-0b36b6cf0b66",
+  "ok": true,
+  "result": {
+    "repos": [
+      {
+        "id": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd",
+        "path": "/Users/gylleus/repo/hackathon/commerce-platform",
+        "displayName": "commerce-platform",
+        "badgeColor": "#737373",
+        "addedAt": 1788349549023,
+        "kind": "git",
+        "externalWorktreeVisibilityLegacy": false,
+        "gitUsername": "gylleus",
+        "worktreeBaseRef": "origin/main",
+        "repoIcon": {
+          "type": "image",
+          "src": "https://github.com/depict-org.png?size=64",
+          "source": "github",
+          "label": "depict-org/commerce-platform"
+        },
+        "upstream": null,
+        "gitRemoteIdentity": {
+          "canonicalKey": "github.com/depict-org/commerce-platform",
+          "remoteName": "origin",
+          "remoteUrl": "git@github.com:depict-org/commerce-platform.git"
+        },
+        "projectHostSetupMethod": "cloned",
+        "hookSettings": {
+          "mode": "auto",
+          "setupRunPolicy": "run-by-default",
+          "setupAgentStartupPolicy": "start-immediately",
+          "scripts": {
+            "setup": "",
+            "archive": ""
+          }
+        },
+        "externalWorktreeVisibility": "hide"
+      },
+      {
+        "id": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f",
+        "path": "/Users/gylleus/repo/depict/depict",
+        "displayName": "depict",
+        "badgeColor": "#737373",
+        "addedAt": 1786617273450,
+        "kind": "git",
+        "externalWorktreeVisibility": "hide",
+        "externalWorktreeVisibilityLegacy": false,
+        "gitUsername": "gylleus",
+        "worktreeBaseRef": "origin/main",
+        "repoIcon": {
+          "type": "image",
+          "src": "https://github.com/depict-org.png?size=64",
+          "source": "github",
+          "label": "depict-org/depict"
+        },
+        "upstream": null,
+        "gitRemoteIdentity": {
+          "canonicalKey": "github.com/depict-org/depict",
+          "remoteName": "origin",
+          "remoteUrl": "git@github.com:depict-org/depict.git"
+        },
+        "hookSettings": {
+          "mode": "auto",
+          "setupRunPolicy": "run-by-default",
+          "setupAgentStartupPolicy": "start-immediately",
+          "scripts": {
+            "setup": "",
+            "archive": ""
+          }
+        }
+      },
+      {
+        "id": "03a82853-617b-4fb2-b502-ad9f0df97007",
+        "path": "/Users/gylleus/repo/saker/fitness-rpg",
+        "displayName": "fitness-rpg",
+        "badgeColor": "#737373",
+        "addedAt": 1790000855689,
+        "kind": "git",
+        "externalWorktreeVisibilityLegacy": false,
+        "gitUsername": "gylleus",
+        "repoIcon": {
+          "type": "image",
+          "src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAABCcAAAQnAEmzTo0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAP+SURBVHgB1ZrPTxNBFMff21aspJKFEAMVTXvTSCIe5WK9oRfBg8YTJdEzP/wDhD+AX2ejlCPGKDe9ES54tCYmHrsJSevBSK0NVGxnnLdYs7Q77ezuIO3n4jq73b7v+zEzzCuCAlnOzUgJRjjCPQ48iRzigGCCTjgUxDszAJgBBtuxHtxU+Rg2u2kbvg/TnPEZ7Qa3xkLENBiwPngOLdlDUgFf9/k0q/L5UzC8HosBWxiKhtNuN10F5Ep8WcR0BtoKXIlFcbZhtH4gX+JrIs9T0IYIu9IXo6Ep55jh/A95vl2NJxAwdZQdzrG/CM+nhPFr0BHw2Vg0tEJXtoD8AY/zKt8Sl3HoDAq/fmMi0YuFoxRiMAmdYzxhdoWZPcnYEciVWBY6SwBhRyGcK1bG4QSM392rwG6hYl8PD3ZBT8QAzZiRMIyEGWJS96ufvfsOzz8Uj409udkDC3f6QCdVYOOGgXgdNLLxsdRgPEFjbuNBELbfIuePgCYoZZa2CtL7i+JescxAI3ESoG2v80p4v5b3bpDxmqNgakt/MnyxifdrkACdUdAmQMV4goxXfVYFLQLI+5Q+qlAUaJrVgRYBfjw6+/Yb6CCwAK/er7FjlWEnW4agBBYw+0buyZePLsDyRL/0/pKGWggkgDxInnTj6W0Txq52w8MbUXsVdv28higEEiDL40tm2BZQg65pzI2gUfAtYKPJolW/56GNnCyVgkbBtwCZ5yhlKHXqGU1EYOxKt6d3qeBLgMz7lCZzSfnOZOV+v+u2mqLgZyYjfAmQeczO9d6w9HNkvLM2nPhdnT0LaOb9ByJ9WkEz0mg80jDudz3xLEDm/ddTA6DKXJMoeN3oeRIg8z4VbrPUqYcK2m1toHd73W57EuDm/VaFK4Nqwa2gvW63lQXIvN+qcGXICtrrHz3KAmTeVylcGZRGwwNdDeNeoqAk4P2XfVfv02YtKPMuJxVkPH2nCiSg5QTslqtUuNcGuyAoshV6yFRKS/to0Wr1FH2JczPmt3BlLNztO+Ykej99pwIZg3G+rfLkC5EuNRGPRe76KVwZzt0rCVFdU4TtnzD/kyc52ifTLaHc/HHAtBrv5HP+EC6LdysfQyJOYHaPm2fPcDrcPe1emFesWNRIGHTGzjlfhQ5D2LxO/9qxOqwY1O3Qd1hz8lhG2EjThS2AoiA0LUCHQG3XWu/4X7VQz4l1QCqRjc6ecUObNVesiu44TkI7wvh6rCeUcg41zFf0QDtGgmyqN55wnXCHzodmRE+WGsoWnDb0IxDRViWb3G43/bEHtV9ZhaUQ8f93MYXhom+9ehg1VhKI0hkSQZFckY8zZEm7JcVFV+dkfm5j0dYmBMZmOQqZZobX+AN3xr1nX6IyBgAAAABJRU5ErkJggg==",
+          "source": "file",
+          "label": "assets/favicon.png"
+        },
+        "upstream": null,
+        "gitRemoteIdentity": {
+          "canonicalKey": "github.com/gylleus/fitness-rpg",
+          "remoteName": "origin",
+          "remoteUrl": "git@github.com:gylleus/fitness-rpg.git"
+        },
+        "projectHostSetupMethod": "imported-existing-folder",
+        "hookSettings": {
+          "mode": "auto",
+          "setupRunPolicy": "run-by-default",
+          "setupAgentStartupPolicy": "start-immediately",
+          "scripts": {
+            "setup": "",
+            "archive": ""
+          }
+        },
+        "externalWorktreeVisibility": "hide"
+      }
+    ]
+  },
+  "_meta": {
+    "runtimeId": "fecc11aa-dfe9-4566-93aa-50a944d817cb"
+  }
+}

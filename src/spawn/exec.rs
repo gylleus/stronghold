@@ -1,0 +1,793 @@
+//! Runs a [`SpawnPlan`] on a background thread, one step after another, reporting each step's
+//! progress, then checks on screen that the agent took its prompt.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+use crossbeam_channel::{Receiver, Sender};
+use serde_json::Value;
+
+use super::verify::{Expect, ScreenVerdict, classify_screen};
+use super::{Agent, SpawnArgs, SpawnContext, SpawnPlan, Step, build_plan, catalog::Catalog};
+use crate::actions::{GONE_TERMINAL_CODES, Key, Wake};
+use crate::model::NodeId;
+use crate::orca::spawn::{
+    TerminalCreated, TerminalWait, WorkerStarted, WorktreeCreated, from_result, from_result_field,
+};
+use crate::orca::{OrcaClient, OrcaError, Run, Task, Terminal, TerminalInput};
+
+/// Per-call timeouts. Creating a worktree runs `git worktree add` (and maybe fetches).
+const WORKTREE_CREATE_TIMEOUT: Duration = Duration::from_secs(120);
+const TERMINAL_CREATE_TIMEOUT: Duration = Duration::from_secs(30);
+const TASK_CREATE_TIMEOUT: Duration = Duration::from_secs(20);
+/// On top of worker-start's own readiness budget.
+const WORKER_START_GRACE: Duration = Duration::from_secs(30);
+const WAIT_GRACE: Duration = Duration::from_secs(10);
+/// How long the screen check keeps looking for the started prompt.
+pub const VERIFY_DEADLINE: Duration = Duration::from_secs(45);
+/// Pause between screen reads.
+pub const VERIFY_POLL: Duration = Duration::from_millis(1500);
+/// Most times each fix is tried.
+const MAX_MODAL_ANSWERS: u32 = 2;
+const MAX_ENTERS: u32 = 3;
+/// Idle reads with an empty input box before the prompt is typed again.
+const IDLE_READS_BEFORE_RETYPE: u32 = 2;
+
+/// Caller identity variables `orca` reads besides [`crate::orca::client::SENDER_IDENTITY_ENV`];
+/// Myrstack acts as itself (or explicitly `--from` a coordinator), never as the terminal that
+/// launched it.
+pub const EXTRA_IDENTITY_ENV: &[&str] = &[
+    "ORCA_AGENT_LAUNCH_TOKEN",
+    "ORCA_ORCHESTRATION_COMPATIBILITY_HOST_KIND",
+    "ORCA_ORCHESTRATION_COMPATIBILITY_HOST_ID",
+    "ORCA_ORCHESTRATION_COMPATIBILITY_HOST_INCARNATION",
+    "ORCA_ORCHESTRATION_COMPATIBILITY_ATTACHMENT",
+];
+
+/// Where a step stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StepStatus {
+    Pending,
+    Running,
+    Done(Option<String>),
+    /// Finished with something worth knowing; the plan carries on.
+    Warned(String),
+    /// Not needed (e.g. no `.envrc`).
+    Skipped(String),
+    Failed(String),
+}
+
+impl StepStatus {
+    pub fn is_finished(&self) -> bool {
+        !matches!(self, StepStatus::Pending | StepStatus::Running)
+    }
+}
+
+/// A finished spawn.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SpawnOutcome {
+    pub context: SpawnContext,
+    /// The screen showed the prompt taken.
+    pub verified: bool,
+    /// Warnings and what was done on the way (modal answered, prompt resubmitted, …).
+    pub notes: Vec<String>,
+}
+
+impl SpawnOutcome {
+    /// The graph node the new session appears as.
+    pub fn node_id(&self) -> Option<NodeId> {
+        let ctx = &self.context;
+        match (&ctx.run_id, &ctx.dispatch_id, &ctx.handle) {
+            (Some(run), Some(dispatch), _) => Some(NodeId::dispatch(run, dispatch)),
+            (_, _, Some(handle)) => Some(NodeId::terminal(handle)),
+            _ => None,
+        }
+    }
+}
+
+/// A spawn that stopped at a step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpawnFailure {
+    /// The failed step; `None` when the request could not become a plan.
+    pub step: Option<usize>,
+    pub message: String,
+    /// What was created before the failure (a worktree, a terminal …).
+    pub context: Box<SpawnContext>,
+}
+
+impl std::fmt::Display for SpawnFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)?;
+        let ctx = &self.context;
+        let mut left = Vec::new();
+        if let Some(path) = &ctx.worktree_path {
+            left.push(format!("worktree {path}"));
+        }
+        if let Some(handle) = &ctx.handle {
+            left.push(format!("terminal {handle}"));
+        }
+        if let Some(task) = &ctx.task_id {
+            left.push(format!("task {task}"));
+        }
+        if !left.is_empty() {
+            write!(f, " (already created: {})", left.join(", "))?;
+        }
+        Ok(())
+    }
+}
+
+/// The side effects a spawn needs; faked in tests.
+pub trait SpawnBackend: Send + 'static {
+    /// `orca <args> --json` → `result`.
+    fn orca(&mut self, args: &[String], timeout: Duration) -> Result<Value, OrcaError>;
+    /// The terminal's rendered screen rows.
+    fn read_screen(&mut self, handle: &str) -> Result<Vec<String>, OrcaError>;
+    /// `orca terminal send`; `Err` when Orca refused the input.
+    fn send(&mut self, handle: &str, input: &TerminalInput) -> Result<(), String>;
+    /// `direnv allow <path>` when `path` has an `.envrc`: `Ok(None)` when there was nothing
+    /// to do.
+    fn direnv_allow(&mut self, path: &str) -> Result<Option<String>, String>;
+    /// Orca's repos and worktrees.
+    fn catalog(&mut self) -> Result<Catalog, String>;
+    fn sleep(&mut self, duration: Duration);
+    /// Monotonic time.
+    fn elapsed(&self) -> Duration;
+}
+
+/// The real backend: the `orca` CLI, `direnv`, wall-clock sleeps.
+pub struct OrcaBackend {
+    client: OrcaClient,
+    started: Instant,
+}
+
+impl Default for OrcaBackend {
+    fn default() -> Self {
+        Self::new(OrcaClient::new())
+    }
+}
+
+impl OrcaBackend {
+    pub fn new(client: OrcaClient) -> Self {
+        Self {
+            client: client
+                .without_sender_identity()
+                .without_env(EXTRA_IDENTITY_ENV.iter().copied()),
+            started: Instant::now(),
+        }
+    }
+}
+
+impl SpawnBackend for OrcaBackend {
+    fn orca(&mut self, args: &[String], timeout: Duration) -> Result<Value, OrcaError> {
+        log::info!("spawn: orca {}", args.join(" "));
+        self.client.clone().timeout(timeout).call_value(args)
+    }
+
+    fn read_screen(&mut self, handle: &str) -> Result<Vec<String>, OrcaError> {
+        self.client.terminal_read_screen(handle).map(|r| r.tail)
+    }
+
+    fn send(&mut self, handle: &str, input: &TerminalInput) -> Result<(), String> {
+        log::info!("spawn: send {input:?} to {handle}");
+        let send = self
+            .client
+            .clone()
+            .timeout(crate::actions::ACTION_TIMEOUT)
+            .terminal_send(handle, input)
+            .map_err(|e| e.to_string())?;
+        if send.accepted == Some(false) {
+            return Err(send
+                .refused_reason
+                .unwrap_or_else(|| "Orca did not accept the input".into()));
+        }
+        Ok(())
+    }
+
+    fn direnv_allow(&mut self, path: &str) -> Result<Option<String>, String> {
+        if !Path::new(path).join(".envrc").is_file() {
+            return Ok(None);
+        }
+        let Some(direnv) = find_direnv() else {
+            return Err("the worktree has an .envrc but direnv is not installed".into());
+        };
+        let out = Command::new(&direnv)
+            .arg("allow")
+            .arg(path)
+            .output()
+            .map_err(|e| format!("running {}: {e}", direnv.display()))?;
+        if out.status.success() {
+            Ok(Some(format!("direnv allow {path}")))
+        } else {
+            Err(format!(
+                "direnv allow exited with {}: {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
+        }
+    }
+
+    fn catalog(&mut self) -> Result<Catalog, String> {
+        Catalog::fetch(&self.client)
+    }
+
+    fn sleep(&mut self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
+
+    fn elapsed(&self) -> Duration {
+        self.started.elapsed()
+    }
+}
+
+/// `direnv` on `PATH` or in Homebrew's bin dirs (apps started from Finder lack the shell PATH).
+fn find_direnv() -> Option<PathBuf> {
+    let on_path = std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+        .map(|dir| dir.join("direnv"));
+    on_path
+        .chain(
+            ["/opt/homebrew/bin/direnv", "/usr/local/bin/direnv"]
+                .into_iter()
+                .map(PathBuf::from),
+        )
+        .find(|p| p.is_file())
+}
+
+/// Progress reported while a plan runs.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Progress {
+    Step { index: usize, status: StepStatus },
+}
+
+/// Runs `plan`'s steps in order; `progress` hears every step start and finish.
+pub fn run_plan(
+    plan: &SpawnPlan,
+    backend: &mut dyn SpawnBackend,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<SpawnOutcome, SpawnFailure> {
+    let mut run = PlanRun {
+        plan,
+        ctx: plan.initial.clone(),
+        notes: Vec::new(),
+        verified: false,
+    };
+    for (index, step) in plan.steps.iter().enumerate() {
+        progress(Progress::Step {
+            index,
+            status: StepStatus::Running,
+        });
+        let status = match run.step(step, backend) {
+            Ok(status) => status,
+            Err(message) => {
+                progress(Progress::Step {
+                    index,
+                    status: StepStatus::Failed(message.clone()),
+                });
+                return Err(SpawnFailure {
+                    step: Some(index),
+                    message: format!("{}: {message}", step.title()),
+                    context: Box::new(run.ctx),
+                });
+            }
+        };
+        if let StepStatus::Warned(note) = &status {
+            run.notes.push(note.clone());
+        }
+        progress(Progress::Step { index, status });
+    }
+    Ok(SpawnOutcome {
+        context: run.ctx,
+        verified: run.verified,
+        notes: run.notes,
+    })
+}
+
+struct PlanRun<'a> {
+    plan: &'a SpawnPlan,
+    ctx: SpawnContext,
+    notes: Vec<String>,
+    verified: bool,
+}
+
+fn orca_error(e: OrcaError) -> String {
+    match e {
+        OrcaError::Api(api) => format!("{} ({})", api.message, api.code),
+        other => other.to_string(),
+    }
+}
+
+fn is_gone(e: &OrcaError) -> bool {
+    e.code().is_some_and(|c| GONE_TERMINAL_CODES.contains(&c))
+}
+
+/// The path part of a worktree id (`<repoId>::<path>`).
+fn path_of_worktree_id(id: &str) -> Option<String> {
+    id.split_once("::").map(|(_, path)| path.to_string())
+}
+
+impl PlanRun<'_> {
+    fn call(
+        &self,
+        step: &Step,
+        backend: &mut dyn SpawnBackend,
+        timeout: Duration,
+    ) -> Result<Value, String> {
+        let args = step
+            .orca_args(&self.ctx)
+            .expect("an orca step")
+            .map_err(|e| e.to_string())?;
+        backend.orca(&args, timeout).map_err(orca_error)
+    }
+
+    fn step(&mut self, step: &Step, backend: &mut dyn SpawnBackend) -> Result<StepStatus, String> {
+        match step {
+            Step::CreateWorktree(req) => {
+                let result = self.call(step, backend, WORKTREE_CREATE_TIMEOUT)?;
+                let created: WorktreeCreated = from_result(result).map_err(orca_error)?;
+                self.ctx.worktree_id = Some(created.worktree.id.clone());
+                self.ctx.worktree_path = Some(created.worktree.path.clone())
+                    .filter(|p| !p.is_empty())
+                    .or_else(|| path_of_worktree_id(&created.worktree.id));
+                let mut note = format!(
+                    "{} at {}",
+                    created.worktree.name(),
+                    self.ctx.worktree_path.as_deref().unwrap_or("?")
+                );
+                if req.agent.is_some() {
+                    let handle = created.agent_handle().ok_or_else(|| {
+                        format!(
+                            "Orca created {} but reported no agent terminal{}",
+                            created.worktree.name(),
+                            created
+                                .warning
+                                .as_deref()
+                                .map(|w| format!(": {w}"))
+                                .unwrap_or_default()
+                        )
+                    })?;
+                    self.ctx.handle = Some(handle.to_string());
+                    note.push_str(&format!(", agent in {handle}"));
+                }
+                Ok(match created.warning {
+                    Some(w) => StepStatus::Warned(format!("{note}; Orca: {w}")),
+                    None => StepStatus::Done(Some(note)),
+                })
+            }
+            Step::CreateTerminal { .. } => {
+                let result = self.call(step, backend, TERMINAL_CREATE_TIMEOUT)?;
+                let terminal: TerminalCreated =
+                    from_result_field(result, "terminal").map_err(orca_error)?;
+                if terminal.handle.is_empty() {
+                    return Err("Orca returned no terminal handle".into());
+                }
+                self.ctx.handle = Some(terminal.handle.clone());
+                Ok(match terminal.warning {
+                    Some(w) => StepStatus::Warned(format!("{}; Orca: {w}", terminal.handle)),
+                    None => StepStatus::Done(Some(terminal.handle)),
+                })
+            }
+            Step::CreateTask { run_id, .. } => {
+                let result = self.call(step, backend, TASK_CREATE_TIMEOUT)?;
+                let task: Task = from_result_field(result, "task").map_err(orca_error)?;
+                self.ctx.run_id = Some(run_id.clone());
+                self.ctx.task_id = Some(task.id.clone());
+                Ok(StepStatus::Done(Some(task.id)))
+            }
+            Step::StartWorker(req) => {
+                let timeout = Duration::from_millis(req.timeout_ms.unwrap_or(0))
+                    + WORKER_START_GRACE
+                    + Duration::from_secs(60) * u32::from(req.timeout_ms.is_none());
+                let result = self.call(step, backend, timeout)?;
+                let started: WorkerStarted = from_result(result).map_err(orca_error)?;
+                self.ctx.dispatch_id = started.dispatch_id.clone();
+                if let Some(handle) = started.agent_handle() {
+                    self.ctx.handle = Some(handle.to_string());
+                }
+                if let Some(id) = started.worktree_id() {
+                    self.ctx.worktree_id = Some(id.to_string());
+                    if self.ctx.worktree_path.is_none() {
+                        self.ctx.worktree_path = path_of_worktree_id(id);
+                    }
+                }
+                if !started.is_ready() {
+                    return Err(started.failure());
+                }
+                let mut note = format!(
+                    "dispatch {} ready in {}",
+                    started.dispatch_id.as_deref().unwrap_or("?"),
+                    self.ctx.handle.as_deref().unwrap_or("?")
+                );
+                if let Some(w) = &started.warning {
+                    note.push_str(&format!("; Orca: {w}"));
+                    return Ok(StepStatus::Warned(note));
+                }
+                Ok(StepStatus::Done(Some(note)))
+            }
+            Step::DirenvAllow => {
+                let Some(path) = self.ctx.worktree_path.clone() else {
+                    return Ok(StepStatus::Skipped("no worktree path".into()));
+                };
+                Ok(match backend.direnv_allow(&path) {
+                    Ok(Some(note)) => StepStatus::Done(Some(note)),
+                    Ok(None) => StepStatus::Skipped("no .envrc".into()),
+                    Err(e) => StepStatus::Warned(e),
+                })
+            }
+            Step::WaitIdle { timeout_ms } => {
+                let timeout = Duration::from_millis(*timeout_ms) + WAIT_GRACE;
+                let args = step
+                    .orca_args(&self.ctx)
+                    .expect("an orca step")
+                    .map_err(|e| e.to_string())?;
+                match backend.orca(&args, timeout) {
+                    Ok(result) => {
+                        let wait: TerminalWait =
+                            from_result_field(result, "wait").map_err(orca_error)?;
+                        if wait.status.as_deref() == Some("exited") {
+                            return Err(format!(
+                                "the agent exited{}",
+                                wait.exit_code
+                                    .map(|c| format!(" with code {c}"))
+                                    .unwrap_or_default()
+                            ));
+                        }
+                        Ok(match wait.blocked_reason {
+                            Some(reason) => StepStatus::Done(Some(format!("blocked: {reason}"))),
+                            None => StepStatus::Done(Some("idle".into())),
+                        })
+                    }
+                    Err(e) if is_gone(&e) => Err("the agent's terminal is gone".into()),
+                    // Busy: an agent working on its prompt is not idle.
+                    Err(e) => Ok(StepStatus::Done(Some(format!(
+                        "not idle yet ({})",
+                        orca_error(e)
+                    )))),
+                }
+            }
+            Step::Verify { expect, retype } => self.verify(expect, *retype, backend),
+        }
+    }
+
+    fn verify(
+        &mut self,
+        expect: &Expect,
+        retype: bool,
+        backend: &mut dyn SpawnBackend,
+    ) -> Result<StepStatus, String> {
+        let handle = self
+            .ctx
+            .handle
+            .clone()
+            .ok_or("no agent terminal from an earlier step")?;
+        let agent = self.plan.request.agent;
+        let mut check = Verifier::new(agent, expect, retype);
+        let deadline = backend.elapsed() + VERIFY_DEADLINE;
+        loop {
+            let screen = match backend.read_screen(&handle) {
+                Ok(lines) => Some(lines),
+                Err(e) if is_gone(&e) => return Err("the agent's terminal is gone".into()),
+                Err(e) => {
+                    log::debug!("spawn: reading {handle}: {e}");
+                    None
+                }
+            };
+            if let Some(lines) = screen {
+                match check.next(&lines) {
+                    VerifyStep::Done => {
+                        let summary = check.summary();
+                        self.verified = true;
+                        self.notes.append(&mut check.notes);
+                        return Ok(StepStatus::Done(Some(summary)));
+                    }
+                    VerifyStep::Send(input, why) => {
+                        log::info!("spawn: {why} in {handle}");
+                        if let Err(e) = backend.send(&handle, &input) {
+                            check.notes.push(format!("{why} failed: {e}"));
+                        }
+                    }
+                    VerifyStep::Wait => {}
+                }
+            }
+            if backend.elapsed() >= deadline {
+                self.notes.append(&mut check.notes);
+                return Ok(StepStatus::Warned(format!(
+                    "could not confirm the prompt started within {} s (last screen: {}); check \
+                     the terminal",
+                    VERIFY_DEADLINE.as_secs(),
+                    check.last_label()
+                )));
+            }
+            backend.sleep(VERIFY_POLL);
+        }
+    }
+}
+
+/// What the screen check does next.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VerifyStep {
+    Done,
+    /// Send this input (and why, for the log and notes).
+    Send(TerminalInput, &'static str),
+    Wait,
+}
+
+/// The screen check's state between reads: which fixes it tried.
+#[derive(Debug, Clone)]
+pub struct Verifier {
+    agent: Agent,
+    expect: Expect,
+    retype: bool,
+    bypass: u32,
+    trust: u32,
+    enters: u32,
+    retyped: bool,
+    idle_reads: u32,
+    last: Option<ScreenVerdict>,
+    pub notes: Vec<String>,
+}
+
+impl Verifier {
+    pub fn new(agent: Agent, expect: &Expect, retype: bool) -> Self {
+        Self {
+            agent,
+            expect: expect.clone(),
+            retype: retype && matches!(expect, Expect::Prompt(_)),
+            bypass: 0,
+            trust: 0,
+            enters: 0,
+            retyped: false,
+            idle_reads: 0,
+            last: None,
+            notes: Vec::new(),
+        }
+    }
+
+    /// Decides on one screen read.
+    pub fn next(&mut self, lines: &[String]) -> VerifyStep {
+        let verdict = classify_screen(lines, self.agent, &self.expect);
+        self.last = Some(verdict.clone());
+        if verdict != ScreenVerdict::IdleEmpty {
+            self.idle_reads = 0;
+        }
+        match verdict {
+            ScreenVerdict::Started => VerifyStep::Done,
+            ScreenVerdict::BypassModal if self.bypass < MAX_MODAL_ANSWERS => {
+                self.bypass += 1;
+                self.note("accepted the Bypass Permissions warning (2)");
+                VerifyStep::Send(
+                    TerminalInput::key(Key::Digit(2)),
+                    "accept Bypass Permissions",
+                )
+            }
+            ScreenVerdict::TrustPrompt if self.trust < MAX_MODAL_ANSWERS => {
+                self.trust += 1;
+                self.note("trusted the folder (1)");
+                VerifyStep::Send(TerminalInput::key(Key::Digit(1)), "trust the folder")
+            }
+            ScreenVerdict::Parked if self.enters < MAX_ENTERS => {
+                self.enters += 1;
+                self.note("submitted the parked prompt (Enter)");
+                VerifyStep::Send(TerminalInput::enter_key(), "submit the parked prompt")
+            }
+            ScreenVerdict::IdleEmpty => {
+                self.idle_reads += 1;
+                match &self.expect {
+                    Expect::Prompt(prompt)
+                        if self.retype
+                            && !self.retyped
+                            && self.idle_reads >= IDLE_READS_BEFORE_RETYPE =>
+                    {
+                        let input = TerminalInput::line(prompt.clone());
+                        self.retyped = true;
+                        self.note("the prompt was lost; typed it again");
+                        VerifyStep::Send(input, "retype the prompt")
+                    }
+                    _ => VerifyStep::Wait,
+                }
+            }
+            _ => VerifyStep::Wait,
+        }
+    }
+
+    fn note(&mut self, text: &str) {
+        self.notes.push(text.to_string());
+    }
+
+    /// The step's note once the prompt shows as started.
+    fn summary(&self) -> String {
+        if self.notes.is_empty() {
+            "prompt taken".into()
+        } else {
+            format!("prompt taken after: {}", self.notes.join("; "))
+        }
+    }
+
+    fn last_label(&self) -> &'static str {
+        match self.last {
+            None => "unreadable",
+            Some(ScreenVerdict::Started) => "started",
+            Some(ScreenVerdict::Parked) => "prompt still in the input box",
+            Some(ScreenVerdict::BypassModal) => "Bypass Permissions warning",
+            Some(ScreenVerdict::TrustPrompt) => "folder trust question",
+            Some(ScreenVerdict::IdleEmpty) => "idle with an empty input box",
+            Some(ScreenVerdict::Booting) => "agent not drawn yet",
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Runner thread
+
+/// Id of a submitted spawn.
+pub type JobId = u64;
+
+/// Something to run.
+#[derive(Debug, Clone)]
+pub enum Job {
+    /// A plan built (and shown) in the dialog.
+    Plan(SpawnPlan),
+    /// API arguments, resolved on the thread against Orca's lists and these runs/terminals.
+    Args {
+        args: SpawnArgs,
+        runs: Vec<Run>,
+        terminals: Vec<Terminal>,
+    },
+}
+
+/// What the runner reports.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SpawnEvent {
+    /// The plan being run (for [`Job::Args`], after resolving).
+    Planned { job: JobId, plan: Box<SpawnPlan> },
+    Step {
+        job: JobId,
+        index: usize,
+        status: StepStatus,
+    },
+    Done {
+        job: JobId,
+        result: Result<SpawnOutcome, SpawnFailure>,
+    },
+}
+
+impl SpawnEvent {
+    pub fn job(&self) -> JobId {
+        match self {
+            SpawnEvent::Planned { job, .. }
+            | SpawnEvent::Step { job, .. }
+            | SpawnEvent::Done { job, .. } => *job,
+        }
+    }
+}
+
+/// Runs one job: resolves it if needed, reports the plan, runs it.
+pub fn run_job(
+    job_id: JobId,
+    job: Job,
+    backend: &mut dyn SpawnBackend,
+    emit: &mut dyn FnMut(SpawnEvent),
+) {
+    let plan = match job {
+        Job::Plan(plan) => plan,
+        Job::Args {
+            args,
+            runs,
+            terminals,
+        } => {
+            let plan = backend.catalog().and_then(|catalog| {
+                let request = args.resolve(&catalog, &runs, &terminals)?;
+                build_plan(&request).map_err(|e| e.0)
+            });
+            match plan {
+                Ok(plan) => plan,
+                Err(message) => {
+                    emit(SpawnEvent::Done {
+                        job: job_id,
+                        result: Err(SpawnFailure {
+                            step: None,
+                            message,
+                            context: Box::default(),
+                        }),
+                    });
+                    return;
+                }
+            }
+        }
+    };
+    emit(SpawnEvent::Planned {
+        job: job_id,
+        plan: Box::new(plan.clone()),
+    });
+    let result = run_plan(&plan, backend, &mut |Progress::Step { index, status }| {
+        emit(SpawnEvent::Step {
+            job: job_id,
+            index,
+            status,
+        })
+    });
+    match &result {
+        Ok(outcome) => log::info!("spawn: job {job_id} done: {:?}", outcome.context),
+        Err(failure) => log::warn!("spawn: job {job_id} failed: {failure}"),
+    }
+    emit(SpawnEvent::Done {
+        job: job_id,
+        result,
+    });
+}
+
+/// Runs spawn jobs one at a time on a background thread.
+pub struct SpawnRunner {
+    jobs: Option<Sender<(JobId, Job)>>,
+    events: Receiver<SpawnEvent>,
+    next_id: JobId,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl SpawnRunner {
+    pub fn spawn(mut backend: impl SpawnBackend, wake: Option<Wake>) -> Self {
+        let (job_tx, job_rx) = crossbeam_channel::unbounded::<(JobId, Job)>();
+        let (event_tx, event_rx) = crossbeam_channel::unbounded();
+        let thread = std::thread::Builder::new()
+            .name("spawn".into())
+            .spawn(move || {
+                for (id, job) in job_rx {
+                    let mut emit = |event: SpawnEvent| {
+                        let _ = event_tx.send(event);
+                        if let Some(wake) = &wake {
+                            wake();
+                        }
+                    };
+                    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        run_job(id, job, &mut backend, &mut emit)
+                    }));
+                    if caught.is_err() {
+                        emit(SpawnEvent::Done {
+                            job: id,
+                            result: Err(SpawnFailure {
+                                step: None,
+                                message: "the spawn thread panicked".into(),
+                                context: Box::default(),
+                            }),
+                        });
+                    }
+                }
+            })
+            .expect("spawn the spawn thread");
+        Self {
+            jobs: Some(job_tx),
+            events: event_rx,
+            next_id: 1,
+            thread: Some(thread),
+        }
+    }
+
+    /// Queues `job`; its events carry the returned id.
+    pub fn submit(&mut self, job: Job) -> JobId {
+        let id = self.next_id;
+        self.next_id += 1;
+        if let Some(jobs) = &self.jobs {
+            let _ = jobs.send((id, job));
+        }
+        id
+    }
+
+    /// Events since the last call.
+    pub fn poll(&self) -> Vec<SpawnEvent> {
+        self.events.try_iter().collect()
+    }
+}
+
+impl Drop for SpawnRunner {
+    fn drop(&mut self) {
+        // A running spawn may take minutes; don't block shutdown on it.
+        self.jobs.take();
+        if let Some(thread) = self.thread.take()
+            && thread.is_finished()
+        {
+            let _ = thread.join();
+        }
+    }
+}

@@ -14,6 +14,7 @@ pub mod search;
 pub mod selection;
 pub mod settings;
 pub mod sidebar;
+pub mod spawn;
 pub mod styled_view;
 pub mod subagent;
 pub mod table;
