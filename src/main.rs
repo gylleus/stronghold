@@ -7,7 +7,8 @@ fn main() -> eframe::Result {
     let cli = myrstack::claude::hook::run_cli(&args)
         .or_else(|| myrstack::control::client::run_cli(&args))
         .or_else(|| myrstack::mcp::run_cli(&args))
-        .or_else(|| myrstack::playbook::run_cli(&args));
+        .or_else(|| myrstack::playbook::run_cli(&args))
+        .or_else(|| myrstack::voice::tts::run_cli(&args));
     if let Some(result) = cli {
         if let Err(e) = result {
             eprintln!("myrstack: {e:#}");
