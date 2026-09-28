@@ -8,6 +8,7 @@ fn main() -> eframe::Result {
         .or_else(|| myrstack::control::client::run_cli(&args))
         .or_else(|| myrstack::mcp::run_cli(&args))
         .or_else(|| myrstack::playbook::run_cli(&args))
+        .or_else(|| myrstack::notify::run_cli(&args))
         .or_else(|| myrstack::voice::tts::run_cli(&args));
     if let Some(result) = cli {
         if let Err(e) = result {
@@ -18,6 +19,7 @@ fn main() -> eframe::Result {
     }
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    myrstack::notify::init();
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()

@@ -12,6 +12,7 @@ mod control;
 mod dictation;
 mod palette;
 mod playbook;
+mod settings;
 mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
@@ -85,7 +86,8 @@ pub struct MyrstackApp {
     whip_log: ui::whip_log::WhipLog,
     /// Sidebar rows and counts derived from `snapshot`.
     sidebar_cache: ui::sidebar::SidebarCache,
-    whip_window: ui::settings::WhipSettingsWindow,
+    /// The Settings window (Queen, Whip, Voice, General); owns `settings.json`.
+    whip_window: ui::settings::SettingsPane,
     /// Rate-limited macOS notifications, shared with the whip's executors.
     notifier: Arc<Notifier>,
     needs_input_detector: NeedsInputDetector,
@@ -126,7 +128,7 @@ impl MyrstackApp {
             PollerConfig::default(),
             Some(repaint_once(ctx)),
         );
-        let whip_window = ui::settings::WhipSettingsWindow::load(whip::Settings::path());
+        let whip_window = ui::settings::SettingsPane::load(whip::Settings::path());
         let notifier = Arc::new(Notifier::spawn(Some(repaint_once(ctx))));
         let whip_notifier = notifier.clone();
         let whip = WhipRunner::spawn(
@@ -141,6 +143,7 @@ impl MyrstackApp {
             crate::quota::POLL_INTERVAL,
             Some(repaint_once(ctx)),
         );
+        let chat = chat::AppChat::start(ctx, whip_window.queen());
         let mut app = Self {
             control: control::AppControl::start(ctx),
             quota,
@@ -174,7 +177,7 @@ impl MyrstackApp {
             frame_stats: ui::frame_stats::FrameStats::default(),
             close: ui::close::CloseDialog::default(),
             playbook_watch: playbook::PlaybookWatch::spawn(repaint_once(ctx)),
-            chat: chat::AppChat::start(ctx),
+            chat,
             whip_now: whip_now::WhipNowState::default(),
             dictation: dictation::AppDictation::new(ctx),
         };
@@ -452,6 +455,10 @@ impl MyrstackApp {
             self.toggle_chat();
             return;
         }
+        if command == KeyCommand::OpenSettings {
+            self.open_settings();
+            return;
+        }
         let Some(snapshot) = &self.snapshot else {
             return;
         };
@@ -538,7 +545,7 @@ impl MyrstackApp {
                 self.help_open = !self.help_open;
                 None
             }
-            KeyCommand::ToggleChat => None,
+            KeyCommand::ToggleChat | KeyCommand::OpenSettings => None,
             KeyCommand::CloseSession => {
                 let ids = ui::selection::close_targets(current, &self.graph.selection());
                 if !ids.is_empty() {
@@ -630,6 +637,7 @@ impl MyrstackApp {
             {
                 self.toggle_chat();
             }
+            self.whip_window.gear_button(ui);
             self.whip_window.button(ui);
             self.alerts_menu(ui);
             self.close.log_menu(ui, now_ms);
@@ -697,9 +705,26 @@ impl MyrstackApp {
 
 /// Notifications: nodes entering NeedsInput, and the in-app list of posted notifications.
 ///
-/// Clicking an `osascript` notification cannot reach Myrstack, so the alerts menu is how a
-/// notification selects its node.
+/// Clicking a native notification (running from `Myrstack.app`) selects its node; clicking an
+/// `osascript` one cannot reach Myrstack, so the alerts menu is how it selects its node.
 impl MyrstackApp {
+    /// Selects the node of each clicked notification, as picking its alert would, and brings
+    /// the window forward. Clicks wait for the first snapshot (a click can launch the app).
+    fn open_clicked_notifications(&mut self, ctx: &egui::Context) {
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
+        let mut select = None;
+        for targets in self.notifier.clicked() {
+            self.alerts.retain(|a| a.targets != targets);
+            select = notify::click_target(snapshot, &targets).or(select);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        if let Some(id) = select {
+            self.select_and_focus(id);
+        }
+    }
+
     /// Asks for a notification for each node that just entered NeedsInput, unless the whip's
     /// notifications are off.
     fn notify_needs_input(&mut self) {
@@ -746,12 +771,10 @@ impl MyrstackApp {
             Some(usize::MAX) => self.alerts.clear(),
             Some(i) => {
                 let alert = self.alerts.remove(i);
-                let target = self.snapshot.as_ref().and_then(|snapshot| {
-                    alert
-                        .targets
-                        .iter()
-                        .find_map(|t| notify::resolve_target(snapshot, t))
-                });
+                let target = self
+                    .snapshot
+                    .as_ref()
+                    .and_then(|snapshot| notify::click_target(snapshot, &alert.targets));
                 if let Some(id) = target {
                     self.select_and_focus(id);
                 }
@@ -918,6 +941,7 @@ impl eframe::App for MyrstackApp {
             self.notify_needs_input();
         }
         self.take_alerts();
+        self.open_clicked_notifications(ctx);
         self.poll_chat();
         self.poll_control(ctx);
         self.poll_whip_now();
@@ -1018,9 +1042,7 @@ impl eframe::App for MyrstackApp {
             },
         });
         self.close_dialog(ui.ctx());
-        if let Some(settings) = self.whip_window.show(ui.ctx(), &self.whip_status, now_ms) {
-            self.whip.update_settings(settings);
-        }
+        self.settings_window(ui.ctx(), now_ms);
         if self.whip_window.take_whip_stalled() {
             self.request_whip_stalled(None);
         }

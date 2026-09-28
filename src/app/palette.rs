@@ -49,6 +49,7 @@ impl MyrstackApp {
                 self.queen.open_broadcast = true;
             }
             Dispatch::WhipSettings => self.whip_window.open_window(),
+            Dispatch::OpenSettings => self.open_settings(),
             Dispatch::ToggleDryRun => self.toggle_whip_dry_run(),
             Dispatch::ResetLayout => {
                 self.view = View::Graph;

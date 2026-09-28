@@ -65,6 +65,11 @@ pub enum ChatCommand {
     NewChat,
     /// Turns auto mode on or off for the running session (no restart).
     SetAuto(bool),
+    /// Restarts the process with this `--model` / `--effort`, resuming the same session.
+    SetModel {
+        model: Option<String>,
+        effort: Option<String>,
+    },
     /// Look for the binary again / restart now.
     Retry,
     Shutdown,
@@ -150,6 +155,8 @@ impl Drop for ChatHandle {
 enum RunEnd {
     Shutdown,
     NewChat,
+    /// The model changed: start again at once, same session.
+    Restart,
     Crashed(String),
 }
 
@@ -199,7 +206,7 @@ impl Supervisor {
                     self.emit(ChatEvent::State(SessionState::Stopped));
                     return;
                 }
-                RunEnd::NewChat => {
+                RunEnd::NewChat | RunEnd::Restart => {
                     backoff = MIN_BACKOFF;
                     continue;
                 }
@@ -249,6 +256,10 @@ impl Supervisor {
                     return true;
                 }
                 ChatCommand::SetAuto(on) => self.policy.set_auto(on),
+                ChatCommand::SetModel { model, effort } => {
+                    self.set_model(model, effort);
+                    return true;
+                }
                 ChatCommand::Send(_) => {
                     self.emit(ChatEvent::Error(
                         "Not sent: the chat is not running.".into(),
@@ -257,6 +268,16 @@ impl Supervisor {
                 ChatCommand::Interrupt | ChatCommand::Permission { .. } => {}
             }
         }
+    }
+
+    fn set_model(&mut self, model: Option<String>, effort: Option<String>) {
+        log::info!(
+            "chat: switching to model {} (effort {})",
+            model.as_deref().unwrap_or("CLI default"),
+            effort.as_deref().unwrap_or("CLI default")
+        );
+        self.config.model = model;
+        self.config.effort = effort;
     }
 
     fn start_new_chat(&mut self) {
@@ -331,6 +352,12 @@ impl Supervisor {
                             return RunEnd::NewChat;
                         }
                         ChatCommand::Retry => Ok(()),
+                        ChatCommand::SetModel { model, effort } => {
+                            stop(&mut child, stdin.take());
+                            self.pending.clear();
+                            self.set_model(model, effort);
+                            return RunEnd::Restart;
+                        }
                         ChatCommand::SetAuto(on) => self.set_auto(on, &mut stdin),
                         ChatCommand::Send(text) => {
                             let sent = write_line(&mut stdin, &protocol::user_message(&text));
