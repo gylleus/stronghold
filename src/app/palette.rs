@@ -28,6 +28,9 @@ impl MyrstackApp {
             show_loose: self.filter.show_loose,
             show_released: self.filter.show_released,
             chat_ready: self.chat_ready(),
+            talk_hotkey: self.talk_hotkey_label(),
+            speaking: self.is_speaking(),
+            speak_replies: self.speak_replies(),
         }
     }
 
@@ -42,6 +45,9 @@ impl MyrstackApp {
             Dispatch::Key(command) => self.run_key_command(ctx, command),
             Dispatch::OpenChat => self.open_chat(),
             Dispatch::Dictate => self.start_dictation(),
+            Dispatch::TalkToQueen => self.start_talk(),
+            Dispatch::StopSpeaking => self.stop_speaking(),
+            Dispatch::ToggleSpeakReplies => self.toggle_speak_replies(),
             Dispatch::StatusReport => self.status_report(),
             Dispatch::WhipStalled => self.request_whip_stalled(None),
             Dispatch::Broadcast => {

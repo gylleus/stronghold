@@ -16,6 +16,8 @@ const INTERRUPTED_NOTE: &str = "[Request interrupted by user]";
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatItem {
     User(String),
+    /// Karl's message spoken with hold-to-talk (drawn with a 🎤 marker).
+    VoiceUser(String),
     Assistant {
         text: String,
         streaming: bool,
@@ -92,6 +94,12 @@ pub struct Transcript {
 impl Transcript {
     pub fn push_user(&mut self, text: &str) {
         self.items.push(ChatItem::User(text.to_owned()));
+        self.running = true;
+    }
+
+    /// A message Karl spoke (hold-to-talk).
+    pub fn push_voice_user(&mut self, text: &str) {
+        self.items.push(ChatItem::VoiceUser(text.to_owned()));
         self.running = true;
     }
 

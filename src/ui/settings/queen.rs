@@ -1,5 +1,5 @@
 //! The Queen section: her model and effort (saving restarts her `claude` process on the same
-//! conversation), auto mode, and the spoken-replies placeholder.
+//! conversation), auto mode, and speaking her replies aloud.
 
 use eframe::egui;
 
@@ -121,10 +121,19 @@ pub(super) fn section(
     {
         out.auto_mode = Some(auto);
     }
-    let mut speak = false;
-    ui.add_enabled(false, egui::Checkbox::new(&mut speak, "Speak replies"))
-        .on_disabled_hover_text("Arrives with the voice feature");
-    ui.weak("Speak replies arrives with the voice feature.");
+    let mut speak = pane.voice().speak_replies;
+    if ui
+        .checkbox(&mut speak, "Speak replies")
+        .on_hover_text("Read every reply aloud with her voice; applies at once")
+        .changed()
+    {
+        out.voice = Some(pane.set_speak_replies(speak));
+    }
+    ui.weak(format!(
+        "Replies to voice messages (hold {}) are always spoken. Voice, speed and the models \
+         are in the Voice section.",
+        pane.voice().talk_hotkey_label()
+    ));
 }
 
 fn model_picker(ui: &mut egui::Ui, draft: &mut QueenDraft) {

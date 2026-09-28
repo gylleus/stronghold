@@ -6,4 +6,5 @@ pub mod dictation;
 pub mod models;
 pub mod settings;
 pub mod stt;
+pub mod talk;
 pub mod tts;

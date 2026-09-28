@@ -61,6 +61,11 @@ impl AppChat {
     pub(super) fn draft_mut(&mut self) -> &mut String {
         &mut self.panel.draft
     }
+
+    /// The session, for talking to the Queen (voice messages and her reply text).
+    pub(super) fn session_mut(&mut self) -> &mut ChatSession {
+        &mut self.session
+    }
 }
 
 impl AppChat {

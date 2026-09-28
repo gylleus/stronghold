@@ -691,3 +691,62 @@ fn model_change_restarts_with_model_and_resume_keeping_the_transcript() {
     assert!(!args[2].contains("--model") && !args[2].contains("--effort"));
     assert!(args[2].contains(&format!("--resume {}", session.session_id)));
 }
+
+#[test]
+fn speech_tap_takes_top_level_text_and_turn_ends() {
+    let mut events = Vec::new();
+    for m in incoming("hello.jsonl") {
+        voice::tap(&m, &mut events);
+    }
+    let text: String = events
+        .iter()
+        .filter_map(|e| match e {
+            SpeechEvent::Text(t) => Some(t.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "Hey Karl! 👋 What can I help you with today?");
+    assert!(events.contains(&SpeechEvent::BlockEnd));
+    assert_eq!(events.last(), Some(&SpeechEvent::TurnEnd));
+
+    // Subagent text stays silent.
+    let sub = parse_line(
+        r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"inner"}},"parent_tool_use_id":"t1"}"#,
+    )
+    .unwrap();
+    let mut events = Vec::new();
+    voice::tap(&sub, &mut events);
+    assert!(events.is_empty());
+}
+
+#[test]
+fn voice_messages_carry_the_spoken_style_note_but_show_as_said() {
+    let fake = Fake::new();
+    let mut chat = ChatSession::spawn(fake.config(&[]), None);
+    wait_until(&mut chat, "ready", |c| c.state == SessionState::Ready);
+    assert!(!chat.send_voice("   "), "nothing to send");
+    assert!(chat.send_voice(" How many agents need input? "));
+    assert_eq!(chat.take_speech(), [SpeechEvent::TurnStart { voice: true }]);
+    wait_until(&mut chat, "reply", |c| !c.transcript.running);
+    assert_eq!(
+        chat.transcript.items.first(),
+        Some(&ChatItem::VoiceUser("How many agents need input?".into()))
+    );
+    let sent = fake.user_log();
+    assert!(
+        sent[0].contains("[Myrstack] Karl said this by voice"),
+        "{}",
+        sent[0]
+    );
+    assert!(sent[0].contains("How many agents need input?"));
+    assert_eq!(chat.take_speech().last(), Some(&SpeechEvent::TurnEnd));
+
+    // A typed message is not voice and carries no note.
+    assert!(chat.send("ping"));
+    assert_eq!(
+        chat.take_speech(),
+        [SpeechEvent::TurnStart { voice: false }]
+    );
+    wait_until(&mut chat, "reply", |c| !c.transcript.running);
+    assert!(!fake.user_log()[1].contains("by voice"));
+}

@@ -30,6 +30,7 @@ impl MyrstackApp {
                 env_model: env_model.as_deref(),
             },
             general: &general,
+            voice: self.talk.voice_status(super::talk::speech_model_found()),
         };
         let out = self.whip_window.show(ctx, &cx);
         if let Some(whip) = out.whip {
@@ -41,8 +42,15 @@ impl MyrstackApp {
         if let Some(on) = out.auto_mode {
             self.chat.set_auto_mode(on);
         }
-        if out.voice.is_some() {
+        if let Some(voice) = &out.voice {
             log::info!("settings: voice settings saved");
+            self.apply_voice_settings(voice);
+        }
+        if let Some(draft) = &out.test_voice {
+            self.test_voice(draft);
+        }
+        if let Some(model) = out.download {
+            self.download_voice_model(model);
         }
     }
 

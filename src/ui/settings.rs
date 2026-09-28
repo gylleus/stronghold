@@ -18,6 +18,7 @@ use crate::whip::{Settings, WhipSettings, WhipStatus};
 
 pub use general::GeneralInfo;
 pub use queen::QueenStatus;
+pub use voice::{ModelStatus, VoiceModel, VoiceStatus};
 
 /// A section of the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -54,6 +55,8 @@ pub struct PaneContext<'a> {
     pub queen: QueenStatus<'a>,
     /// Paths and versions for the General section.
     pub general: &'a GeneralInfo,
+    /// Voices and speech model states for the Voice section.
+    pub voice: VoiceStatus<'a>,
 }
 
 /// What the user changed this frame.
@@ -65,8 +68,12 @@ pub struct PaneOutput {
     pub queen: Option<QueenSettings>,
     /// The Queen's auto mode switch was flipped (applies at once, like the chat header's).
     pub auto_mode: Option<bool>,
-    /// Saved voice settings.
+    /// Saved voice settings (from the Voice section, or the Queen's "Speak replies").
     pub voice: Option<VoiceSettings>,
+    /// "Test voice": speak a sample with these (unsaved) settings.
+    pub test_voice: Option<VoiceSettings>,
+    /// A speech model's download button.
+    pub download: Option<VoiceModel>,
     /// "Whip all stalled now" was clicked.
     pub whip_stalled: bool,
 }
@@ -241,16 +248,15 @@ impl SettingsPane {
                 }
             }
             Section::Voice => {
-                voice::voice_section(ui, &mut self.voice_draft);
-                // No Save row while there is nothing to edit.
-                if self.voice_draft != self.applied.voice {
-                    let (save, revert) = save_row(ui, self, true, "Save");
-                    if save {
-                        out.voice = self.save_voice();
-                    }
-                    if revert {
-                        self.voice_draft = self.applied.voice.clone();
-                    }
+                voice::voice_section(ui, &mut self.voice_draft, &cx.voice, out);
+                ui.separator();
+                let changed = self.voice_draft != self.applied.voice;
+                let (save, revert) = save_row(ui, self, changed, "Save");
+                if save {
+                    out.voice = self.save_voice();
+                }
+                if revert {
+                    self.voice_draft = self.applied.voice.clone();
                 }
             }
             Section::General => general::section(ui, cx.general, self.path.as_deref()),
@@ -308,6 +314,16 @@ impl SettingsPane {
         self.commit(next);
         self.queen_draft = queen::QueenDraft::new(&self.applied.queen);
         Some(self.applied.queen.clone())
+    }
+
+    /// Saves "Speak replies" at once (the Queen section's switch and the palette), keeping
+    /// the rest of the voice draft.
+    pub fn set_speak_replies(&mut self, on: bool) -> VoiceSettings {
+        let mut next = self.applied.clone();
+        next.voice.speak_replies = on;
+        self.commit(next);
+        self.voice_draft.speak_replies = on;
+        self.applied.voice.clone()
     }
 
     fn save_voice(&mut self) -> Option<VoiceSettings> {

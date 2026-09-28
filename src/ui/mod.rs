@@ -20,6 +20,7 @@ pub mod spawn;
 pub mod styled_view;
 pub mod subagent;
 pub mod table;
+pub mod talk;
 pub mod term_style;
 pub mod terminal;
 #[cfg(test)]
