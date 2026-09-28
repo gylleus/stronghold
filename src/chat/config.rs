@@ -13,11 +13,31 @@ pub const MODEL_ENV: &str = "MYRSTACK_CHAT_MODEL";
 /// Unix socket paths longer than this are passed relative to the chat directory.
 const MAX_SOCKET_PATH: usize = 100;
 
+/// Built-in tools the Queen keeps: read-only lookups, and `ToolSearch` to load the myrstack MCP
+/// tools. No shell or editing tools, so code work goes to spawned sessions. Passed as
+/// `--tools=<list>`: the flag is variadic and would otherwise swallow the next argument.
+pub const QUEEN_TOOLS: &str = "Read,Grep,Glob,ToolSearch,WebSearch,WebFetch";
+
 /// Appended to Claude Code's system prompt.
 pub const SYSTEM_PROMPT: &str = "\
 You are the Queen of Karl's agent fleet in Myrstack, speaking for Karl. Karl talks to you here, \
 in a chat pane inside the Myrstack app, to get status reports and insights and to command the fleet.
 
+- You manage the fleet; you never do the engineering yourself. Don't write or edit code, run \
+builds or tests, or change files: you have no shell or editing tools, only read-only Read, Grep \
+and Glob for scoping. Any request to fix a bug, build a feature, refactor, change config or dig \
+into a failure becomes work for an agent:
+  1. Work out the repo (fleet_status and list_agents show the repos; ask Karl if it's unclear).
+  2. If a live coordinator already owns related work, hand it over with send_to_agent instead of \
+starting a duplicate.
+  3. Otherwise start a session with spawn_session. A contained fix or small change: one session \
+in a new worktree. A larger feature or multi-part work: a coordinator session whose prompt tells \
+it to load its rules with the myrstack get_playbook tool (role coordinator) and run the work as a \
+campaign with workers.
+  4. Write the prompt like a kickoff: the goal, what you found (files, errors, links), \
+constraints, and the definition of done (open a PR, then call mark_pr_ready). Say it comes from \
+Karl via the Queen. Keep your own code reading to what the prompt needs.
+  5. Tell Karl in one line what you started, with its node id, and report progress when he asks.
 - Use the myrstack MCP tools (fleet_status, list_agents, get_agent, whip_status, alerts, quotas, …) \
 for facts about the fleet rather than guessing or reading files. Refer to agents by label and give \
 their node id (e.g. `term:term_…`) so Karl can click it.
@@ -110,6 +130,7 @@ impl ChatConfig {
         .map(str::to_owned)
         .collect();
         args.extend(session_args.iter().cloned());
+        args.push(format!("--tools={QUEEN_TOOLS}"));
         args.push("--settings".into());
         args.push(permissions::session_settings());
         args.push("--append-system-prompt".into());
@@ -224,6 +245,13 @@ mod tests {
         assert!(joined.contains("--append-system-prompt be the queen"));
         assert!(joined.ends_with("--model sonnet"));
         assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
+        // Only read-only built-ins, in the `=` form so the variadic flag can't eat an argument.
+        assert!(args.contains(&"--tools=Read,Grep,Glob,ToolSearch,WebSearch,WebFetch".to_owned()));
+        assert!(
+            !args
+                .iter()
+                .any(|a| a.contains("Bash") || a.contains("Edit") || a.contains("Write"))
+        );
         assert!(!args.iter().any(|a| a == "--effort"));
 
         let config = ChatConfig {
@@ -242,6 +270,8 @@ mod tests {
         assert!(SYSTEM_PROMPT.contains("fleet_status"));
         assert!(SYSTEM_PROMPT.contains("review_queue"));
         assert!(SYSTEM_PROMPT.contains("status report"));
+        assert!(SYSTEM_PROMPT.contains("never do the engineering yourself"));
+        assert!(SYSTEM_PROMPT.contains("spawn_session"));
         assert!(SYSTEM_PROMPT.contains("`Queen:`"));
     }
 
