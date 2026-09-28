@@ -308,6 +308,8 @@ pub struct SidebarResponse {
     pub filter_changed: bool,
     /// "Close shown…" was clicked: ask to close the nodes the filter shows.
     pub close_shown: bool,
+    /// A repo header's "+" was clicked: open "New session…" for that repo.
+    pub new_session_repo: Option<String>,
 }
 
 /// What the sidebar shows of one snapshot, derived once per snapshot rather than every frame.
@@ -483,6 +485,19 @@ fn repos_section(
     }
 }
 
+/// The repo header's "+": opens "New session…" with the repo picked.
+fn new_session_button(ui: &mut Ui, group: &RepoView, response: &mut SidebarResponse) {
+    if group.repo == NO_REPO {
+        return;
+    }
+    let button = ui
+        .small_button("+")
+        .on_hover_text(format!("New session in {}…", group.repo));
+    if button.clicked() {
+        response.new_session_repo = Some(group.repo.clone());
+    }
+}
+
 /// A repo's header: its name (click to focus its region) and node counts per state.
 fn repo_header(ui: &mut Ui, group: &RepoView, response: &mut SidebarResponse) {
     let runs = group.runs.len();
@@ -504,6 +519,7 @@ fn repo_header(ui: &mut Ui, group: &RepoView, response: &mut SidebarResponse) {
     if name.clicked() {
         response.focus_repo = Some(group.repo.clone());
     }
+    new_session_button(ui, group, response);
     let dark = ui.visuals().dark_mode;
     for state in ALL_STATES {
         let Some(&n) = group.states.get(&state) else {
