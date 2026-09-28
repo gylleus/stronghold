@@ -14,7 +14,8 @@
 //!   turn waiting on a permission card would otherwise never end. If the chat does not
 //!   become ready within [`SEND_TIMEOUT`], the text comes back as [`TalkEvent::NotSent`].
 //! - Replies to voice messages are always spoken; other replies only with "Speak replies".
-//!   Only top-level reply text is spoken, never tool calls; a new turn stops the old reply.
+//!   Only the reply's `<say>…</say>` line is spoken (see [`SayFilter`]), or without one its
+//!   first sentences; never tool calls. A new turn stops the old reply.
 //! - Nothing here downloads anything: without the voice model a reply that should be spoken
 //!   produces [`TalkEvent::VoiceMissing`] instead.
 
@@ -22,6 +23,7 @@ use std::time::{Duration, Instant};
 
 use super::dictation::{Capture, Dictation, DictationError, DictationOutput, Phase, Recognize};
 use super::tts::{SentenceStream, Speaker};
+use crate::chat::say::{FALLBACK_SENTENCES, SayFilter, Spoken};
 use crate::chat::{ChatSession, SessionState, SpeechEvent};
 
 /// How long a transcript waits for the chat before it is given back.
@@ -125,7 +127,11 @@ struct ReplySpeech {
     muted: bool,
     /// The turn is still running.
     running: bool,
+    /// Picks the say-line out of the reply.
+    filter: SayFilter,
     stream: SentenceStream,
+    /// Sentences handed to the speaker.
+    spoken: usize,
 }
 
 /// The talk-to-the-Queen state machine.
@@ -347,22 +353,34 @@ impl<S: Say> Talk<S> {
             }
             SpeechEvent::Text(delta) => {
                 let reply = self.reply.as_mut()?;
-                let sentences = reply.stream.push(delta);
-                self.say(sentences);
+                let spoken = reply.filter.push(delta);
+                self.speak_filtered(spoken);
             }
             SpeechEvent::BlockEnd => {
                 let reply = self.reply.as_mut()?;
-                let sentences = reply.stream.finish();
-                self.say(sentences);
+                let spoken = reply.filter.block_end();
+                self.speak_filtered(spoken);
             }
             SpeechEvent::TurnEnd => {
                 let reply = self.reply.as_mut()?;
-                let sentences = reply.stream.finish();
+                let spoken = reply.filter.turn_end();
                 reply.running = false;
-                self.say(sentences);
+                self.speak_filtered(spoken);
             }
         }
         None
+    }
+
+    /// Turns the filter's output into sentences for the speaker.
+    fn speak_filtered(&mut self, spoken: Spoken) {
+        let Some(reply) = &mut self.reply else {
+            return;
+        };
+        let mut sentences = reply.stream.push(&spoken.text);
+        if spoken.flush {
+            sentences.extend(reply.stream.finish());
+        }
+        self.say(sentences);
     }
 
     fn say(&mut self, sentences: Vec<String>) {
@@ -373,6 +391,10 @@ impl<S: Say> Talk<S> {
             return;
         }
         for sentence in sentences {
+            if reply.filter.is_fallback() && reply.spoken >= FALLBACK_SENTENCES {
+                return;
+            }
+            reply.spoken += 1;
             self.speaker.enqueue(sentence);
         }
     }
@@ -594,7 +616,8 @@ mod tests {
         assert_eq!(r.chat.sent, ["How many agents need input?"]);
         assert_eq!(*r.mic.log.borrow(), ["start", "stop"]);
 
-        // The chat starts the voice turn; her reply streams in and is spoken by sentence.
+        // The chat starts the voice turn; her say-line streams in and is spoken by sentence,
+        // the details after it are not.
         assert_eq!(
             r.talk.on_speech(&SpeechEvent::TurnStart { voice: true }),
             None
@@ -602,17 +625,31 @@ mod tests {
         assert_eq!(r.phase(), TalkPhase::Thinking);
         deltas(
             &mut r,
-            &["**Two** agents ", "need input. Terminal", " ab12 is"],
+            &[
+                "\n<sa",
+                "y>**Two** agents ",
+                "need input. The search",
+                " one is",
+            ],
         );
         assert_eq!(r.said(), ["Two agents need input."]);
         assert_eq!(r.phase(), TalkPhase::Speaking);
-        deltas(&mut r, &[" waiting for a review."]);
+        deltas(
+            &mut r,
+            &[
+                " waiting for a review.</s",
+                "ay>\n\n- `term:term_ab12` run 7c25",
+            ],
+        );
         r.talk.on_speech(&SpeechEvent::BlockEnd);
         r.talk.on_speech(&SpeechEvent::TurnEnd);
-        let said = r.said();
-        assert_eq!(said.len(), 2, "{said:?}");
-        assert!(said[1].starts_with("Terminal"), "{said:?}");
-        assert!(said[1].ends_with("waiting for a review."), "{said:?}");
+        assert_eq!(
+            r.said(),
+            [
+                "Two agents need input.",
+                "The search one is waiting for a review."
+            ]
+        );
         r.voice.playing.set(false);
         assert_eq!(r.phase(), TalkPhase::Idle);
     }
@@ -638,7 +675,7 @@ mod tests {
         let mut r = rig();
         r.talk.set_speak_replies(true);
         r.talk.on_speech(&SpeechEvent::TurnStart { voice: false });
-        deltas(&mut r, &["First reply sentence. And more"]);
+        deltas(&mut r, &["<say>First reply sentence. And more"]);
         assert!(r.voice.playing.get());
         let stops = r.voice.stops.get();
         r.talk.on_speech(&SpeechEvent::TurnStart { voice: false });
@@ -653,11 +690,11 @@ mod tests {
     fn stopping_silences_the_rest_of_the_reply() {
         let mut r = rig();
         r.talk.on_speech(&SpeechEvent::TurnStart { voice: true });
-        deltas(&mut r, &["One. Two"]);
+        deltas(&mut r, &["<say>One. Two"]);
         assert!(r.talk.is_speaking());
         assert!(r.talk.stop_speaking());
         assert!(!r.talk.is_speaking());
-        deltas(&mut r, &[". Three."]);
+        deltas(&mut r, &[". Three.</say>"]);
         r.talk.on_speech(&SpeechEvent::TurnEnd);
         assert_eq!(r.said(), ["One."]);
         assert!(!r.talk.stop_speaking(), "nothing left to stop");
@@ -795,5 +832,54 @@ mod tests {
         r.dict.cancel();
         assert_eq!(r.tick(), []);
         assert!(!r.talk.owns_dictation());
+    }
+
+    #[test]
+    fn only_the_say_line_is_spoken_across_blocks() {
+        let mut r = rig();
+        r.talk.on_speech(&SpeechEvent::TurnStart { voice: true });
+        // Narration before a tool call is held back, not spoken.
+        deltas(&mut r, &["Let me check the fleet."]);
+        r.talk.on_speech(&SpeechEvent::BlockEnd);
+        assert!(r.said().is_empty());
+        deltas(
+            &mut r,
+            &[
+                "<say>All quiet. Want the list?</say>",
+                "\n\n| a | b |\n| 1 | 2 |\n",
+            ],
+        );
+        r.talk.on_speech(&SpeechEvent::BlockEnd);
+        deltas(&mut r, &["More text in a later block."]);
+        r.talk.on_speech(&SpeechEvent::TurnEnd);
+        assert_eq!(r.said(), ["All quiet.", "Want the list?"]);
+    }
+
+    #[test]
+    fn without_a_say_line_the_first_two_sentences_are_spoken() {
+        let mut r = rig();
+        r.talk.on_speech(&SpeechEvent::TurnStart { voice: true });
+        let long = format!(
+            "Two agents need input. The docs one waits on a review. {}",
+            "Then a long tail of details nobody should hear. ".repeat(6)
+        );
+        deltas(&mut r, &[&long[..100]]);
+        assert!(r.said().is_empty(), "a tag may still come");
+        deltas(&mut r, &[&long[100..]]);
+        assert_eq!(
+            r.said(),
+            ["Two agents need input.", "The docs one waits on a review."]
+        );
+        r.talk.on_speech(&SpeechEvent::BlockEnd);
+        r.talk.on_speech(&SpeechEvent::TurnEnd);
+        assert_eq!(r.said().len(), 2);
+
+        // A short reply without a tag is spoken at the end of the turn.
+        let mut r = rig();
+        r.talk.on_speech(&SpeechEvent::TurnStart { voice: true });
+        deltas(&mut r, &["Done. All ", "green. Three.", " Four."]);
+        assert!(r.said().is_empty());
+        r.talk.on_speech(&SpeechEvent::TurnEnd);
+        assert_eq!(r.said(), ["Done.", "All green."]);
     }
 }

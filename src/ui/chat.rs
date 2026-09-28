@@ -8,6 +8,7 @@ use serde_json::Value;
 use crate::chat::permissions::{
     DESTRUCTIVE_TOOLS, MYRSTACK_PREFIX, short_tool_name, summarize_input, truncate,
 };
+use crate::chat::say::split_say;
 use crate::chat::transcript::{ChatItem, Decision, PermissionCard, ToolCall, Transcript};
 use crate::chat::{STATUS_REPORT_PROMPT, SessionState};
 use crate::model::NodeId;
@@ -257,7 +258,16 @@ fn item_ui(ui: &mut Ui, item: &ChatItem, view: &ChatView<'_>, actions: &mut Vec<
         ChatItem::User(text) => user_bubble(ui, text),
         ChatItem::VoiceUser(text) => user_bubble(ui, &voice_bubble_text(text)),
         ChatItem::Assistant { text, .. } => {
-            if let Some(id) = markdown(ui, text, view.is_node) {
+            let split = split_say(text);
+            if let Some(say) = split.say.as_deref().filter(|s| !s.is_empty()) {
+                say_line(ui, say);
+                if !split.rest.trim().is_empty() {
+                    ui.add_space(4.0);
+                }
+            }
+            if (split.say.is_none() || !split.rest.trim().is_empty())
+                && let Some(id) = markdown(ui, &split.rest, view.is_node)
+            {
                 actions.push(ChatAction::SelectNode(id));
             }
         }
@@ -278,6 +288,52 @@ fn item_ui(ui: &mut Ui, item: &ChatItem, view: &ChatView<'_>, actions: &mut Vec<
             ui.colored_label(ui.visuals().error_fg_color, text);
         }
     }
+}
+
+/// Marker in front of the Queen's spoken line.
+pub const SAY_MARKER: &str = "🔊";
+
+/// The reply's spoken line (`<say>…</say>`): a highlighted summary above the rest, with the
+/// speaker icon, or an accent bar where the font lacks it.
+fn say_line(ui: &mut Ui, say: &str) {
+    let accent = accent(ui);
+    let has_icon = can_draw(ui, SAY_MARKER);
+    let frame = egui::Frame::new()
+        .fill(accent.gamma_multiply(0.18))
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::symmetric(8, 5))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                if has_icon {
+                    ui.label(SAY_MARKER);
+                }
+                ui.add(egui::Label::new(RichText::new(say).strong()).wrap());
+            });
+        });
+    if !has_icon {
+        let rect = frame.response.rect;
+        let bar = egui::Rect::from_min_max(rect.min, egui::pos2(rect.min.x + 3.0, rect.max.y));
+        ui.painter().rect_filled(bar, 1.5, accent);
+    }
+}
+
+/// Whether the body font draws the character `c` rather than the replacement glyph.
+pub fn can_draw(ui: &Ui, c: &str) -> bool {
+    /// What egui draws for a missing glyph.
+    const REPLACEMENT: char = '◻';
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    ui.ctx().fonts_mut(|f| {
+        if f.has_glyphs(&font, c) {
+            return true;
+        }
+        // `has_glyphs` is also false for anything in the replacement glyph's own face (the
+        // emoji font), so compare the drawn glyph's size with the replacement's (a glyph
+        // that happens to match it counts as missing).
+        let galley = f.layout_no_wrap(format!("{c}{REPLACEMENT}"), font, Color32::WHITE);
+        let glyphs: Vec<_> = galley.rows.iter().flat_map(|r| &r.row.glyphs).collect();
+        matches!(glyphs.as_slice(), [a, b]
+            if a.uv_rect.size != b.uv_rect.size)
+    })
 }
 
 /// Marker in front of a message Karl spoke (🎙 is not in egui's default fonts; 🎤 is).
@@ -980,5 +1036,50 @@ mod tests {
         let (_, off) = draw(&Transcript::default(), false, Vec::new());
         assert!(off.contains("Auto"), "the switch is always there: {off}");
         assert!(!off.contains("AUTO") && !off.contains(AUTO_HINT), "{off}");
+    }
+
+    /// The say-line shows as a highlighted summary with the speaker icon, tags hidden, above
+    /// the rest; replies without tags show as before.
+    #[test]
+    fn say_line_is_shown_apart_and_tags_are_hidden() {
+        let reply = |text: &str, streaming: bool| ChatItem::Assistant {
+            text: text.into(),
+            streaming,
+        };
+        let mut t = Transcript::default();
+        t.items.push(reply(
+            "<say>Two agents need you. Want the list?</say>\n\n**Details**: `term:term_1` waits",
+            false,
+        ));
+        t.items.push(reply("Plain reply, no tags.", false));
+        t.items.push(reply("<say>Still stream", true));
+        t.items.push(reply("Half a tag <sa", true));
+        let (_, text) = draw(&t, false, Vec::new());
+        assert!(!text.contains("<say") && !text.contains("say>"), "{text}");
+        assert!(!text.contains("<sa"), "{text}");
+        assert!(
+            text.contains("Two agents need you. Want the list?"),
+            "{text}"
+        );
+        assert!(text.contains(SAY_MARKER), "{text}");
+        assert!(text.contains("Details"), "{text}");
+        assert!(text.contains("Plain reply, no tags."), "{text}");
+        assert!(text.contains("Still stream"), "{text}");
+        let say_at = text.find("Two agents").unwrap();
+        let details_at = text.find("Details").unwrap();
+        assert!(say_at < details_at, "the say-line comes first: {text}");
+        assert_eq!(text.matches(SAY_MARKER).count(), 2, "{text}");
+    }
+
+    #[test]
+    fn the_speaker_icon_is_in_the_font() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            assert!(can_draw(ui, SAY_MARKER));
+            assert!(can_draw(ui, VOICE_MARKER));
+            assert!(can_draw(ui, "a"));
+            assert!(!can_draw(ui, "\u{10FFFD}"), "a private-use char is missing");
+        });
+        output.textures_delta.clear();
     }
 }

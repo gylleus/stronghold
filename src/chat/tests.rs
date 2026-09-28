@@ -734,7 +734,8 @@ fn voice_messages_carry_the_spoken_style_note_but_show_as_said() {
     );
     let sent = fake.user_log();
     assert!(
-        sent[0].contains("[Myrstack] Karl said this by voice"),
+        sent[0].contains("Karl said this by voice (hold-to-talk); this turn is spoken")
+            && sent[0].contains("<say>…</say>"),
         "{}",
         sent[0]
     );
@@ -749,4 +750,41 @@ fn voice_messages_carry_the_spoken_style_note_but_show_as_said() {
     );
     wait_until(&mut chat, "reply", |c| !c.transcript.running);
     assert!(!fake.user_log()[1].contains("by voice"));
+    assert!(
+        !fake.user_log()[1].contains("<say>"),
+        "plain typed turns get no note"
+    );
+
+    // With "Speak replies" on, typed turns ask for the say-line too.
+    chat.set_speak_replies(true);
+    assert!(chat.send("status?"));
+    wait_until(&mut chat, "reply", |c| !c.transcript.running);
+    let typed = &fake.user_log()[2];
+    assert!(
+        typed.contains("[Myrstack] Speak replies is on; this turn is spoken")
+            && typed.contains("<say>…</say>"),
+        "{typed}"
+    );
+    assert!(typed.contains("\\n\\nstatus?"), "{typed}");
+    assert_eq!(
+        chat.transcript.items.iter().rev().find_map(|i| match i {
+            ChatItem::User(t) => Some(t.as_str()),
+            _ => None,
+        }),
+        Some("status?"),
+        "the note is not shown"
+    );
+}
+
+#[test]
+fn notes_ask_for_one_plain_say_line() {
+    for note in [voice::VOICE_NOTE, voice::SPEAK_NOTE] {
+        assert!(note.starts_with("[Myrstack]"), "{note}");
+        assert!(
+            note.contains("<say>…</say>") && note.contains("25 words"),
+            "{note}"
+        );
+        assert!(note.contains("this turn is spoken"), "{note}");
+    }
+    assert!(config::SYSTEM_PROMPT.contains("<say>…</say>"));
 }

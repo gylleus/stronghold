@@ -7,6 +7,7 @@ pub mod config;
 pub mod permissions;
 pub mod process;
 pub mod protocol;
+pub mod say;
 pub mod session;
 pub mod settings;
 pub mod transcript;
@@ -39,6 +40,8 @@ pub struct ChatSession {
     effort: Option<String>,
     /// Turn starts and reply text for the speaker, drained by [`take_speech`](Self::take_speech).
     speech: Vec<SpeechEvent>,
+    /// "Speak replies" is on: typed turns are spoken too and carry [`voice::SPEAK_NOTE`].
+    speak_replies: bool,
 }
 
 /// Environment variable with a message the chat sends as soon as it is ready; with it the
@@ -68,6 +71,7 @@ impl ChatSession {
             model,
             effort,
             speech: Vec::new(),
+            speak_replies: false,
         }
     }
 
@@ -217,10 +221,18 @@ impl ChatSession {
         for text in self.transcript.assistant_text() {
             log::info!("chat: assistant: {text}");
         }
+        for say in self.transcript.say_lines() {
+            log::info!("chat: say: {say}");
+        }
     }
 
     pub fn can_send(&self) -> bool {
         self.state == SessionState::Ready && !self.transcript.running
+    }
+
+    /// Whether typed turns are spoken ("Speak replies"), so they ask for a `<say>` line.
+    pub fn set_speak_replies(&mut self, on: bool) {
+        self.speak_replies = on;
     }
 
     /// Sends a user message; false when the session cannot take one now.
@@ -229,7 +241,7 @@ impl ChatSession {
     }
 
     /// Sends a message Karl spoke: his bubble gets the voice marker and the Queen gets
-    /// [`voice::VOICE_NOTE`] with it (not shown), asking for a short spoken-style answer.
+    /// [`voice::VOICE_NOTE`] with it (not shown), asking for a `<say>` line to speak.
     pub fn send_voice(&mut self, text: &str) -> bool {
         self.send_as(text, true)
     }
@@ -245,6 +257,9 @@ impl ChatSession {
             outgoing = format!("{}\n\n{outgoing}", voice::VOICE_NOTE);
         } else {
             self.transcript.push_user(text);
+            if self.speak_replies {
+                outgoing = format!("{}\n\n{outgoing}", voice::SPEAK_NOTE);
+            }
         }
         self.speech.push(SpeechEvent::TurnStart { voice });
         self.handle.send(ChatCommand::Send(outgoing));
