@@ -66,6 +66,7 @@ impl MyrstackApp {
                 self.filter.show_loose = !self.filter.show_loose;
                 self.apply_filter();
             }
+            Dispatch::NewSession => self.open_spawn_dialog(None),
             Dispatch::ToggleReleased => {
                 self.filter.show_released = !self.filter.show_released;
                 self.apply_filter();

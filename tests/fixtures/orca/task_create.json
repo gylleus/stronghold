@@ -1,0 +1,22 @@
+{
+  "id": "5b0c4d6e-7f8a-4b9c-8d0e-2f3a4b5c6d7e",
+  "ok": true,
+  "result": {
+    "task": {
+      "id": "task_4e5f6a7b8c9d",
+      "run_id": "run_7c25cdcf46e0",
+      "parent_id": null,
+      "task_title": "Spawned from Myrstack",
+      "display_name": null,
+      "spec": "Fix the flaky checkout test.",
+      "status": "ready",
+      "deps": "[]",
+      "result": null,
+      "assignee_handle": null,
+      "dispatch_id": null,
+      "created_by_terminal_handle": "term_df9f48c9-c8e8-4ceb-afca-932028245fb1",
+      "created_at": "2026-09-28T10:02:11Z",
+      "completed_at": null
+    }
+  }
+}

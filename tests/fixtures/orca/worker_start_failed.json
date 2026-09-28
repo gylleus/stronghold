@@ -1,0 +1,47 @@
+{
+  "id": "7d2e6f8a-9b0c-4d1e-8f2a-4b5c6d7e8f9a",
+  "ok": true,
+  "result": {
+    "runId": "run_7c25cdcf46e0",
+    "taskId": "task_4e5f6a7b8c9d",
+    "dispatchId": "dispatch_1b2c3d4e5f6a",
+    "state": "failed",
+    "stage": "agent_readiness",
+    "failedStage": "agent_readiness",
+    "lastError": "Agent did not become ready (running).",
+    "setup": {
+      "requested": "not_applicable",
+      "effective": "not_applicable",
+      "source": "existing_worktree",
+      "hookFound": false,
+      "startupPolicy": "start-immediately",
+      "state": "not_applicable"
+    },
+    "effects": [
+      {
+        "kind": "worktree",
+        "action": "reused",
+        "id": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/repo/hackathon/commerce-platform"
+      },
+      {
+        "kind": "setup",
+        "action": "not_applicable",
+        "state": "not_applicable"
+      },
+      {
+        "kind": "terminal",
+        "role": "agent",
+        "action": "created",
+        "id": "term_6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c"
+      }
+    ],
+    "residualResources": [
+      {
+        "kind": "terminal",
+        "role": "agent",
+        "action": "created",
+        "id": "term_6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c"
+      }
+    ]
+  }
+}

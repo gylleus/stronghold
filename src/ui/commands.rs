@@ -13,6 +13,7 @@ pub enum ActionId {
     OpenChat,
     Dictate,
     StatusReport,
+    NewSession,
     WhipSelected,
     WhipStalled,
     CloseSelected,
@@ -92,6 +93,13 @@ pub const ACTIONS: &[Action] = &[
         "status_report",
         "Status report",
         "queen chat ask summary fleet overview",
+        None,
+    ),
+    action(
+        ActionId::NewSession,
+        "new_session",
+        "New session…",
+        "spawn start launch agent claude codex worktree worker prompt",
         None,
     ),
     action(
@@ -404,6 +412,8 @@ pub enum Dispatch {
     ShowOnly(NodeState),
     ToggleLoose,
     ToggleReleased,
+    /// Open the "New session…" dialog.
+    NewSession,
 }
 
 pub fn dispatch(id: ActionId) -> Dispatch {
@@ -412,6 +422,7 @@ pub fn dispatch(id: ActionId) -> Dispatch {
         A::OpenChat => Dispatch::OpenChat,
         A::Dictate => Dispatch::Dictate,
         A::StatusReport => Dispatch::StatusReport,
+        A::NewSession => Dispatch::NewSession,
         A::WhipSelected => Dispatch::Key(KeyCommand::Whip),
         A::WhipStalled => Dispatch::WhipStalled,
         A::CloseSelected => Dispatch::Key(KeyCommand::CloseSession),
@@ -543,6 +554,7 @@ mod tests {
             (A::OpenChat, Dispatch::OpenChat),
             (A::Dictate, Dispatch::Dictate),
             (A::StatusReport, Dispatch::StatusReport),
+            (A::NewSession, Dispatch::NewSession),
             (A::WhipSelected, Dispatch::Key(KeyCommand::Whip)),
             (A::WhipStalled, Dispatch::WhipStalled),
             (A::CloseSelected, Dispatch::Key(KeyCommand::CloseSession)),

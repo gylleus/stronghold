@@ -3,6 +3,7 @@
 pub mod accounts;
 pub mod client;
 pub mod commands;
+pub mod spawn;
 pub mod types;
 
 pub use accounts::{AccountList, ProviderRateLimit, RateWindow};

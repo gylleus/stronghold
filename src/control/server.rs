@@ -63,6 +63,7 @@ pub const ACTION_METHODS: &[&str] = &[
     "open_whip_settings",
     "close",
     "whip",
+    "spawn",
     "pr_ready",
     "review_dismiss",
     "review_done",

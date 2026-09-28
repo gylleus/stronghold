@@ -22,6 +22,9 @@ pub const ACTION_REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 pub const CLOSE_REPLY_TIMEOUT: Duration = Duration::from_secs(180);
 /// How long a manual whip may take: each nudge is an orca call on the whip thread.
 pub const WHIP_REPLY_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a spawn may take: worktree creation, the agent's start and the prompt check.
+/// Stays under the control client's own timeout.
+pub const SPAWN_REPLY_TIMEOUT: Duration = Duration::from_secs(190);
 /// How long the app may take to apply a dashboard change.
 pub const UI_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -129,6 +132,8 @@ pub enum ControlCommand {
     },
     /// Review queue methods (`pr_ready`, `review_queue`, …), answered by the app.
     Review(crate::review::ReviewCommand),
+    /// Start a new agent session (existing worktree, new worktree, or a run's worker).
+    Spawn(crate::spawn::SpawnArgs),
 }
 
 impl ControlCommand {
@@ -258,6 +263,7 @@ impl ControlCommand {
                     _ => Ok(Self::Whip { agents, stalled }),
                 }
             })(),
+            "spawn" => crate::spawn::SpawnArgs::parse(params).map(Self::Spawn),
             _ => return None,
         };
         Some(result)
@@ -269,6 +275,7 @@ impl ControlCommand {
             Self::Send { .. } | Self::Key { .. } | Self::Broadcast { .. } => ACTION_REPLY_TIMEOUT,
             Self::Close { dry_run: false, .. } => CLOSE_REPLY_TIMEOUT,
             Self::Whip { .. } => WHIP_REPLY_TIMEOUT,
+            Self::Spawn(_) => SPAWN_REPLY_TIMEOUT,
             _ => UI_REPLY_TIMEOUT,
         }
     }

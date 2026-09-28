@@ -1,0 +1,13 @@
+{
+  "id": "3f8a2b4c-5d6e-4f7a-9b8c-0d1e2f3a4b5c",
+  "ok": true,
+  "result": {
+    "wait": {
+      "handle": "term_9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+      "condition": "tui-idle",
+      "satisfied": true,
+      "status": "running",
+      "exitCode": null
+    }
+  }
+}
