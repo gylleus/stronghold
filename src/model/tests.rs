@@ -633,7 +633,8 @@ fn live_declared_coordinator_that_creates_tasks_stays_coordinator() {
     assert!(snap.attendants.is_empty());
 }
 
-/// The declared coordinator is an attendant: LOOSE creates the run's tasks.
+/// The declared coordinator is an attendant: LOOSE creates the run's tasks and the declared
+/// one forwards to it.
 fn attendant_scenario() -> FleetData {
     let mut data = scenario();
     data.terminals
@@ -642,7 +643,35 @@ fn attendant_scenario() -> FleetData {
         .unwrap()
         .title = Some("✳ cp-wave-0923-ATTENDANT brief".into());
     data.tasks.get_mut(RUN).unwrap()[0].created_by_terminal_handle = Some(LOOSE.into());
+    data.forwards.insert(
+        COORDINATOR.into(),
+        vec![crate::fleet::Forward {
+            target: LOOSE.into(),
+            at_ms: Some(NOW),
+        }],
+    );
     data
+}
+
+/// A coordinator whose topic is the attendant brief: its title says "attendant" but it
+/// creates the run's tasks, so the queen links it as the coordinator.
+#[test]
+fn attendant_titled_coordinator_is_not_an_attendant() {
+    let mut data = scenario();
+    data.terminals
+        .iter_mut()
+        .find(|t| t.handle == COORDINATOR)
+        .unwrap()
+        .title = Some("◑ Attendant brief review".into());
+    data.tasks.get_mut(RUN).unwrap()[0].created_by_terminal_handle = Some(COORDINATOR.into());
+    let snap = FleetSnapshot::build(&data, NOW);
+
+    assert_eq!(snap.run(RUN).unwrap().coordinator, Some(term(COORDINATOR)));
+    assert_eq!(
+        snap.node(&term(COORDINATOR)).unwrap().kind,
+        NodeKind::Coordinator
+    );
+    assert!(snap.attendants.is_empty());
 }
 
 #[test]

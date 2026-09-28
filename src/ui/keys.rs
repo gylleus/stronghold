@@ -63,6 +63,10 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
         "Command palette: nodes and actions (> for actions only)",
     ),
     ("⌘J", "Open / close the Queen's chat"),
+    (
+        "hold ⌘E",
+        "Dictate: speak, release to insert the text at the cursor (Esc cancels)",
+    ),
     ("j  k", "Next / previous node"),
     ("J  K", "Next / previous run"),
     ("]  [", "Next / previous repo"),

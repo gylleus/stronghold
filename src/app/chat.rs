@@ -56,6 +56,13 @@ impl AppChat {
 }
 
 impl AppChat {
+    /// The input box's text, for dictation to insert into.
+    pub(super) fn draft_mut(&mut self) -> &mut String {
+        &mut self.panel.draft
+    }
+}
+
+impl AppChat {
     /// Read-only: the control API and MCP report it, nothing outside the header sets it.
     pub(super) fn auto_mode(&self) -> bool {
         self.session.auto_mode()

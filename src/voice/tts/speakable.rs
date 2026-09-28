@@ -110,14 +110,11 @@ impl SentenceStream {
             self.start_line(kind, out);
             self.line_kind = Some(kind);
         }
-        match self.line_kind {
-            Some(LineKind::Block(start) | LineKind::Paragraph(start)) => {
-                let from = self.consumed.max(start);
-                self.pending.push_str(&self.line[from..]);
-                self.consumed = self.line.len();
-                self.emit_complete(out);
-            }
-            _ => {}
+        if let Some(LineKind::Block(start) | LineKind::Paragraph(start)) = self.line_kind {
+            let from = self.consumed.max(start);
+            self.pending.push_str(&self.line[from..]);
+            self.consumed = self.line.len();
+            self.emit_complete(out);
         }
     }
 
