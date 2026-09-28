@@ -35,6 +35,8 @@ pub enum ChatAction {
     NewChat,
     Retry,
     SelectNode(NodeId),
+    /// Karl flipped the Auto switch.
+    SetAutoMode(bool),
 }
 
 /// What the pane reads each frame.
@@ -43,6 +45,16 @@ pub struct ChatView<'a> {
     pub state: &'a SessionState,
     /// Whether a node id names a node in the current snapshot (only those become links).
     pub is_node: &'a dyn Fn(&NodeId) -> bool,
+    /// The Queen's Myrstack actions run without asking.
+    pub auto_mode: bool,
+}
+
+/// Line under the input while auto mode is on.
+pub const AUTO_HINT: &str = "Auto mode: Myrstack actions run without asking";
+
+/// Color of the auto mode badge, hint and notices.
+fn accent(ui: &Ui) -> Color32 {
+    ui.visuals().selection.bg_fill
 }
 
 /// Id of the input box, for focusing it from a shortcut.
@@ -59,7 +71,12 @@ pub fn chat_ui(ui: &mut Ui, state: &mut ChatPanelState, view: ChatView<'_>) -> V
 
     egui::Panel::bottom("queen_chat_input_panel")
         .frame(egui::Frame::NONE)
-        .show(ui, |ui| input_box(ui, state, ready, running, &mut actions));
+        .show(ui, |ui| {
+            input_box(ui, state, ready, running, &mut actions);
+            if view.auto_mode {
+                ui.label(RichText::new(AUTO_HINT).small().color(accent(ui)));
+            }
+        });
 
     egui::ScrollArea::vertical()
         .id_salt("queen_chat_messages")
@@ -122,6 +139,9 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
                 SessionState::Crashed { reason, .. } => reason.as_str(),
                 _ => "The Queen's Claude Code session",
             });
+        if view.auto_mode {
+            auto_badge(ui);
+        }
         if let Some(model) = &view.transcript.model {
             ui.weak(model);
         }
@@ -132,6 +152,18 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
                 .clicked()
             {
                 actions.push(ChatAction::NewChat);
+            }
+            let mut auto = view.auto_mode;
+            if ui
+                .toggle_value(&mut auto, "Auto")
+                .on_hover_text(
+                    "Auto mode: the Queen's Myrstack actions (including sends, keys, closes and \
+                     whip changes) run without asking. Built-in tools and other MCP servers \
+                     still ask.",
+                )
+                .changed()
+            {
+                actions.push(ChatAction::SetAutoMode(auto));
             }
             if running {
                 if ui
@@ -157,6 +189,23 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
         }
     }
     ui.separator();
+}
+
+fn auto_badge(ui: &mut Ui) {
+    egui::Frame::new()
+        .fill(accent(ui))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(5, 1))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new("AUTO")
+                    .small()
+                    .strong()
+                    .color(ui.visuals().selection.stroke.color),
+            )
+        })
+        .response
+        .on_hover_text("Auto mode is on: the Queen's Myrstack actions run without asking");
 }
 
 fn input_box(
@@ -216,6 +265,14 @@ fn item_ui(ui: &mut Ui, item: &ChatItem, view: &ChatView<'_>, actions: &mut Vec<
         ChatItem::Notice(text) => {
             ui.weak(RichText::new(text).italics());
         }
+        ChatItem::System(text) => {
+            ui.label(
+                RichText::new(format!("⚙ {text}"))
+                    .small()
+                    .italics()
+                    .color(accent(ui)),
+            );
+        }
         ChatItem::Error(text) => {
             ui.colored_label(ui.visuals().error_fg_color, text);
         }
@@ -244,12 +301,18 @@ pub fn tool_status_mark(call: &ToolCall) -> &'static str {
     }
 }
 
-fn tool_row(ui: &mut Ui, call: &ToolCall) {
-    let title = format!(
-        "🔧 {} {}",
+/// A tool row's title: name, outcome and, when auto mode allowed it, an `auto` marker.
+pub fn tool_title(call: &ToolCall) -> String {
+    let marker = if call.auto { " · auto" } else { "" };
+    format!(
+        "🔧 {} {}{marker}",
         short_tool_name(&call.name),
         tool_status_mark(call)
-    );
+    )
+}
+
+fn tool_row(ui: &mut Ui, call: &ToolCall) {
+    let title = tool_title(call);
     let color = match &call.result {
         Some(r) if r.is_error => ui.visuals().error_fg_color,
         _ => ui.visuals().weak_text_color(),
@@ -287,6 +350,7 @@ fn permission_card(ui: &mut Ui, card: &PermissionCard, actions: &mut Vec<ChatAct
             Decision::AlwaysAllow => format!("✓ Approved {name} (always, this chat)"),
             Decision::Deny => format!("✗ Denied {name}"),
             Decision::Cancelled => format!("– {name}: request cancelled"),
+            Decision::Auto => format!("✓ Approved {name} (auto mode)"),
         };
         ui.weak(text);
         return;
@@ -720,14 +784,18 @@ mod tests {
             focus_input: true,
             ..ChatPanelState::default()
         };
-        for session in [
-            SessionState::Starting,
-            SessionState::Ready,
-            SessionState::Crashed {
-                reason: "exit 1".into(),
-                retry_in: std::time::Duration::from_secs(2),
-            },
-            SessionState::Unavailable("no claude".into()),
+        for (session, auto_mode) in [
+            (SessionState::Starting, false),
+            (SessionState::Ready, false),
+            (SessionState::Ready, true),
+            (
+                SessionState::Crashed {
+                    reason: "exit 1".into(),
+                    retry_in: std::time::Duration::from_secs(2),
+                },
+                true,
+            ),
+            (SessionState::Unavailable("no claude".into()), false),
         ] {
             for _ in 0..2 {
                 let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -738,6 +806,7 @@ mod tests {
                             transcript: &transcript,
                             state: &session,
                             is_node: &|id| id.as_str() == "term:term_1",
+                            auto_mode,
                         },
                     );
                     assert!(actions.is_empty(), "{actions:?}");
@@ -771,6 +840,7 @@ mod tests {
                         transcript: &transcript,
                         state: &SessionState::Ready,
                         is_node: &any_node,
+                        auto_mode: false,
                     },
                 );
             });
@@ -797,5 +867,80 @@ mod tests {
         };
         assert!(text.starts_with("status?"));
         assert!(state.draft.is_empty());
+    }
+
+    /// Frames of the pane with `transcript`; returns the actions and all text drawn.
+    fn draw(
+        transcript: &Transcript,
+        auto_mode: bool,
+        events: Vec<egui::Event>,
+    ) -> (Vec<ChatAction>, String) {
+        let ctx = egui::Context::default();
+        let mut state = ChatPanelState::default();
+        let mut actions = Vec::new();
+        let mut shapes = Vec::new();
+        for events in [Vec::new(), events] {
+            let input = egui::RawInput {
+                events,
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(700.0, 900.0),
+                )),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                actions = chat_ui(
+                    ui,
+                    &mut state,
+                    ChatView {
+                        transcript,
+                        state: &SessionState::Ready,
+                        is_node: &any_node,
+                        auto_mode,
+                    },
+                );
+            });
+            output.textures_delta.clear();
+            shapes = output.shapes;
+        }
+        let mut text = String::new();
+        for shape in shapes {
+            if let egui::epaint::Shape::Text(t) = shape.shape {
+                text.push_str(t.galley.text());
+                text.push('\n');
+            }
+        }
+        (actions, text)
+    }
+
+    #[test]
+    fn auto_mode_shows_badge_hint_notice_and_markers() {
+        let mut t = Transcript::default();
+        t.push_system(crate::chat::auto_mode::notice(true));
+        t.apply(&parse_line(r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t9","name":"mcp__myrstack__send_to_agent","input":{}}]},"parent_tool_use_id":null}"#).unwrap());
+        t.mark_auto(&PermissionRequest {
+            request_id: "p9".into(),
+            tool_name: "mcp__myrstack__send_to_agent".into(),
+            display_name: None,
+            input: json!({}),
+            tool_use_id: Some("t9".into()),
+            description: None,
+        });
+        let call = t.tool_calls().next().unwrap();
+        assert!(call.auto);
+        assert_eq!(tool_title(call), "🔧 send_to_agent … · auto");
+
+        let (_, on) = draw(&t, true, Vec::new());
+        assert!(on.contains("AUTO"), "{on}");
+        assert!(on.contains(AUTO_HINT), "{on}");
+        assert!(
+            on.contains("⚙ Auto mode on: Myrstack actions run without asking"),
+            "{on}"
+        );
+        assert!(on.contains("send_to_agent … · auto"), "{on}");
+
+        let (_, off) = draw(&Transcript::default(), false, Vec::new());
+        assert!(off.contains("Auto"), "the switch is always there: {off}");
+        assert!(!off.contains("AUTO") && !off.contains(AUTO_HINT), "{off}");
     }
 }

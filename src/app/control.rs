@@ -68,6 +68,7 @@ struct Fingerprint {
     filter: FleetFilter,
     whip_window_open: bool,
     playbook: u64,
+    queen_auto: bool,
 }
 
 impl AppControl {
@@ -112,6 +113,7 @@ impl MyrstackApp {
             filter: self.filter.clone(),
             whip_window_open: self.whip_window.open,
             playbook: self.playbook_watch.generation,
+            queen_auto: self.chat.auto_mode(),
         }
     }
 
@@ -140,6 +142,7 @@ impl MyrstackApp {
         if let Some(status) = self.playbook_status() {
             view.playbook = status.view();
         }
+        view.queen_auto = self.chat.auto_mode();
         self.control.status.publish(view);
         self.control.published = Some(fingerprint);
     }
