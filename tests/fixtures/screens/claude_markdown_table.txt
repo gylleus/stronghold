@@ -1,0 +1,74 @@
+⏺ I got a big result set. Let me also pull the recs-specific projects' issue lists and the next pages of the searches so nothing in the backlog is missed.
+  Called linear 6 times
+⏺ Here's the full picture from Linear. I searched issues matching "recommendation"/"recs" and pulled every recs-related project's issue list, then filtered out everything completed, canceled, or duplicate. Net result: 8
+  issues in flight, ~30 open in todo/backlog, spread across a handful of projects.
+  Projects (the containers)
+  ┌────────────────────────────────────────────────────────┬────────────────────────────────────────┬─────────┐
+  │                        Project                         │                 Status                 │  Lead   │
+  ├────────────────────────────────────────────────────────┼────────────────────────────────────────┼─────────┤
+  │ Make Recommendations & Search testable                 │ In Progress (target was Jun 30)        │ Karl    │
+  ├────────────────────────────────────────────────────────┼────────────────────────────────────────┼─────────┤
+  │ Headless portal recommendations rebuild                │ Planned, target Dec 31                 │ Karl    │
+  ├────────────────────────────────────────────────────────┼────────────────────────────────────────┼─────────┤
+  │ Recommendation improvements (post-MVP Shopify)         │ Planned, target Dec 31                 │ Florian │
+  ├────────────────────────────────────────────────────────┼────────────────────────────────────────┼─────────┤
+  │ Dynamic recommenders (session based / in Shopify lite) │ mostly shipped, few backlog stragglers │ —       │
+  ├────────────────────────────────────────────────────────┼────────────────────────────────────────┼─────────┤
+  │ Realtime V4 Recommendations                            │ Paused, no open issues                 │ —       │
+  ├────────────────────────────────────────────────────────┼────────────────────────────────────────┼─────────┤
+  │ E-commerce recommendations guide (marketing)           │ In Progress                            │ Lassi   │
+  └────────────────────────────────────────────────────────┴────────────────────────────────────────┴─────────┘
+  Ongoing (In Progress / In Review)
+  - VROOM-720 — Azure retired the gpt-5-chat deployment; GPT-logic merchants' recs-deploy burns its 8h deadline on 404 retries. Urgent, In Review, unassigned.
+  - VROOM-1561 — lite-recs-precompute surface fan-out unbounded per tenant; 500+ workflow instances for one shop overloaded gpt-search-ingestion's webhook DO. Daniel, In Progress.
+  - VROOM-1264 — recs-precompute: supervise hang-cancelled workflow children (done-marker + bounded respawn). Karl, High.
+  - VROOM-299 — Let merchants pin products at specific positions on surfaces. Karl. (The pins-modal fix VROOM-1490 is done; the remaining piece matches the "pins override on compose" follow-up.)
+  - VROOM-932 — lite-backend fetch endpoint for baked surfaces. Karl, High.
+  - VROOM-839 — Recs rule editor saves an empty "For" and labels it "All products". Kristen.
+  - VROOM-111 — "Recommendations - MVP" umbrella, still In Progress but untouched since April — probably just needs closing.
+  - Recs-adjacent: VROOM-331 / VROOM-1165 (foundation portal read-path migration + Argo sunset, gates on foundation recs generation, Kristen) and VROOM-1529 (portal worker Hono/OpenAPI migration, which touches the recs
+    routes, Daniel).
+  To be done, grouped
+  Live serving / storefront track (your current recs-inprocess work):
+  - VROOM-1496 (High) — storefront recs at request time via Shopify app proxy. ⚠️  This one is stale: the app proxy approach was dropped on 2026-09-25 in favor of the serving-flag + direct-compose path, so it should be
+    rewritten or closed.
+  - VROOM-1499 (High) — section hydrates LIVE surfaces only; static rows stay first paint + fallback. Karl.
+  - VROOM-1503 (High) — precompute writes serving=static|live into each surface's metaobject. Karl.
+  - VROOM-1506 (Med) — stamp recs clicks with serving=static|live in tracking/Tinybird; hydrate latency + fallback rate. Karl.
+  - VROOM-1500 (Med) — client-history store so client_id personalises instead of 422. Karl.
+  - VROOM-1518 — hover fallback picks video media. Unprioritized.
+  Precompute / pipeline hygiene:
+  - VROOM-940 (Med) — precompute trigger from public URL to a wrangler service binding.
+  - VROOM-1495 (Med) — compose: share one Foundation connection across the three metadata loaders. Karl.
+  - VROOM-1563 (Low) — unchanged-metafield dedup compares pre-prune value, so dead-GID anchors rewrite every run.
+  - VROOM-1394 (Low) — merchant with no Depict-format markets errors every cron slot. Karl.
+  - VROOM-1132 — alert when a cron workflow's recs task is skipped N consecutive runs.
+  - VROOM-1512 (Med) — preparing screen: Retry button that re-runs the failed stage.
+  Bugs / quality:
+  - FOUND-195 (High) — dedicated: out-of-stock filter removes pinned products (after_basket 801/day, related 307/day). Kristen.
+  - VROOM-709 (Med) — OVH realtime feature store has no writer; search-related recs dedup silently off for all 23 OVH merchants.
+  Merchant-facing feature backlog:
+  - VROOM-300 (High) — sync surfaces/configs across multi-store groups (v1 without pins shipped as VROOM-1289).
+  - VROOM-297, VROOM-398, VROOM-399, VROOM-400 (all Med, Karl) — filter by brand/fields/tags; group by seed-product tags; tab selector between surfaces; per-product/collection recommender overrides.
+  - Session-based leftovers: VROOM-933 (read-time pins + draft preview), VROOM-934 (session endpoints), VROOM-935 (pin-editor live preview), VROOM-937 (session beacons + Recently viewed block), VROOM-939 (cart
+    complements).
+  - Umbrellas: ROA-123 (Shopify post-MVP improvements, Florian), ROA-195 (Headless UI design parity, Florian), VROOM-379 (unify Shopify + Foundation recs, Karl), VROOM-351 / VROOM-1171 (portal rule editing + recs UX,
+    Kristen).
+  Testing / evaluation (the whole "Make Recommendations & Search testable" project is open):
+  - VROOM-1522 (Med) — offline eval harness: held-out next-event hit@k over Tinybird sessions.
+  - VROOM-113 (Karl, Todo) plus Ramon's benchmark chain VROOM-114–119 (dataset, Typesense populate/dump scripts, CI gate, Prometheus push) — all untouched since July.
+  Analytics / rollout:
+  - VROOM-409 (High) — Foundation rec/search KPI tiles production rollout. Kristen.
+  - FEA-19 — free trial for Search & Recs; VROOM-180 — trial with double-app setup (Daniel).
+  Old Todos that look stale (untouched for months, likely overtaken by shipped work): VROOM-112 (Shopify lite integration), VROOM-171 (conversion tracking), VROOM-183/184 (unify data format / ship for Centra), VROOM-284
+  (recommendations app interim gap), VROOM-697 (ospreylondon cross-sell flip, was blocked on the dead recs-deploy pipeline — same root as VROOM-720), VROOM-973 (write recs to new ingestion structure).
+  Two follow-up observations: the highest-severity open item is VROOM-720 (every GPT-logic merchant's recs-deploy has been dead since ~Jul 13, and VROOM-697 is blocked behind it), and VROOM-1496 contradicts the decided
+  direction, so the backlog misstates the serving plan. Happy to update/close the stale ones if you want.
+✻ Worked for 1m 45s · done 9:16 AM
+※ recap: You asked for all recommendation-related Linear tasks. I pulled them: 8 in flight (urgent one is VROOM-720, dead recs-deploys) and about 30 in backlog, summarized above. Next action: your call on updating or
+  closing the stale issues like VROOM-1496. (disable recaps in /config)
+                                                                                                                                                                                      new task? /clear to save 107.8k tokens
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

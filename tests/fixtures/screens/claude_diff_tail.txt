@@ -1,0 +1,29 @@
+      52 +
+      53    it("sends the diff and the branch to the model, and nothing else", async () => {
+      54      let seen = { system: "", user: "" };
+      55      await reviewDiff({
+⏺ Passes. Mutation check: reverting the parse against main's reviewer.ts.
+  Ran 1 shell command
+⏺ Red on main, green here. For part 2, confirming the store build runs the template tests, which include guards.test.ts.
+  Ran 1 shell command
+⏺ The build already fails correctly on missing guards via guards.test.ts, and the module coder can't touch it anyway due
+  to directory restrictions—no change needed. Committing and running the gate now.
+  Created PR #249, ran 3 shell commands
+⏺ A review that asks for changes without naming any now counts as a pass, so no fix-up coder is sent off to guess. PR
+  #249 is green and can be merged (https://github.com/depict-org/commerce-platform/pull/249).
+  - The fix: it's enforced where the platform reads the reviewer's answer, and the reviewer's instructions now say it
+    too: "Every change you ask for is a finding: changes with no findings counts as pass." A change too long to review
+    still can't pass, because that path always attaches its own finding. The new test fails against main and passes
+    here, and pnpm -r check passes.
+  - Owner-guard regressions: these already fail the build, so I added nothing. The store build runs the template's
+    tests, and guards.test.ts fails when a backoffice form action lacks requireOwner(locals). That is exactly what
+    stopped odenplan-klipp's Employees builds. Since #248 that failure names the offending actions. The module coder
+    can't edit that test either, because it can only write inside its module's own folders.
+  It takes effect once #249 is merged and cp-platform is deployed. I've sent merge_ready and worker_done to the
+  coordinator and haven't merged.
+✻ Crunched for 5m 40s · done 3:41 PM
+                                                                                new task? /clear to save 412.4k tokens
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

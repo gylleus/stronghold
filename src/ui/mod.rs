@@ -14,8 +14,10 @@ pub mod search;
 pub mod selection;
 pub mod settings;
 pub mod sidebar;
+pub mod styled_view;
 pub mod subagent;
 pub mod table;
+pub mod term_style;
 pub mod terminal;
 #[cfg(test)]
 pub(crate) mod test_util;
