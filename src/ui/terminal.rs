@@ -10,11 +10,15 @@ use crate::model::{Node, NodeKind, NodeState};
 use crate::orca::{Terminal, TerminalInput, TerminalStatus};
 use crate::poller::ScreenUpdate;
 use crate::ui::graph::state_color;
+use crate::ui::styled_view::styled_view;
+use crate::ui::term_style::AgentKind;
 
 /// Columns the screen font is sized to fit in the panel width.
 const TARGET_COLUMNS: f32 = 110.0;
 const MIN_FONT_SIZE: f32 = 8.0;
 const MAX_FONT_SIZE: f32 = 14.0;
+/// Styled lines wrap, so they need not shrink as far as a fixed-column screen.
+const STYLED_MIN_FONT_SIZE: f32 = 10.5;
 
 /// A second Interrupt click within this window confirms it.
 pub const INTERRUPT_CONFIRM_MS: i64 = 2_000;
@@ -374,7 +378,7 @@ pub fn terminal_panel(
                 );
             });
     }
-    screen_view(ui, screen);
+    screen_view(ui, screen, AgentKind::from_identity(node.agent.as_ref()));
 
     response
 }
@@ -630,26 +634,18 @@ fn header(
         });
 }
 
-fn screen_view(ui: &mut egui::Ui, screen: Option<&ScreenUpdate>) {
+fn screen_view(ui: &mut egui::Ui, screen: Option<&ScreenUpdate>, agent: AgentKind) {
     let Some(screen) = screen else {
         return;
     };
-    let font = screen_font(ui, ui.available_width());
-    let text = screen.lines.join("\n");
+    let font_size = screen_font(ui, ui.available_width())
+        .size
+        .max(STYLED_MIN_FONT_SIZE);
     egui::Frame::new()
         .fill(ui.visuals().extreme_bg_color)
-        .inner_margin(4.0)
+        .inner_margin(egui::Margin::symmetric(6, 4))
         .show(ui, |ui| {
-            egui::ScrollArea::both()
-                .id_salt("terminal_screen")
-                .auto_shrink(false)
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(text).font(font))
-                            .wrap_mode(egui::TextWrapMode::Extend),
-                    );
-                });
+            styled_view(ui, "terminal_screen", &screen.lines, agent, font_size);
         });
 }
 

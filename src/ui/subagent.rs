@@ -5,6 +5,8 @@ use eframe::egui::{self, RichText, Ui};
 use crate::claude::{SubagentInfo, SubagentState};
 use crate::model::Node;
 use crate::ui::graph::{format_ago, state_color};
+use crate::ui::styled_view::styled_view;
+use crate::ui::term_style::AgentKind;
 
 /// Header rows (label, value) describing `info` as of `now_ms`.
 pub fn header_rows(info: &SubagentInfo, now_ms: i64) -> Vec<(&'static str, String)> {
@@ -33,7 +35,7 @@ pub fn header_rows(info: &SubagentInfo, now_ms: i64) -> Vec<(&'static str, Strin
     rows
 }
 
-/// Draws the header and the monospace tail (`tail` is the rendered transcript, oldest first).
+/// Draws the header and the styled tail (`tail` is the rendered transcript, oldest first).
 pub fn subagent_panel(ui: &mut Ui, node: &Node, info: &SubagentInfo, tail: &[String], now_ms: i64) {
     ui.horizontal(|ui| {
         let color = state_color(node.state, ui.visuals().dark_mode);
@@ -59,14 +61,18 @@ pub fn subagent_panel(ui: &mut Ui, node: &Node, info: &SubagentInfo, tail: &[Str
         ui.weak("No transcript output yet.");
         return;
     }
-    egui::ScrollArea::both()
-        .id_salt(("subagent_tail", &info.agent_id))
-        .auto_shrink([false, false])
-        .stick_to_bottom(true)
+    let font_size = egui::TextStyle::Monospace.resolve(ui.style()).size;
+    egui::Frame::new()
+        .fill(ui.visuals().extreme_bg_color)
+        .inner_margin(egui::Margin::symmetric(6, 4))
         .show(ui, |ui| {
-            for line in tail {
-                ui.add(egui::Label::new(RichText::new(line).monospace()).extend());
-            }
+            styled_view(
+                ui,
+                ("subagent_tail", &info.agent_id),
+                tail,
+                AgentKind::Transcript,
+                font_size,
+            );
         });
 }
 
