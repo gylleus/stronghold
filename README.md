@@ -12,6 +12,44 @@ cargo run
 
 Requires the `orca` CLI on `PATH`. Set `RUST_LOG=debug` for more logging.
 
+## Install as a macOS app
+
+```bash
+scripts/install.sh              # release build → Myrstack.app → ~/Applications, CLI linked
+scripts/install.sh --app-only   # same, but leave ~/.cargo/bin/myrstack alone
+scripts/install.sh --uninstall  # remove the app (and the CLI link if it points into it)
+```
+
+The app lives in `~/Applications/Myrstack.app` (nothing is written to `/Applications`); open it
+from Finder, Spotlight or `open -a Myrstack`. `~/.cargo/bin/myrstack` becomes a symlink to
+`Myrstack.app/Contents/MacOS/myrstack`, so the CLI (`myrstack mcp` for the registered MCP
+server, `ctl`, `playbook`, `notify`) and the app are always the same build, and bundled dylibs
+resolve through the link. Uninstalling removes that link; get a standalone CLI back with
+`cargo install --path .`.
+
+Building only the bundle: `cargo build --release && scripts/bundle.py` writes
+`target/release/Myrstack.app`. [`scripts/bundle.py`](scripts/bundle.py) writes the Info.plist
+(`ai.depict.myrstack`, version from `Cargo.toml`), copies every non-system dylib the binary
+loads (`otool -L`, recursively) into `Contents/Frameworks` and relinks it through `@rpath`, and
+signs the bundle. The icon is `packaging/Myrstack.icns`, rendered by
+[`scripts/make_icon.py`](scripts/make_icon.py) (re-run it after changing the design).
+
+**Notifications.** Run from the app, notifications come from Myrstack itself
+(`UNUserNotificationCenter`), and clicking one brings Myrstack forward with that agent selected.
+macOS asks once whether Myrstack may notify; if you declined, turn it on in System Settings →
+Notifications → Myrstack. `myrstack notify "title" "body"` posts a test notification (add
+`--quiet` to skip the prompt: provisional permission, delivered quietly to Notification
+Center). Run with `cargo run`, notifications go through `osascript` (shown under Script Editor;
+clicks cannot reach Myrstack). Either way they are listed in the in-app **Alerts** menu.
+
+**Microphone and signing.** The app asks for microphone access the first time a voice shortcut
+listens. It is signed ad hoc (`codesign --sign -`), and macOS remembers permissions per
+signature, which changes with every build: after a reinstall, macOS may ask for the microphone
+again. To keep permissions across builds, sign with a stable identity, e.g. a self-signed
+"Myrstack Dev" code-signing certificate made in Keychain Access:
+`MYRSTACK_SIGN_IDENTITY="Myrstack Dev" scripts/install.sh`. To forget a decision:
+`tccutil reset Microphone ai.depict.myrstack`.
+
 ## Talk to it from a chat
 
 `myrstack mcp` is an MCP server that lets Claude Code (or another MCP client) read the fleet

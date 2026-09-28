@@ -697,9 +697,26 @@ impl MyrstackApp {
 
 /// Notifications: nodes entering NeedsInput, and the in-app list of posted notifications.
 ///
-/// Clicking an `osascript` notification cannot reach Myrstack, so the alerts menu is how a
-/// notification selects its node.
+/// Clicking a native notification (running from `Myrstack.app`) selects its node; clicking an
+/// `osascript` one cannot reach Myrstack, so the alerts menu is how it selects its node.
 impl MyrstackApp {
+    /// Selects the node of each clicked notification, as picking its alert would, and brings
+    /// the window forward. Clicks wait for the first snapshot (a click can launch the app).
+    fn open_clicked_notifications(&mut self, ctx: &egui::Context) {
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
+        let mut select = None;
+        for targets in self.notifier.clicked() {
+            self.alerts.retain(|a| a.targets != targets);
+            select = notify::click_target(snapshot, &targets).or(select);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        if let Some(id) = select {
+            self.select_and_focus(id);
+        }
+    }
+
     /// Asks for a notification for each node that just entered NeedsInput, unless the whip's
     /// notifications are off.
     fn notify_needs_input(&mut self) {
@@ -746,12 +763,10 @@ impl MyrstackApp {
             Some(usize::MAX) => self.alerts.clear(),
             Some(i) => {
                 let alert = self.alerts.remove(i);
-                let target = self.snapshot.as_ref().and_then(|snapshot| {
-                    alert
-                        .targets
-                        .iter()
-                        .find_map(|t| notify::resolve_target(snapshot, t))
-                });
+                let target = self
+                    .snapshot
+                    .as_ref()
+                    .and_then(|snapshot| notify::click_target(snapshot, &alert.targets));
                 if let Some(id) = target {
                     self.select_and_focus(id);
                 }
@@ -918,6 +933,7 @@ impl eframe::App for MyrstackApp {
             self.notify_needs_input();
         }
         self.take_alerts();
+        self.open_clicked_notifications(ctx);
         self.poll_chat();
         self.poll_control(ctx);
         self.poll_whip_now();
