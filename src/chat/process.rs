@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, select, unbounded};
 
 use super::config::{ChatConfig, is_scrubbed_env};
-use super::permissions::PermissionPolicy;
+use super::permissions::{PermissionPolicy, Verdict};
 use super::protocol::{self, HostRequest, Incoming, PermissionAnswer, PermissionRequest};
 use super::session::SessionStore;
 
@@ -42,6 +42,9 @@ pub enum ChatEvent {
     Message(Incoming),
     /// A tool call that waits for the user.
     PermissionNeeded(PermissionRequest),
+    /// A tool call allowed without a card only because auto mode is on (including a card that
+    /// was waiting when auto mode turned on).
+    AutoApproved(PermissionRequest),
     /// A new conversation started (New chat); the transcript should be cleared.
     NewSession(String),
     /// A message could not be delivered.
@@ -60,6 +63,8 @@ pub enum ChatCommand {
         always: bool,
     },
     NewChat,
+    /// Turns auto mode on or off for the running session (no restart).
+    SetAuto(bool),
     /// Look for the binary again / restart now.
     Retry,
     Shutdown,
@@ -243,6 +248,7 @@ impl Supervisor {
                     self.start_new_chat();
                     return true;
                 }
+                ChatCommand::SetAuto(on) => self.policy.set_auto(on),
                 ChatCommand::Send(_) => {
                     self.emit(ChatEvent::Error(
                         "Not sent: the chat is not running.".into(),
@@ -325,6 +331,7 @@ impl Supervisor {
                             return RunEnd::NewChat;
                         }
                         ChatCommand::Retry => Ok(()),
+                        ChatCommand::SetAuto(on) => self.set_auto(on, &mut stdin),
                         ChatCommand::Send(text) => {
                             let sent = write_line(&mut stdin, &protocol::user_message(&text));
                             if sent.is_ok() {
@@ -399,16 +406,24 @@ impl Supervisor {
             } => {
                 match request {
                     HostRequest::CanUseTool(permission) => {
-                        if self.policy.allows(&permission.tool_name) {
-                            log::info!("chat: auto-approved {}", permission.tool_name);
-                            let reply =
-                                protocol::permission_response(permission, &PermissionAnswer::Allow);
-                            if let Err(e) = write_line(stdin, &reply) {
-                                log::warn!("chat: cannot answer permission request: {e}");
+                        match self.policy.verdict(&permission.tool_name) {
+                            Verdict::Ask => {
+                                self.pending.insert(request_id.clone(), permission.clone());
+                                self.emit(ChatEvent::PermissionNeeded(permission.clone()));
                             }
-                        } else {
-                            self.pending.insert(request_id.clone(), permission.clone());
-                            self.emit(ChatEvent::PermissionNeeded(permission.clone()));
+                            verdict => {
+                                log::info!("chat: auto-approved {}", permission.tool_name);
+                                let reply = protocol::permission_response(
+                                    permission,
+                                    &PermissionAnswer::Allow,
+                                );
+                                if let Err(e) = write_line(stdin, &reply) {
+                                    log::warn!("chat: cannot answer permission request: {e}");
+                                }
+                                if verdict == Verdict::Auto {
+                                    self.emit(ChatEvent::AutoApproved(permission.clone()));
+                                }
+                            }
                         }
                     }
                     HostRequest::Other(subtype) => {
@@ -426,6 +441,29 @@ impl Supervisor {
             _ => {}
         }
         self.emit(ChatEvent::Message(message));
+    }
+
+    /// Switches auto mode; turning it on also answers the Myrstack cards already waiting.
+    fn set_auto(&mut self, on: bool, stdin: &mut Option<ChildStdin>) -> std::io::Result<()> {
+        self.policy.set_auto(on);
+        log::info!("chat: auto mode {}", if on { "on" } else { "off" });
+        let due: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|(_, r)| self.policy.verdict(&r.tool_name) != Verdict::Ask)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in due {
+            let Some(request) = self.pending.remove(&id) else {
+                continue;
+            };
+            write_line(
+                stdin,
+                &protocol::permission_response(&request, &PermissionAnswer::Allow),
+            )?;
+            self.emit(ChatEvent::AutoApproved(request));
+        }
+        Ok(())
     }
 
     /// Explains an exit and fixes the session record when the CLI disagreed about it.

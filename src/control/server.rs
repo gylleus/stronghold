@@ -165,6 +165,7 @@ fn status(view: &StatusView) -> Value {
         "alerts": view.alerts.len(),
         "dashboard": view.dashboard,
         "playbook": view.playbook,
+        "queen_auto": view.queen_auto,
     })
 }
 

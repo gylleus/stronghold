@@ -522,6 +522,7 @@ fn fleet_status(control: &mut dyn Control) -> ToolResult {
         "needs_input": s.waiting.iter().map(compact).collect::<Vec<_>>(),
         "stalled": s.stalled.iter().map(compact).collect::<Vec<_>>(),
         "whip": if fallback { Value::Null } else { s.status.get("whip").cloned().unwrap_or_default() },
+        "queen_auto": if fallback { Value::Null } else { s.status.get("queen_auto").cloned().unwrap_or(Value::Bool(false)) },
         "quotas": s.quotas,
     });
     Ok(ToolOutput::ok(text, structured))
@@ -595,6 +596,17 @@ fn fleet_text(s: &Status, fallback: bool, now: i64) -> String {
         out.push("Whip: unknown (Myrstack isn't running)".into());
     } else if let Some(w) = s.status.get("whip") {
         out.push(whip_line(w, now));
+    }
+    if !fallback {
+        let auto = s.status.get("queen_auto").and_then(Value::as_bool) == Some(true);
+        out.push(format!(
+            "Queen auto mode: {} (Karl sets it in the chat header)",
+            if auto {
+                "on — Myrstack actions run without Karl's confirmation"
+            } else {
+                "off — destructive actions ask Karl"
+            }
+        ));
     }
     if let Some(q) = &s.quotas {
         out.push(format!("Quotas: {}", quota_line(q, now)));

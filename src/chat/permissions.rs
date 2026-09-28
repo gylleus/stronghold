@@ -43,29 +43,67 @@ pub fn is_auto_approved(tool: &str) -> bool {
         .is_some_and(|name| READ_ONLY_TOOLS.contains(&name))
 }
 
-/// Per-chat permission memory: the auto-approve list plus tools the user allowed for the rest
-/// of the chat.
+/// Whether `tool` is one of the `myrstack` MCP server's tools.
+pub fn is_myrstack_tool(tool: &str) -> bool {
+    tool.strip_prefix(MYRSTACK_PREFIX)
+        .is_some_and(|name| !name.is_empty())
+}
+
+/// How a `can_use_tool` request is answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// Show a card and wait for Karl.
+    Ask,
+    /// Allowed without a card: a read-only Myrstack tool, or one Karl always-allowed.
+    Allow,
+    /// Allowed without a card only because auto mode is on.
+    Auto,
+}
+
+/// Per-chat permission memory: the auto-approve list, tools the user allowed for the rest of
+/// the chat, and auto mode (every Myrstack tool runs without asking; other tools still ask).
 #[derive(Debug, Default, Clone)]
 pub struct PermissionPolicy {
     always: HashSet<String>,
+    auto: bool,
 }
 
 impl PermissionPolicy {
+    pub fn verdict(&self, tool: &str) -> Verdict {
+        if is_auto_approved(tool) || self.always.contains(tool) {
+            Verdict::Allow
+        } else if self.auto && is_myrstack_tool(tool) {
+            Verdict::Auto
+        } else {
+            Verdict::Ask
+        }
+    }
+
     pub fn allows(&self, tool: &str) -> bool {
-        is_auto_approved(tool) || self.always.contains(tool)
+        self.verdict(tool) != Verdict::Ask
     }
 
     pub fn always_allow(&mut self, tool: &str) {
         self.always.insert(tool.to_owned());
     }
 
-    /// Forgets the "always allow" choices (a new chat).
+    pub fn set_auto(&mut self, on: bool) {
+        self.auto = on;
+    }
+
+    pub fn auto(&self) -> bool {
+        self.auto
+    }
+
+    /// Forgets the "always allow" choices (a new chat); auto mode is a setting and stays.
     pub fn reset(&mut self) {
         self.always.clear();
     }
 }
 
-/// `--settings` JSON for the chat session: the destructive Myrstack tools always ask.
+/// `--settings` JSON for the chat session: the destructive Myrstack tools always ask, so no
+/// allow rule elsewhere skips the host. Every prompt reaches the host as a `can_use_tool`
+/// request, which is where auto mode answers them; the settings never change with it.
 pub fn session_settings() -> String {
     let ask: Vec<String> = DESTRUCTIVE_TOOLS
         .iter()
@@ -160,6 +198,69 @@ mod tests {
         policy.reset();
         assert!(!policy.allows("mcp__myrstack__send_to_agent"));
         assert!(policy.allows("mcp__myrstack__fleet_status"));
+    }
+
+    /// Auto mode on/off × read-only Myrstack tool / destructive Myrstack tool / built-in tool /
+    /// another MCP server's tool.
+    #[test]
+    fn decision_table() {
+        use Verdict::{Allow, Ask, Auto};
+        let read = "mcp__myrstack__fleet_status";
+        let built_ins = [
+            "Bash",
+            "Edit",
+            "Write",
+            "NotebookEdit",
+            "WebFetch",
+            "WebSearch",
+            "Task",
+            "Agent",
+        ];
+        let other_mcp = [
+            "mcp__linear__save_issue",
+            "mcp__myrstack_evil__send_to_agent",
+        ];
+        let mut destructive: Vec<String> = DESTRUCTIVE_TOOLS
+            .iter()
+            .chain(&["whip_agents", "some_future_tool"])
+            .map(|t| format!("{MYRSTACK_PREFIX}{t}"))
+            .collect();
+        destructive.push("mcp__myrstack__press_key".into());
+
+        let mut policy = PermissionPolicy::default();
+        assert!(!policy.auto());
+        assert_eq!(policy.verdict(read), Allow);
+        for tool in &destructive {
+            assert_eq!(policy.verdict(tool), Ask, "{tool}");
+        }
+        for tool in built_ins.iter().chain(&other_mcp) {
+            assert_eq!(policy.verdict(tool), Ask, "{tool}");
+        }
+
+        policy.set_auto(true);
+        assert_eq!(
+            policy.verdict(read),
+            Allow,
+            "read-only needs no auto marker"
+        );
+        for tool in &destructive {
+            assert_eq!(policy.verdict(tool), Auto, "{tool}");
+            assert!(policy.allows(tool));
+        }
+        for tool in built_ins.iter().chain(&other_mcp) {
+            assert_eq!(policy.verdict(tool), Ask, "{tool}");
+        }
+        assert_eq!(policy.verdict(MYRSTACK_PREFIX), Ask);
+
+        // Always-allowed stays a plain allow; a new chat keeps auto mode.
+        policy.always_allow("mcp__myrstack__send_to_agent");
+        assert_eq!(policy.verdict("mcp__myrstack__send_to_agent"), Allow);
+        policy.reset();
+        assert!(policy.auto());
+        assert_eq!(policy.verdict("mcp__myrstack__send_to_agent"), Auto);
+
+        policy.set_auto(false);
+        assert_eq!(policy.verdict("mcp__myrstack__send_to_agent"), Ask);
     }
 
     #[test]

@@ -906,3 +906,41 @@ fn fleet_data_serves_the_raw_poll_and_status_carries_the_playbook() {
     h.status.publish(StatusView::default());
     assert_eq!(h.err("fleet_data", Value::Null), ErrorCode::Unavailable);
 }
+
+#[test]
+fn status_reports_queen_auto_read_only() {
+    use crate::control::server::{ACTION_METHODS, READ_METHODS};
+    let h = Harness::new();
+    assert_eq!(h.ok("status", Value::Null)["queen_auto"], false);
+    let mut view = status_view();
+    view.queen_auto = true;
+    h.status.publish(view);
+    assert_eq!(h.ok("status", Value::Null)["queen_auto"], true);
+
+    // Nothing sets it: no method, and no action parses one.
+    for method in [
+        "queen_auto",
+        "auto",
+        "auto_mode",
+        "set_auto",
+        "set_auto_mode",
+        "set_queen_auto",
+    ] {
+        assert!(!READ_METHODS.contains(&method) && !ACTION_METHODS.contains(&method));
+        assert!(
+            crate::control::commands::ControlCommand::parse(method, &json!({"on": true})).is_none(),
+            "{method}"
+        );
+        assert_eq!(
+            h.err(method, json!({"on": true})),
+            ErrorCode::UnknownMethod,
+            "{method}"
+        );
+    }
+    assert!(
+        ACTION_METHODS
+            .iter()
+            .chain(READ_METHODS)
+            .all(|m| !m.contains("auto"))
+    );
+}

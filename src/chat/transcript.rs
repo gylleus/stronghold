@@ -2,7 +2,7 @@
 //! bubbles, assistant text streaming in from deltas, tool calls paired with their results,
 //! permission cards and inline notices.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::Value;
 
@@ -16,10 +16,15 @@ const INTERRUPTED_NOTE: &str = "[Request interrupted by user]";
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatItem {
     User(String),
-    Assistant { text: String, streaming: bool },
+    Assistant {
+        text: String,
+        streaming: bool,
+    },
     Tool(ToolCall),
     Permission(PermissionCard),
     Notice(String),
+    /// A note from Myrstack itself (e.g. auto mode changed), not typed by Karl.
+    System(String),
     Error(String),
 }
 
@@ -30,6 +35,8 @@ pub struct ToolCall {
     /// `None` until the finished assistant message carries it.
     pub input: Option<Value>,
     pub result: Option<ToolOutcome>,
+    /// Allowed without a card because auto mode was on.
+    pub auto: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +60,8 @@ pub enum Decision {
     Deny,
     /// The session ended before an answer.
     Cancelled,
+    /// Auto mode answered it.
+    Auto,
 }
 
 #[derive(Debug, Default)]
@@ -76,6 +85,8 @@ pub struct Transcript {
     unfinished_text: HashMap<String, VecDeque<usize>>,
     /// Tool use id → item index.
     tools_by_id: HashMap<String, usize>,
+    /// Tool use ids auto mode allowed before their row appeared.
+    auto_ids: HashSet<String>,
 }
 
 impl Transcript {
@@ -86,6 +97,29 @@ impl Transcript {
 
     pub fn push_notice(&mut self, text: impl Into<String>) {
         self.items.push(ChatItem::Notice(text.into()));
+    }
+
+    pub fn push_system(&mut self, text: impl Into<String>) {
+        self.items.push(ChatItem::System(text.into()));
+    }
+
+    /// Records that auto mode allowed `request`: its waiting card (if any) closes and its tool
+    /// row gets the auto marker.
+    pub fn mark_auto(&mut self, request: &PermissionRequest) {
+        self.decide(&request.request_id, Decision::Auto);
+        let Some(id) = &request.tool_use_id else {
+            return;
+        };
+        match self
+            .tools_by_id
+            .get(id)
+            .and_then(|&at| self.items.get_mut(at))
+        {
+            Some(ChatItem::Tool(call)) => call.auto = true,
+            _ => {
+                self.auto_ids.insert(id.clone());
+            }
+        }
     }
 
     pub fn push_error(&mut self, text: impl Into<String>) {
@@ -258,6 +292,7 @@ impl Transcript {
             name: name.to_owned(),
             input: None,
             result: None,
+            auto: self.auto_ids.remove(id),
         }));
     }
 

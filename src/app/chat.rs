@@ -32,6 +32,7 @@ impl AppChat {
             transcript: &self.session.transcript,
             state: &self.session.state,
             is_node: &is_node,
+            auto_mode: self.session.auto_mode(),
         };
         let mut select = None;
         for action in chat_ui(ui, &mut self.panel, view) {
@@ -47,9 +48,17 @@ impl AppChat {
                 ChatAction::NewChat => self.session.new_chat(),
                 ChatAction::Retry => self.session.retry(),
                 ChatAction::SelectNode(id) => select = Some(id),
+                ChatAction::SetAutoMode(on) => self.session.set_auto_mode(on),
             }
         }
         select
+    }
+}
+
+impl AppChat {
+    /// Read-only: the control API and MCP report it, nothing outside the header sets it.
+    pub(super) fn auto_mode(&self) -> bool {
+        self.session.auto_mode()
     }
 }
 
