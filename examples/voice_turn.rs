@@ -1,7 +1,7 @@
 //! A scripted voice turn through the real talk pipeline, with a WAV file in place of the
 //! microphone and the Queen's spoken reply rendered to a WAV file instead of the speakers:
-//! WAV → `Recorder` → Parakeet → `Talk` → the Queen's chat → `SentenceStream` → Kokoro →
-//! `BufferSink`. Prints a latency breakdown.
+//! WAV → `Recorder` → Parakeet → `Talk` → the Queen's chat → `SayFilter` → `SentenceStream` →
+//! Kokoro → `BufferSink`. Prints the say-line and a latency breakdown.
 //!
 //! ```text
 //! say -o /tmp/q.wav --data-format=LEI16@16000 "How many agents need input?"
@@ -203,8 +203,8 @@ fn main() -> anyhow::Result<()> {
 
     let mut queen = if fake {
         Queen::Fake(FakeChat {
-            reply: "Two agents need input: the reviewer on run 7c25, and the docs worker. \
-                    Everything else is working.",
+            reply: "<say>Two agents need you: the reviewer and the docs one. Want the list?</say>\n\n\
+                    - `term:term_7c25` reviewer on run 7c25\n- `term:term_d0c5` docs worker",
             delay: Duration::from_millis(800),
             sent_at: None,
             events: Vec::new(),
@@ -286,6 +286,15 @@ fn main() -> anyhow::Result<()> {
 
     let show = |d: Option<Duration>| d.map_or("never".into(), ms);
     println!("reply text: {reply:?}");
+    let say = myrstack::chat::say::split_say(&reply).say;
+    println!(
+        "say-line: {}",
+        say.as_deref()
+            .map_or("none (fallback: first sentences)".into(), |s| format!(
+                "{s:?} ({} words)",
+                s.split_whitespace().count()
+            ))
+    );
     println!(
         "reply audio: {:.1} s written to {}",
         audio.len() as f32 / 24_000.0,

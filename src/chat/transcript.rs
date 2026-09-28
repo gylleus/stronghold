@@ -18,6 +18,8 @@ pub enum ChatItem {
     User(String),
     /// Karl's message spoken with hold-to-talk (drawn with a 🎤 marker).
     VoiceUser(String),
+    /// Reply text as streamed, `<say>` tags included; the pane shows the say-line apart
+    /// (see [`split_say`](super::say::split_say)).
     Assistant {
         text: String,
         streaming: bool,
@@ -364,6 +366,14 @@ impl Transcript {
                 ChatItem::Assistant { text, .. } => Some(text.as_str()),
                 _ => None,
             })
+            .collect()
+    }
+
+    /// The say-lines of the assistant items, tags removed.
+    pub fn say_lines(&self) -> Vec<String> {
+        self.assistant_text()
+            .into_iter()
+            .filter_map(|text| super::say::split_say(text).say)
             .collect()
     }
 

@@ -414,6 +414,8 @@ impl MyrstackApp {
         for event in events {
             self.talk_event(event, focused);
         }
+        let speak_replies = self.talk.talk.speak_replies();
+        self.chat.session_mut().set_speak_replies(speak_replies);
         for speech in self.chat.session_mut().take_speech() {
             if let crate::chat::SpeechEvent::TurnStart { .. } = speech
                 && self.talk.testing
