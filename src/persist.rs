@@ -1,5 +1,5 @@
-//! UI state saved between launches through eframe's storage: filters, view, graph layout and
-//! selection. Window size and position are saved by eframe itself, panel widths with egui memory.
+//! UI state saved between launches through eframe's storage: filters, view, graph layout,
+//! selection and the command palette's recent actions. Window size and position are saved by eframe itself, panel widths with egui memory.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,8 @@ pub struct PersistedState {
     pub view: View,
     pub filter: FleetFilter,
     pub layout: SavedLayout,
+    /// The command palette's recently run actions, newest first.
+    pub recent_actions: Vec<String>,
 }
 
 impl Default for PersistedState {
@@ -28,6 +30,7 @@ impl Default for PersistedState {
             view: View::default(),
             filter: FleetFilter::default(),
             layout: SavedLayout::default(),
+            recent_actions: Vec::new(),
         }
     }
 }
@@ -94,6 +97,7 @@ mod tests {
                 manual_view: true,
                 selected: Some(NodeId::terminal("t1")),
             },
+            recent_actions: vec!["fit_graph".into(), "open_chat".into()],
         }
     }
 

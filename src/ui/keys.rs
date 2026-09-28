@@ -35,9 +35,33 @@ pub enum KeyCommand {
     Whip,
 }
 
+impl KeyCommand {
+    /// Every command, for checks that each one is reachable from the command palette.
+    pub const ALL: [KeyCommand; 15] = [
+        KeyCommand::NextNode,
+        KeyCommand::PrevNode,
+        KeyCommand::NextRun,
+        KeyCommand::PrevRun,
+        KeyCommand::NextRepo,
+        KeyCommand::PrevRepo,
+        KeyCommand::OpenPanel,
+        KeyCommand::FocusInput,
+        KeyCommand::Escape,
+        KeyCommand::OpenInOrca,
+        KeyCommand::Fit,
+        KeyCommand::ToggleHelp,
+        KeyCommand::CloseSession,
+        KeyCommand::ToggleChat,
+        KeyCommand::Whip,
+    ];
+}
+
 /// Shortcuts listed in the help overlay.
 pub const SHORTCUTS: &[(&str, &str)] = &[
-    ("⌘K  /", "Search nodes"),
+    (
+        "⌘K  /",
+        "Command palette: nodes and actions (> for actions only)",
+    ),
     ("⌘J", "Open / close the Queen's chat"),
     ("j  k", "Next / previous node"),
     ("J  K", "Next / previous run"),

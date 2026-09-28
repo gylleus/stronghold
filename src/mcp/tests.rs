@@ -1316,3 +1316,40 @@ fn playbook_prompts_tools_and_resources_log_their_fetches() {
     );
     assert!(log.iter().all(|r| r.hash.len() == 7 && r.at_ms > 0));
 }
+
+#[test]
+fn fleet_status_reports_queen_auto_and_no_tool_sets_it() {
+    let mut server = McpServer::new(app());
+    let r = call(&mut server, "fleet_status", json!({}));
+    assert_eq!(r["structuredContent"]["queen_auto"], false);
+    assert!(text(&r).contains("Queen auto mode: off"), "{}", text(&r));
+
+    let mut view = status_view();
+    view.queen_auto = true;
+    let mut server = McpServer::new(HeadlessControl::from_view(view, Arc::new(Screens)));
+    let r = call(&mut server, "fleet_status", json!({}));
+    assert_eq!(r["structuredContent"]["queen_auto"], true);
+    assert!(text(&r).contains("Queen auto mode: on"), "{}", text(&r));
+
+    let r = rpc(&mut server, "tools/list", json!({}));
+    for tool in r["result"]["tools"].as_array().unwrap() {
+        let name = tool["name"].as_str().unwrap();
+        assert!(!name.contains("auto"), "{name}");
+        let schema = tool["inputSchema"].to_string();
+        assert!(
+            !schema.contains("queen_auto") && !schema.contains("auto_mode"),
+            "{name}: {schema}"
+        );
+    }
+}
+
+#[test]
+fn close_agents_stays_a_dry_run_by_default() {
+    // The MCP server knows nothing of the chat's auto mode: a close without dry_run=false is
+    // always a dry run, so auto mode never turns an unqualified close into a real one.
+    let mut server = McpServer::new(
+        FakeControl::default().reply("close", Ok(json!({"dry_run": true, "plan": null}))),
+    );
+    call(&mut server, "close_agents", json!({"ids": ["term:a"]}));
+    assert_eq!(server.control().calls[0].1["dry_run"], true);
+}

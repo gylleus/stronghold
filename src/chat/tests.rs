@@ -272,6 +272,7 @@ echo $$ > "$dir/pid"
 id() { printf '%s' "$1" | sed -E 's/.*"request_id":"([^"]*)".*/\1/'; }
 result() { echo '{"type":"result","subtype":"success","is_error":false,"result":"'"$1"'","total_cost_usd":0.01}'; }
 while IFS= read -r line; do
+  case "$line" in *'"type":"user"'*) printf '%s\n' "$line" >> "$dir/user.log" ;; esac
   case "$line" in
     *'"subtype":"initialize"'*)
       echo '{"type":"control_response","response":{"subtype":"success","request_id":"'"$(id "$line")"'","response":{}}}' ;;
@@ -328,6 +329,14 @@ impl Fake {
 
     fn args_log(&self) -> Vec<String> {
         std::fs::read_to_string(self.root.join("args.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn user_log(&self) -> Vec<String> {
+        std::fs::read_to_string(self.root.join("user.log"))
             .unwrap_or_default()
             .lines()
             .map(str::to_owned)
@@ -493,4 +502,143 @@ fn missing_binary_reports_unavailable() {
         matches!(c.state, SessionState::Unavailable(_))
     });
     assert!(!chat.send("hello"));
+}
+
+#[test]
+fn auto_mode_toggles_mid_session_without_a_restart() {
+    let fake = Fake::new();
+    let chat_dir = fake.root.join("chat");
+    let mut chat = ChatSession::spawn(fake.config(&[]), None);
+    assert!(!chat.auto_mode(), "off by default");
+    wait_until(&mut chat, "ready", |c| c.state == SessionState::Ready);
+    assert!(chat.send("ping"));
+    wait_until(&mut chat, "reply", |c| !c.transcript.running);
+    let session = session::SessionStore::open(&chat_dir).record;
+
+    // A card waiting when auto mode turns on is answered by it.
+    assert!(chat.send("permit please"));
+    wait_until(&mut chat, "card", |c| {
+        c.transcript.pending_permission().is_some()
+    });
+    chat.set_auto_mode(true);
+    assert!(auto_mode::load(&chat_dir), "saved");
+    wait_until(&mut chat, "auto allowed", |c| !c.transcript.running);
+    assert_eq!(last_result(&chat).as_deref(), Some("allowed"));
+    assert!(chat.transcript.items.iter().any(|i| matches!(
+        i,
+        ChatItem::Permission(card) if card.decision == Some(Decision::Auto)
+    )));
+    assert!(
+        chat.transcript
+            .items
+            .contains(&ChatItem::System(auto_mode::notice(true).into()))
+    );
+
+    // No card now; the Queen is told with Karl's next message, which shows unprefixed.
+    assert!(chat.send("permit again"));
+    wait_until(&mut chat, "no card", |c| !c.transcript.running);
+    assert_eq!(last_result(&chat).as_deref(), Some("allowed"));
+    assert!(chat.transcript.pending_permission().is_none());
+    assert!(
+        chat.transcript
+            .items
+            .contains(&ChatItem::User("permit again".into()))
+    );
+    let users = fake.user_log();
+    let told = users.last().unwrap();
+    assert!(told.contains("[Myrstack] Auto mode is now ON"), "{told}");
+    assert!(told.contains("permit again"), "{told}");
+    assert_eq!(
+        users
+            .iter()
+            .filter(|l| l.contains("[Myrstack] Auto mode"))
+            .count(),
+        1
+    );
+
+    // Told once: the next message goes as typed.
+    assert!(chat.send("ping"));
+    wait_until(&mut chat, "reply", |c| !c.transcript.running);
+    assert!(!fake.user_log().last().unwrap().contains("[Myrstack]"));
+
+    // Off again: cards come back and the Queen hears about it.
+    chat.set_auto_mode(false);
+    assert!(chat.send("permit once more"));
+    wait_until(&mut chat, "card", |c| {
+        c.transcript.pending_permission().is_some()
+    });
+    assert!(
+        fake.user_log()
+            .last()
+            .unwrap()
+            .contains("[Myrstack] Auto mode is now OFF")
+    );
+    let id = chat
+        .transcript
+        .pending_permission()
+        .unwrap()
+        .request
+        .request_id
+        .clone();
+    chat.decide(&id, Decision::Deny);
+    wait_until(&mut chat, "denied", |c| !c.transcript.running);
+    assert_eq!(last_result(&chat).as_deref(), Some("denied"));
+
+    // Same process and conversation throughout.
+    assert_eq!(fake.args_log().len(), 1, "{:?}", fake.args_log());
+    let after = session::SessionStore::open(&chat_dir).record;
+    assert_eq!(after.session_id, session.session_id);
+    assert!(!auto_mode::load(&chat_dir));
+}
+
+#[test]
+fn saved_auto_mode_applies_after_a_restart() {
+    let fake = Fake::new();
+    auto_mode::save(&fake.root.join("chat"), true).unwrap();
+    let mut chat = ChatSession::spawn(fake.config(&[]), None);
+    assert!(chat.auto_mode());
+    wait_until(&mut chat, "ready", |c| c.state == SessionState::Ready);
+    assert!(chat.send("permit please"));
+    wait_until(&mut chat, "reply", |c| !c.transcript.running);
+    assert_eq!(last_result(&chat).as_deref(), Some("allowed"));
+    assert!(chat.transcript.pending_permission().is_none());
+    assert!(
+        fake.user_log()[0].contains("[Myrstack] Auto mode is now ON"),
+        "a resumed Queen is reminded"
+    );
+    // Read-only tools never get the auto marker or a card.
+    assert!(chat.send("auto"));
+    wait_until(&mut chat, "reply", |c| !c.transcript.running);
+    assert_eq!(last_result(&chat).as_deref(), Some("auto-allowed"));
+}
+
+#[test]
+fn auto_approved_tool_rows_get_the_marker_whenever_the_row_appears() {
+    let request = |id: &str, tool_use: &str| PermissionRequest {
+        request_id: id.into(),
+        tool_name: "mcp__myrstack__press_key".into(),
+        display_name: None,
+        input: Value::Null,
+        tool_use_id: Some(tool_use.into()),
+        description: None,
+    };
+    let tool_use = |id: &str| {
+        parse_line(&format!(
+            r#"{{"type":"assistant","message":{{"id":"m","content":[{{"type":"tool_use","id":"{id}","name":"mcp__myrstack__press_key","input":{{}}}}]}},"parent_tool_use_id":null}}"#
+        ))
+        .unwrap()
+    };
+    let mut t = Transcript::default();
+    // Row first, then the approval.
+    t.apply(&tool_use("a"));
+    t.mark_auto(&request("r1", "a"));
+    // Approval first, then the row.
+    t.mark_auto(&request("r2", "b"));
+    t.apply(&tool_use("b"));
+    t.apply(&tool_use("c"));
+    let marks: Vec<(String, bool)> = t.tool_calls().map(|c| (c.id.clone(), c.auto)).collect();
+    assert_eq!(
+        marks,
+        vec![("a".into(), true), ("b".into(), true), ("c".into(), false)]
+    );
 }

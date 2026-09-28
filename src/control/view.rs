@@ -44,6 +44,10 @@ pub struct StatusView {
     /// Current playbook version and who fetched which; set by the app after [`StatusView::build`].
     #[serde(default)]
     pub playbook: PlaybookView,
+    /// The Queen's chat is in auto mode (her Myrstack actions run without Karl's confirmation).
+    /// Set by the app after [`StatusView::build`]; read-only for API clients.
+    #[serde(default)]
+    pub queen_auto: bool,
     /// The raw poll data the `fleet_data` method serves (for filled playbook templates).
     #[serde(skip)]
     pub fleet_data: Option<Arc<FleetFacts>>,
@@ -468,6 +472,7 @@ impl StatusView {
                 whip_settings_open: inputs.whip_settings_open,
             },
             playbook: PlaybookView::default(),
+            queen_auto: false,
             fleet_data: inputs.data.map(|d| Arc::new(FleetFacts::from_fleet(d))),
         }
     }
