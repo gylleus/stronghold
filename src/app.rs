@@ -63,6 +63,9 @@ pub struct MyrstackApp {
     view: View,
     /// Whether the details column is open, collapsed or follows the window width.
     details_pref: ui::columns::DetailsPref,
+    /// ⌘J hid the Queen's chat, which otherwise fills the conversation column when nothing
+    /// is selected.
+    chat_hidden: bool,
     /// Terminal whose screen the poller is reading (the selected node's, if live).
     watched_screen: Option<String>,
     /// Newest screen of `watched_screen`.
@@ -169,6 +172,7 @@ impl MyrstackApp {
             selected: None,
             view: View::default(),
             details_pref: ui::columns::DetailsPref::default(),
+            chat_hidden: false,
             watched_screen: None,
             screen: None,
             filter: FleetFilter::default(),
@@ -305,10 +309,11 @@ impl MyrstackApp {
         self.selected.as_ref() == Some(&NodeId::queen())
     }
 
-    /// Whether the conversation column has something to show: the Queen's chat, the selected
-    /// agent's screen or transcript, or the multi-selection.
+    /// Whether the conversation column has something to show: the Queen's chat (also when
+    /// nothing is selected, unless hidden), the selected agent's screen or transcript, or the
+    /// multi-selection.
     fn has_conversation(&self) -> bool {
-        self.queen_selected()
+        self.shows_chat()
             || self.selected_node().is_some()
             || (self.snapshot.is_some() && self.graph.selection().len() > 1)
     }
@@ -336,7 +341,7 @@ impl MyrstackApp {
     fn conversation_contents(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         if self.graph.selection().len() > 1 {
             self.selection_contents(ui);
-        } else if self.queen_selected() {
+        } else if self.shows_chat() {
             if let Some(id) = self.chat.ui(ui, self.snapshot.as_ref()) {
                 self.select_and_focus(id);
             }
@@ -939,6 +944,7 @@ impl MyrstackApp {
         );
         self.view = state.view;
         self.details_pref = state.details;
+        self.chat_hidden = state.chat_hidden;
         self.filter = state.filter;
         self.selected = state.layout.selected.clone();
         self.graph.import_layout(state.layout);
@@ -950,6 +956,7 @@ impl MyrstackApp {
         PersistedState {
             view: self.view,
             details: self.details_pref,
+            chat_hidden: self.chat_hidden,
             filter: self.filter.clone(),
             layout: self.graph.export_layout(),
             recent_actions: self.search.recents().keys(),

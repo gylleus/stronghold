@@ -99,10 +99,11 @@ impl MyrstackApp {
         self.chat.session.poll();
     }
 
-    /// Cmd+J: select the Queen and focus the chat's input, or close her chat when it is open.
+    /// Cmd+J: hide the conversation column when it shows the Queen's chat, else show her chat
+    /// with the cursor in it.
     pub(super) fn toggle_chat(&mut self) {
-        let queen = NodeId::queen();
-        if self.selected.as_ref() == Some(&queen) && self.graph.selection().len() <= 1 {
+        if self.shows_chat() {
+            self.chat_hidden = true;
             self.selected = None;
             self.graph.set_selected(None);
         } else {
@@ -112,8 +113,24 @@ impl MyrstackApp {
 
     /// Selects the Queen and focuses the chat's input.
     pub(super) fn open_chat(&mut self) {
+        self.chat_hidden = false;
         self.select_queen();
         self.chat.panel.focus_input = true;
+    }
+
+    /// Whether the conversation column shows the Queen's chat now.
+    pub(super) fn shows_chat(&self) -> bool {
+        use crate::ui::columns::{Picked, shows_chat};
+        let picked = if self.graph.selection().len() > 1 {
+            Picked::Other
+        } else if self.queen_selected() {
+            Picked::Queen
+        } else if self.selected_node().is_some() {
+            Picked::Other
+        } else {
+            Picked::Nothing
+        };
+        shows_chat(picked, self.chat_hidden)
     }
 
     /// Whether the chat can take a message now.

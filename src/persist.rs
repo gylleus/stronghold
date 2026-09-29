@@ -20,6 +20,8 @@ pub struct PersistedState {
     pub view: View,
     /// The details column: open, collapsed or following the window width.
     pub details: DetailsPref,
+    /// ⌘J hid the Queen's chat shown when nothing is selected.
+    pub chat_hidden: bool,
     pub filter: FleetFilter,
     pub layout: SavedLayout,
     /// The command palette's recently run actions, newest first.
@@ -32,6 +34,7 @@ impl Default for PersistedState {
             version: FORMAT_VERSION,
             view: View::default(),
             details: DetailsPref::default(),
+            chat_hidden: false,
             filter: FleetFilter::default(),
             layout: SavedLayout::default(),
             recent_actions: Vec::new(),
@@ -80,6 +83,7 @@ mod tests {
             version: FORMAT_VERSION,
             view: View::Table,
             details: DetailsPref::Collapsed,
+            chat_hidden: true,
             filter: FleetFilter {
                 repos: BTreeSet::from(["myrstack".to_owned()]),
                 states: BTreeSet::from([NodeState::NeedsInput, NodeState::Stalled]),
@@ -140,6 +144,7 @@ mod tests {
         let state = PersistedState::load(&storage).unwrap();
         assert_eq!(state.view, View::Table);
         assert_eq!(state.details, DetailsPref::Auto);
+        assert!(!state.chat_hidden);
         assert_eq!(state.filter, FleetFilter::default());
         assert_eq!(state.layout, SavedLayout::default());
     }

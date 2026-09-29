@@ -1,5 +1,6 @@
 //! The window's side columns: the conversation column on the right (the Queen's chat, or the
-//! selected agent's screen and input) and the details column on the left of the graph (the
+//! selected agent's screen and input; the Queen's chat when nothing is selected, unless ⌘J hid
+//! it) and the details column on the left of the graph (the
 //! selected node's attributes and actions), which collapses to a strip.
 
 use serde::{Deserialize, Serialize};
@@ -58,6 +59,25 @@ pub fn toggled(shown: DetailsColumn) -> DetailsPref {
     }
 }
 
+/// What the selection is, for the conversation column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Picked {
+    Nothing,
+    Queen,
+    /// One agent, or several nodes.
+    Other,
+}
+
+/// Whether the conversation column shows the Queen's chat: when she is selected, or when
+/// nothing is and the user has not hidden it.
+pub fn shows_chat(picked: Picked, chat_hidden: bool) -> bool {
+    match picked {
+        Picked::Queen => true,
+        Picked::Nothing => !chat_hidden,
+        Picked::Other => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,5 +123,16 @@ mod tests {
         assert_eq!(details_column(pref, true, NARROW), DetailsColumn::Open);
         let pref = toggled(details_column(pref, true, NARROW));
         assert_eq!(details_column(pref, true, WIDE), DetailsColumn::Collapsed);
+    }
+
+    #[test]
+    fn chat_shows_by_default_until_hidden() {
+        assert!(shows_chat(Picked::Nothing, false));
+        assert!(!shows_chat(Picked::Nothing, true));
+        assert!(
+            shows_chat(Picked::Queen, true),
+            "selecting her always shows it"
+        );
+        assert!(!shows_chat(Picked::Other, false));
     }
 }
