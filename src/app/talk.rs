@@ -378,7 +378,7 @@ impl MyrstackApp {
         }
     }
 
-    /// Shows the window with the Queen's panel open.
+    /// Shows the window with the Queen's chat open.
     fn bring_forward_to_queen(&mut self) {
         self.select_queen();
         self.talk.bring_forward = true;

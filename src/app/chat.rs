@@ -1,4 +1,4 @@
-//! The app side of the Queen's chat: owns the chat session and draws it in the Queen's panel.
+//! The app side of the Queen's chat: owns the chat session and draws it in the conversation column.
 
 use eframe::egui;
 
@@ -99,8 +99,7 @@ impl MyrstackApp {
         self.chat.session.poll();
     }
 
-    /// The top bar's Chat button and Cmd+J: select the Queen and focus the chat's input, or
-    /// close her panel when it is open.
+    /// Cmd+J: select the Queen and focus the chat's input, or close her chat when it is open.
     pub(super) fn toggle_chat(&mut self) {
         let queen = NodeId::queen();
         if self.selected.as_ref() == Some(&queen) && self.graph.selection().len() <= 1 {
@@ -127,5 +126,22 @@ impl MyrstackApp {
     pub(super) fn status_report(&mut self) {
         self.open_chat();
         self.chat.session.send(STATUS_REPORT_PROMPT);
+    }
+}
+
+impl MyrstackApp {
+    /// The top bar's Queen and Status report buttons, run through the command palette's
+    /// actions so they behave as picking "Open Queen chat" or "Status report" there.
+    pub(super) fn queen_quick_actions(&mut self, ui: &mut egui::Ui) {
+        use crate::ui::commands::{self, ActionId};
+        use crate::ui::queen::{QueenQuickAction, quick_actions};
+        let cx = self.palette_context();
+        let status_disabled = commands::disabled_reason(ActionId::StatusReport, &cx);
+        let action = match quick_actions(ui, status_disabled) {
+            Some(QueenQuickAction::OpenChat) => ActionId::OpenChat,
+            Some(QueenQuickAction::StatusReport) => ActionId::StatusReport,
+            None => return,
+        };
+        self.run_palette_action(ui.ctx(), action);
     }
 }

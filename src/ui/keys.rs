@@ -20,7 +20,7 @@ pub enum KeyCommand {
     PrevRepo,
     /// Select the current node (the first one if none) and open its panel.
     OpenPanel,
-    /// Focus the terminal panel's input box.
+    /// Focus the selected terminal's input box.
     FocusInput,
     /// Leave the focused text field, else clear the selection.
     Escape,

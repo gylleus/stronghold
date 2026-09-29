@@ -22,7 +22,7 @@ Question: can Myrstack show token usage or cost per terminal, per session or per
 It reuses `tail_file` from `subagents.rs` to read incrementally from an offset.
 The UI shows "103M tok" in two places:
 
-- the terminal panel header's `tokens` row, where hovering shows the breakdown and a line per model;
+- the details column's `tokens` row, where hovering shows the breakdown and a line per model;
 - the node tooltip.
 
 A subagent node shows only its own transcript's usage. A terminal node shows its session's usage, subagents included.
