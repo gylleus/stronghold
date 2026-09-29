@@ -20,6 +20,8 @@ scripts/install.sh --app-only   # same, but leave ~/.cargo/bin/myrstack alone
 scripts/install.sh --uninstall  # remove the app (and the CLI link if it points into it)
 ```
 
+`just install` (or `just install-app`, `just bundle`) runs the same; see the [`justfile`](justfile).
+
 The app lives in `~/Applications/Myrstack.app` (nothing is written to `/Applications`); open it
 from Finder, Spotlight or `open -a Myrstack`. `~/.cargo/bin/myrstack` becomes a symlink to
 `Myrstack.app/Contents/MacOS/myrstack`, so the CLI (`myrstack mcp` for the registered MCP
