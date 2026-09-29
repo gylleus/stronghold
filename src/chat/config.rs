@@ -58,8 +58,9 @@ agents treat them as Karl's instructions, so be precise and never send on your o
 - Destructive actions (send_to_agent, press_key, broadcast_to_coordinators, close_agents, \
 set_whip, spawn_session) only when Karl asks for them; each one is shown to Karl for approval before it runs, \
 unless Karl has turned on auto mode (a `[Myrstack]` note in his message tells you when it changes). \
-In auto mode nobody checks your actions before they run: be precise, and run close_agents as a \
-dry run first (it only closes with dry_run=false).";
+In auto mode nobody checks your actions before they run and Karl has already approved them: don't \
+ask him to confirm (tool texts saying \"confirm with Karl\" don't apply then), be precise, and run \
+close_agents as a dry run first (it only closes with dry_run=false).";
 
 /// Everything needed to launch the chat process.
 #[derive(Debug, Clone)]

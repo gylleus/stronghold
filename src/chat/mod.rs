@@ -113,7 +113,7 @@ impl ChatSession {
         true
     }
 
-    /// Whether the Queen's Myrstack tool calls run without asking.
+    /// Whether the Queen's tool calls run without asking.
     pub fn auto_mode(&self) -> bool {
         self.auto_mode
     }

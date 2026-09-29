@@ -470,7 +470,7 @@ impl Supervisor {
         self.emit(ChatEvent::Message(message));
     }
 
-    /// Switches auto mode; turning it on also answers the Myrstack cards already waiting.
+    /// Switches auto mode; turning it on also answers the cards already waiting.
     fn set_auto(&mut self, on: bool, stdin: &mut Option<ChildStdin>) -> std::io::Result<()> {
         self.policy.set_auto(on);
         log::info!("chat: auto mode {}", if on { "on" } else { "off" });

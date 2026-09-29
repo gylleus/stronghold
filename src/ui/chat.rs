@@ -51,12 +51,12 @@ pub struct ChatView<'a> {
     pub state: &'a SessionState,
     /// Whether a node id names a node in the current snapshot (only those become links).
     pub is_node: &'a dyn Fn(&NodeId) -> bool,
-    /// The Queen's Myrstack actions run without asking.
+    /// The Queen's tool calls run without asking.
     pub auto_mode: bool,
 }
 
 /// Line under the input while auto mode is on.
-pub const AUTO_HINT: &str = "Auto mode: Myrstack actions run without asking";
+pub const AUTO_HINT: &str = "Auto mode: the Queen's actions run without asking";
 
 /// Color of the auto mode badge, hint and notices.
 fn accent(ui: &Ui) -> Color32 {
@@ -177,9 +177,9 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
             if ui
                 .toggle_value(&mut auto, "Auto")
                 .on_hover_text(
-                    "Auto mode: the Queen's Myrstack actions (including sends, keys, closes and \
-                     whip changes) run without asking. Built-in tools and other MCP servers \
-                     still ask.",
+                    "Auto mode: every tool call of the Queen's (Myrstack sends, keys, closes, \
+                     spawns and whip changes, file reads, web fetches, other MCP servers) \
+                     runs without asking. close_agents still dry-runs unless told otherwise.",
                 )
                 .changed()
             {
@@ -225,7 +225,7 @@ fn auto_badge(ui: &mut Ui) {
             )
         })
         .response
-        .on_hover_text("Auto mode is on: the Queen's Myrstack actions run without asking");
+        .on_hover_text("Auto mode is on: the Queen's actions run without asking");
 }
 
 fn input_box(
@@ -1067,7 +1067,7 @@ mod tests {
         assert!(on.contains("AUTO"), "{on}");
         assert!(on.contains(AUTO_HINT), "{on}");
         assert!(
-            on.contains("⚙ Auto mode on: Myrstack actions run without asking"),
+            on.contains("⚙ Auto mode on: the Queen's actions run without asking"),
             "{on}"
         );
         assert!(on.contains("send_to_agent … · auto"), "{on}");

@@ -112,10 +112,7 @@ pub(super) fn section(
     ui.separator();
     let mut auto = status.auto_mode;
     if ui
-        .checkbox(
-            &mut auto,
-            "Auto mode: her Myrstack actions run without asking",
-        )
+        .checkbox(&mut auto, "Auto mode: her actions run without asking")
         .on_hover_text("The same switch as Auto in the chat header; applies at once")
         .changed()
     {

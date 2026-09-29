@@ -263,8 +263,8 @@ fn unknown_control_requests_are_declined() {
 // ---- lifecycle against a fake `claude` ----
 
 /// A stand-in for `claude`: logs its arguments, answers `initialize`, and per user message:
-/// `crash` exits, `permit` asks to use send_to_agent, `auto` asks to use fleet_status (the
-/// supervisor answers), anything else gets a text reply. `FAKE_STUBBORN` ignores end of input.
+/// `crash` exits, `permit` asks to use send_to_agent, `fetch` asks to use the built-in WebFetch,
+/// `auto` asks to use fleet_status (the supervisor answers), anything else gets a text reply. `FAKE_STUBBORN` ignores end of input.
 const FAKE_CLAUDE: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 echo "$*" >> "$dir/args.log"
@@ -281,6 +281,10 @@ while IFS= read -r line; do
       echo '{"type":"control_request","request_id":"perm-1","request":{"subtype":"can_use_tool","tool_name":"mcp__myrstack__send_to_agent","input":{"agent":"term:term_1","text":"hi"}}}'
       IFS= read -r answer
       case "$answer" in *'"behavior":"allow"'*) result allowed ;; *) result denied ;; esac ;;
+    *'"type":"user"'*fetch*)
+      echo '{"type":"control_request","request_id":"perm-3","request":{"subtype":"can_use_tool","tool_name":"WebFetch","input":{"url":"https://example.com"}}}'
+      IFS= read -r answer
+      case "$answer" in *'"behavior":"allow"'*) result fetched ;; *) result fetch-denied ;; esac ;;
     *'"type":"user"'*auto*)
       echo '{"type":"control_request","request_id":"perm-2","request":{"subtype":"can_use_tool","tool_name":"mcp__myrstack__fleet_status","input":{}}}'
       IFS= read -r answer
@@ -557,6 +561,12 @@ fn auto_mode_toggles_mid_session_without_a_restart() {
         1
     );
 
+    // Built-in tools and other MCP servers' tools run without a card too.
+    assert!(chat.send("fetch it"));
+    wait_until(&mut chat, "fetched", |c| !c.transcript.running);
+    assert_eq!(last_result(&chat).as_deref(), Some("fetched"));
+    assert!(chat.transcript.pending_permission().is_none());
+
     // Told once: the next message goes as typed.
     assert!(chat.send("ping"));
     wait_until(&mut chat, "reply", |c| !c.transcript.running);
@@ -584,6 +594,20 @@ fn auto_mode_toggles_mid_session_without_a_restart() {
     chat.decide(&id, Decision::Deny);
     wait_until(&mut chat, "denied", |c| !c.transcript.running);
     assert_eq!(last_result(&chat).as_deref(), Some("denied"));
+    assert!(chat.send("fetch again"));
+    wait_until(&mut chat, "fetch card", |c| {
+        c.transcript.pending_permission().is_some()
+    });
+    let id = chat
+        .transcript
+        .pending_permission()
+        .unwrap()
+        .request
+        .request_id
+        .clone();
+    chat.decide(&id, Decision::Deny);
+    wait_until(&mut chat, "fetch denied", |c| !c.transcript.running);
+    assert_eq!(last_result(&chat).as_deref(), Some("fetch-denied"));
 
     // Same process and conversation throughout.
     assert_eq!(fake.args_log().len(), 1, "{:?}", fake.args_log());
@@ -607,10 +631,45 @@ fn saved_auto_mode_applies_after_a_restart() {
         fake.user_log()[0].contains("[Myrstack] Auto mode is now ON"),
         "a resumed Queen is reminded"
     );
+    assert!(chat.send("fetch it"));
+    wait_until(&mut chat, "reply", |c| !c.transcript.running);
+    assert_eq!(last_result(&chat).as_deref(), Some("fetched"));
+    assert!(chat.transcript.pending_permission().is_none());
     // Read-only tools never get the auto marker or a card.
     assert!(chat.send("auto"));
     wait_until(&mut chat, "reply", |c| !c.transcript.running);
     assert_eq!(last_result(&chat).as_deref(), Some("auto-allowed"));
+}
+
+#[test]
+fn saved_auto_mode_off_still_asks_after_a_restart() {
+    let fake = Fake::new();
+    let chat_dir = fake.root.join("chat");
+    auto_mode::save(&chat_dir, true).unwrap();
+    auto_mode::save(&chat_dir, false).unwrap();
+    let mut chat = ChatSession::spawn(fake.config(&[]), None);
+    assert!(!chat.auto_mode());
+    wait_until(&mut chat, "ready", |c| c.state == SessionState::Ready);
+    for (message, denied) in [("permit please", "denied"), ("fetch it", "fetch-denied")] {
+        assert!(chat.send(message));
+        wait_until(&mut chat, "card", |c| {
+            c.transcript.pending_permission().is_some()
+        });
+        let id = chat
+            .transcript
+            .pending_permission()
+            .unwrap()
+            .request
+            .request_id
+            .clone();
+        chat.decide(&id, Decision::Deny);
+        wait_until(&mut chat, "denied", |c| !c.transcript.running);
+        assert_eq!(last_result(&chat).as_deref(), Some(denied));
+    }
+    assert!(
+        !fake.user_log()[0].contains("[Myrstack]"),
+        "nothing to tell"
+    );
 }
 
 #[test]

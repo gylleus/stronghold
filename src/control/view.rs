@@ -44,7 +44,7 @@ pub struct StatusView {
     /// Current playbook version and who fetched which; set by the app after [`StatusView::build`].
     #[serde(default)]
     pub playbook: PlaybookView,
-    /// The Queen's chat is in auto mode (her Myrstack actions run without Karl's confirmation).
+    /// The Queen's chat is in auto mode (her actions run without Karl's confirmation).
     /// Set by the app after [`StatusView::build`]; read-only for API clients.
     #[serde(default)]
     pub queen_auto: bool,
