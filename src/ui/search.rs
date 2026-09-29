@@ -1,17 +1,21 @@
-//! The Cmd+K command palette: find a node by label, branch, repo, worktree, run objective,
-//! task, agent or terminal handle, or run an action (see [`crate::ui::commands`]).
+//! The Cmd+K command palette: find an agent node by label, branch, repo, worktree, run
+//! objective, task, agent, terminal handle or node id, or run an action (see
+//! [`crate::ui::commands`]).
 
 use std::collections::BTreeSet;
+use std::rc::Rc;
 
 use eframe::egui::{self, Key, Modifiers, RichText};
 
 use crate::fleet::FleetData;
-use crate::model::{FleetSnapshot, NO_REPO, Node, NodeId, NodeKind, RepoIndex};
+use crate::model::{FleetSnapshot, NO_REPO, Node, NodeId, NodeKind, NodeState, RepoIndex};
 use crate::ui::commands::{self, ACTIONS, ActionContext, ActionId, Recents};
 use crate::ui::graph::{kind_label, state_color, state_label};
 
-/// Most results the palette lists.
+/// Most agents the palette lists for a query.
 pub const MAX_RESULTS: usize = 12;
+/// Most actions the palette lists for a query (all of them after `>`).
+const MAX_ACTION_RESULTS: usize = 6;
 
 /// A searchable field of a node, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -26,6 +30,7 @@ pub enum Field {
     RunId,
     Agent,
     Handle,
+    NodeId,
 }
 
 impl Field {
@@ -34,7 +39,12 @@ impl Field {
         match self {
             Field::Label | Field::TaskTitle => 3,
             Field::Branch | Field::Objective | Field::Repo => 2,
-            Field::Worktree | Field::TaskId | Field::RunId | Field::Agent | Field::Handle => 1,
+            Field::Worktree
+            | Field::TaskId
+            | Field::RunId
+            | Field::Agent
+            | Field::Handle
+            | Field::NodeId => 1,
         }
     }
 
@@ -50,6 +60,29 @@ impl Field {
             Field::RunId => "run",
             Field::Agent => "agent",
             Field::Handle => "handle",
+            Field::NodeId => "id",
+        }
+    }
+}
+
+/// Whether a node is worth listing first: live agents before finished ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Activity {
+    NeedsInput,
+    Active,
+    /// Done, failed, released, or its terminal is gone.
+    Finished,
+}
+
+impl Activity {
+    pub fn of(node: &Node) -> Self {
+        let finished = matches!(node.state, NodeState::Done | NodeState::Failed)
+            || node.released_at_ms.is_some()
+            || !node.live;
+        match node.state {
+            _ if finished => Activity::Finished,
+            NodeState::NeedsInput => Activity::NeedsInput,
+            _ => Activity::Active,
         }
     }
 }
@@ -60,10 +93,34 @@ pub struct SearchEntry {
     pub id: NodeId,
     pub kind: NodeKind,
     pub label: String,
+    pub state: NodeState,
+    pub activity: Activity,
     pub fields: Vec<(Field, String)>,
+    /// `fields`' text lowercased, in the same order.
+    lower: Vec<String>,
 }
 
 impl SearchEntry {
+    pub fn new(
+        id: NodeId,
+        kind: NodeKind,
+        label: String,
+        state: NodeState,
+        activity: Activity,
+        fields: Vec<(Field, String)>,
+    ) -> Self {
+        let lower = fields.iter().map(|(_, s)| s.to_lowercase()).collect();
+        Self {
+            id,
+            kind,
+            label,
+            state,
+            activity,
+            fields,
+            lower,
+        }
+    }
+
     pub fn field(&self, field: Field) -> Option<&str> {
         self.fields
             .iter()
@@ -118,25 +175,32 @@ fn entry(
         (Field::RunId, node.run_id.clone()),
         (Field::Agent, node.agent.as_ref().map(|a| a.to_string())),
         (Field::Handle, node.terminal_handle.clone()),
+        (Field::NodeId, Some(node.id.to_string())),
     ]
     .into_iter()
     .filter_map(|(f, s)| Some((f, s.filter(|s| !s.is_empty())?)))
     .collect();
-    SearchEntry {
-        id: node.id.clone(),
-        kind: node.kind,
-        label: node.label.clone(),
+    SearchEntry::new(
+        node.id.clone(),
+        node.kind,
+        node.label.clone(),
+        node.state,
+        Activity::of(node),
         fields,
-    }
+    )
 }
 
 /// How well `token` (lowercase) matches `text`: exact beats prefix beats word start beats
 /// substring beats a fuzzy subsequence; `None` if the letters don't occur in order.
 pub fn match_score(token: &str, text: &str) -> Option<u32> {
+    match_lower(token, &text.to_lowercase())
+}
+
+/// [`match_score`] against already lowercased `text`.
+fn match_lower(token: &str, text: &str) -> Option<u32> {
     if token.is_empty() {
         return Some(0);
     }
-    let text = text.to_lowercase();
     if text == token {
         return Some(100);
     }
@@ -150,7 +214,7 @@ pub fn match_score(token: &str, text: &str) -> Option<u32> {
             .is_some_and(|c| !c.is_alphanumeric());
         return Some(if at_word { 60 } else { 40 });
     }
-    fuzzy_score(token, &text)
+    fuzzy_score(token, text)
 }
 
 /// Subsequence match scored by compactness: 1–30.
@@ -179,15 +243,24 @@ pub struct SearchHit {
     pub field: Field,
 }
 
+/// Weakest [`match_score`] of a strong match: a substring. Actions need every token to match
+/// strongly; agents matching only fuzzily rank after every strong match.
+const MIN_STRONG_MATCH: u32 = 40;
+
 /// Entries matching every whitespace-separated token of `query`, best first, at most `limit`.
-/// Each token scores its best field (score × field weight); ties keep coordinators before
-/// workers before terminals before subagents, then sort by label. An empty query lists entries
-/// in order.
+/// Each token scores its best field (score × field weight). Entries whose every token matches
+/// strongly come first; then live agents before finished ones, higher scores, needs-input
+/// first, coordinators before workers before terminals before subagents, and label. An empty
+/// query lists entries in order, needs-input first and finished last.
 pub fn rank(entries: &[SearchEntry], query: &str, limit: usize) -> Vec<SearchHit> {
     let query = query.trim().to_lowercase();
     let tokens: Vec<&str> = query.split_whitespace().collect();
     if tokens.is_empty() {
-        return (0..entries.len().min(limit))
+        let mut order: Vec<usize> = (0..entries.len()).collect();
+        order.sort_by_key(|&i| (entries[i].activity, i));
+        return order
+            .into_iter()
+            .take(limit)
             .map(|index| SearchHit {
                 index,
                 score: 0,
@@ -195,62 +268,82 @@ pub fn rank(entries: &[SearchEntry], query: &str, limit: usize) -> Vec<SearchHit
             })
             .collect();
     }
-    let mut hits: Vec<SearchHit> = entries
+    let mut hits: Vec<(bool, SearchHit)> = entries
         .iter()
         .enumerate()
         .filter_map(|(index, entry)| {
             let fields: Vec<(Field, u32, &str)> = entry
                 .fields
                 .iter()
-                .map(|(f, text)| (*f, f.weight(), text.as_str()))
+                .zip(&entry.lower)
+                .map(|((f, _), text)| (*f, f.weight(), text.as_str()))
                 .collect();
-            let (score, field) = score_tokens(&tokens, &fields, 0)?;
-            Some(SearchHit {
+            let m = score_tokens(&tokens, &fields, 0)?;
+            let hit = SearchHit {
                 index,
-                score,
-                field: field.unwrap_or(Field::Label),
-            })
+                score: m.score,
+                field: m.field.unwrap_or(Field::Label),
+            };
+            Some((m.weakest >= MIN_STRONG_MATCH, hit))
         })
         .collect();
-    hits.sort_by(|a, b| {
+    hits.sort_by(|(strong_a, a), (strong_b, b)| {
         let (ea, eb) = (&entries[a.index], &entries[b.index]);
-        b.score
-            .cmp(&a.score)
+        let finished = |e: &SearchEntry| e.activity == Activity::Finished;
+        strong_b
+            .cmp(strong_a)
+            .then(finished(ea).cmp(&finished(eb)))
+            .then(b.score.cmp(&a.score))
+            .then(ea.activity.cmp(&eb.activity))
             .then(ea.kind.cmp(&eb.kind))
             .then_with(|| ea.label.cmp(&eb.label))
             .then(a.index.cmp(&b.index))
     });
     hits.truncate(limit);
-    hits
+    hits.into_iter().map(|(_, hit)| hit).collect()
 }
 
-/// The summed score of `tokens` against weighted `fields` — each token scores its best field
-/// (score × weight) — and the field with the best single token score. `None` unless every
-/// token matches somewhere with a [`match_score`] of at least `min`; ties between fields go to
-/// the one listed first.
+/// How a query's tokens matched one entry's fields.
+struct TokenMatch<F> {
+    /// Each token's best field score (score × weight), summed.
+    score: u32,
+    /// The field with the best single token score; ties go to the one listed first.
+    field: Option<F>,
+    /// The lowest unweighted [`match_score`] among the tokens' best fields.
+    weakest: u32,
+}
+
+/// How `tokens` (lowercase) match weighted, lowercased `fields`. `None` unless every token
+/// matches somewhere with a [`match_score`] of at least `min`.
 fn score_tokens<F: Copy>(
     tokens: &[&str],
     fields: &[(F, u32, &str)],
     min: u32,
-) -> Option<(u32, Option<F>)> {
+) -> Option<TokenMatch<F>> {
     let mut total = 0;
+    let mut weakest = u32::MAX;
     let mut best: Option<(u32, F)> = None;
     for token in tokens {
-        let (score, field) = fields
+        let (score, raw, field) = fields
             .iter()
             .enumerate()
             .filter_map(|(i, (f, weight, text))| {
-                let score = match_score(token, text).filter(|s| *s >= min)?;
-                Some((score * weight, i, *f))
+                let raw = match_lower(token, text).filter(|s| *s >= min)?;
+                Some((raw * weight, raw, i, *f))
             })
-            .max_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
-            .map(|(score, _, f)| (score, f))?;
+            .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(b.2.cmp(&a.2)))
+            .map(|(score, raw, _, f)| (score, raw, f))?;
         total += score;
+        weakest = weakest.min(raw);
         if best.is_none_or(|(s, _)| score > s) {
             best = Some((score, field));
         }
     }
-    Some((total, best.map(|(_, f)| f)))
+    Some(TokenMatch {
+        score: total,
+        field: best.map(|(_, f)| f),
+        weakest,
+    })
 }
 
 /// Whether `event` opens the palette: Cmd+K always, `/` only while no text field has focus.
@@ -277,7 +370,7 @@ pub fn take_open_shortcut(ctx: &egui::Context) -> bool {
     })
 }
 
-/// Nodes listed under an empty query, after the actions.
+/// Agents listed under an empty query, after the actions.
 pub const EMPTY_QUERY_NODES: usize = 6;
 /// Actions offered under an empty query before any was run.
 const SUGGESTED: [ActionId; 3] = [
@@ -301,8 +394,9 @@ pub struct PaletteRow {
 }
 
 /// The palette's rows for `query`. Empty: recent actions (or a few suggestions), then the
-/// first nodes. `>` prefix: actions only (all of them, recents first, for a bare `>`).
-/// Otherwise nodes and actions ranked together, actions first on equal scores.
+/// first agents. `>` prefix: actions only (all of them, recents first, for a bare `>`).
+/// Otherwise an "Agents" and an "Actions" section, the one with the better top match first
+/// (actions on a tie).
 pub fn palette_rows(
     entries: &[SearchEntry],
     query: &str,
@@ -344,7 +438,7 @@ pub fn palette_rows(
                 section("Recent actions", recent);
             }
             let nodes = rank(entries, "", EMPTY_QUERY_NODES);
-            section("Nodes", nodes.into_iter().map(PaletteItem::Node).collect());
+            section("Agents", nodes.into_iter().map(PaletteItem::Node).collect());
         }
         return rows;
     }
@@ -359,27 +453,26 @@ pub fn palette_rows(
             })
             .collect();
     }
-    let mut merged: Vec<(u32, bool, PaletteItem)> = actions
+    let agents = rank(entries, query, MAX_RESULTS);
+    let agents_first = match (agents.first(), actions.first()) {
+        (Some(agent), Some((_, action))) => agent.score > *action,
+        _ => true,
+    };
+    let agent_items = agents.into_iter().map(PaletteItem::Node).collect();
+    let action_items = actions
         .into_iter()
-        .map(|(id, score)| (score, false, PaletteItem::Action(id)))
-        .chain(
-            rank(entries, query, MAX_RESULTS)
-                .into_iter()
-                .map(|hit| (hit.score, true, PaletteItem::Node(hit))),
-        )
+        .take(MAX_ACTION_RESULTS)
+        .map(|(id, _)| PaletteItem::Action(id))
         .collect();
-    // Stable: each list keeps its own order within a score.
-    merged.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    merged.truncate(MAX_RESULTS);
-    merged
-        .into_iter()
-        .map(|(_, _, item)| PaletteRow { item, header: None })
-        .collect()
+    if agents_first {
+        section("Agents", agent_items);
+        section("Actions", action_items);
+    } else {
+        section("Actions", action_items);
+        section("Agents", agent_items);
+    }
+    rows
 }
-
-/// Weakest [`match_score`] an action accepts: a substring. Fuzzy matches would list most
-/// actions for any short query.
-const MIN_ACTION_MATCH: u32 = 40;
 
 /// Actions matching every token with their scores, best first; the title counts like a node's
 /// label, keywords like a branch. Enabled actions come first on equal scores, then registry
@@ -389,14 +482,15 @@ fn rank_actions(tokens: &[&str], cx: &ActionContext) -> Vec<(ActionId, u32)> {
         .iter()
         .enumerate()
         .filter_map(|(order, action)| {
-            let title = commands::title(action.id, cx);
+            let title = commands::title(action.id, cx).to_lowercase();
+            let (fixed, keywords) = (action.title.to_lowercase(), action.keywords.to_lowercase());
             let fields = [
                 ((), Field::Label.weight(), title.as_str()),
-                ((), Field::Label.weight(), action.title),
-                ((), Field::Branch.weight(), action.keywords),
+                ((), Field::Label.weight(), fixed.as_str()),
+                ((), Field::Branch.weight(), keywords.as_str()),
             ];
-            let (score, _) = score_tokens(tokens, &fields, MIN_ACTION_MATCH)?;
-            Some((order, action.id, score))
+            let m = score_tokens(tokens, &fields, MIN_STRONG_MATCH)?;
+            Some((order, action.id, m.score))
         })
         .collect();
     hits.sort_by_key(|(order, id, score)| {
@@ -452,6 +546,8 @@ pub struct SearchPalette {
     cursor: usize,
     focus_query: bool,
     recents: Recents,
+    /// The current snapshot's entries, built on first use after [`Self::snapshot_changed`].
+    entries: Option<Rc<Vec<SearchEntry>>>,
 }
 
 impl SearchPalette {
@@ -475,8 +571,14 @@ impl SearchPalette {
         self.recents = recents;
     }
 
+    /// Drops the cached entries; call whenever the snapshot (or the task titles) change.
+    pub fn snapshot_changed(&mut self) {
+        self.entries = None;
+    }
+
     /// Draws the palette if open; returns the picked node or action. `hidden` are the nodes
-    /// the sidebar filter hides; `cx` decides the actions' titles and which can run.
+    /// the sidebar filter hides; `cx` decides the actions' titles and which can run. Entries
+    /// are built from `snapshot` once per [`Self::snapshot_changed`].
     pub fn show(
         &mut self,
         ctx: &egui::Context,
@@ -488,7 +590,9 @@ impl SearchPalette {
         if !self.open {
             return None;
         }
-        let entries = snapshot.map_or_else(Vec::new, |s| search_entries(s, data));
+        let entries = Rc::clone(self.entries.get_or_insert_with(|| {
+            Rc::new(snapshot.map_or_else(Vec::new, |s| search_entries(s, data)))
+        }));
         let rows = palette_rows(&entries, &self.query, &self.recents, cx);
         self.cursor = self.cursor.min(rows.len().saturating_sub(1));
 
@@ -519,7 +623,7 @@ impl SearchPalette {
                 ui.set_width(520.0_f32.min(ctx.content_rect().width() - 40.0));
                 let edit = ui.add(
                     egui::TextEdit::singleline(&mut self.query)
-                        .hint_text("Search nodes and actions (> for actions only)…")
+                        .hint_text("Search agents and actions (> for actions only)…")
                         .desired_width(f32::INFINITY),
                 );
                 if std::mem::take(&mut self.focus_query) {
@@ -530,7 +634,7 @@ impl SearchPalette {
                 }
                 ui.separator();
                 if rows.is_empty() {
-                    ui.weak("No matching nodes or actions");
+                    ui.weak("No matching agents or actions");
                 }
                 egui::ScrollArea::vertical()
                     .max_height(420.0)
@@ -544,9 +648,8 @@ impl SearchPalette {
                             let response = match &row.item {
                                 PaletteItem::Node(hit) => {
                                     let entry = &entries[hit.index];
-                                    let node = snapshot.and_then(|s| s.node(&entry.id));
                                     let is_hidden = hidden.contains(&entry.id);
-                                    result_row(ui, entry, hit, node, is_hidden, highlighted)
+                                    result_row(ui, entry, hit, is_hidden, highlighted)
                                 }
                                 PaletteItem::Action(id) => action_row(ui, *id, cx, highlighted),
                             };
@@ -637,27 +740,31 @@ fn action_row(
     )
 }
 
+/// An agent: a state dot and the label (weak once finished), then a line of kind, state,
+/// repo and branch, the run, and the field that matched if not already shown.
 fn result_row(
     ui: &mut egui::Ui,
     entry: &SearchEntry,
     hit: &SearchHit,
-    node: Option<&Node>,
     is_hidden: bool,
     highlighted: bool,
 ) -> egui::Response {
     let inner = row_frame(ui, highlighted).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
-            if let Some(node) = node {
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-                ui.painter().circle_filled(
-                    rect.center(),
-                    5.0,
-                    state_color(node.state, ui.visuals().dark_mode),
-                );
-            }
-            ui.add(egui::Label::new(RichText::new(&entry.label).strong()).truncate());
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+            ui.painter().circle_filled(
+                rect.center(),
+                5.0,
+                state_color(entry.state, ui.visuals().dark_mode),
+            );
+            let label = RichText::new(&entry.label);
+            let label = if entry.activity == Activity::Finished {
+                label.weak()
+            } else {
+                label.strong()
+            };
+            ui.add(egui::Label::new(label).truncate());
             if is_hidden {
                 ui.label(
                     RichText::new("hidden by filter")
@@ -666,28 +773,43 @@ fn result_row(
                 );
             }
         });
-        let mut meta = vec![kind_label(entry.kind).to_string()];
-        if let Some(node) = node {
-            meta.push(state_label(node.state).to_string());
-        }
-        if let Some(run) = entry
-            .field(Field::Objective)
-            .or_else(|| entry.field(Field::RunId))
-        {
-            meta.push(run.to_string());
-        }
-        if hit.field != Field::Label
-            && let Some(text) = entry.field(hit.field)
-        {
-            meta.push(format!("{}: {text}", hit.field.name()));
-        }
-        ui.add(egui::Label::new(RichText::new(meta.join(" · ")).small().weak()).truncate());
+        ui.add(egui::Label::new(RichText::new(result_meta(entry, hit)).small().weak()).truncate());
     });
     ui.interact(
         inner.response.rect,
         ui.id().with(("search_row", &entry.id)),
         egui::Sense::click(),
     )
+}
+
+/// An agent row's second line: "worker · needs input · myrstack @ feat/x · Objective".
+pub fn result_meta(entry: &SearchEntry, hit: &SearchHit) -> String {
+    let mut meta = vec![
+        kind_label(entry.kind).to_string(),
+        state_label(entry.state).to_string(),
+    ];
+    let mut shown = vec![Field::Label];
+    let place = match (entry.field(Field::Repo), entry.field(Field::Branch)) {
+        (Some(repo), Some(branch)) => Some(format!("{repo} @ {branch}")),
+        (repo, branch) => repo.or(branch).map(str::to_string),
+    };
+    if let Some(place) = place {
+        meta.push(place);
+        shown.extend([Field::Repo, Field::Branch]);
+    }
+    if let Some(run) = entry.field(Field::Objective) {
+        meta.push(run.to_string());
+        shown.push(Field::Objective);
+    } else if let Some(run) = entry.field(Field::RunId) {
+        meta.push(format!("run {run}"));
+        shown.push(Field::RunId);
+    }
+    if !shown.contains(&hit.field)
+        && let Some(text) = entry.field(hit.field)
+    {
+        meta.push(format!("{}: {text}", hit.field.name()));
+    }
+    meta.join(" · ")
 }
 
 #[cfg(test)]
@@ -720,16 +842,31 @@ mod tests {
     }
 
     fn entry(id: &str, kind: NodeKind, fields: &[(Field, &str)]) -> SearchEntry {
+        entry_in(id, kind, NodeState::Working, true, fields)
+    }
+
+    fn entry_in(
+        id: &str,
+        kind: NodeKind,
+        state: NodeState,
+        live: bool,
+        fields: &[(Field, &str)],
+    ) -> SearchEntry {
         let label = fields
             .iter()
             .find(|(f, _)| *f == Field::Label)
             .map_or(id, |(_, s)| s);
-        SearchEntry {
-            id: NodeId(id.to_string()),
+        let mut n = node(id, kind, label);
+        n.state = state;
+        n.live = live;
+        SearchEntry::new(
+            n.id.clone(),
             kind,
-            label: label.to_string(),
-            fields: fields.iter().map(|(f, s)| (*f, s.to_string())).collect(),
-        }
+            label.to_string(),
+            state,
+            Activity::of(&n),
+            fields.iter().map(|(f, s)| (*f, s.to_string())).collect(),
+        )
     }
 
     fn ids(entries: &[SearchEntry], hits: &[SearchHit]) -> Vec<String> {
@@ -895,6 +1032,209 @@ mod tests {
         let hits = rank(&entries, "que", MAX_RESULTS);
         assert_eq!(entries[hits[0].index].id, NodeId::queen());
     }
+
+    #[test]
+    fn rank_puts_live_agents_before_finished_ones() {
+        let entries = vec![
+            entry_in(
+                "done",
+                NodeKind::Worker,
+                NodeState::Done,
+                true,
+                &[(Field::Label, "pay")],
+            ),
+            entry_in(
+                "gone",
+                NodeKind::Worker,
+                NodeState::Idle,
+                false,
+                &[(Field::Label, "pay")],
+            ),
+            entry_in(
+                "idle",
+                NodeKind::Worker,
+                NodeState::Idle,
+                true,
+                &[(Field::Label, "repay")],
+            ),
+            entry_in(
+                "ask",
+                NodeKind::Terminal,
+                NodeState::NeedsInput,
+                true,
+                &[(Field::Label, "repay")],
+            ),
+            entry_in(
+                "fail",
+                NodeKind::Worker,
+                NodeState::Failed,
+                true,
+                &[(Field::Label, "pay")],
+            ),
+        ];
+        // The live ones lead despite weaker label matches; on a tie needs-input comes first even
+        // before a worker. Finished ones keep entry order among themselves.
+        assert_eq!(
+            ids(&entries, &rank(&entries, "pay", 10)),
+            ["ask", "idle", "done", "gone", "fail"]
+        );
+        // Empty query: needs-input first, finished last, otherwise in order.
+        assert_eq!(
+            ids(&entries, &rank(&entries, "", 10)),
+            ["ask", "idle", "done", "gone", "fail"]
+        );
+    }
+
+    #[test]
+    fn rank_puts_fuzzy_matches_after_substring_matches() {
+        let entries = vec![
+            entry_in(
+                "live-fuzzy",
+                NodeKind::Coordinator,
+                NodeState::Working,
+                true,
+                &[(Field::Label, "pull a yak")],
+            ),
+            entry_in(
+                "old-exact",
+                NodeKind::Worker,
+                NodeState::Done,
+                true,
+                &[(Field::Label, "pay")],
+            ),
+        ];
+        assert_eq!(
+            ids(&entries, &rank(&entries, "pay", 10)),
+            ["old-exact", "live-fuzzy"]
+        );
+    }
+
+    #[test]
+    fn rank_matches_every_identifying_field_case_insensitively() {
+        let mut w = node("dispatch:d-42", NodeKind::Worker, "worker 3");
+        w.branch = Some("feat/Stripe-Refunds".into());
+        w.run_id = Some("run-9f".into());
+        w.task_id = Some("task-7".into());
+        w.terminal_handle = Some("term_ABC".into());
+        w.worktree_path = Some("/x/commerce-platform".into());
+        let mut snapshot = FleetSnapshot::default();
+        snapshot.nodes = vec![w, node("term:other", NodeKind::Terminal, "worker 3")];
+        let entries = search_entries(&snapshot, None);
+        for (query, field) in [
+            ("WORKER 3", Field::Label),
+            ("stripe-refunds", Field::Branch),
+            ("RUN-9F", Field::RunId),
+            ("task-7", Field::TaskId),
+            ("term_abc", Field::Handle),
+            ("commerce", Field::Repo),
+            ("d-42", Field::NodeId),
+        ] {
+            let hits = rank(&entries, query, 5);
+            assert_eq!(hits[0].index, 0, "{query}");
+            assert_eq!(hits[0].field, field, "{query}");
+        }
+        // Two tokens in different fields narrow it to one.
+        assert_eq!(
+            ids(&entries, &rank(&entries, "worker stripe", 5)),
+            ["dispatch:d-42"]
+        );
+    }
+
+    #[test]
+    fn result_meta_tells_similar_agents_apart() {
+        let a = entry_in(
+            "a",
+            NodeKind::Worker,
+            NodeState::NeedsInput,
+            true,
+            &[
+                (Field::Label, "worker"),
+                (Field::Repo, "myrstack"),
+                (Field::Branch, "feat/a"),
+                (Field::Objective, "Ship search"),
+                (Field::RunId, "run1"),
+                (Field::Handle, "term_1"),
+            ],
+        );
+        let hit = |field| SearchHit {
+            index: 0,
+            score: 1,
+            field,
+        };
+        assert_eq!(
+            result_meta(&a, &hit(Field::Label)),
+            "worker · needs input · myrstack @ feat/a · Ship search"
+        );
+        assert_eq!(
+            result_meta(&a, &hit(Field::Branch)),
+            "worker · needs input · myrstack @ feat/a · Ship search"
+        );
+        assert_eq!(
+            result_meta(&a, &hit(Field::Handle)),
+            "worker · needs input · myrstack @ feat/a · Ship search · handle: term_1"
+        );
+        let b = entry_in(
+            "b",
+            NodeKind::Terminal,
+            NodeState::Done,
+            true,
+            &[(Field::Label, "worker"), (Field::RunId, "run2")],
+        );
+        assert_eq!(
+            result_meta(&b, &hit(Field::Label)),
+            "terminal · done · run run2"
+        );
+    }
+
+    #[test]
+    fn entries_follow_the_snapshot_once_invalidated() {
+        let mut snapshot = FleetSnapshot::build(&FleetData::default(), 0);
+        let mut palette = SearchPalette::default();
+        palette.open();
+        palette.query = "newc".into();
+        let cx = ready();
+        let (_, output) = run_palette(&mut palette, &snapshot, &cx, vec![]);
+        use crate::ui::test_util::text_center;
+        assert!(text_center(&output, "newcomer").is_none());
+
+        snapshot
+            .nodes
+            .push(node("term:n", NodeKind::Terminal, "newcomer"));
+        let (_, output) = run_palette(&mut palette, &snapshot, &cx, vec![]);
+        assert!(text_center(&output, "newcomer").is_none(), "cached");
+        palette.snapshot_changed();
+        let (_, output) = run_palette(&mut palette, &snapshot, &cx, vec![]);
+        assert!(text_center(&output, "newcomer").is_some());
+        assert!(text_center(&output, "Agents").is_some());
+    }
+
+    #[test]
+    fn ranks_hundreds_of_agents() {
+        let entries: Vec<SearchEntry> = (0..600)
+            .map(|i| {
+                let state = [NodeState::Working, NodeState::Done, NodeState::NeedsInput][i % 3];
+                let label = format!("worker {i}");
+                let branch = format!("feat/task-{i}");
+                entry_in(
+                    &format!("dispatch:{i}"),
+                    NodeKind::Worker,
+                    state,
+                    true,
+                    &[(Field::Label, &label), (Field::Branch, &branch)],
+                )
+            })
+            .collect();
+        let hits = rank(&entries, "task-599", MAX_RESULTS);
+        assert_eq!(entries[hits[0].index].id.0, "dispatch:599");
+        let hits = rank(&entries, "worker", MAX_RESULTS);
+        assert_eq!(hits.len(), MAX_RESULTS);
+        assert!(
+            hits.iter()
+                .all(|h| entries[h.index].activity != Activity::Finished)
+        );
+        assert_eq!(entries[hits[0].index].state, NodeState::NeedsInput);
+    }
+
     fn actions(rows: &[PaletteRow]) -> Vec<ActionId> {
         rows.iter()
             .filter_map(|r| match r.item {
@@ -932,12 +1272,14 @@ mod tests {
             entry("chat-node", NodeKind::Worker, &[(Field::Label, "chat")]),
         ];
         let cx = ready();
-        // "fit": the action's title prefix beats the node's worktree word match.
+        // "fit": the action's title prefix beats the node's worktree word match, so the
+        // Actions section comes first.
         let rows = palette_rows(&entries, "fit", &Recents::default(), &cx);
         assert_eq!(row_names(&entries, &rows)[..2], [">fit_graph", "fits"]);
         // An exact node label outranks an action matching only by keyword.
         let rows = palette_rows(&entries, "chat", &Recents::default(), &cx);
         assert_eq!(row_names(&entries, &rows)[0], "chat-node");
+        assert_eq!(rows[0].header, Some("Agents"));
         assert!(actions(&rows).contains(&ActionId::OpenChat));
         // Every token must match an action's title or keywords.
         let rows = palette_rows(&entries, "whip stalled", &Recents::default(), &cx);
@@ -947,7 +1289,8 @@ mod tests {
         let names = row_names(&entries, &rows);
         assert_eq!(names[0], ">whip_stalled", "{names:?}");
         assert!(names.contains(&"whipper".to_string()));
-        assert!(rows.iter().all(|r| r.header.is_none()));
+        let headers: Vec<_> = rows.iter().filter_map(|r| r.header).collect();
+        assert_eq!(headers, ["Actions", "Agents"]);
         // Dynamic titles are searchable, and so are the fixed ones.
         let rows = palette_rows(&entries, "hide loose", &Recents::default(), &cx);
         assert_eq!(actions(&rows), [ActionId::ToggleLoose]);
@@ -1012,7 +1355,7 @@ mod tests {
         );
         assert_eq!(rows[0].header, Some("Recent actions"));
         assert_eq!(rows[1].header, None);
-        assert_eq!(rows[2].header, Some("Nodes"));
+        assert_eq!(rows[2].header, Some("Agents"));
     }
 
     #[test]
