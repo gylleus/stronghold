@@ -1,5 +1,5 @@
 //! The Queen's chat: a Claude Code session Myrstack spawns and owns (`claude -p` in
-//! stream-json mode), with the myrstack MCP tools, shown in the Queen's panel. It is not an
+//! stream-json mode), with the myrstack MCP tools, shown in the app's conversation column. It is not an
 //! Orca terminal, so it never appears in the graph.
 
 pub mod auto_mode;

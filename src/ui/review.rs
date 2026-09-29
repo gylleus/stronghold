@@ -79,50 +79,47 @@ fn review_row(ui: &mut Ui, row: &ReviewRow, now_ms: i64) -> Option<ReviewAction>
         .inner_margin(egui::Margin::symmetric(6, 4))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            // Title and buttons on their own lines, so a narrow column cannot overlap them.
             ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .small_button("Dismiss")
-                        .on_hover_text("Hide it until an agent marks it ready again")
-                        .clicked()
-                    {
-                        action = Some(ReviewAction::Dismiss(row.url.clone()));
-                    }
-                    if ui
-                        .small_button("Reviewed")
-                        .on_hover_text("Hide it until it is pushed to or marked ready again")
-                        .clicked()
-                    {
-                        action = Some(ReviewAction::Reviewed(row.url.clone()));
-                    }
-                    if ui
-                        .small_button("Open")
-                        .on_hover_text(format!("Open {} in the browser", row.url))
-                        .clicked()
-                    {
-                        action = Some(ReviewAction::Open(row.url.clone()));
-                    }
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(&row.repo).weak().small());
-                        let text = if row.title.is_empty() {
-                            format!("#{}", row.number)
-                        } else {
-                            format!("#{} {}", row.number, row.title)
-                        };
-                        let link = ui
-                            .add(
-                                egui::Label::new(
-                                    RichText::new(text).color(pr_color(dark)).strong(),
-                                )
-                                .truncate()
-                                .sense(egui::Sense::click()),
-                            )
-                            .on_hover_text(format!("{}\nclick to open in the browser", row.url));
-                        if link.clicked() {
-                            action = Some(ReviewAction::Open(row.url.clone()));
-                        }
-                    });
-                });
+                ui.label(RichText::new(&row.repo).weak().small());
+                let text = if row.title.is_empty() {
+                    format!("#{}", row.number)
+                } else {
+                    format!("#{} {}", row.number, row.title)
+                };
+                let link = ui
+                    .add(
+                        egui::Label::new(RichText::new(text).color(pr_color(dark)).strong())
+                            .truncate()
+                            .sense(egui::Sense::click()),
+                    )
+                    .on_hover_text(format!("{}\nclick to open in the browser", row.url));
+                if link.clicked() {
+                    action = Some(ReviewAction::Open(row.url.clone()));
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui
+                    .small_button("Open")
+                    .on_hover_text(format!("Open {} in the browser", row.url))
+                    .clicked()
+                {
+                    action = Some(ReviewAction::Open(row.url.clone()));
+                }
+                if ui
+                    .small_button("Reviewed")
+                    .on_hover_text("Hide it until it is pushed to or marked ready again")
+                    .clicked()
+                {
+                    action = Some(ReviewAction::Reviewed(row.url.clone()));
+                }
+                if ui
+                    .small_button("Dismiss")
+                    .on_hover_text("Hide it until an agent marks it ready again")
+                    .clicked()
+                {
+                    action = Some(ReviewAction::Dismiss(row.url.clone()));
+                }
             });
             ui.horizontal_wrapped(|ui| {
                 let agent = ui.add(

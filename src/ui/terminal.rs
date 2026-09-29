@@ -269,8 +269,6 @@ pub struct PanelInput<'a> {
     pub state: &'a mut InputPanelState,
     /// The node's row in `terminal list`, if live.
     pub terminal: Option<&'a Terminal>,
-    /// Claude token usage of the node's session.
-    pub usage: Option<&'a Usage>,
 }
 
 /// The terminal whose screen should be polled for `node`: live terminals only (not dead
@@ -282,7 +280,78 @@ pub fn watch_handle(node: &Node) -> Option<&str> {
     node.terminal_handle.as_deref()
 }
 
-/// Draws the header for `node`, then its screen (if it has a live terminal).
+/// The details column for `node`: its label, actions (Open in Orca, Whip, Close…) and
+/// attributes.
+pub fn details_panel(
+    ui: &mut egui::Ui,
+    node: &Node,
+    screen: Option<&ScreenUpdate>,
+    usage: Option<&Usage>,
+    now_ms: i64,
+) -> TerminalPanelResponse {
+    let mut response = TerminalPanelResponse::default();
+    let handle = watch_handle(node);
+    let screen = screen.filter(|s| Some(s.handle.as_str()) == handle);
+
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            if ui
+                .button("×")
+                .on_hover_text("Close (clears selection)")
+                .clicked()
+            {
+                response.close = true;
+            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                ui.add(egui::Label::new(egui::RichText::new(&node.label).strong()).wrap());
+            });
+        });
+    });
+    ui.horizontal_wrapped(|ui| {
+        let open = ui
+            .add_enabled(handle.is_some(), egui::Button::new("Open in Orca"))
+            .on_hover_text(format!(
+                "Show this terminal's tab in Orca ({})",
+                ui.ctx().format_shortcut(&OPEN_SHORTCUT)
+            ))
+            .on_disabled_hover_text("No live terminal.");
+        if open.clicked()
+            && let Some(handle) = handle
+        {
+            response.requests.push(ActionRequest::open(handle));
+        }
+        let whippable = handle.is_some()
+            && matches!(
+                node.kind,
+                NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal
+            );
+        if ui
+            .add_enabled(whippable, egui::Button::new("Whip"))
+            .on_hover_text("Send this agent a Myrstack nudge now — w")
+            .on_disabled_hover_text("No live terminal to nudge.")
+            .clicked()
+        {
+            response.whip = true;
+        }
+        if node.kind != NodeKind::Subagent
+            && ui
+                .button(egui::RichText::new("Close…").color(ui.visuals().error_fg_color))
+                .on_hover_text("Kill this session in Orca (asks first) — x")
+                .clicked()
+        {
+            response.close_session = true;
+        }
+    });
+    ui.add_space(4.0);
+    header(ui, node, screen, handle.is_some(), usage, now_ms);
+    response
+}
+
+/// ⌘O: show the selected terminal's tab in Orca.
+const OPEN_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
+
+/// The conversation column for `node`: a one-line title, then its live screen and input box.
 pub fn terminal_panel(
     ui: &mut egui::Ui,
     node: &Node,
@@ -292,13 +361,11 @@ pub fn terminal_panel(
 ) -> TerminalPanelResponse {
     let mut response = TerminalPanelResponse::default();
     let handle = watch_handle(node);
-    let has_screen = handle.is_some();
     // Only an update for this node's terminal counts.
     let screen = screen.filter(|s| Some(s.handle.as_str()) == handle);
 
-    let open_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
     if let Some(handle) = handle
-        && ui.input_mut(|i| i.consume_shortcut(&open_shortcut))
+        && ui.input_mut(|i| i.consume_shortcut(&OPEN_SHORTCUT))
     {
         response.requests.push(ActionRequest::open(handle));
     }
@@ -312,72 +379,37 @@ pub fn terminal_panel(
             {
                 response.close = true;
             }
-            if node.kind != NodeKind::Subagent
-                && ui
-                    .button(egui::RichText::new("Close…").color(ui.visuals().error_fg_color))
-                    .on_hover_text("Kill this session in Orca (asks first) — x")
-                    .clicked()
-            {
-                response.close_session = true;
-            }
-            let whippable = handle.is_some()
-                && matches!(
-                    node.kind,
-                    NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal
-                );
-            if ui
-                .add_enabled(whippable, egui::Button::new("Whip"))
-                .on_hover_text("Send this agent a Myrstack nudge now — w")
-                .on_disabled_hover_text("No live terminal to nudge.")
-                .clicked()
-            {
-                response.whip = true;
-            }
-            let open = ui
-                .add_enabled(handle.is_some(), egui::Button::new("Open in Orca"))
-                .on_hover_text(format!(
-                    "Show this terminal's tab in Orca ({})",
-                    ui.ctx().format_shortcut(&open_shortcut)
-                ))
-                .on_disabled_hover_text("No live terminal.");
-            if open.clicked()
-                && let Some(handle) = handle
-            {
-                response.requests.push(ActionRequest::open(handle));
-            }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let color = state_color(node.state, ui.visuals().dark_mode);
+                crate::ui::widgets::state_pill(ui, color, state_label(node.state));
                 ui.add(egui::Label::new(egui::RichText::new(&node.label).strong()).truncate());
             });
         });
     });
-    header(ui, node, screen, has_screen, input.usage, now_ms);
     ui.separator();
 
-    if !has_screen {
+    let Some(handle) = handle else {
         ui.weak(match node.kind {
             NodeKind::Subagent => "Subagents have no terminal.",
             _ => "No live terminal.",
         });
         return response;
-    }
-
-    if let Some(handle) = handle {
-        let blocked = input_block_reason(input.terminal, screen);
-        let needs_input = node.state == NodeState::NeedsInput;
-        egui::Panel::bottom("terminal_input")
-            .resizable(false)
-            .show(ui, |ui| {
-                input_area(
-                    ui,
-                    handle,
-                    input.state,
-                    blocked,
-                    needs_input,
-                    now_ms,
-                    &mut response.requests,
-                );
-            });
-    }
+    };
+    let blocked = input_block_reason(input.terminal, screen);
+    let needs_input = node.state == NodeState::NeedsInput;
+    egui::Panel::bottom("terminal_input")
+        .resizable(false)
+        .show(ui, |ui| {
+            input_area(
+                ui,
+                handle,
+                input.state,
+                blocked,
+                needs_input,
+                now_ms,
+                &mut response.requests,
+            );
+        });
     screen_view(ui, screen, AgentKind::from_identity(node.agent.as_ref()));
 
     response
@@ -588,6 +620,16 @@ fn header(
                 ui.label(repo);
                 ui.end_row();
             }
+            if let Some(run) = &node.run_id {
+                ui.weak("run");
+                ui.add(egui::Label::new(run.as_str()).truncate());
+                ui.end_row();
+            }
+            if let Some(task) = &node.task_id {
+                ui.weak("task");
+                ui.add(egui::Label::new(task.as_str()).truncate());
+                ui.end_row();
+            }
             if let Some(branch) = &node.branch {
                 ui.weak("branch");
                 ui.add(egui::Label::new(branch.as_str()).truncate());
@@ -733,15 +775,7 @@ mod tests {
     }
 
     fn click_in_panel(node: &Node, label: &str) -> TerminalPanelResponse {
-        let mut state = InputPanelState::default();
-        crate::ui::test_util::click_label(label, |ui| {
-            let input = PanelInput {
-                state: &mut state,
-                terminal: None,
-                usage: None,
-            };
-            terminal_panel(ui, node, None, input, 0)
-        })
+        crate::ui::test_util::click_label(label, |ui| details_panel(ui, node, None, None, 0))
     }
 
     #[test]
@@ -754,6 +788,45 @@ mod tests {
         // Disabled without a live terminal: the click does nothing.
         let response = click_in_panel(&node(NodeKind::Worker, false, Some("t1")), "Whip");
         assert!(!response.whip);
+    }
+
+    /// Shapes of one headless frame of `draw`.
+    fn frame(draw: impl FnMut(&mut egui::Ui)) -> egui::FullOutput {
+        let mut draw = draw;
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| draw(ui));
+        output.textures_delta.clear();
+        output
+    }
+
+    #[test]
+    fn attributes_are_in_the_details_not_the_conversation() {
+        use crate::ui::test_util::text_center;
+        let node = node(NodeKind::Worker, true, Some("t1"));
+        let details = frame(|ui| {
+            details_panel(ui, &node, None, None, 0);
+        });
+        for label in ["kind", "terminal", "Whip", "Open in Orca"] {
+            assert!(text_center(&details, label).is_some(), "{label} in details");
+        }
+        let mut state = InputPanelState::default();
+        let conversation = frame(|ui| {
+            let input = PanelInput {
+                state: &mut state,
+                terminal: None,
+            };
+            terminal_panel(ui, &node, None, input, 0);
+        });
+        for label in ["kind", "terminal", "Whip", "Open in Orca"] {
+            assert!(
+                text_center(&conversation, label).is_none(),
+                "{label} not in chat"
+            );
+        }
+        assert!(
+            text_center(&conversation, "×").is_some(),
+            "the conversation has its own close"
+        );
     }
 
     #[test]

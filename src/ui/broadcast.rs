@@ -1,4 +1,4 @@
-//! Broadcast composer, shown in the queen's panel: pick runs, write one message, confirm, send
+//! Broadcast composer, shown in the Queen's details: pick runs, write one message, confirm, send
 //! to their coordinators.
 
 use std::collections::{BTreeSet, HashSet};

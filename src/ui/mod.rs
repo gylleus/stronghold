@@ -3,6 +3,7 @@
 pub mod broadcast;
 pub mod chat;
 pub mod close;
+pub mod columns;
 pub mod commands;
 pub mod dictation;
 pub mod frame_stats;

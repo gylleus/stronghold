@@ -1,9 +1,10 @@
 //! UI state saved between launches through eframe's storage: filters, view, graph layout,
-//! selection and the command palette's recent actions. Window size and position are saved by eframe itself, panel widths with egui memory.
+//! selection, the details column and the command palette's recent actions. Window size and position are saved by eframe itself, panel widths with egui memory.
 
 use serde::{Deserialize, Serialize};
 
 use crate::app::View;
+use crate::ui::columns::DetailsPref;
 use crate::ui::graph::SavedLayout;
 use crate::ui::sidebar::FleetFilter;
 
@@ -17,6 +18,10 @@ pub const FORMAT_VERSION: u32 = 1;
 pub struct PersistedState {
     pub version: u32,
     pub view: View,
+    /// The details column: open, collapsed or following the window width.
+    pub details: DetailsPref,
+    /// ⌘J hid the Queen's chat shown when nothing is selected.
+    pub chat_hidden: bool,
     pub filter: FleetFilter,
     pub layout: SavedLayout,
     /// The command palette's recently run actions, newest first.
@@ -28,6 +33,8 @@ impl Default for PersistedState {
         Self {
             version: FORMAT_VERSION,
             view: View::default(),
+            details: DetailsPref::default(),
+            chat_hidden: false,
             filter: FleetFilter::default(),
             layout: SavedLayout::default(),
             recent_actions: Vec::new(),
@@ -75,6 +82,8 @@ mod tests {
         PersistedState {
             version: FORMAT_VERSION,
             view: View::Table,
+            details: DetailsPref::Collapsed,
+            chat_hidden: true,
             filter: FleetFilter {
                 repos: BTreeSet::from(["myrstack".to_owned()]),
                 states: BTreeSet::from([NodeState::NeedsInput, NodeState::Stalled]),
@@ -134,6 +143,8 @@ mod tests {
         storage.set_string_for_test("(version: 1, view: Table)");
         let state = PersistedState::load(&storage).unwrap();
         assert_eq!(state.view, View::Table);
+        assert_eq!(state.details, DetailsPref::Auto);
+        assert!(!state.chat_hidden);
         assert_eq!(state.filter, FleetFilter::default());
         assert_eq!(state.layout, SavedLayout::default());
     }

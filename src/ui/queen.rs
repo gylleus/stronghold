@@ -1,5 +1,6 @@
-//! The queen's panel: the Queen's chat, under a fleet summary (state counts, runs, nodes
-//! needing input or stalled, whip status, plan quotas) and the broadcast composer.
+//! The Queen's details column (fleet summary: state counts, runs, nodes needing input or
+//! stalled, whip status, plan quotas; and the broadcast composer) and the top bar's Queen
+//! quick actions. Her chat has the conversation column to itself.
 
 use std::collections::BTreeMap;
 
@@ -32,7 +33,7 @@ pub struct RunLine {
     pub coordinator_state: Option<NodeState>,
 }
 
-/// What the queen's panel shows of a snapshot. The queen itself is not counted.
+/// What the Queen's details show of a snapshot. The queen itself is not counted.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FleetSummary {
     pub states: BTreeMap<NodeState, usize>,
@@ -105,15 +106,14 @@ pub struct QueenResponse {
     pub whip_stalled: bool,
 }
 
-/// Draws the queen panel: the Queen's header with the fleet counts, the fleet summary and
-/// the broadcast composer as collapsible sections, and `chat` (the Queen's chat) filling the
-/// rest. `make_sender` is called once, when the user confirms a broadcast.
-pub fn queen_panel(
+/// Draws the Queen's details: her header with the fleet counts, then the fleet summary and the
+/// broadcast composer as collapsible sections. `make_sender` is called once, when the user
+/// confirms a broadcast.
+pub fn queen_details(
     ui: &mut Ui,
     panel: &mut QueenPanel,
     inputs: QueenInputs<'_>,
     make_sender: impl FnOnce() -> Box<dyn BroadcastSender>,
-    chat: impl FnOnce(&mut Ui),
 ) -> QueenResponse {
     let mut response = QueenResponse::default();
     let summary = inputs.snapshot.map(FleetSummary::new).unwrap_or_default();
@@ -132,7 +132,6 @@ pub fn queen_panel(
             {
                 response.close = true;
             }
-            response.whip_stalled |= crate::ui::whip_now::whip_stalled_button(ui);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 queen_badge(ui, fleet, dark);
                 ui.label(RichText::new("Queen").strong());
@@ -162,32 +161,28 @@ pub fn queen_panel(
     if let Some(status) = inputs.playbook {
         crate::ui::playbook::playbook_line(ui, status, inputs.now_ms);
     }
+    response.whip_stalled |= crate::ui::whip_now::whip_stalled_button(ui);
 
     egui::CollapsingHeader::new(RichText::new("Fleet summary").strong())
         .id_salt("queen_summary")
-        .default_open(false)
+        .default_open(true)
         .show(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("queen_panel")
-                .max_height(ui.ctx().content_rect().height() * 0.3)
-                .show(ui, |ui| {
-                    node_list(ui, "Needs input", &summary.needs_input, &mut response);
-                    node_list(ui, "Stalled", &summary.stalled, &mut response);
-                    runs_section(ui, &summary.runs, dark, &mut response);
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Whip").strong());
-                    ui.weak(crate::ui::whip_log::status_line(inputs.whip, inputs.now_ms));
-                    if !inputs.quotas.providers.is_empty() {
-                        ui.horizontal_wrapped(|ui| {
-                            crate::ui::quota::quota_chips(ui, inputs.quotas, inputs.now_ms);
-                        });
-                    }
-                    if let Some(status) = inputs.playbook
-                        && let Some(id) = crate::ui::playbook::stale_list(ui, status, inputs.now_ms)
-                    {
-                        response.select = Some(id);
-                    }
+            node_list(ui, "Needs input", &summary.needs_input, &mut response);
+            node_list(ui, "Stalled", &summary.stalled, &mut response);
+            runs_section(ui, &summary.runs, dark, &mut response);
+            ui.add_space(4.0);
+            ui.label(RichText::new("Whip").strong());
+            ui.weak(crate::ui::whip_log::status_line(inputs.whip, inputs.now_ms));
+            if !inputs.quotas.providers.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    crate::ui::quota::quota_chips(ui, inputs.quotas, inputs.now_ms);
                 });
+            }
+            if let Some(status) = inputs.playbook
+                && let Some(id) = crate::ui::playbook::stale_list(ui, status, inputs.now_ms)
+            {
+                response.select = Some(id);
+            }
         });
 
     egui::CollapsingHeader::new(RichText::new("Broadcast to coordinators").strong())
@@ -197,9 +192,50 @@ pub fn queen_panel(
         .show(ui, |ui| {
             panel.broadcast.ui(ui, inputs.snapshot, make_sender);
         });
-    ui.separator();
-    chat(ui);
     response
+}
+
+/// A top-bar quick action on the Queen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueenQuickAction {
+    /// Select the Queen and put the cursor in her chat.
+    OpenChat,
+    /// Ask her for a status report.
+    StatusReport,
+}
+
+/// The top bar's Queen and Status report buttons. `status_disabled` is why a status report
+/// cannot be asked for now (the chat is busy or not ready), if so.
+pub fn quick_actions(ui: &mut Ui, status_disabled: Option<&str>) -> Option<QueenQuickAction> {
+    let mut action = None;
+    let dark = ui.visuals().dark_mode;
+    let queen = egui::Button::new(
+        RichText::new("Queen")
+            .strong()
+            .color(ui.visuals().extreme_bg_color),
+    )
+    .fill(queen_color(dark));
+    if ui
+        .add(queen)
+        .on_hover_text("Open the Queen's chat and put the cursor in it (⌘J toggles it)")
+        .clicked()
+    {
+        action = Some(QueenQuickAction::OpenChat);
+    }
+    let status = ui
+        .add_enabled(
+            status_disabled.is_none(),
+            egui::Button::new("Status report"),
+        )
+        .on_hover_text(format!(
+            "Ask the Queen \"{}\"",
+            crate::chat::STATUS_REPORT_PROMPT
+        ))
+        .on_disabled_hover_text(status_disabled.unwrap_or_default());
+    if status.clicked() {
+        action = Some(QueenQuickAction::StatusReport);
+    }
+    action
 }
 
 /// The Queen's hexagon in her colour, with a dot in the fleet state's colour.
@@ -341,7 +377,7 @@ mod tests {
                 now_ms: 0,
                 playbook: None,
             };
-            queen_panel(ui, &mut panel, inputs, || Box::new(NeverSender), |_| {})
+            queen_details(ui, &mut panel, inputs, || Box::new(NeverSender))
         });
         assert!(response.whip_stalled);
     }
@@ -357,7 +393,7 @@ mod tests {
         let ctx = egui::Context::default();
         for _ in 0..3 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                let response = queen_panel(
+                let response = queen_details(
                     ui,
                     &mut panel,
                     QueenInputs {
@@ -368,13 +404,29 @@ mod tests {
                         playbook: None,
                     },
                     || Box::new(NeverSender),
-                    |ui| {
-                        ui.label("chat");
-                    },
                 );
                 assert_eq!(response, QueenResponse::default());
             });
             output.textures_delta.clear();
         }
+    }
+
+    #[test]
+    fn quick_actions_open_the_chat_and_ask_for_a_report() {
+        let clicked =
+            |label| crate::ui::test_util::click_label(label, |ui| quick_actions(ui, None));
+        assert_eq!(clicked("Queen"), Some(QueenQuickAction::OpenChat));
+        assert_eq!(
+            clicked("Status report"),
+            Some(QueenQuickAction::StatusReport)
+        );
+    }
+
+    #[test]
+    fn status_report_is_disabled_while_the_chat_is_busy() {
+        let action = crate::ui::test_util::click_label("Status report", |ui| {
+            quick_actions(ui, Some("The Queen's chat is busy or not ready"))
+        });
+        assert_eq!(action, None);
     }
 }

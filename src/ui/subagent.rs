@@ -1,4 +1,5 @@
-//! Detail panel for a selected Claude subagent: its metadata and a read-only transcript tail.
+//! A selected Claude subagent: its metadata (details column) and a read-only transcript tail
+//! (conversation column).
 
 use eframe::egui::{self, RichText, Ui};
 
@@ -35,12 +36,12 @@ pub fn header_rows(info: &SubagentInfo, now_ms: i64) -> Vec<(&'static str, Strin
     rows
 }
 
-/// Draws the header and the styled tail (`tail` is the rendered transcript, oldest first).
-pub fn subagent_panel(ui: &mut Ui, node: &Node, info: &SubagentInfo, tail: &[String], now_ms: i64) {
+/// The details column for a subagent: its label, description and header rows.
+pub fn subagent_details(ui: &mut Ui, node: &Node, info: &SubagentInfo, now_ms: i64) {
     ui.horizontal(|ui| {
         let color = state_color(node.state, ui.visuals().dark_mode);
         ui.label(RichText::new("●").color(color));
-        ui.heading(&node.label);
+        ui.add(egui::Label::new(RichText::new(&node.label).strong()).wrap());
     });
     if !info.description.is_empty() && info.description != node.label {
         ui.label(&info.description);
@@ -55,6 +56,16 @@ pub fn subagent_panel(ui: &mut Ui, node: &Node, info: &SubagentInfo, tail: &[Str
                 ui.end_row();
             }
         });
+}
+
+/// The conversation column for a subagent: a title and its read-only transcript tail
+/// (`tail` is the rendered transcript, oldest first).
+pub fn subagent_transcript(ui: &mut Ui, node: &Node, info: &SubagentInfo, tail: &[String]) {
+    ui.horizontal(|ui| {
+        let color = state_color(node.state, ui.visuals().dark_mode);
+        ui.label(RichText::new("●").color(color));
+        ui.add(egui::Label::new(RichText::new(&node.label).strong()).truncate());
+    });
     ui.separator();
 
     if tail.is_empty() {
