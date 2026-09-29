@@ -212,7 +212,7 @@ pub fn definitions() -> Vec<Value> {
             "Send text to an agent",
             "Types text into an agent's terminal and, unless submit is false, presses Enter. \
              Needs a live terminal (not a subagent). This is real input to a running agent: \
-             confirm with Karl first.",
+             confirm with Karl first (the Queen in auto mode needn't).",
             object(
                 json!({
                     "id": id_prop(),
@@ -634,7 +634,7 @@ fn fleet_text(s: &Status, fallback: bool, now: i64) -> String {
         out.push(format!(
             "Queen auto mode: {} (Karl sets it in the chat header)",
             if auto {
-                "on — Myrstack actions run without Karl's confirmation"
+                "on — the Queen's actions run without Karl's confirmation"
             } else {
                 "off — destructive actions ask Karl"
             }
@@ -1101,8 +1101,8 @@ fn close_text(result: &Value, dry_run: bool) -> String {
             out.push("This plan cannot run.".into());
         } else {
             out.push(
-                "To really close, confirm with Karl, then call close_agents again with \
-                 dry_run=false."
+                "To really close, confirm with Karl (the Queen in auto mode needn't), then call \
+                 close_agents again with dry_run=false."
                     .into(),
             );
         }

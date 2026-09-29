@@ -39,7 +39,8 @@ prompt), stalled (the whip escalated it), done, failed.
 Start with fleet_status. Agent ids (term:…, dispatch:…, sub:…) come from list_agents or \
 fleet_status; a terminal handle or an exact label also works. send_to_agent, press_key, \
 close_agents, broadcast_to_coordinators, set_whip and spawn_session act on real agents, so confirm \
-with Karl first. close_agents only shows the plan unless dry_run=false is passed. spawn_session \
+with Karl first (the Queen in auto mode needn't: Karl approved her actions up front). close_agents \
+only shows the plan unless dry_run=false is passed. spawn_session \
 starts a new session (existing worktree, new worktree, or a run's worker) with a prompt.
 
 This server also serves the fleet playbook, the standing rules the fleet runs by, read from disk \

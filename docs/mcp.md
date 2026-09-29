@@ -86,7 +86,8 @@ works.
   returns the plan: targets, the `orca` commands it would run, and warnings such as a run
   losing its coordinator. The chat should show the plan to Karl before closing.
 - `send_to_agent`, `press_key`, `broadcast_to_coordinators` and `set_whip` act on real
-  agents or on saved settings. Their descriptions tell the model to confirm with Karl first.
+  agents or on saved settings. Their descriptions tell the model to confirm with Karl first; the Queen in auto mode
+  skips that (Karl approved her actions up front).
 - `whip_agents` sends Myrstack nudges now. With `ids` they are live even when the automatic
   whip is in dry-run, and threshold and cooldown are ignored; the Queen, subagents, released
   workers and dead terminals are skipped with a reason, and agents waiting on Karl's input
@@ -246,7 +247,8 @@ Steps:
 - `orca terminal close --terminal=term_2bf8…`
 Warnings:
 - run depict-xyx: … loses its coordinator; its workers keep running (0 open tasks)
-To really close, confirm with Karl, then call close_agents again with dry_run=false.
+To really close, confirm with Karl (the Queen in auto mode needn't), then call
+close_agents again with dry_run=false.
 ```
 
 To try the server by hand, pipe JSON-RPC lines into it:
