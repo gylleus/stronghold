@@ -16,12 +16,17 @@ use crate::model::NodeId;
 /// Longest tool input/result shown in an expanded row.
 const MAX_DETAIL_CHARS: usize = 4000;
 
+/// How long a new message takes to fade in.
+const FADE_IN_SECS: f64 = 0.2;
+
 /// Draft and focus state of the pane, kept by the app across frames.
 #[derive(Debug, Default)]
 pub struct ChatPanelState {
     pub draft: String,
     /// Focus the input box on the next frame.
     pub focus_input: bool,
+    /// When each transcript item was first drawn (`Input::time`), for the fade-in.
+    appear: Vec<f64>,
 }
 
 /// What the user did in the pane this frame.
@@ -79,6 +84,13 @@ pub fn chat_ui(ui: &mut Ui, state: &mut ChatPanelState, view: ChatView<'_>) -> V
             }
         });
 
+    let now = ui.input(|i| i.time);
+    if state.appear.len() > view.transcript.items.len() {
+        state.appear.clear();
+    }
+    while state.appear.len() < view.transcript.items.len() {
+        state.appear.push(now);
+    }
     egui::ScrollArea::vertical()
         .id_salt("queen_chat_messages")
         .auto_shrink([false, false])
@@ -89,8 +101,15 @@ pub fn chat_ui(ui: &mut Ui, state: &mut ChatPanelState, view: ChatView<'_>) -> V
                 ui.weak("Ask the Queen about the fleet, or press Status report.");
             }
             for (i, item) in view.transcript.items.iter().enumerate() {
-                ui.push_id(i, |ui| item_ui(ui, item, &view, &mut actions));
-                ui.add_space(6.0);
+                let alpha = (((now - state.appear[i]) / FADE_IN_SECS) as f32).clamp(0.0, 1.0);
+                if alpha < 1.0 {
+                    ui.ctx().request_repaint();
+                }
+                ui.push_id(i, |ui| {
+                    ui.multiply_opacity(alpha);
+                    item_ui(ui, item, &view, &mut actions);
+                });
+                ui.add_space(8.0);
             }
             if running && !streaming_text(view.transcript) {
                 ui.horizontal(|ui| {
@@ -235,10 +254,14 @@ fn input_box(
         response.request_focus();
         state.focus_input = false;
     }
+    crate::ui::widgets::focus_ring(ui, &response);
     let clicked = ui
         .horizontal(|ui| {
             let send = ui
-                .add_enabled(can_send, egui::Button::new("Send"))
+                .add_enabled(
+                    can_send,
+                    crate::ui::widgets::primary_button(ui, can_send, "Send"),
+                )
                 .clicked();
             if !ready {
                 ui.weak("waiting for the session…");
@@ -300,8 +323,8 @@ fn say_line(ui: &mut Ui, say: &str) {
     let has_icon = can_draw(ui, SAY_MARKER);
     let frame = egui::Frame::new()
         .fill(accent.gamma_multiply(0.18))
-        .corner_radius(6.0)
-        .inner_margin(egui::Margin::symmetric(8, 5))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::symmetric(10, 6))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 if has_icon {
@@ -348,10 +371,10 @@ fn user_bubble(ui: &mut Ui, text: &str) {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
         egui::Frame::new()
             .fill(ui.visuals().selection.bg_fill.gamma_multiply(0.35))
-            .corner_radius(8.0)
-            .inner_margin(egui::Margin::symmetric(10, 6))
+            .corner_radius(10.0)
+            .inner_margin(egui::Margin::symmetric(12, 7))
             .show(ui, |ui| {
-                ui.set_max_width(ui.available_width() * 0.85);
+                ui.set_max_width(ui.available_width() * 0.8);
                 ui.add(egui::Label::new(text).wrap());
             });
     });
@@ -485,14 +508,29 @@ fn pretty_text(text: &str) -> String {
 }
 
 fn code_block(ui: &mut Ui, text: &str) {
-    egui::Frame::new()
+    let frame = egui::Frame::new()
         .fill(ui.visuals().extreme_bg_color)
-        .corner_radius(4.0)
-        .inner_margin(egui::Margin::same(6))
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.add(egui::Label::new(RichText::new(text).monospace().small()).wrap());
         });
+    // Hover reveals a copy button in the corner (contains_pointer, so it survives its own hover).
+    if frame.response.contains_pointer() {
+        let rect = frame.response.rect;
+        let button = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 54.0, rect.top() + 4.0),
+            egui::vec2(48.0, 20.0),
+        );
+        if ui
+            .put(button, egui::Button::new(RichText::new("Copy").small()))
+            .on_hover_text("Copy this block")
+            .clicked()
+        {
+            ui.ctx().copy_text(text.to_owned());
+        }
+    }
 }
 
 // ---- markdown ----
@@ -919,6 +957,7 @@ mod tests {
         let mut state = ChatPanelState {
             draft: "status?".into(),
             focus_input: true,
+            ..ChatPanelState::default()
         };
         let frame = |state: &mut ChatPanelState, events: Vec<egui::Event>| {
             let input = egui::RawInput {

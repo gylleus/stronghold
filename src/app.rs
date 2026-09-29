@@ -126,6 +126,7 @@ const MAX_ALERTS: usize = 10;
 
 impl MyrstackApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        ui::theme::install(&cc.egui_ctx);
         let hotkey = Hotkey::register(&cc.egui_ctx)
             .inspect_err(|err| log::warn!("global hotkey unavailable: {err:#}"))
             .ok();
@@ -637,9 +638,9 @@ impl MyrstackApp {
             }
             ui.separator();
             if let Some(data) = &self.data {
-                ui.label(format!("{} terminals", data.terminals.len()));
+                ui.weak(format!("{} terminals", data.terminals.len()));
                 ui.separator();
-                ui.label(format!(
+                ui.weak(format!(
                     "updated {} ago",
                     ui::table::format_age(now_ms - data.polled_at_ms)
                 ));
@@ -1002,7 +1003,12 @@ impl eframe::App for MyrstackApp {
         self.dictation_frame(ui.ctx());
         self.search_palette(ui.ctx());
         self.keyboard(ui.ctx());
-        egui::Panel::top("top_bar").show(ui, |ui| self.top_bar(ui, now_ms));
+        egui::Panel::top("top_bar")
+            .frame(
+                egui::Frame::side_top_panel(ui.style())
+                    .inner_margin(egui::Margin::symmetric(10, 6)),
+            )
+            .show(ui, |ui| self.top_bar(ui, now_ms));
         self.hidden_selection_notice(ui);
         let mut whip_pick = None;
         if self.view == View::Graph
@@ -1047,7 +1053,12 @@ impl eframe::App for MyrstackApp {
             self.select_and_focus(id);
         }
         if self.view == View::Graph {
-            egui::Panel::bottom("legend").show(ui, ui::graph::legend);
+            egui::Panel::bottom("legend")
+                .frame(
+                    egui::Frame::side_top_panel(ui.style())
+                        .inner_margin(egui::Margin::symmetric(10, 6)),
+                )
+                .show(ui, ui::graph::legend);
         }
         self.terminal_panel(ui, now_ms);
         egui::CentralPanel::default().show(ui, |ui| match &self.data {

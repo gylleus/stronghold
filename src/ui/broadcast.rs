@@ -193,12 +193,13 @@ impl BroadcastComposer {
 
         ui.separator();
         ui.label("Message (sent as a `status` to each coordinator's Run mailbox):");
-        ui.add(
+        let response = ui.add(
             egui::TextEdit::multiline(&mut self.text)
                 .desired_rows(4)
                 .desired_width(f32::INFINITY)
                 .hint_text("Sent as \"Queen: …\" — agents treat it as Karl's instruction"),
         );
+        crate::ui::widgets::focus_ring(ui, &response);
 
         let selection = self.selection(&choices);
         // Plan with placeholder text so the count shows before anything is typed.
@@ -223,7 +224,10 @@ impl BroadcastComposer {
         });
         let can_send = n > 0 && !self.text.trim().is_empty();
         if ui
-            .add_enabled(can_send, egui::Button::new("Send…"))
+            .add_enabled(
+                can_send,
+                crate::ui::widgets::primary_button(ui, can_send, "Send…"),
+            )
             .clicked()
         {
             self.stage = Stage::Confirm(plan_broadcast(snapshot, &selection, &self.text));
