@@ -268,9 +268,8 @@ impl MyrstackApp {
                 .control_node(&agent)
                 .map(|node| node.id.clone())
                 .map(|id| {
-                    self.view = View::Graph;
                     let hidden = self.graph.hidden().contains(&id);
-                    self.select_and_focus(id.clone());
+                    self.focus_in_graph(id.clone());
                     if raise {
                         for cmd in [
                             egui::ViewportCommand::Minimized(false),

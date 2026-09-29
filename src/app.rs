@@ -430,6 +430,12 @@ impl MyrstackApp {
         self.selected = Some(id);
     }
 
+    /// Switches to the graph and selects and focuses `id` there, as `focus_agent` does.
+    fn focus_in_graph(&mut self, id: NodeId) {
+        self.view = View::Graph;
+        self.select_and_focus(id);
+    }
+
     fn clear_filters(&mut self) {
         self.filter = FleetFilter::default();
         if let Some(snapshot) = &self.snapshot {
@@ -452,10 +458,10 @@ impl MyrstackApp {
             &cx,
         );
         match outcome {
-            Some(ui::search::SearchOutcome::Select(id)) => self.select_and_focus(id),
+            Some(ui::search::SearchOutcome::Select(id)) => self.focus_in_graph(id),
             Some(ui::search::SearchOutcome::ClearFiltersAndSelect(id)) => {
                 self.clear_filters();
-                self.select_and_focus(id);
+                self.focus_in_graph(id);
             }
             Some(ui::search::SearchOutcome::Run(action)) => self.run_palette_action(ctx, action),
             None => {}
@@ -968,6 +974,7 @@ impl eframe::App for MyrstackApp {
             }
             self.snapshot = Some(snapshot);
             self.sidebar_cache.snapshot_changed();
+            self.search.snapshot_changed();
             self.whip_log.snapshot_changed();
             self.feed_whip();
             self.notify_needs_input();
