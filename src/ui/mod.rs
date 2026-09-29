@@ -25,5 +25,7 @@ pub mod term_style;
 pub mod terminal;
 #[cfg(test)]
 pub(crate) mod test_util;
+pub mod theme;
 pub mod whip_log;
 pub mod whip_now;
+pub mod widgets;

@@ -384,7 +384,7 @@ pub fn legend(ui: &mut Ui) {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(text_height), Sense::hover());
                 paint_swatch(ui.painter(), rect, state, dark);
-                ui.label(state_label(state));
+                ui.label(egui::RichText::new(state_label(state)).small().weak());
             });
             ui.add_space(6.0);
         }
@@ -401,7 +401,11 @@ pub fn legend(ui: &mut Ui) {
             ));
             ui.painter()
                 .add(crown_shape(rect.center(), radius, glyph_color(fill)));
-            ui.label("queen (fleet hub; its badge shows the most urgent state)");
+            ui.label(
+                egui::RichText::new("queen (fleet hub; its badge shows the most urgent state)")
+                    .small()
+                    .weak(),
+            );
         });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -414,7 +418,11 @@ pub fn legend(ui: &mut Ui) {
                 fill,
                 stroke,
             ));
-            ui.label("attendant (forwards a run's events to its coordinator)");
+            ui.label(
+                egui::RichText::new("attendant (forwards a run's events to its coordinator)")
+                    .small()
+                    .weak(),
+            );
         });
     });
 }

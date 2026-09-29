@@ -39,7 +39,10 @@ fn main() -> eframe::Result {
             viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]),
             ..Default::default()
         },
-        Box::new(move |_| Ok(Box::new(Demo::new(runs, workers, tick)))),
+        Box::new(move |cc| {
+            myrstack::ui::theme::install(&cc.egui_ctx);
+            Ok(Box::new(Demo::new(runs, workers, tick)))
+        }),
     )
 }
 

@@ -649,7 +649,7 @@ fn filters_section(
     ui.checkbox(&mut filter.show_released, "Recently released");
 
     ui.add_space(4.0);
-    ui.label(RichText::new("Repo").strong());
+    crate::ui::widgets::section_label(ui, "Repo");
     let derived = cache.derived(snapshot);
     let repos = &derived.repos;
     let mut universe: Vec<String> = repos.keys().cloned().collect();
@@ -670,7 +670,7 @@ fn filters_section(
     }
 
     ui.add_space(4.0);
-    ui.label(RichText::new("State").strong())
+    crate::ui::widgets::section_label(ui, "State")
         .on_hover_text("Pick states to show only those; none picked shows all");
     let states = &derived.states;
     ui.horizontal_wrapped(|ui| {
@@ -688,7 +688,7 @@ fn filters_section(
     });
 
     ui.add_space(4.0);
-    ui.label(RichText::new("Kind").strong())
+    crate::ui::widgets::section_label(ui, "Kind")
         .on_hover_text("Pick kinds to show only those; none picked shows all");
     let kinds = &derived.kinds;
     ui.horizontal_wrapped(|ui| {

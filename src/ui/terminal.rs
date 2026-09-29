@@ -412,20 +412,25 @@ fn input_area(
     let mut send_text = enter_pressed && can_send;
 
     ui.add_enabled_ui(enabled, |ui| {
-        ui.add(
-            egui::TextEdit::multiline(state.draft_mut(handle))
-                .id(edit_id)
-                .hint_text("Type a reply…  Enter sends, Shift+Enter adds a line")
-                .font(egui::TextStyle::Monospace)
-                .desired_rows(2)
-                .desired_width(f32::INFINITY),
-        )
-        .on_disabled_hover_text(disabled_text);
+        let response = ui
+            .add(
+                egui::TextEdit::multiline(state.draft_mut(handle))
+                    .id(edit_id)
+                    .hint_text("Type a reply…  Enter sends, Shift+Enter adds a line")
+                    .font(egui::TextStyle::Monospace)
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY),
+            )
+            .on_disabled_hover_text(disabled_text);
+        crate::ui::widgets::focus_ring(ui, &response);
     });
 
     ui.horizontal_wrapped(|ui| {
         let send = ui
-            .add_enabled(can_send, egui::Button::new("Send"))
+            .add_enabled(
+                can_send,
+                crate::ui::widgets::primary_button(ui, can_send, "Send"),
+            )
             .on_hover_text("Send the text followed by Enter")
             .on_disabled_hover_text(if enabled {
                 "Type something first."
@@ -564,7 +569,9 @@ fn header(
 
             ui.weak("state");
             let color = state_color(node.state, ui.visuals().dark_mode);
-            ui.colored_label(color, state_label(node.state));
+            ui.horizontal(|ui| {
+                crate::ui::widgets::state_pill(ui, color, state_label(node.state));
+            });
             ui.end_row();
 
             if let Some(agent) = &node.agent {

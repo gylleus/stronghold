@@ -429,7 +429,10 @@ impl SpawnDialog {
         ui.horizontal(|ui| {
             let ready = plan.is_ok() && !running;
             let button = ui
-                .add_enabled(ready, egui::Button::new("Launch"))
+                .add_enabled(
+                    ready,
+                    crate::ui::widgets::primary_button(ui, ready, "Launch"),
+                )
                 .on_hover_text("⌘↩ in the prompt also launches");
             launch |= button.clicked();
             launch &= ready;
@@ -688,13 +691,14 @@ fn prompt_field(ui: &mut egui::Ui, prompt: &mut String) -> bool {
     let focused = ui.memory(|m| m.has_focus(id));
     let submit =
         focused && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter));
-    ui.add(
+    let response = ui.add(
         egui::TextEdit::multiline(prompt)
             .id(id)
             .desired_rows(6)
             .desired_width(f32::INFINITY)
             .hint_text("What should the agent do? (⌘↩ to launch)"),
     );
+    crate::ui::widgets::focus_ring(ui, &response);
     submit
 }
 
