@@ -59,6 +59,8 @@ pub struct MyrstackApp {
     graph: GraphView,
     /// Node selected in the graph, shared by all views and side panels.
     selected: Option<NodeId>,
+    /// The nodes selected so far, for back/forward.
+    history: ui::history::SelectionHistory,
     view: View,
     /// The dock's pane arrangement: sidebar, graph or table, details and conversation.
     panes: ui::dock::PaneLayout,
@@ -177,6 +179,7 @@ impl MyrstackApp {
             snapshot: None,
             graph: GraphView::new(),
             selected: None,
+            history: ui::history::SelectionHistory::default(),
             view: View::default(),
             panes: ui::dock::PaneLayout::default(),
             bring_forward: None,
@@ -552,6 +555,14 @@ impl MyrstackApp {
             self.open_settings();
             return;
         }
+        if command == KeyCommand::HistoryBack {
+            self.history_step(ui::history::HistoryStep::Back);
+            return;
+        }
+        if command == KeyCommand::HistoryForward {
+            self.history_step(ui::history::HistoryStep::Forward);
+            return;
+        }
         let Some(snapshot) = &self.snapshot else {
             return;
         };
@@ -638,7 +649,10 @@ impl MyrstackApp {
                 self.help_open = !self.help_open;
                 None
             }
-            KeyCommand::ToggleChat | KeyCommand::OpenSettings => None,
+            KeyCommand::ToggleChat
+            | KeyCommand::OpenSettings
+            | KeyCommand::HistoryBack
+            | KeyCommand::HistoryForward => None,
             KeyCommand::CloseSession => {
                 let ids = ui::selection::close_targets(current, &self.graph.selection());
                 if !ids.is_empty() {
@@ -727,6 +741,10 @@ impl MyrstackApp {
     fn top_bar_controls(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         ui::widgets::app_title(ui);
         ui.separator();
+        let can_back = self.history.can_back(self.selected.as_ref());
+        if let Some(step) = ui::history::history_buttons(ui, can_back, self.history.can_forward()) {
+            self.history_step(step);
+        }
         ui.selectable_value(&mut self.view, View::Graph, "Graph");
         ui.selectable_value(&mut self.view, View::Table, "Table");
         if self.view == View::Graph && ui.button("Fit").clicked() {
@@ -780,6 +798,34 @@ impl MyrstackApp {
             )
             .on_hover_text(data.errors.join("\n"));
         }
+    }
+}
+
+/// Selection history: back and forward over the nodes selected so far.
+///
+/// Every change of the selected node is recorded once per frame, whoever made it (a click,
+/// the keyboard, the palette, a notification, the Queen's `focus_agent`, a spawned session
+/// being selected), so back always returns to what was on screen before the jump.
+impl MyrstackApp {
+    /// Records the selected node if it changed since the last frame.
+    fn record_selection(&mut self) {
+        self.history.record(self.selected.as_ref());
+    }
+
+    /// Selects the previous or next node in the history and centers the graph on it.
+    fn history_step(&mut self, step: ui::history::HistoryStep) {
+        let target = match step {
+            ui::history::HistoryStep::Back => self.history.back(self.selected.as_ref()),
+            ui::history::HistoryStep::Forward => self.history.forward(),
+        };
+        let Some(id) = target else {
+            return;
+        };
+        self.graph.set_selected(Some(&id));
+        if self.graph.is_visible(&id) {
+            self.graph.center_on(&id);
+        }
+        self.selected = Some(id);
     }
 }
 
@@ -1064,6 +1110,7 @@ impl eframe::App for MyrstackApp {
             {
                 self.selected = None;
             }
+            self.history.prune(|id| snapshot.node(id).is_some());
             self.snapshot = Some(snapshot);
             self.sidebar_cache.snapshot_changed();
             self.search.snapshot_changed();
@@ -1115,6 +1162,7 @@ impl eframe::App for MyrstackApp {
         }
         self.whip_now_dialogs(ui.ctx(), now_ms);
         self.spawn_dialog(ui.ctx());
+        self.record_selection();
         self.sync_screen_watch();
     }
 }

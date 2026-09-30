@@ -36,7 +36,6 @@ fn run_stdio() -> Result<()> {
     let path = crate::control::socket_path();
     log::info!("myrstack mcp: proxying to {}", path.display());
     let mut server = McpServer::new(SocketControl::new(path));
-    let stdin = io::stdin();
-    server.serve(stdin.lock(), io::stdout().lock())?;
+    server.serve(io::BufReader::new(io::stdin()), io::stdout().lock())?;
     Ok(())
 }

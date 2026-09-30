@@ -290,8 +290,8 @@ pub fn watch_handle(node: &Node) -> Option<&str> {
     node.terminal_handle.as_deref()
 }
 
-/// The details column for `node`: its label, actions (Open in Orca, Whip, Close…) and
-/// attributes.
+/// The details column for `node`: its label, Close… and attributes. Open in Orca and Whip
+/// sit in the conversation header instead, where they are used.
 pub fn details_panel(
     ui: &mut egui::Ui,
     node: &Node,
@@ -317,44 +317,14 @@ pub fn details_panel(
             });
         });
     });
-    ui.horizontal_wrapped(|ui| {
-        let open = ui
-            .add_enabled(
-                handle.is_some(),
-                crate::ui::widgets::orca_button(ui, handle.is_some()),
-            )
-            .on_hover_text(format!(
-                "Show this terminal's tab in Orca ({})",
-                ui.ctx().format_shortcut(&OPEN_SHORTCUT)
-            ))
-            .on_disabled_hover_text("No live terminal.");
-        if open.clicked()
-            && let Some(handle) = handle
-        {
-            response.requests.push(ActionRequest::open(handle));
-        }
-        let whippable = handle.is_some()
-            && matches!(
-                node.kind,
-                NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal
-            );
-        if ui
-            .add_enabled(whippable, egui::Button::new("Whip"))
-            .on_hover_text("Send this agent a Myrstack nudge now — w")
-            .on_disabled_hover_text("No live terminal to nudge.")
+    if node.kind != NodeKind::Subagent
+        && ui
+            .button(egui::RichText::new("Close…").color(ui.visuals().error_fg_color))
+            .on_hover_text("Kill this session in Orca (asks first) — x")
             .clicked()
-        {
-            response.whip = true;
-        }
-        if node.kind != NodeKind::Subagent
-            && ui
-                .button(egui::RichText::new("Close…").color(ui.visuals().error_fg_color))
-                .on_hover_text("Kill this session in Orca (asks first) — x")
-                .clicked()
-        {
-            response.close_session = true;
-        }
-    });
+    {
+        response.close_session = true;
+    }
     ui.add_space(4.0);
     header(ui, node, screen, handle.is_some(), usage, now_ms);
     response
@@ -363,6 +333,9 @@ pub fn details_panel(
 /// ⌘O: show the selected terminal's tab in Orca.
 const OPEN_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
+
+/// Below this width the conversation's Open in Orca and Whip sit under its title.
+const ACTIONS_INLINE_MIN_WIDTH: f32 = 420.0;
 
 /// Text of the switch to the agent's conversation.
 pub const CHAT_TAB: &str = "Chat";
@@ -397,6 +370,8 @@ pub fn terminal_panel(
         is_node,
     } = input;
     let has_chat = conversation.is_some();
+    // A narrow pane gives the actions their own row, so the title keeps its room.
+    let actions_below = ui.available_width() < ACTIONS_INLINE_MIN_WIDTH;
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
@@ -423,6 +398,9 @@ pub fn terminal_panel(
                     state.show_screen = false;
                 }
             }
+            if !actions_below {
+                agent_actions(ui, node, handle, &mut response);
+            }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 let color = state_color(node.state, ui.visuals().dark_mode);
                 crate::ui::widgets::state_pill(ui, color, state_label(node.state));
@@ -430,6 +408,13 @@ pub fn terminal_panel(
             });
         });
     });
+    if actions_below {
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                agent_actions(ui, node, handle, &mut response);
+            });
+        });
+    }
     ui.separator();
 
     let agent = AgentKind::from_identity(node.agent.as_ref());
@@ -488,6 +473,48 @@ pub fn terminal_panel(
         is_node,
     );
     response
+}
+
+/// Open in Orca and Whip for `node`, in a right-to-left header (Whip is added first so it ends
+/// up right of Open in Orca). Neither is shown for the Queen or a subagent: they have no
+/// terminal of their own.
+fn agent_actions(
+    ui: &mut egui::Ui,
+    node: &Node,
+    handle: Option<&str>,
+    response: &mut TerminalPanelResponse,
+) {
+    if matches!(node.kind, NodeKind::Queen | NodeKind::Subagent) {
+        return;
+    }
+    let whippable = handle.is_some()
+        && matches!(
+            node.kind,
+            NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal
+        );
+    if ui
+        .add_enabled(whippable, egui::Button::new("Whip"))
+        .on_hover_text("Send this agent a Myrstack nudge now — w")
+        .on_disabled_hover_text("No live terminal to nudge.")
+        .clicked()
+    {
+        response.whip = true;
+    }
+    let open = ui
+        .add_enabled(
+            handle.is_some(),
+            crate::ui::widgets::orca_button(ui, handle.is_some()),
+        )
+        .on_hover_text(format!(
+            "Show this terminal's tab in Orca ({})",
+            ui.ctx().format_shortcut(&OPEN_SHORTCUT)
+        ))
+        .on_disabled_hover_text("No live terminal.");
+    if open.clicked()
+        && let Some(handle) = handle
+    {
+        response.requests.push(ActionRequest::open(handle));
+    }
 }
 
 /// Widget id of `handle`'s input box, so other code can focus it.
@@ -855,20 +882,57 @@ mod tests {
         }
     }
 
-    fn click_in_panel(node: &Node, label: &str) -> TerminalPanelResponse {
-        crate::ui::test_util::click_label(label, |ui| details_panel(ui, node, None, None, 0))
+    /// Clicks `label` in `node`'s conversation.
+    fn click_in_chat(node: &Node, label: &str) -> TerminalPanelResponse {
+        let mut state = InputPanelState::default();
+        crate::ui::test_util::click_label(label, |ui| {
+            let input = PanelInput {
+                state: &mut state,
+                terminal: None,
+                conversation: None,
+                is_node: &|_| false,
+            };
+            terminal_panel(ui, node, None, input, 0)
+        })
     }
 
     #[test]
     fn whip_button_asks_to_whip_a_live_agent() {
         for kind in [NodeKind::Worker, NodeKind::Coordinator, NodeKind::Terminal] {
-            let response = click_in_panel(&node(kind, true, Some("t1")), "Whip");
+            let response = click_in_chat(&node(kind, true, Some("t1")), "Whip");
             assert!(response.whip, "{kind:?}");
             assert!(response.requests.is_empty());
         }
         // Disabled without a live terminal: the click does nothing.
-        let response = click_in_panel(&node(NodeKind::Worker, false, Some("t1")), "Whip");
+        let response = click_in_chat(&node(NodeKind::Worker, false, Some("t1")), "Whip");
         assert!(!response.whip);
+    }
+
+    #[test]
+    fn open_in_orca_button_asks_to_switch_to_the_terminal() {
+        let response = click_in_chat(&node(NodeKind::Worker, true, Some("t1")), "Open in Orca");
+        assert_eq!(response.requests, vec![ActionRequest::open("t1")]);
+        assert!(!response.whip);
+        // Disabled without a live terminal.
+        let response = click_in_chat(&node(NodeKind::Worker, false, Some("t1")), "Open in Orca");
+        assert!(response.requests.is_empty());
+    }
+
+    #[test]
+    fn narrow_conversation_keeps_the_actions_on_their_own_row() {
+        let node = node(NodeKind::Worker, true, Some("t1"));
+        let mut state = InputPanelState::default();
+        let response = crate::ui::test_util::click_label("Open in Orca", |ui| {
+            ui.set_max_width(ACTIONS_INLINE_MIN_WIDTH - 1.0);
+            let input = PanelInput {
+                state: &mut state,
+                terminal: None,
+                conversation: None,
+                is_node: &|_| false,
+            };
+            terminal_panel(ui, &node, None, input, 0)
+        });
+        assert_eq!(response.requests, vec![ActionRequest::open("t1")]);
     }
 
     /// Shapes of one headless frame of `draw`.
@@ -1039,36 +1103,57 @@ mod tests {
         );
     }
 
-    #[test]
-    fn attributes_are_in_the_details_not_the_conversation() {
-        use crate::ui::test_util::text_center;
-        let node = node(NodeKind::Worker, true, Some("t1"));
-        let details = frame(|ui| {
-            details_panel(ui, &node, None, None, 0);
-        });
-        for label in ["kind", "terminal", "Whip", "Open in Orca"] {
-            assert!(text_center(&details, label).is_some(), "{label} in details");
-        }
+    fn chat_frame(node: &Node) -> egui::FullOutput {
         let mut state = InputPanelState::default();
-        let conversation = frame(|ui| {
+        frame(|ui| {
             let input = PanelInput {
                 state: &mut state,
                 terminal: None,
                 conversation: None,
                 is_node: &|_| false,
             };
-            terminal_panel(ui, &node, None, input, 0);
+            terminal_panel(ui, node, None, input, 0);
+        })
+    }
+
+    #[test]
+    fn agent_actions_are_in_the_conversation_attributes_in_the_details() {
+        use crate::ui::test_util::text_center;
+        let node = node(NodeKind::Worker, true, Some("t1"));
+        let details = frame(|ui| {
+            details_panel(ui, &node, None, None, 0);
         });
-        for label in ["kind", "terminal", "Whip", "Open in Orca"] {
+        for label in ["kind", "terminal", "Close…"] {
+            assert!(text_center(&details, label).is_some(), "{label} in details");
+        }
+        for label in ["Whip", "Open in Orca"] {
+            assert!(
+                text_center(&details, label).is_none(),
+                "{label} not in details"
+            );
+        }
+        let conversation = chat_frame(&node);
+        for label in ["Whip", "Open in Orca", "×"] {
+            assert!(
+                text_center(&conversation, label).is_some(),
+                "{label} in chat"
+            );
+        }
+        for label in ["kind", "terminal"] {
             assert!(
                 text_center(&conversation, label).is_none(),
                 "{label} not in chat"
             );
         }
-        assert!(
-            text_center(&conversation, "×").is_some(),
-            "the conversation has its own close"
-        );
+    }
+
+    #[test]
+    fn no_agent_actions_for_subagents() {
+        use crate::ui::test_util::text_center;
+        let conversation = chat_frame(&node(NodeKind::Subagent, true, Some("t1")));
+        for label in ["Whip", "Open in Orca"] {
+            assert!(text_center(&conversation, label).is_none(), "{label}");
+        }
     }
 
     #[test]

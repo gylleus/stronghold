@@ -11,7 +11,7 @@ use crate::poller::PollerCommand;
 use crate::spawn::exec::{Job, JobId, OrcaBackend};
 use crate::spawn::pending::{PendingSelect, take_ready};
 use crate::spawn::resolve::outcome_json;
-use crate::spawn::{SpawnArgs, SpawnEvent, SpawnRunner};
+use crate::spawn::{LiveAgent, SpawnArgs, SpawnEvent, SpawnRunner};
 use crate::ui::spawn::{SpawnDialog, SpawnFleet};
 
 /// The spawn runner, the dialog, API spawns waiting for their reply, and the node to select.
@@ -44,7 +44,7 @@ impl MyrstackApp {
         if !self.spawn.dialog.open {
             return;
         }
-        let fleet = SpawnFleet::from_data(self.data.as_ref());
+        let fleet = SpawnFleet::from_data(self.data.as_ref()).with_agents(self.snapshot.as_ref());
         if let Some(plan) = self.spawn.dialog.show(ctx, &fleet) {
             log::info!("spawn: launching {:?}", plan.steps);
             let job = self.spawn.runner.submit(Job::Plan(plan.clone()));
@@ -127,6 +127,11 @@ impl MyrstackApp {
             args,
             runs: data.runs.clone(),
             terminals: data.terminals.clone(),
+            agents: self
+                .snapshot
+                .as_ref()
+                .map(LiveAgent::from_snapshot)
+                .unwrap_or_default(),
         };
         let id = self.spawn.runner.submit(job);
         self.spawn.replies.insert(id, reply);

@@ -35,9 +35,13 @@ in a new worktree. A larger feature or multi-part work: a coordinator session wh
 it to load its rules with the myrstack get_playbook tool (role coordinator) and run the work as a \
 campaign with workers.
   4. Write the prompt like a kickoff: the goal, what you found (files, errors, links), \
-constraints, and the definition of done (open a PR, then call mark_pr_ready). Say it comes from \
-Karl via the Queen. Keep your own code reading to what the prompt needs.
+constraints, and the definition of done (open a PR, then call mark_pr_ready; unless the repo's \
+AGENTS.md says otherwise, e.g. Myrstack agents merge into main locally and exit). Say it comes \
+from Karl via the Queen. Keep your own code reading to what the prompt needs.
   5. Tell Karl in one line what you started, with its node id, and report progress when he asks.
+- After an interrupted or rejected spawn_session, run list_agents for that repo first. If the \
+session started, send the changes with send_to_agent; don't spawn again. Close leftover empty \
+terminals once work is done.
 - Use the myrstack MCP tools (fleet_status, list_agents, get_agent, whip_status, alerts, quotas, …) \
 for facts about the fleet rather than guessing or reading files. Refer to agents by label and give \
 their node id (e.g. `term:term_…`) so Karl can click it.
@@ -278,6 +282,9 @@ mod tests {
         assert!(SYSTEM_PROMPT.contains("never do the engineering yourself"));
         assert!(SYSTEM_PROMPT.contains("spawn_session"));
         assert!(SYSTEM_PROMPT.contains("`Queen:`"));
+        assert!(SYSTEM_PROMPT.contains(
+            "After an interrupted or rejected spawn_session, run list_agents for that repo first."
+        ));
     }
 
     #[test]
