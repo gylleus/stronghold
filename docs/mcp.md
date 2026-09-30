@@ -60,7 +60,7 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `set_view` | `view`: `graph` \| `table` | `view` | idempotent |
 | `fit_graph` | – | `fit` | idempotent |
 | `open_whip_settings` | – | `open_whip_settings` | idempotent |
-| `alerts` | `limit` (default 20) | `alerts` | read-only |
+| `alerts` | `limit` (default 20), `unread_only` | `alerts` | read-only |
 | `quotas` | – | `quotas` | read-only |
 | `get_playbook` | `role` (default `coordinator`) or `file`, `section` | – (reads the playbook) | read-only |
 | `list_playbook` | – | – (reads the playbook) | read-only |
@@ -68,6 +68,7 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `kickoff` | `task_id` | `fleet_data` (headless fallback) | read-only |
 | `mark_pr_ready` | `pr_url`, `title`, `summary` | `pr_ready` (queued in `pr-ready.jsonl` when the app is down) | not destructive, idempotent |
 | `review_queue` | – | `review_queue` (the saved queue when the app is down) | read-only |
+| `notify` | `title`, `message`, `severity` (`info` \| `warn` \| `urgent`), `url`, `agent` | `notify` | not destructive |
 
 `mark_pr_ready` is for fleet agents: the server is registered at user scope, so every Claude
 session (fleet agents in Orca terminals included) has it. It sends the caller's Orca identity
@@ -75,6 +76,15 @@ session (fleet agents in Orca terminals included) has it. It sends the caller's 
 environment, which it inherits from the agent's terminal) so the PR shows under the agent's
 node. Agents without MCP (Codex) run `myrstack pr-ready <url> [--title …] [--summary …]`,
 which does the same. See the control API's [Review queue](control-api.md#review-queue).
+
+`notify` is how any agent reaches Karl without going through the Queen: a macOS and/or
+in-app pop-up with a sound (per his Notifications settings), kept in his inbox (the bell in
+the top bar, `alerts`, `fleet_status`) and attributed to the caller's terminal like
+`mark_pr_ready`. Agents should call it when they are blocked on Karl, need a decision from him,
+or finished something important he is waiting for; not for progress updates. Identical
+repeats collapse, each agent gets at most 5 per 10 minutes, and quiet mode lets only `urgent`
+through. It needs the app running. See the control API's
+[Notifications](control-api.md#notifications).
 
 All tools set `openWorldHint: false`. Agent ids are node ids from `list_agents` or
 `fleet_status` (`term:…`, `dispatch:…`, `sub:…`). A terminal handle or an exact label also

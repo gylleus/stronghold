@@ -14,7 +14,7 @@ use crate::claude::usage::TokenCounts;
 use crate::detect::PromptKind;
 use crate::fleet::FleetData;
 use crate::model::{EdgeKind, FleetSnapshot, Node, NodeKind, NodeState, TaskCounts, fleet_state};
-use crate::notify::{self, Delivered};
+use crate::notify::{self, history::Entry};
 use crate::playbook::fetches::PlaybookView;
 use crate::playbook::fill::FleetFacts;
 use crate::quota::{self, Quotas, Severity};
@@ -39,6 +39,7 @@ pub struct StatusView {
     pub agents: Vec<AgentView>,
     pub whip: WhipView,
     pub quotas: QuotasView,
+    /// The notification inbox, newest first.
     pub alerts: Vec<AlertView>,
     pub dashboard: DashboardView,
     /// Current playbook version and who fetched which; set by the app after [`StatusView::build`].
@@ -296,12 +297,56 @@ pub struct WindowView {
     pub severity: String,
 }
 
+/// One notification in the inbox.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AlertView {
+    #[serde(default)]
+    pub id: u64,
+    /// When it last arrived.
     pub at_ms: i64,
+    /// `info`, `warn` or `urgent`.
+    #[serde(default)]
+    pub severity: String,
+    /// `agent`, `needs_input`, `escalation`, `review` or `test`.
+    #[serde(default)]
+    pub source: String,
     pub title: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    /// The agent's name when it was raised.
+    #[serde(default)]
+    pub agent: Option<String>,
     /// Node the alert is about, if still in the fleet.
     pub node: Option<String>,
+    /// Identical notifications collapsed into this one.
+    #[serde(default)]
+    pub count: u32,
+    #[serde(default)]
+    pub read: bool,
+}
+
+impl AlertView {
+    pub fn build(entry: &Entry, snapshot: &FleetSnapshot) -> Self {
+        Self {
+            id: entry.id,
+            at_ms: entry.at_ms,
+            severity: entry.severity.name().into(),
+            source: entry.source.name().into(),
+            title: entry.title.clone(),
+            message: entry.message.clone(),
+            url: entry.url.clone(),
+            agent: entry.agent_label.clone(),
+            node: entry
+                .target
+                .as_deref()
+                .and_then(|t| notify::resolve_target(snapshot, t))
+                .map(|id| id.0),
+            count: entry.count,
+            read: entry.read,
+        }
+    }
 }
 
 /// What the dashboard currently shows.
@@ -424,7 +469,8 @@ pub struct ViewInputs<'a> {
     /// Whip log, oldest first.
     pub whip_log: Vec<&'a WhipLogItem>,
     pub quotas: &'a Quotas,
-    pub alerts: &'a [Delivered],
+    /// The notification inbox, oldest first.
+    pub alerts: &'a [Entry],
     pub view: View,
     pub selected: Option<&'a str>,
     pub selection: Vec<&'a str>,
@@ -454,15 +500,7 @@ impl StatusView {
                 .alerts
                 .iter()
                 .rev()
-                .map(|a| AlertView {
-                    at_ms: a.at_ms,
-                    title: a.title.clone(),
-                    node: a
-                        .targets
-                        .iter()
-                        .find_map(|t| notify::resolve_target(snapshot, t))
-                        .map(|id| id.0),
-                })
+                .map(|a| AlertView::build(a, snapshot))
                 .collect(),
             dashboard: DashboardView {
                 view: view_name(inputs.view).into(),

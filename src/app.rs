@@ -8,6 +8,7 @@ use eframe::egui;
 mod chat;
 mod control;
 mod dictation;
+mod notifications;
 mod palette;
 mod panes;
 mod playbook;
@@ -22,7 +23,7 @@ use crate::detect::detect_prompt;
 use crate::fleet::FleetData;
 use crate::hotkey::Hotkey;
 use crate::model::{FleetSnapshot, Node, NodeId, NodeKind, NodeState};
-use crate::notify::{self, Delivered, NeedsInputDetector, Notifier};
+use crate::notify::{NeedsInputDetector, Notifier};
 use crate::orca::OrcaClient;
 use crate::persist::PersistedState;
 use crate::poller::{Poller, PollerCommand, PollerConfig, ScreenUpdate};
@@ -105,11 +106,12 @@ pub struct MyrstackApp {
     sidebar_cache: ui::sidebar::SidebarCache,
     /// The Settings window (Queen, Whip, Voice, General); owns `settings.json`.
     whip_window: ui::settings::SettingsPane,
-    /// Rate-limited macOS notifications, shared with the whip's executors.
+    /// Pops up and sounds notifications; shared with the whip's executors, which raise theirs
+    /// through it.
     notifier: Arc<Notifier>,
     needs_input_detector: NeedsInputDetector,
-    /// Posted notifications, newest last; the top bar lists them so they can select their node.
-    alerts: Vec<Delivered>,
+    /// Every notification's dispatcher, the saved inbox, toasts and node badges.
+    notifications: notifications::AppNotifications,
     /// Debug-logged frames per second and repaint causes.
     frame_stats: ui::frame_stats::FrameStats,
     /// Polls `orca account list` for plan quotas every few minutes.
@@ -134,9 +136,6 @@ pub struct MyrstackApp {
     /// PRs agents marked ready for review, their GitHub state and the poller reading it.
     review: review::AppReview,
 }
-
-/// How many posted notifications the alerts menu keeps.
-const MAX_ALERTS: usize = 10;
 
 impl MyrstackApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -202,7 +201,7 @@ impl MyrstackApp {
             whip_window,
             notifier,
             needs_input_detector: NeedsInputDetector::new(),
-            alerts: Vec::new(),
+            notifications: notifications::AppNotifications::load(),
             search: ui::search::SearchPalette::default(),
             help_open: false,
             frame_stats: ui::frame_stats::FrameStats::default(),
@@ -780,7 +779,7 @@ impl MyrstackApp {
         }
         self.whip_window.gear_button(ui);
         self.whip_window.button(ui);
-        self.alerts_menu(ui);
+        self.inbox_menu(ui, now_ms);
         self.review_badge(ui);
         self.close.log_menu(ui, now_ms);
         if let Some(data) = &self.data
@@ -856,94 +855,6 @@ impl MyrstackApp {
             Some(ui::selection::SelectionAction::Clear) => {
                 self.graph.set_selected(None);
                 self.selected = None;
-            }
-            None => {}
-        }
-    }
-}
-
-/// Notifications: nodes entering NeedsInput, and the in-app list of posted notifications.
-///
-/// Clicking a native notification (running from `Myrstack.app`) selects its node; clicking an
-/// `osascript` one cannot reach Myrstack, so the alerts menu is how it selects its node.
-impl MyrstackApp {
-    /// Selects the node of each clicked notification, as picking its alert would, and brings
-    /// the window forward. Clicks wait for the first snapshot (a click can launch the app).
-    fn open_clicked_notifications(&mut self, ctx: &egui::Context) {
-        let Some(snapshot) = &self.snapshot else {
-            return;
-        };
-        let mut select = None;
-        let mut review = false;
-        for targets in self.notifier.clicked() {
-            self.alerts.retain(|a| a.targets != targets);
-            select = notify::click_target(snapshot, &targets).or(select);
-            review |= self.is_review_alert(&targets);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        }
-        if review && select.is_none() {
-            self.open_review_queue();
-        }
-        if let Some(id) = select {
-            self.select_and_focus(id);
-        }
-    }
-
-    /// Asks for a notification for each node that just entered NeedsInput, unless the whip's
-    /// notifications are off.
-    fn notify_needs_input(&mut self) {
-        let Some(snapshot) = &self.snapshot else {
-            return;
-        };
-        let requests = self.needs_input_detector.update(snapshot);
-        if !self.whip_window.whip().notify {
-            return;
-        }
-        for request in requests {
-            self.notifier.notify(request);
-        }
-    }
-
-    fn take_alerts(&mut self) {
-        self.alerts.extend(self.notifier.delivered());
-        let excess = self.alerts.len().saturating_sub(MAX_ALERTS);
-        self.alerts.drain(..excess);
-    }
-
-    /// `Alerts (n)` menu in the top bar; picking an entry selects its node and forgets it.
-    fn alerts_menu(&mut self, ui: &mut egui::Ui) {
-        if self.alerts.is_empty() {
-            return;
-        }
-        let mut picked = None;
-        ui.menu_button(format!("Alerts ({})", self.alerts.len()), |ui| {
-            for (i, alert) in self.alerts.iter().enumerate().rev() {
-                let title = alert
-                    .title
-                    .strip_prefix("Myrstack: ")
-                    .unwrap_or(&alert.title);
-                if ui.button(title).clicked() {
-                    picked = Some(i);
-                }
-            }
-            ui.separator();
-            if ui.button("Clear").clicked() {
-                picked = Some(usize::MAX);
-            }
-        });
-        match picked {
-            Some(usize::MAX) => self.alerts.clear(),
-            Some(i) => {
-                let alert = self.alerts.remove(i);
-                let target = self
-                    .snapshot
-                    .as_ref()
-                    .and_then(|snapshot| notify::click_target(snapshot, &alert.targets));
-                if let Some(id) = target {
-                    self.select_and_focus(id);
-                } else if self.is_review_alert(&alert.targets) {
-                    self.open_review_queue();
-                }
             }
             None => {}
         }
@@ -1119,8 +1030,7 @@ impl eframe::App for MyrstackApp {
             self.notify_needs_input();
             self.spawn_select_pending();
         }
-        self.take_alerts();
-        self.open_clicked_notifications(ctx);
+        self.poll_notifications(ctx);
         self.poll_chat();
         self.talk_logic(ctx);
         self.poll_control(ctx);
@@ -1148,13 +1058,14 @@ impl eframe::App for MyrstackApp {
         self.dictation_frame(ui.ctx());
         self.search_palette(ui.ctx());
         self.keyboard(ui.ctx());
-        egui::Panel::top("top_bar")
+        let top_bar = egui::Panel::top("top_bar")
             .frame(
                 egui::Frame::side_top_panel(ui.style())
                     .inner_margin(egui::Margin::symmetric(10, 6)),
             )
             .show(ui, |ui| self.top_bar(ui, now_ms));
         self.panes(ui, now_ms);
+        self.notification_toasts(ui.ctx(), top_bar.response.rect.bottom());
         self.close_dialog(ui.ctx());
         self.settings_window(ui.ctx(), now_ms);
         if self.whip_window.take_whip_stalled() {

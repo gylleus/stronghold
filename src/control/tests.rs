@@ -372,11 +372,19 @@ fn whip_quotas_alerts() {
             ..Default::default()
         })
         .collect();
-    view.alerts = vec![view::AlertView {
-        at_ms: 5,
-        title: "Myrstack: needs input".into(),
-        node: None,
-    }];
+    view.alerts = vec![
+        view::AlertView {
+            at_ms: 5,
+            title: "Myrstack: needs input".into(),
+            ..Default::default()
+        },
+        view::AlertView {
+            at_ms: 4,
+            title: "read".into(),
+            read: true,
+            ..Default::default()
+        },
+    ];
     view.quotas.fetched_at_ms = 7;
     h.status.publish(view);
 
@@ -392,6 +400,35 @@ fn whip_quotas_alerts() {
         h.ok("alerts", Value::Null)["alerts"][0]["title"],
         "Myrstack: needs input"
     );
+    let notifications = &h.ok("status", Value::Null)["notifications"];
+    assert_eq!(notifications["total"], 2);
+    assert_eq!(notifications["unread"], 1);
+    assert_eq!(
+        notifications["latest_unread"][0]["title"],
+        "Myrstack: needs input"
+    );
+}
+
+#[test]
+fn notify_parses_into_a_command() {
+    let params = json!({
+        "title": "Blocked",
+        "severity": "urgent",
+        "url": "https://example.com/x",
+        "origin": {"terminal_handle": "term_a"},
+    });
+    let Some(Ok(ControlCommand::Notify(notice))) = ControlCommand::parse("notify", &params) else {
+        panic!("notify parses");
+    };
+    assert_eq!(notice.title, "Blocked");
+    assert_eq!(notice.severity, crate::notify::Severity::Urgent);
+    assert_eq!(notice.origin.terminal_handle.as_deref(), Some("term_a"));
+    assert!(
+        ControlCommand::parse("notify", &json!({"severity": "warn"}))
+            .unwrap()
+            .is_err()
+    );
+    assert!(crate::control::server::ACTION_METHODS.contains(&"notify"));
 }
 
 // ---------------------------------------------------------------------------

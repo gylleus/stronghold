@@ -134,6 +134,8 @@ pub enum ControlCommand {
     Review(crate::review::ReviewCommand),
     /// Start a new agent session (existing worktree, new worktree, or a run's worker).
     Spawn(crate::spawn::SpawnArgs),
+    /// A notification from an agent to Karl, through the app's dispatcher.
+    Notify(crate::notify::agent::AgentNotice),
 }
 
 impl ControlCommand {
@@ -264,6 +266,7 @@ impl ControlCommand {
                 }
             })(),
             "spawn" => crate::spawn::SpawnArgs::parse(params).map(Self::Spawn),
+            "notify" => crate::notify::agent::AgentNotice::from_params(params).map(Self::Notify),
             _ => return None,
         };
         Some(result)
