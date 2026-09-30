@@ -1,7 +1,9 @@
-//! Headless pointer tests: box selection, Shift/Cmd toggling, node drag, right-drag pan and the
-//! right-click menu.
+//! Headless pointer tests: box selection, Shift/Cmd toggling, node drag, right-drag pan, scroll
+//! and arrow-key navigation and the right-click menu.
 
-use eframe::egui::{self, Event, Modifiers, PointerButton, Pos2, Rect, Vec2};
+use eframe::egui::{
+    self, Event, Key, Modifiers, MouseWheelUnit, PointerButton, Pos2, Rect, TouchPhase, Vec2,
+};
 
 use super::*;
 use crate::model::{Edge, EdgeKind, NodeState, RunSummary};
@@ -193,6 +195,49 @@ impl Harness {
         self.button(at, button, true);
         self.button(at, button, false);
         self.frame(vec![]);
+    }
+
+    fn wheel(&mut self, unit: MouseWheelUnit, delta: Vec2, phase: TouchPhase) {
+        let modifiers = self.modifiers;
+        self.frame(vec![Event::MouseWheel {
+            unit,
+            delta,
+            phase,
+            modifiers,
+        }]);
+    }
+
+    /// A two-finger trackpad swipe of `delta`, as macOS reports it: begin, move, end.
+    fn swipe(&mut self, delta: Vec2) {
+        self.wheel(MouseWheelUnit::Point, Vec2::ZERO, TouchPhase::Start);
+        self.wheel(MouseWheelUnit::Point, delta, TouchPhase::Move);
+        self.wheel(MouseWheelUnit::Point, Vec2::ZERO, TouchPhase::End);
+    }
+
+    /// Mouse wheel notches (lines, no phase), then frames until egui's smoothing has run out.
+    fn wheel_notches(&mut self, lines: Vec2) {
+        self.wheel(MouseWheelUnit::Line, lines, TouchPhase::Move);
+        for _ in 0..120 {
+            self.frame(vec![]);
+        }
+    }
+
+    fn key(&mut self, key: Key, pressed: bool) {
+        let modifiers = self.modifiers;
+        self.frame(vec![Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers,
+        }]);
+    }
+
+    /// The canvas point under screen point `p`.
+    fn to_canvas(&self, p: Pos2) -> Pos2 {
+        let meta = self.meta();
+        let top_left = self.view.last_top_left.unwrap_or(Pos2::ZERO);
+        ((p - top_left - meta.pan) / meta.zoom).to_pos2()
     }
 
     fn selection(&self) -> Vec<&str> {
@@ -468,4 +513,218 @@ fn context_menu_on_a_multi_selection_whips_all_of_it() {
     h.click(PointerButton::Secondary, h.node_screen("w2"));
     let last = click_menu_item(&mut h, "Whip 3 selected");
     assert_eq!(last.whip_requested, ids.into_iter().collect::<Vec<_>>());
+}
+
+#[test]
+fn scroll_routing_per_input_kind() {
+    let d = Vec2::new(12.0, -30.0);
+    assert_eq!(
+        route_scroll(ScrollSource::Trackpad, d, false),
+        Some(ScrollAction::Pan(d))
+    );
+    let zoom_in = |action| matches!(action, Some(ScrollAction::Zoom(f)) if f > 1.0);
+    let zoom_out = |action| matches!(action, Some(ScrollAction::Zoom(f)) if f < 1.0);
+    assert!(zoom_in(route_scroll(
+        ScrollSource::Wheel,
+        Vec2::new(0.0, 40.0),
+        false
+    )));
+    assert!(zoom_out(route_scroll(
+        ScrollSource::Wheel,
+        Vec2::new(0.0, -40.0),
+        false
+    )));
+    // A horizontal wheel (or shift+wheel) pans sideways.
+    assert_eq!(
+        route_scroll(ScrollSource::Wheel, Vec2::new(40.0, 0.0), false),
+        Some(ScrollAction::Pan(Vec2::new(40.0, 0.0)))
+    );
+    // Ctrl zooms whatever the device.
+    assert!(zoom_in(route_scroll(
+        ScrollSource::Trackpad,
+        Vec2::new(0.0, 20.0),
+        true
+    )));
+    assert!(zoom_out(route_scroll(ScrollSource::Wheel, d, true)));
+    for source in [ScrollSource::Trackpad, ScrollSource::Wheel] {
+        assert_eq!(route_scroll(source, Vec2::ZERO, false), None);
+    }
+}
+
+#[test]
+fn scroll_source_follows_the_wheel_unit() {
+    let wheel = |unit| Event::MouseWheel {
+        unit,
+        delta: Vec2::new(0.0, 1.0),
+        phase: TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    };
+    assert_eq!(ScrollSource::from_events(&[]), None);
+    assert_eq!(
+        ScrollSource::from_events(&[wheel(MouseWheelUnit::Point)]),
+        Some(ScrollSource::Trackpad)
+    );
+    for unit in [MouseWheelUnit::Line, MouseWheelUnit::Page] {
+        assert_eq!(
+            ScrollSource::from_events(&[wheel(MouseWheelUnit::Point), wheel(unit)]),
+            Some(ScrollSource::Wheel)
+        );
+    }
+}
+
+#[test]
+fn trackpad_swipe_pans_both_axes_without_zooming() {
+    let mut h = Harness::new();
+    h.view.fitted_size = Some(SCREEN);
+    h.move_to(h.to_screen(Pos2::new(300.0, 200.0)));
+    h.swipe(Vec2::new(30.0, -20.0));
+    assert_eq!(h.meta().zoom, 1.0);
+    let pan = h.meta().pan;
+    assert!(
+        (pan - (PAN + Vec2::new(30.0, -20.0))).length() < 0.01,
+        "pan {pan:?}"
+    );
+    assert!(h.view.fitted_size.is_none(), "counts as manual navigation");
+    assert!(h.view.export_layout().manual_view);
+
+    h.swipe(Vec2::new(-50.0, 0.0));
+    assert!((h.meta().pan - (pan + Vec2::new(-50.0, 0.0))).length() < 0.01);
+    assert_eq!(h.meta().zoom, 1.0);
+}
+
+#[test]
+fn trackpad_momentum_after_lift_keeps_panning() {
+    let mut h = Harness::new();
+    h.move_to(h.to_screen(Pos2::new(300.0, 200.0)));
+    h.swipe(Vec2::new(0.0, 10.0));
+    // macOS sends the inertia as a second begin/move/end series once the fingers lift.
+    h.swipe(Vec2::new(0.0, 5.0));
+    assert!((h.meta().pan - (PAN + Vec2::new(0.0, 15.0))).length() < 0.01);
+}
+
+#[test]
+fn mouse_wheel_zooms_around_the_pointer() {
+    let mut h = Harness::new();
+    let pointer = h.to_screen(Pos2::new(300.0, 200.0));
+    h.move_to(pointer);
+    h.wheel_notches(Vec2::new(0.0, 3.0));
+    let zoom = h.meta().zoom;
+    assert!(zoom > 1.1, "zoomed in: {zoom}");
+    let under = h.to_canvas(pointer);
+    assert!(
+        (under - Pos2::new(300.0, 200.0)).length() < 0.5,
+        "{under:?}"
+    );
+
+    h.wheel_notches(Vec2::new(0.0, -3.0));
+    assert!(h.meta().zoom < zoom, "zoomed back out");
+}
+
+#[test]
+fn a_wheel_after_a_swipe_zooms_and_a_swipe_after_a_wheel_pans() {
+    let mut h = Harness::new();
+    h.move_to(h.to_screen(Pos2::new(300.0, 200.0)));
+    h.swipe(Vec2::new(0.0, 20.0));
+    h.wheel_notches(Vec2::new(0.0, 2.0));
+    let zoom = h.meta().zoom;
+    assert!(zoom > 1.0);
+    let pan = h.meta().pan;
+    h.swipe(Vec2::new(0.0, 20.0));
+    assert_eq!(h.meta().zoom, zoom);
+    assert!((h.meta().pan - (pan + Vec2::new(0.0, 20.0))).length() < 0.01);
+}
+
+#[test]
+fn modifier_scroll_and_pinch_zoom() {
+    for modifiers in [Modifiers::COMMAND, Modifiers::CTRL] {
+        let mut h = Harness::new();
+        h.move_to(h.to_screen(Pos2::new(300.0, 200.0)));
+        h.modifiers = modifiers;
+        h.swipe(Vec2::new(0.0, 20.0));
+        assert!(h.meta().zoom > 1.0, "{modifiers:?}+scroll zooms in");
+    }
+
+    let mut h = Harness::new();
+    h.move_to(h.to_screen(Pos2::new(300.0, 200.0)));
+    h.frame(vec![Event::Zoom(1.1)]);
+    assert!(h.meta().zoom > 1.0, "pinch zooms in");
+    let zoom = h.meta().zoom;
+    h.frame(vec![Event::Zoom(0.9)]);
+    assert!(h.meta().zoom < zoom, "pinch zooms out");
+}
+
+#[test]
+fn scroll_outside_the_graph_does_nothing() {
+    let mut h = Harness::new();
+    h.move_to(Pos2::new(-50.0, -50.0));
+    h.swipe(Vec2::new(30.0, 30.0));
+    h.wheel_notches(Vec2::new(0.0, 3.0));
+    assert_eq!(h.meta().pan, PAN);
+    assert_eq!(h.meta().zoom, 1.0);
+}
+
+#[test]
+fn held_arrow_keys_pan() {
+    let mut h = Harness::new();
+    h.view.fitted_size = Some(SCREEN);
+    // Clicking the graph first leaves the arrows to it.
+    h.click(PointerButton::Primary, h.to_screen(Pos2::new(300.0, 200.0)));
+    h.key(Key::ArrowRight, true);
+    h.frame(vec![]);
+    let pan = h.meta().pan;
+    assert!(pan.x < PAN.x && pan.y == PAN.y, "view moves right: {pan:?}");
+    assert!(h.view.export_layout().manual_view);
+    h.key(Key::ArrowRight, false);
+    h.key(Key::ArrowUp, true);
+    h.frame(vec![]);
+    h.key(Key::ArrowUp, false);
+    let after = h.meta().pan;
+    assert!(after.y > pan.y, "view moves up: {after:?}");
+    h.frame(vec![]);
+    assert_eq!(h.meta().pan, after, "stops on release");
+
+    // Arrows with a modifier are left to other shortcuts.
+    h.modifiers = Modifiers::COMMAND;
+    h.key(Key::ArrowLeft, true);
+    h.frame(vec![]);
+    h.key(Key::ArrowLeft, false);
+    assert_eq!(h.meta().pan, after);
+}
+
+#[test]
+fn arrow_keys_do_not_pan_while_typing() {
+    let mut h = Harness::new();
+    let text_id = egui::Id::new("some_text_field");
+    let mut text = String::new();
+    let mut pan = Vec2::ZERO;
+    let arrow = Event::Key {
+        key: Key::ArrowLeft,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    };
+    for (i, events) in [vec![], vec![arrow], vec![], vec![]]
+        .into_iter()
+        .enumerate()
+    {
+        if i == 1 {
+            h.ctx.memory_mut(|m| m.request_focus(text_id));
+        }
+        let input = h.input(events);
+        let view = &mut h.view;
+        h.ctx
+            .run_ui(input, |ui| {
+                view.show(ui);
+                pan = MetadataFrame::new(Some(view.id.clone())).load(ui).pan;
+                // In an area of its own so the graph keeps its rect.
+                egui::Area::new(egui::Id::new("text_area")).show(ui.ctx(), |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
+                });
+            })
+            .textures_delta
+            .clear();
+    }
+    assert!(h.ctx.text_edit_focused());
+    assert_eq!(pan, PAN);
 }

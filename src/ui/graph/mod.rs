@@ -5,6 +5,7 @@ mod fit;
 #[cfg(test)]
 mod fit_tests;
 mod layout;
+mod nav;
 mod regions;
 mod saved;
 #[cfg(test)]
@@ -41,6 +42,7 @@ pub use layout::{
     REGION_PADDING, RunClusters, RunClustersParams, SettleTracker, memberships, region_rect,
     repo_indices,
 };
+use nav::{ScrollAction, ScrollSource, route_scroll};
 pub use regions::{Region, region_color, regions};
 pub use saved::{MAX_SAVED_POSITIONS, SavedLayout, SavedView};
 pub use select::{circle_intersects_rect, is_additive};
@@ -63,8 +65,6 @@ const SPAWN_NEAR: f32 = 40.0;
 const SPAWN_CENTER: f32 = 80.0;
 /// Cosine of the half-angle of the cone [`GraphView::outside_graph`] looks along.
 const SPAWN_CONE_COS: f32 = 0.7;
-/// Zoom factor per scrolled point.
-const SCROLL_ZOOM_SPEED: f32 = 0.0015;
 const MIN_ZOOM: f32 = 0.05;
 const MAX_ZOOM: f32 = 10.0;
 /// Margin around focused nodes, as a fraction of their bounding box.
@@ -152,6 +152,8 @@ pub struct GraphView {
     box_select: Option<select::BoxSelect>,
     /// Nodes the user dragged: the layout leaves them where they were dropped.
     pinned: HashSet<NodeId>,
+    /// Device of the latest scroll over the graph; see [`ScrollSource`].
+    scroll_source: ScrollSource,
 }
 
 impl Default for GraphView {
@@ -196,6 +198,7 @@ impl GraphView {
             primary: None,
             box_select: None,
             pinned: HashSet::new(),
+            scroll_source: ScrollSource::default(),
         }
     }
 
@@ -556,7 +559,7 @@ impl GraphView {
                 _ => {}
             }
         }
-        if self.scroll_zoom(ui, &response.response) {
+        if self.scroll_navigate(ui, &response.response) || self.key_pan(ui) {
             user_navigated = true;
         }
         if self.apply_focus(ui, response.response.rect.size()) {
@@ -949,22 +952,52 @@ impl GraphView {
         running
     }
 
-    /// Zooms around the pointer on plain scroll (egui_graphs itself only zooms on
-    /// ctrl+scroll and pinch). Returns whether it zoomed.
-    fn scroll_zoom(&self, ui: &mut Ui, response: &egui::Response) -> bool {
+    /// Pans or zooms on scroll over the graph, per [`route_scroll`] (egui_graphs itself only
+    /// zooms, on ⌘+scroll and pinch). Returns whether the view moved.
+    fn scroll_navigate(&mut self, ui: &mut Ui, response: &egui::Response) -> bool {
         let Some(pointer) = response.hover_pos() else {
             return false;
         };
-        let (scroll, zoom_delta) = ui.input(|i| (i.smooth_scroll_delta(), i.zoom_delta()));
-        if zoom_delta != 1.0 || scroll.y == 0.0 {
+        let (source, scroll, zoom_delta, ctrl) = ui.input(|i| {
+            (
+                ScrollSource::from_events(&i.events),
+                i.smooth_scroll_delta(),
+                i.zoom_delta(),
+                i.modifiers.ctrl,
+            )
+        });
+        if let Some(source) = source {
+            self.scroll_source = source;
+        }
+        if zoom_delta != 1.0 {
             return false;
         }
+        let Some(action) = route_scroll(self.scroll_source, scroll, ctrl) else {
+            return false;
+        };
         let mut meta = MetadataFrame::new(Some(self.id.clone())).load(ui);
-        let new_zoom = (meta.zoom * (scroll.y * SCROLL_ZOOM_SPEED).exp()).clamp(MIN_ZOOM, MAX_ZOOM);
-        let local = pointer - response.rect.left_top();
-        meta.pan = local - (local - meta.pan) * (new_zoom / meta.zoom);
-        meta.zoom = new_zoom;
+        match action {
+            ScrollAction::Pan(delta) => meta.pan += delta,
+            ScrollAction::Zoom(factor) => {
+                let new_zoom = (meta.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+                let local = pointer - response.rect.left_top();
+                meta.pan = local - (local - meta.pan) * (new_zoom / meta.zoom);
+                meta.zoom = new_zoom;
+            }
+        }
         meta.save(ui);
+        true
+    }
+
+    /// Pans while arrow keys are held. Returns whether the view moved.
+    fn key_pan(&self, ui: &mut Ui) -> bool {
+        let Some(delta) = nav::arrow_pan(ui.ctx()) else {
+            return false;
+        };
+        let mut meta = MetadataFrame::new(Some(self.id.clone())).load(ui);
+        meta.pan += delta;
+        meta.save(ui);
+        ui.ctx().request_repaint();
         true
     }
 }
