@@ -376,7 +376,28 @@ fn user_bubble(ui: &mut Ui, text: &str) {
             .inner_margin(egui::Margin::symmetric(12, 7))
             .show(ui, |ui| {
                 ui.set_max_width(ui.available_width() * 0.8);
-                ui.add(egui::Label::new(text).wrap());
+                let mut spans = Vec::new();
+                push_plain(&mut spans, text, &|_| false, false);
+                if !spans.iter().any(|s| matches!(s, Span::Link { .. })) {
+                    ui.add(egui::Label::new(text).wrap());
+                    return;
+                }
+                ui.vertical(|ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        for span in spans {
+                            match span {
+                                Span::Link { text, url, .. } => {
+                                    link_ui(ui, RichText::new(text), &url)
+                                }
+                                Span::Plain(s) => {
+                                    ui.label(s);
+                                }
+                                _ => {}
+                            }
+                        }
+                    })
+                });
             });
     });
 }
@@ -627,25 +648,46 @@ pub enum Span {
     Bold(String),
     Code(String),
     Node(NodeId),
+    /// A web link: shown text, http(s) url, and whether to draw it as code.
+    Link {
+        text: String,
+        url: String,
+        code: bool,
+    },
 }
 
-/// Splits a line into spans: `code`, **bold**, and node ids (`term:…`, `sub:…`,
-/// `dispatch:…`) for which `is_node` holds, whether bare or in backticks.
+/// Splits a line into spans: `code`, **bold**, `[text](url)` links, bare http(s) urls,
+/// and node ids (`term:…`, `sub:…`, `dispatch:…`) for which `is_node` holds, whether bare
+/// or in backticks.
 pub fn parse_spans(text: &str, is_node: &dyn Fn(&NodeId) -> bool) -> Vec<Span> {
     let mut spans = Vec::new();
     let mut rest = text;
     while !rest.is_empty() {
-        let code = rest.find('`');
-        let bold = rest.find("**");
-        let next = match (code, bold) {
-            (Some(c), Some(b)) => Some(c.min(b)),
-            (c, b) => c.or(b),
-        };
+        let link = rest
+            .match_indices('[')
+            .map(|(i, _)| i)
+            .find(|&i| markdown_link(&rest[i..]).is_some());
+        let next = [rest.find('`'), rest.find("**"), link]
+            .into_iter()
+            .flatten()
+            .min();
         let Some(at) = next else {
             push_plain(&mut spans, rest, is_node, false);
             break;
         };
-        let is_code = code == Some(at);
+        if link == Some(at)
+            && let Some((text, url, len)) = markdown_link(&rest[at..])
+        {
+            push_plain(&mut spans, &rest[..at], is_node, false);
+            spans.push(Span::Link {
+                text: text.to_owned(),
+                url: url.to_owned(),
+                code: false,
+            });
+            rest = &rest[at + len..];
+            continue;
+        }
+        let is_code = rest[at..].starts_with('`');
         let marker = if is_code { "`" } else { "**" };
         let after = &rest[at + marker.len()..];
         let Some(end) = after.find(marker) else {
@@ -659,7 +701,7 @@ pub fn parse_spans(text: &str, is_node: &dyn Fn(&NodeId) -> bool) -> Vec<Span> {
             if looks_like_node(inner) && is_node(&id) {
                 spans.push(Span::Node(id));
             } else {
-                spans.push(Span::Code(inner.to_owned()));
+                push_code(&mut spans, inner);
             }
         } else {
             push_plain(&mut spans, inner, is_node, true);
@@ -667,6 +709,93 @@ pub fn parse_spans(text: &str, is_node: &dyn Fn(&NodeId) -> bool) -> Vec<Span> {
         rest = &after[end + marker.len()..];
     }
     spans
+}
+
+/// Parses `[text](url)` at the start of `s` when url is http(s): text, url and the byte
+/// length consumed.
+fn markdown_link(s: &str) -> Option<(&str, &str, usize)> {
+    let close = s.find(']')?;
+    let text = &s[1..close];
+    let after = s[close + 1..].strip_prefix('(')?;
+    let end = after.find(')')?;
+    let url = after[..end].trim();
+    (!text.is_empty() && is_web_url(url) && !url.contains(char::is_whitespace)).then_some((
+        text,
+        url,
+        close + 2 + end + 1,
+    ))
+}
+
+/// Whether `s` is an http(s) url with something after the scheme.
+pub fn is_web_url(s: &str) -> bool {
+    ["http://", "https://"]
+        .iter()
+        .any(|p| s.len() > p.len() && s[..p.len()].eq_ignore_ascii_case(p))
+}
+
+/// The length of a bare http(s) url starting at `text[i..]`, with trailing punctuation
+/// (and unbalanced closing brackets) trimmed off.
+fn url_len(text: &str, i: usize) -> Option<usize> {
+    if !text.as_bytes()[i].eq_ignore_ascii_case(&b'h') {
+        return None;
+    }
+    let boundary = text[..i]
+        .chars()
+        .next_back()
+        .is_none_or(|c| !c.is_alphanumeric());
+    if !boundary {
+        return None;
+    }
+    let rest = &text[i..];
+    let len = rest
+        .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"' | '`'))
+        .unwrap_or(rest.len());
+    let url = trim_url(&rest[..len]);
+    is_web_url(url).then_some(url.len())
+}
+
+/// Trims trailing punctuation off a bare url; `)` and `]` only when unbalanced.
+pub fn trim_url(url: &str) -> &str {
+    let mut url = url;
+    while let Some(c) = url.chars().next_back() {
+        let strip = match c {
+            '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '"' => true,
+            ')' => url.matches('(').count() < url.matches(')').count(),
+            ']' => url.matches('[').count() < url.matches(']').count(),
+            _ => false,
+        };
+        if !strip {
+            break;
+        }
+        url = &url[..url.len() - c.len_utf8()];
+    }
+    url
+}
+
+/// Pushes inline code, cutting out any urls in it as code-styled links.
+fn push_code(spans: &mut Vec<Span>, code: &str) {
+    let mut start = 0;
+    let mut i = 0;
+    while i < code.len() {
+        if let Some(len) = url_len(code, i) {
+            if start < i {
+                spans.push(Span::Code(code[start..i].to_owned()));
+            }
+            let url = &code[i..i + len];
+            spans.push(Span::Link {
+                text: url.to_owned(),
+                url: url.to_owned(),
+                code: true,
+            });
+            i += len;
+            start = i;
+            continue;
+        }
+        i += code[i..].chars().next().map_or(1, char::len_utf8);
+    }
+    if start < code.len() || code.is_empty() {
+        spans.push(Span::Code(code[start..].to_owned()));
+    }
 }
 
 fn looks_like_node(s: &str) -> bool {
@@ -677,7 +806,7 @@ fn looks_like_node(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '_' | '-' | '.'))
 }
 
-/// Pushes `text` as plain (or bold) spans, cutting out node ids.
+/// Pushes `text` as plain (or bold) spans, cutting out node ids and web urls.
 fn push_plain(spans: &mut Vec<Span>, text: &str, is_node: &dyn Fn(&NodeId) -> bool, bold: bool) {
     let wrap = |s: &str| {
         if bold {
@@ -690,6 +819,20 @@ fn push_plain(spans: &mut Vec<Span>, text: &str, is_node: &dyn Fn(&NodeId) -> bo
     let mut i = 0;
     let bytes = text.as_bytes();
     while i < text.len() {
+        if let Some(len) = url_len(text, i) {
+            if start < i {
+                spans.push(wrap(&text[start..i]));
+            }
+            let url = &text[i..i + len];
+            spans.push(Span::Link {
+                text: url.to_owned(),
+                url: url.to_owned(),
+                code: false,
+            });
+            i += len;
+            start = i;
+            continue;
+        }
         let at_boundary = i == 0 || !is_id_char(bytes[i - 1] as char);
         if at_boundary
             && ["term:", "sub:", "dispatch:"]
@@ -778,9 +921,20 @@ fn spans_ui(
                         *clicked = Some(id);
                     }
                 }
+                Span::Link { text, url, code } => {
+                    let text = RichText::new(text);
+                    link_ui(ui, if code { text.code() } else { text }, &url);
+                }
             }
         }
     });
+}
+
+/// A web link: pointer cursor and underline on hover, the url as tooltip; a click opens
+/// it in the default browser (Cmd+click in the background).
+fn link_ui(ui: &mut Ui, text: RichText, url: &str) {
+    ui.add(egui::Hyperlink::from_label_and_url(text, url))
+        .on_hover_text(url);
 }
 
 #[cfg(test)]
@@ -846,6 +1000,120 @@ mod tests {
         assert_eq!(
             parse_spans("determ:x", &any_node),
             vec![Span::Plain("determ:x".into())]
+        );
+    }
+
+    fn link(url: &str, code: bool) -> Span {
+        Span::Link {
+            text: url.into(),
+            url: url.into(),
+            code,
+        }
+    }
+
+    #[test]
+    fn spans_find_web_links() {
+        let pr = "https://github.com/depict-org/recommendations/pull/142";
+        assert_eq!(
+            parse_spans(
+                &format!("See {pr}. Also [#142]({pr}) and `{pr}`"),
+                &any_node
+            ),
+            vec![
+                Span::Plain("See ".into()),
+                link(pr, false),
+                Span::Plain(". Also ".into()),
+                Span::Link {
+                    text: "#142".into(),
+                    url: pr.into(),
+                    code: false,
+                },
+                Span::Plain(" and ".into()),
+                link(pr, true),
+            ]
+        );
+        // A url inside longer inline code; a node id next to a url.
+        assert_eq!(
+            parse_spans(
+                "`gh pr view http://x.io/1` term:term_1 (https://a.b/c)",
+                &any_node
+            ),
+            vec![
+                Span::Code("gh pr view ".into()),
+                link("http://x.io/1", true),
+                Span::Plain(" ".into()),
+                Span::Node(NodeId("term:term_1".into())),
+                Span::Plain(" (".into()),
+                link("https://a.b/c", false),
+                Span::Plain(")".into()),
+            ]
+        );
+        // Only http(s) links; stray brackets and non-web schemes stay text.
+        assert_eq!(
+            parse_spans(
+                "[x](javascript:alert(1)) [a] ftp://h xhttps://h https://",
+                &any_node
+            ),
+            vec![Span::Plain(
+                "[x](javascript:alert(1)) [a] ftp://h xhttps://h https://".into()
+            )]
+        );
+    }
+
+    #[test]
+    fn bare_urls_trim_trailing_punctuation() {
+        for (raw, want) in [
+            ("https://a.io/x).", "https://a.io/x"),
+            ("https://a.io/x,", "https://a.io/x"),
+            ("https://a.io/x;:", "https://a.io/x"),
+            ("https://a.io/x?!'\"", "https://a.io/x"),
+            (
+                "https://en.wikipedia.org/wiki/Rust_(language)",
+                "https://en.wikipedia.org/wiki/Rust_(language)",
+            ),
+            (
+                "https://en.wikipedia.org/wiki/Rust_(language)).",
+                "https://en.wikipedia.org/wiki/Rust_(language)",
+            ),
+            ("https://a.io/q?x=1&y=[2]]", "https://a.io/q?x=1&y=[2]"),
+            ("https://a.io/", "https://a.io/"),
+        ] {
+            assert_eq!(trim_url(raw), want, "{raw}");
+            assert_eq!(parse_spans(raw, &any_node)[0], link(want, false), "{raw}");
+        }
+        assert!(is_web_url("HTTPS://a.io"));
+        assert!(!is_web_url("mailto:a@b.io"));
+    }
+
+    /// Clicking a link opens its url; node links still select.
+    #[test]
+    fn clicking_links_opens_urls_and_selects_nodes() {
+        use crate::ui::test_util::click_label;
+        let text =
+            "PR: [#142](https://github.com/o/r/pull/142), node `term:term_1`, `https://a.io/x`";
+        let opened = |label: &str| {
+            click_label(label, |ui| {
+                let node = markdown(ui, text, &any_node);
+                let url = ui.ctx().output(|o| {
+                    o.commands.iter().find_map(|c| match c {
+                        egui::OutputCommand::OpenUrl(u) => Some(u.url.clone()),
+                        _ => None,
+                    })
+                });
+                (node, url)
+            })
+        };
+        assert_eq!(
+            opened("#142"),
+            (None, Some("https://github.com/o/r/pull/142".into()))
+        );
+        assert_eq!(
+            opened("https://a.io/x"),
+            (None, Some("https://a.io/x".into()))
+        );
+        assert_eq!(
+            opened("term:term_1"),
+            (Some(NodeId("term:term_1".into())), None)
         );
     }
 
