@@ -4,6 +4,9 @@ A native Rust/egui desktop app that shows the agent fleet running in the
 Orca agent IDE as a live graph: coordinators, their
 workers and their subagents. Select a node to see its terminal and type into it.
 
+**Ant**: one dedicated agent session working on a task (what the Queen, or "New ant…",
+starts). The fleet is the colony of ants.
+
 ## Run
 
 ```bash

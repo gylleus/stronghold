@@ -36,7 +36,9 @@ server talks to the running app.
 Node kinds: the Queen is the hub that stands for the whole fleet (not an agent; its state is the \
 fleet state). A coordinator orchestrates a run (an objective split into tasks); a worker is an \
 agent a coordinator dispatched for one task; a terminal is a loose agent terminal outside any \
-run; a subagent is a Claude Code subagent inside a terminal (read-only: no input, no close).
+run; a subagent is a Claude Code subagent inside a terminal (read-only: no input, no close). \
+An ant is one dedicated agent session working on one task (what spawn_session starts); the fleet \
+is Karl's colony of ants.
 
 States: working, idle, needs_input (waiting on Karl at a permission, choice or question \
 prompt), stalled (the whip escalated it), done, failed.

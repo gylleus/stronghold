@@ -127,7 +127,7 @@ pub struct MyrstackApp {
     chat: chat::AppChat,
     /// Manual whips in flight, their confirmation popover and result toast.
     whip_now: whip_now::WhipNowState,
-    /// "New session…" dialog, spawns in flight and the new node to select.
+    /// "New ant…" dialog, spawns in flight and the new node to select.
     spawn: spawn::AppSpawn,
     /// ⌘E push-to-talk dictation.
     dictation: dictation::AppDictation,

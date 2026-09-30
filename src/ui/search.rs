@@ -395,7 +395,7 @@ pub struct PaletteRow {
 
 /// The palette's rows for `query`. Empty: recent actions (or a few suggestions), then the
 /// first agents. `>` prefix: actions only (all of them, recents first, for a bare `>`).
-/// Otherwise an "Agents" and an "Actions" section, the one with the better top match first
+/// Otherwise an "Ants" and an "Actions" section, the one with the better top match first
 /// (actions on a tie).
 pub fn palette_rows(
     entries: &[SearchEntry],
@@ -438,7 +438,7 @@ pub fn palette_rows(
                 section("Recent actions", recent);
             }
             let nodes = rank(entries, "", EMPTY_QUERY_NODES);
-            section("Agents", nodes.into_iter().map(PaletteItem::Node).collect());
+            section("Ants", nodes.into_iter().map(PaletteItem::Node).collect());
         }
         return rows;
     }
@@ -465,11 +465,11 @@ pub fn palette_rows(
         .map(|(id, _)| PaletteItem::Action(id))
         .collect();
     if agents_first {
-        section("Agents", agent_items);
+        section("Ants", agent_items);
         section("Actions", action_items);
     } else {
         section("Actions", action_items);
-        section("Agents", agent_items);
+        section("Ants", agent_items);
     }
     rows
 }
@@ -623,7 +623,7 @@ impl SearchPalette {
                 ui.set_width(520.0_f32.min(ctx.content_rect().width() - 40.0));
                 let edit = ui.add(
                     egui::TextEdit::singleline(&mut self.query)
-                        .hint_text("Search agents and actions (> for actions only)…")
+                        .hint_text("Search ants and actions (> for actions only)…")
                         .desired_width(f32::INFINITY),
                 );
                 if std::mem::take(&mut self.focus_query) {
@@ -634,7 +634,7 @@ impl SearchPalette {
                 }
                 ui.separator();
                 if rows.is_empty() {
-                    ui.weak("No matching agents or actions");
+                    ui.weak("No matching ants or actions");
                 }
                 egui::ScrollArea::vertical()
                     .max_height(420.0)
@@ -1205,7 +1205,7 @@ mod tests {
         palette.snapshot_changed();
         let (_, output) = run_palette(&mut palette, &snapshot, &cx, vec![]);
         assert!(text_center(&output, "newcomer").is_some());
-        assert!(text_center(&output, "Agents").is_some());
+        assert!(text_center(&output, "Ants").is_some());
     }
 
     #[test]
@@ -1279,7 +1279,7 @@ mod tests {
         // An exact node label outranks an action matching only by keyword.
         let rows = palette_rows(&entries, "chat", &Recents::default(), &cx);
         assert_eq!(row_names(&entries, &rows)[0], "chat-node");
-        assert_eq!(rows[0].header, Some("Agents"));
+        assert_eq!(rows[0].header, Some("Ants"));
         assert!(actions(&rows).contains(&ActionId::OpenChat));
         // Every token must match an action's title or keywords.
         let rows = palette_rows(&entries, "whip stalled", &Recents::default(), &cx);
@@ -1290,7 +1290,7 @@ mod tests {
         assert_eq!(names[0], ">whip_stalled", "{names:?}");
         assert!(names.contains(&"whipper".to_string()));
         let headers: Vec<_> = rows.iter().filter_map(|r| r.header).collect();
-        assert_eq!(headers, ["Actions", "Agents"]);
+        assert_eq!(headers, ["Actions", "Ants"]);
         // Dynamic titles are searchable, and so are the fixed ones.
         let rows = palette_rows(&entries, "hide loose", &Recents::default(), &cx);
         assert_eq!(actions(&rows), [ActionId::ToggleLoose]);
@@ -1355,7 +1355,7 @@ mod tests {
         );
         assert_eq!(rows[0].header, Some("Recent actions"));
         assert_eq!(rows[1].header, None);
-        assert_eq!(rows[2].header, Some("Agents"));
+        assert_eq!(rows[2].header, Some("Ants"));
     }
 
     #[test]
