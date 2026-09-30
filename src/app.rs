@@ -66,6 +66,11 @@ pub struct MyrstackApp {
     /// ⌘J hid the Queen's chat, which otherwise fills the conversation column when nothing
     /// is selected.
     chat_hidden: bool,
+    /// Left edge of the conversation column's content last frame, `None` while it is closed;
+    /// the top bar puts the Queen's quick actions above it.
+    conversation_left: Option<f32>,
+    /// Width of the top bar's Queen quick actions last frame.
+    quick_actions_width: f32,
     /// Terminal whose screen the poller is reading (the selected node's, if live).
     watched_screen: Option<String>,
     /// Newest screen of `watched_screen`.
@@ -173,6 +178,8 @@ impl MyrstackApp {
             view: View::default(),
             details_pref: ui::columns::DetailsPref::default(),
             chat_hidden: false,
+            conversation_left: None,
+            quick_actions_width: 0.0,
             watched_screen: None,
             screen: None,
             filter: FleetFilter::default(),
@@ -328,14 +335,18 @@ impl MyrstackApp {
     /// input or transcript, or the multi-selection panel.
     fn conversation_column(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         if !self.has_conversation() {
+            self.conversation_left = None;
             return;
         }
         let window = ui.ctx().content_rect().width();
-        egui::Panel::right("terminal")
+        let margin = egui::Frame::side_top_panel(ui.style()).inner_margin.leftf();
+        let response = egui::Panel::right("terminal")
             .resizable(true)
             .default_size(window * ui::columns::CONVERSATION_SHARE)
             .min_size(ui::columns::CONVERSATION_MIN_WIDTH)
-            .show(ui, |ui| self.conversation_contents(ui, now_ms));
+            .show(ui, |ui| self.conversation_contents(ui, now_ms))
+            .response;
+        self.conversation_left = Some(response.rect.left() + margin);
     }
 
     fn conversation_contents(&mut self, ui: &mut egui::Ui, now_ms: i64) {
@@ -719,68 +730,99 @@ impl MyrstackApp {
         }
     }
 
+    /// The top bar: the app's controls, and the Queen and Status report buttons and plan
+    /// quotas at the right, above the conversation column.
     fn top_bar(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+        let bar = ui.max_rect();
+        let row = ui.spacing().interact_size.y;
+        let x = ui::columns::quick_actions_x(
+            bar.left(),
+            bar.right(),
+            self.quick_actions_width,
+            self.conversation_left,
+        );
+        let gap = ui.spacing().item_spacing.x;
+        let left = egui::Rect::from_min_size(bar.min, egui::vec2(x - gap - bar.left(), row));
+        let right = egui::Rect::from_min_max(
+            egui::pos2(x, bar.top()),
+            egui::pos2(bar.right(), bar.top() + row),
+        );
         // Wraps onto a second line rather than clipping on narrow windows.
-        ui.horizontal_wrapped(|ui| {
-            ui.heading(APP_NAME);
-            ui.separator();
-            self.queen_quick_actions(ui);
-            ui.separator();
-            ui.selectable_value(&mut self.view, View::Graph, "Graph");
-            ui.selectable_value(&mut self.view, View::Table, "Table");
-            if self.view == View::Graph && ui.button("Fit").clicked() {
-                self.graph.fit_to_screen();
-            }
-            if self.view == View::Graph
-                && ui
-                    .button("Reset layout")
-                    .on_hover_text("Forget saved node positions and lay the graph out again")
-                    .clicked()
-            {
-                self.graph.reset_layout();
-            }
-            ui.separator();
-            if let Some(data) = &self.data {
-                ui.weak(format!("{} terminals", data.terminals.len()));
-                ui.separator();
-                ui.weak(format!(
-                    "updated {} ago",
-                    ui::table::format_age(now_ms - data.polled_at_ms)
-                ));
-            }
-            if ui.button("Refresh").clicked() {
-                self.poller.send(PollerCommand::RefreshNow);
-            }
-            if ui
-                .button("Broadcast…")
-                .on_hover_text("Select the Queen and open the broadcast to coordinators")
+        let wrapped = egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true);
+        ui.scope_builder(
+            egui::UiBuilder::new().max_rect(left).layout(wrapped),
+            |ui| {
+                self.top_bar_controls(ui, now_ms);
+            },
+        );
+        // One row, never wrapped: its natural width places it next frame.
+        let row_layout = egui::Layout::left_to_right(egui::Align::Center);
+        let quick = ui.scope_builder(
+            egui::UiBuilder::new().max_rect(right).layout(row_layout),
+            |ui| {
+                self.queen_quick_actions(ui);
+                self.quota_chips(ui, now_ms);
+            },
+        );
+        self.quick_actions_width = quick.response.rect.width();
+    }
+
+    fn top_bar_controls(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+        ui.heading(APP_NAME);
+        ui.separator();
+        ui.selectable_value(&mut self.view, View::Graph, "Graph");
+        ui.selectable_value(&mut self.view, View::Table, "Table");
+        if self.view == View::Graph && ui.button("Fit").clicked() {
+            self.graph.fit_to_screen();
+        }
+        if self.view == View::Graph
+            && ui
+                .button("Reset layout")
+                .on_hover_text("Forget saved node positions and lay the graph out again")
                 .clicked()
-            {
-                self.select_queen();
-                self.queen.open_broadcast = true;
-            }
-            self.whip_window.gear_button(ui);
-            self.whip_window.button(ui);
-            self.alerts_menu(ui);
-            self.review_badge(ui);
-            self.close.log_menu(ui, now_ms);
-            self.quota_chips(ui, now_ms);
-            if let Some(data) = &self.data
-                && let Some(first) = data.errors.first()
-            {
-                ui.separator();
-                let text = if data.errors.len() > 1 {
-                    format!("{first} (+{} more)", data.errors.len() - 1)
-                } else {
-                    first.clone()
-                };
-                ui.add(
-                    egui::Label::new(egui::RichText::new(text).color(ui.visuals().error_fg_color))
-                        .truncate(),
-                )
-                .on_hover_text(data.errors.join("\n"));
-            }
-        });
+        {
+            self.graph.reset_layout();
+        }
+        ui.separator();
+        if let Some(data) = &self.data {
+            ui.weak(format!("{} terminals", data.terminals.len()));
+            ui.separator();
+            ui.weak(format!(
+                "updated {} ago",
+                ui::table::format_age(now_ms - data.polled_at_ms)
+            ));
+        }
+        if ui.button("Refresh").clicked() {
+            self.poller.send(PollerCommand::RefreshNow);
+        }
+        if ui
+            .button("Broadcast…")
+            .on_hover_text("Select the Queen and open the broadcast to coordinators")
+            .clicked()
+        {
+            self.select_queen();
+            self.queen.open_broadcast = true;
+        }
+        self.whip_window.gear_button(ui);
+        self.whip_window.button(ui);
+        self.alerts_menu(ui);
+        self.review_badge(ui);
+        self.close.log_menu(ui, now_ms);
+        if let Some(data) = &self.data
+            && let Some(first) = data.errors.first()
+        {
+            ui.separator();
+            let text = if data.errors.len() > 1 {
+                format!("{first} (+{} more)", data.errors.len() - 1)
+            } else {
+                first.clone()
+            };
+            ui.add(
+                egui::Label::new(egui::RichText::new(text).color(ui.visuals().error_fg_color))
+                    .truncate(),
+            )
+            .on_hover_text(data.errors.join("\n"));
+        }
     }
 }
 
