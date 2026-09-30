@@ -31,6 +31,8 @@ impl MyrstackApp {
             talk_hotkey: self.talk_hotkey_label(),
             speaking: self.is_speaking(),
             speak_replies: self.speak_replies(),
+            can_back: self.history.can_back(current),
+            can_forward: self.history.can_forward(),
         }
     }
 
