@@ -535,7 +535,10 @@ dispatcher like every notification; see [Notifications](#notifications).
 
 `outcome` is `delivered` (possibly silently: below Karl's thresholds or quiet mode, see
 `delivery` and `quiet`), `collapsed` (identical to one the agent sent in the last 30 min;
-`count` says how many), or `rate_limited` (at most 5 per agent per 10 min;
+`count` says how many), `folded` (a handover about a PR that Myrstack announced as ready for
+review in the last 10 min: its text replaces that entry's, so Karl gets one notification; a
+review announcement after an agent's handover about the same PR is dropped likewise), or
+`rate_limited` (at most 5 per agent per 10 min;
 `retry_after_ms`). An `agent` that matches no node is reported as `unknown_agent` and the
 notification is filed under the caller's terminal.
 

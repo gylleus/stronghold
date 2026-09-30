@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::history::{Entry, History};
 use super::settings::{Delivery, NotifySettings, Severity};
+use crate::review::PrRef;
 
 /// Myrstack's own notifications about one target (needs input, stalled, PR ready) are sent at
 /// most once in this window.
@@ -115,6 +116,9 @@ pub enum Outcome {
     /// Identical to entry `id` sent recently: that entry now counts `count` and is unread
     /// again, and nothing pops up or plays.
     Collapsed { id: u64, count: u32 },
+    /// An agent's handover about a PR Myrstack just announced as ready for review: its text
+    /// replaced that entry's (`id`), which is unread again, and nothing pops up or plays.
+    Folded { id: u64 },
     /// The sender hit the per-agent limit; nothing was recorded.
     RateLimited { retry_after_ms: i64 },
     /// The same target was notified within the cooldown; nothing was recorded.
@@ -125,7 +129,9 @@ impl Outcome {
     /// The inbox entry it ended up in, if any.
     pub fn id(&self) -> Option<u64> {
         match self {
-            Outcome::Delivered { id, .. } | Outcome::Collapsed { id, .. } => Some(*id),
+            Outcome::Delivered { id, .. }
+            | Outcome::Collapsed { id, .. }
+            | Outcome::Folded { id } => Some(*id),
             _ => None,
         }
     }
@@ -134,6 +140,7 @@ impl Outcome {
         match self {
             Outcome::Delivered { .. } => "delivered",
             Outcome::Collapsed { .. } => "collapsed",
+            Outcome::Folded { .. } => "folded",
             Outcome::RateLimited { .. } => "rate_limited",
             Outcome::Cooldown => "cooldown",
         }
@@ -161,6 +168,32 @@ impl NotificationCenter {
     /// Runs `n` through the cooldown, duplicates and the per-agent limit, records it and
     /// decides its delivery.
     pub fn dispatch(&mut self, n: Incoming, settings: &NotifySettings, now_ms: i64) -> Outcome {
+        // One notification per PR handover: Myrstack's "PR ready for review" and the agent's
+        // own notify about the same PR become one entry, whichever comes first.
+        if n.source == Source::Review
+            && self
+                .recent_about_pr(Source::Agent, n.target.as_deref(), now_ms)
+                .is_some()
+        {
+            return Outcome::Cooldown;
+        }
+        if n.source == Source::Agent
+            && let Some(id) = self.recent_about_pr(Source::Review, n.url.as_deref(), now_ms)
+        {
+            let entry = self.history.get_mut(id).expect("just found");
+            entry.severity = entry.severity.max(n.severity);
+            entry.title = n.title;
+            entry.message = n.message;
+            entry.url = n.url;
+            entry.sender = n.sender;
+            if n.agent_label.is_some() {
+                entry.agent_label = n.agent_label;
+            }
+            entry.count += 1;
+            entry.at_ms = now_ms;
+            entry.read = false;
+            return Outcome::Folded { id };
+        }
         if n.source.has_cooldown() {
             let key = n.target.clone().unwrap_or_else(|| n.title.clone());
             if let Some(&last) = self.cooldowns.get(&key)
@@ -213,6 +246,25 @@ impl NotificationCenter {
             read: false,
         });
         Outcome::Delivered { id, delivery }
+    }
+
+    /// A `source` entry from the last [`PER_TARGET_COOLDOWN_MS`] about the PR `link` names
+    /// (a Review entry's target, an Agent entry's url).
+    fn recent_about_pr(&self, source: Source, link: Option<&str>, now_ms: i64) -> Option<u64> {
+        let pr = PrRef::parse(link?)?;
+        self.history
+            .entries()
+            .iter()
+            .rev()
+            .take_while(|e| now_ms - e.at_ms < PER_TARGET_COOLDOWN_MS)
+            .find(|e| {
+                let their = match source {
+                    Source::Review => e.target.as_deref(),
+                    _ => e.url.as_deref(),
+                };
+                e.source == source && their.and_then(PrRef::parse).as_ref() == Some(&pr)
+            })
+            .map(|e| e.id)
     }
 
     /// A recent entry from the same sender with the same severity, title, message and link.
@@ -440,5 +492,56 @@ mod tests {
             let out = c.dispatch(Incoming::new(Source::Test, Severity::Info, "t", ""), &s, 0);
             assert!(matches!(out, Outcome::Delivered { .. }));
         }
+    }
+
+    #[test]
+    fn a_pr_handover_and_the_review_notification_are_one() {
+        let mut c = NotificationCenter::default();
+        let s = NotifySettings::default();
+        let pr = "https://github.com/o/r/pull/7";
+        let review = || {
+            Incoming::new(
+                Source::Review,
+                Severity::Info,
+                "PR ready for review: o/r#7",
+                "",
+            )
+            .with_target(pr)
+        };
+        let handover = || {
+            let mut n = agent("term_a", "PR #7 ready", Severity::Info);
+            n.url = Some(format!("{pr}/files"));
+            n.message = "Review it; merging deploys lite".into();
+            n
+        };
+        // Review first, then the agent's handover folds into it.
+        let first = c.dispatch(review(), &s, 0);
+        let id = first.id().unwrap();
+        c.history.mark_read(id);
+        assert_eq!(c.dispatch(handover(), &s, MIN), Outcome::Folded { id });
+        let e = c.history.get(id).unwrap();
+        assert_eq!(
+            (e.title.as_str(), e.count, e.read),
+            ("PR #7 ready", 2, false)
+        );
+        assert_eq!(e.message, "Review it; merging deploys lite");
+        assert_eq!(c.history.entries().len(), 1);
+
+        // Handover first: the review notification that follows is dropped.
+        let mut c = NotificationCenter::default();
+        assert!(matches!(
+            c.dispatch(handover(), &s, 0),
+            Outcome::Delivered { .. }
+        ));
+        assert_eq!(c.dispatch(review(), &s, MIN), Outcome::Cooldown);
+        assert_eq!(c.history.entries().len(), 1);
+
+        // Another PR, or a non-PR link, is its own notification.
+        let mut other = handover();
+        other.url = Some("https://github.com/o/r/pull/8".into());
+        assert!(matches!(
+            c.dispatch(other, &s, MIN),
+            Outcome::Delivered { .. }
+        ));
     }
 }

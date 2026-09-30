@@ -125,7 +125,7 @@ impl MyrstackApp {
                     self.notifier.post(post);
                 }
             }
-            Outcome::Collapsed { id, .. } => {
+            Outcome::Collapsed { id, .. } | Outcome::Folded { id } => {
                 notes.dirty = true;
                 // A toast still up shows the new count; nothing pops up again.
                 if notes.toasts.ids().contains(id)

@@ -76,6 +76,9 @@ orca orchestration send --type worker_done --subject "<short status>" \
   `ask --resume <message_id>`. Never re-ask — you'll create a second thread nobody can match
   to the first.
 - Something is on fire and the coordinator must intervene → `--type escalation`.
+- Don't call Myrstack's `notify` tool: your coordinator reaches Karl. Exceptions: the
+  credential step under _Hard rules_, and a standalone session with no coordinator, which
+  notifies Karl itself by the playbook's _Human in the loop_ rules.
 - After `worker_done`, end your turn and idle. Do not start more work, do not poll, do not
   close your own terminal. If the coordinator reuses you, a fresh preamble arrives as new
   input.
@@ -120,7 +123,9 @@ task, do what it says and report the change to your coordinator. Don't confuse i
 - **Never provision cloud resources.** No `wrangler kv create` and friends. Use a placeholder
   and hand Karl the exact command.
 - **Never self-serve credentials.** No 1Password CLI exists here. Any login, 2FA, passkey or
-  secret step: summon Karl and wait ≥10 min, polling.
+  secret step: summon Karl and wait ≥10 min, polling. Summon with Myrstack's `notify` tool
+  (`severity: warn`, `urgent` if the track is stalled on it; say what you need). If Myrstack
+  isn't running, `notify` errors; then:
   ```bash
   osascript -e 'display dialog "Agent <track> needs you: <what>" with title "orca fleet" buttons {"OK"} giving up after 300'
   ```
