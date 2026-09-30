@@ -115,6 +115,7 @@ impl GraphView {
         self.edges.clear();
         self.nodes.clear();
         self.stashed.clear();
+        self.pinned.clear();
         self.layout_initialized = false;
         self.focus_requested = None;
         if let Some(snapshot) = self.last_snapshot.take() {

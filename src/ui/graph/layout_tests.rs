@@ -476,3 +476,161 @@ fn reset_layout_regroups_scrambled_repos() {
         }
     }
 }
+
+/// `repos` repos of `per_repo` loose terminals `r{r}_t{t}` each, plus the queen.
+fn loose_fleet(repos: usize, per_repo: usize) -> FleetSnapshot {
+    let mut s = FleetSnapshot::default();
+    for r in 0..repos {
+        for t in 0..per_repo {
+            s.nodes.push(in_repo(
+                node(&format!("r{r}_t{t}"), NodeKind::Terminal, None),
+                &format!("repo{r}"),
+            ));
+        }
+    }
+    s.add_queen();
+    s
+}
+
+/// Steps the layout in a view of `size` until it settles.
+fn settle_in(view: &mut GraphView, size: egui::Vec2) {
+    let viewport = Rect::from_min_size(Pos2::ZERO, size);
+    let mut algorithm = FruchtermanReingoldWithExtras::<Extras>::from_state(view.layout_state());
+    let mut tracker = SettleTracker::default();
+    for _ in 0..5_000 {
+        algorithm.step(&mut view.graph, viewport);
+        if tracker.observe(algorithm.state().last_avg_displacement()) {
+            return;
+        }
+    }
+    panic!("layout did not settle");
+}
+
+#[test]
+fn repo_regions_stay_compact_at_any_group_size() {
+    // Nodes pack at about NODE_SPACING, so a group of n spans about √n spacings each way.
+    for per_repo in [1, 2, 4, 8, 12] {
+        let snapshot = loose_fleet(6, per_repo);
+        let mut view = GraphView::new();
+        view.sync(&snapshot);
+        settle(&mut view);
+        let side = (per_repo as f32).sqrt().ceil() + 1.0;
+        let max = NODE_SPACING * side + region_rect(&[Pos2::ZERO]).size();
+        for region in view.repo_regions() {
+            let size = region.rect.size();
+            assert!(
+                size.x <= max.x && size.y <= max.y,
+                "{} of {per_repo} nodes spans {size:?} (max {max:?})",
+                region.repo
+            );
+        }
+    }
+}
+
+#[test]
+fn repo_regions_do_not_grow_with_the_window() {
+    let size_in = |window: egui::Vec2| {
+        let snapshot = loose_fleet(4, 4);
+        let mut view = GraphView::new();
+        view.sync(&snapshot);
+        settle_in(&mut view, window);
+        view.repo_regions()
+            .iter()
+            .map(|r| r.rect.area())
+            .fold(0.0, f32::max)
+    };
+    let small = size_in(egui::vec2(1280.0, 800.0));
+    let large = size_in(egui::vec2(2560.0, 1600.0));
+    assert!(
+        large < small * 1.3,
+        "largest region {small} in a small window, {large} in a large one"
+    );
+}
+
+#[test]
+fn nodes_of_a_group_keep_apart() {
+    let (view, snapshot) = settled(6, 8, 6);
+    let pos = positions(&view, &snapshot);
+    let nodes: Vec<&Node> = snapshot.agent_nodes().collect();
+    for (i, a) in nodes.iter().enumerate() {
+        for b in &nodes[i + 1..] {
+            if a.run_id != b.run_id || view.node_repo(&a.id) != view.node_repo(&b.id) {
+                continue;
+            }
+            let d = pos[&a.id] - pos[&b.id];
+            let scaled = egui::vec2(d.x / NODE_SPACING.x, d.y / NODE_SPACING.y).length();
+            assert!(scaled > 0.6, "{} and {} are {d:?} apart", a.id, b.id);
+        }
+    }
+}
+
+#[test]
+fn a_dropped_node_stays_where_it_was_dropped() {
+    let snapshot = loose_fleet(3, 4);
+    let mut view = GraphView::new();
+    view.sync(&snapshot);
+    settle(&mut view);
+    // Drop r0_t0 right next to r0_t1, then well away from its group.
+    for offset in [egui::vec2(70.0, 10.0), egui::vec2(-150.0, 120.0)] {
+        let dropped = view.node_position(&id("r0_t1")).unwrap() + offset;
+        view.set_node_position(&id("r0_t0"), dropped);
+        view.pin(id("r0_t0"));
+        settle(&mut view);
+        assert_eq!(view.node_position(&id("r0_t0")), Some(dropped));
+        let region = view
+            .repo_regions()
+            .into_iter()
+            .find(|r| r.repo == "repo0")
+            .unwrap();
+        assert!(region.rect.contains(dropped));
+    }
+}
+
+#[test]
+fn a_new_node_leaves_pinned_nodes_alone_and_reset_unpins() {
+    let snapshot = loose_fleet(3, 3);
+    let mut view = GraphView::new();
+    view.sync(&snapshot);
+    settle(&mut view);
+    view.pin(id("r1_t0"));
+    let pinned = view.node_position(&id("r1_t0")).unwrap();
+    let mut next = snapshot.clone();
+    next.nodes
+        .push(in_repo(node("r1_new", NodeKind::Terminal, None), "repo1"));
+    view.sync(&next);
+    settle(&mut view);
+    assert_eq!(view.node_position(&id("r1_t0")), Some(pinned));
+
+    view.reset_layout();
+    assert!(!view.is_pinned(&id("r1_t0")));
+    view.pin(id("r1_t0"));
+    view.sync(&snapshot);
+    view.sync(&loose_fleet(3, 0));
+    assert!(
+        !view.is_pinned(&id("r1_t0")),
+        "a vanished node stays pinned"
+    );
+}
+
+#[test]
+fn collision_is_zero_beyond_the_spacing_and_one_on_top() {
+    assert_eq!(super::collision(Vec2::ZERO), 1.0);
+    assert_eq!(super::collision(egui::vec2(NODE_SPACING.x, 0.0)), 0.0);
+    assert_eq!(super::collision(egui::vec2(0.0, NODE_SPACING.y * 2.0)), 0.0);
+    assert!((super::collision(NODE_SPACING * 0.5 / 2f32.sqrt()) - 0.5).abs() < 1e-5);
+}
+
+#[test]
+fn a_settled_layout_stays_settled() {
+    // A layout that only paused mid-way (slow creep caught by the stall check) would carry on
+    // at the next wake-up and reshuffle the graph.
+    let (mut view, snapshot) = settled(12, 8, 4);
+    let before = positions(&view, &snapshot);
+    settle(&mut view);
+    let after = positions(&view, &snapshot);
+    let moved = before
+        .iter()
+        .map(|(id, p)| (after[id] - *p).length())
+        .fold(0.0, f32::max);
+    assert!(moved < 30.0, "a node moved {moved} after settling again");
+}
