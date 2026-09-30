@@ -5,8 +5,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
 
-use crate::APP_NAME;
-
 mod chat;
 mod control;
 mod dictation;
@@ -701,7 +699,7 @@ impl MyrstackApp {
     }
 
     fn top_bar_controls(&mut self, ui: &mut egui::Ui, now_ms: i64) {
-        ui.heading(APP_NAME);
+        ui::widgets::app_title(ui);
         ui.separator();
         ui.selectable_value(&mut self.view, View::Graph, "Graph");
         ui.selectable_value(&mut self.view, View::Table, "Table");

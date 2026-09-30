@@ -173,7 +173,10 @@ impl MyrstackApp {
         }
         egui::CentralPanel::default().show(ui, |ui| match &self.data {
             None => {
-                ui.centered_and_justified(|ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(ui.available_height() * 0.3);
+                    ui.add(egui::Image::new(ui::art::ant_cell()).max_width(96.0));
+                    ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.spinner();
                         ui.label("Connecting to Orca…");

@@ -471,7 +471,13 @@ fn repos_section(
     response: &mut SidebarResponse,
 ) {
     if groups.is_empty() {
-        ui.weak("No agents");
+        crate::ui::art::empty_state(
+            ui,
+            crate::ui::art::anthill(),
+            140.0,
+            "No agents",
+            "The colony is quiet. New sessions show up here.",
+        );
         return;
     }
     for group in groups {
@@ -676,8 +682,13 @@ fn filters_section(
     ui.horizontal_wrapped(|ui| {
         for state in ALL_STATES {
             let count = states.get(&state).copied().unwrap_or(0);
-            let text = RichText::new(format!("{} {count}", state_label(state)))
-                .color(state_color(state, ui.visuals().dark_mode));
+            let text = crate::ui::icons::with_icon(
+                ui,
+                crate::ui::icons::state_icon(state),
+                &format!("{} {count}", state_label(state)),
+                egui::TextStyle::Button,
+                Some(state_color(state, ui.visuals().dark_mode)),
+            );
             if ui
                 .selectable_label(filter.states.contains(&state), text)
                 .clicked()
@@ -697,7 +708,13 @@ fn filters_section(
             if count == 0 && !filter.kinds.contains(&kind) {
                 continue;
             }
-            let text = format!("{} {count}", kind_label(kind));
+            let text = crate::ui::icons::with_icon(
+                ui,
+                crate::ui::icons::kind_icon(kind),
+                &format!("{} {count}", kind_label(kind)),
+                egui::TextStyle::Button,
+                None,
+            );
             if ui
                 .selectable_label(filter.kinds.contains(&kind), text)
                 .clicked()

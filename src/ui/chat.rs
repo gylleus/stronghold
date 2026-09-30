@@ -97,8 +97,13 @@ pub fn chat_ui(ui: &mut Ui, state: &mut ChatPanelState, view: ChatView<'_>) -> V
         .stick_to_bottom(true)
         .show(ui, |ui| {
             if view.transcript.items.is_empty() {
-                ui.add_space(8.0);
-                ui.weak("Ask the Queen about the fleet, or press Status report above.");
+                crate::ui::art::empty_state(
+                    ui,
+                    crate::ui::art::queen(),
+                    96.0,
+                    "Ask the Queen",
+                    "Ask her about the fleet, or press Status report above.",
+                );
             }
             for (i, item) in view.transcript.items.iter().enumerate() {
                 let alpha = (((now - state.appear[i]) / FADE_IN_SECS) as f32).clamp(0.0, 1.0);
@@ -151,6 +156,9 @@ pub fn state_text(
 fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
     let running = view.transcript.running;
     ui.horizontal(|ui| {
+        ui.add(crate::ui::art::queen_avatar(
+            ui.text_style_height(&egui::TextStyle::Body) + 4.0,
+        ));
         ui.label(RichText::new("Chat").strong());
         let (text, color) = state_text(view.state, running, ui.visuals());
         ui.label(RichText::new(format!("● {text}")).color(color))

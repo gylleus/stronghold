@@ -1,5 +1,6 @@
 //! UI panels drawn by the app.
 
+pub mod art;
 pub mod broadcast;
 pub mod chat;
 pub mod close;
@@ -9,6 +10,7 @@ pub mod dictation;
 pub mod dock;
 pub mod frame_stats;
 pub mod graph;
+pub mod icons;
 pub mod keys;
 pub mod playbook;
 pub mod queen;

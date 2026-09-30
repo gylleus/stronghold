@@ -16,14 +16,15 @@ const SYSTEM_FONT_FILES: [&str; 2] = [
     "/System/Library/Fonts/SFNS.ttf",
 ];
 
-/// Installs the fonts and both theme styles on `ctx`.
+/// Installs the fonts, image loaders and both theme styles on `ctx`.
 pub fn install(ctx: &egui::Context) {
     ctx.set_fonts(fonts());
+    super::art::install(ctx);
     ctx.set_style_of(egui::Theme::Dark, style(egui::Theme::Dark));
     ctx.set_style_of(egui::Theme::Light, style(egui::Theme::Light));
 }
 
-/// egui's default fonts with a system face put first for proportional text.
+/// egui's default fonts with a system face put first for proportional text, plus the icon font.
 pub fn fonts() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     for path in SYSTEM_FONT_FILES {
@@ -40,6 +41,7 @@ pub fn fonts() -> egui::FontDefinitions {
             .insert(0, "system".into());
         break;
     }
+    super::icons::add_font(&mut fonts);
     fonts
 }
 

@@ -50,7 +50,15 @@ pub fn review_section(
                 .on_hover_text(note);
             }
             if rows.is_empty() {
-                ui.weak("Nothing waiting. Agents call mark_pr_ready (or send merge_ready) when a PR is ready.");
+                ui.horizontal_top(|ui| {
+                    ui.add(egui::Image::new(crate::ui::art::ant_cell()).max_width(28.0));
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new("Nothing waiting. Agents call mark_pr_ready (or send merge_ready) when a PR is ready.").weak(),
+                        )
+                        .wrap(),
+                    );
+                });
                 return;
             }
             egui::ScrollArea::vertical()

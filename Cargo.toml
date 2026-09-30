@@ -28,7 +28,7 @@ log = "0.4"
 env_logger = "0.11"
 jiff = "0.2"
 global-hotkey = "0.8"
-egui_extras = "0.36"
+egui_extras = { version = "0.36", features = ["svg"] }
 sherpa-rs = { version = "0.6.8", features = ["static"] }
 cpal = "0.18"
 sha2 = "0.10"
