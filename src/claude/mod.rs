@@ -14,4 +14,4 @@ pub use subagents::{
     SubagentInfo, SubagentParent, SubagentScanner, SubagentState, SubagentWatcher,
 };
 pub use usage::{SessionUsage, TokenCounts, Usage, UsageTracker, format_tokens};
-pub use worker::{ClaudeData, ClaudeWorker, ClaudeWorkerConfig, TranscriptTail};
+pub use worker::{ClaudeData, ClaudeWorker, ClaudeWorkerConfig};

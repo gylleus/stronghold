@@ -105,6 +105,32 @@ impl Transcript {
         self.running = true;
     }
 
+    /// Puts `earlier` (the conversation before this one was opened) in front of the items.
+    pub fn prepend(&mut self, earlier: Transcript) {
+        let shift = earlier.items.len();
+        let mut items = earlier.items;
+        items.append(&mut self.items);
+        self.items = items;
+        for at in self.stream_blocks.values_mut() {
+            *at += shift;
+        }
+        for at in self.unfinished_text.values_mut().flatten() {
+            *at += shift;
+        }
+        for at in self.tools_by_id.values_mut() {
+            *at += shift;
+        }
+        for (id, at) in earlier.tools_by_id {
+            self.tools_by_id.entry(id).or_insert(at);
+        }
+        if self.session_id.is_none() {
+            self.session_id = earlier.session_id;
+        }
+        if self.model.is_none() {
+            self.model = earlier.model;
+        }
+    }
+
     pub fn push_notice(&mut self, text: impl Into<String>) {
         self.items.push(ChatItem::Notice(text.into()));
     }

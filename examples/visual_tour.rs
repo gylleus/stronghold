@@ -111,6 +111,8 @@ impl Tour {
                     let input = ui::terminal::PanelInput {
                         state: &mut self.input,
                         terminal: None,
+                        conversation: None,
+                        is_node: &|_| false,
                     };
                     ui::terminal::terminal_panel(ui, node, None, input, 0);
                 });

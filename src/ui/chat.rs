@@ -2,22 +2,28 @@
 //! (user bubbles, markdown replies streaming in, collapsible tool rows, permission cards) and
 //! the input box.
 
+use std::path::PathBuf;
+
 use eframe::egui::{self, Color32, RichText, Ui};
 use serde_json::Value;
 
 use crate::chat::SessionState;
+use crate::chat::history::HistoryChunk;
 use crate::chat::permissions::{
     DESTRUCTIVE_TOOLS, MYRSTACK_PREFIX, short_tool_name, summarize_input, truncate,
 };
 use crate::chat::say::split_say;
 use crate::chat::transcript::{ChatItem, Decision, PermissionCard, ToolCall, Transcript};
 use crate::model::NodeId;
+use crate::ui::message_list::MessageList;
 
 /// Longest tool input/result shown in an expanded row.
 const MAX_DETAIL_CHARS: usize = 4000;
 
-/// How long a new message takes to fade in.
-const FADE_IN_SECS: f64 = 0.2;
+/// User messages longer than this many lines show collapsed, with "Show more".
+const COLLAPSED_LINES: usize = 12;
+/// …or longer than this many characters.
+const COLLAPSED_CHARS: usize = 1200;
 
 /// Draft and focus state of the pane, kept by the app across frames.
 #[derive(Debug, Default)]
@@ -25,8 +31,52 @@ pub struct ChatPanelState {
     pub draft: String,
     /// Focus the input box on the next frame.
     pub focus_input: bool,
-    /// When each transcript item was first drawn (`Input::time`), for the fade-in.
-    appear: Vec<f64>,
+    /// Scroll position and row heights of the message list.
+    pub list: MessageList,
+}
+
+/// A conversation read from a session transcript on disk (an agent's or a subagent's), with
+/// its list state.
+#[derive(Debug)]
+pub struct TranscriptView {
+    pub path: PathBuf,
+    pub transcript: Transcript,
+    pub list: MessageList,
+    /// Bytes of the file applied so far; the next chunk must start here.
+    read_to: u64,
+    /// The first chunk (the whole file as it was) arrived.
+    pub loaded: bool,
+}
+
+impl TranscriptView {
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            transcript: Transcript::default(),
+            list: MessageList::default(),
+            read_to: 0,
+            loaded: false,
+        }
+    }
+
+    /// Applies `chunk` if it is the next part of this view's file; returns whether it was.
+    pub fn apply(&mut self, chunk: &HistoryChunk) -> bool {
+        if chunk.path != self.path {
+            return false;
+        }
+        if chunk.reset {
+            self.transcript = Transcript::default();
+            self.list.reset();
+        } else if chunk.start != self.read_to {
+            return false;
+        }
+        for record in &chunk.records {
+            self.transcript.apply_history(record);
+        }
+        self.read_to = chunk.end;
+        self.loaded = true;
+        true
+    }
 }
 
 /// What the user did in the pane this frame.
@@ -84,46 +134,148 @@ pub fn chat_ui(ui: &mut Ui, state: &mut ChatPanelState, view: ChatView<'_>) -> V
             }
         });
 
-    let now = ui.input(|i| i.time);
-    if state.appear.len() > view.transcript.items.len() {
-        state.appear.clear();
+    if view.transcript.items.is_empty() {
+        crate::ui::art::empty_state(
+            ui,
+            crate::ui::art::queen(),
+            96.0,
+            "Ask the Queen",
+            "Ask her about the fleet, or press Status report above.",
+        );
+    } else {
+        let thinking = running && !streaming_text(view.transcript);
+        if let Some(id) = conversation(
+            ui,
+            "queen_chat_messages",
+            &mut state.list,
+            &view.transcript.items,
+            thinking,
+            view.is_node,
+            &mut actions,
+        ) {
+            actions.push(ChatAction::SelectNode(id));
+        }
     }
-    while state.appear.len() < view.transcript.items.len() {
-        state.appear.push(now);
-    }
-    egui::ScrollArea::vertical()
-        .id_salt("queen_chat_messages")
-        .auto_shrink([false, false])
-        .stick_to_bottom(true)
-        .show(ui, |ui| {
-            if view.transcript.items.is_empty() {
-                crate::ui::art::empty_state(
-                    ui,
-                    crate::ui::art::queen(),
-                    96.0,
-                    "Ask the Queen",
-                    "Ask her about the fleet, or press Status report above.",
-                );
-            }
-            for (i, item) in view.transcript.items.iter().enumerate() {
-                let alpha = (((now - state.appear[i]) / FADE_IN_SECS) as f32).clamp(0.0, 1.0);
-                if alpha < 1.0 {
-                    ui.ctx().request_repaint();
-                }
-                ui.push_id(i, |ui| {
-                    ui.multiply_opacity(alpha);
-                    item_ui(ui, item, &view, &mut actions);
-                });
-                ui.add_space(8.0);
-            }
-            if running && !streaming_text(view.transcript) {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.weak("thinking…");
-                });
-            }
-        });
     actions
+}
+
+/// The message list of `items` (plus a "thinking…" row when `thinking`), drawing only the rows
+/// in view. Returns a node whose link was clicked; permission answers go to `actions`.
+pub fn conversation(
+    ui: &mut Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    list: &mut MessageList,
+    items: &[ChatItem],
+    thinking: bool,
+    is_node: &dyn Fn(&NodeId) -> bool,
+    actions: &mut Vec<ChatAction>,
+) -> Option<NodeId> {
+    let mut clicked = None;
+    let len = items.len() + usize::from(thinking);
+    let metrics = TextMetrics::of(ui);
+    let estimate = |i: usize, width: f32| {
+        items
+            .get(i)
+            .map_or(metrics.row, |item| estimate_height(item, width, &metrics))
+    };
+    list.show(ui, id_salt, len, &estimate, &mut |ui, i| {
+        let Some(item) = items.get(i) else {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.weak(WORKING);
+            });
+            return;
+        };
+        if let Some(id) = item_ui(ui, item, is_node, actions) {
+            clicked = Some(id);
+        }
+    });
+    clicked
+}
+
+/// A conversation read from disk into the rest of `ui`: a spinner until its first chunk, a
+/// note when it is empty, else the message list (with a "working…" row while `running`).
+/// Returns a node whose link was clicked.
+pub fn transcript_conversation(
+    ui: &mut Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    view: Option<&mut TranscriptView>,
+    running: bool,
+    is_node: &dyn Fn(&NodeId) -> bool,
+) -> Option<NodeId> {
+    let Some(view) = view.filter(|v| v.loaded) else {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.weak("Loading the conversation…");
+        });
+        return None;
+    };
+    if view.transcript.items.is_empty() {
+        ui.weak("No messages yet.");
+        return None;
+    }
+    let mut actions = Vec::new();
+    conversation(
+        ui,
+        id_salt,
+        &mut view.list,
+        &view.transcript.items,
+        running,
+        is_node,
+        &mut actions,
+    )
+}
+
+/// The last row of a conversation whose agent is at work.
+pub const WORKING: &str = "working…";
+
+/// Row height and average character width of the body font, for estimating row heights.
+struct TextMetrics {
+    row: f32,
+    char_width: f32,
+}
+
+impl TextMetrics {
+    fn of(ui: &Ui) -> Self {
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        ui.ctx().fonts_mut(|f| Self {
+            row: f.row_height(&font),
+            char_width: f.glyph_width(&font, 'n'),
+        })
+    }
+
+    /// Height of `text` wrapped at `width`.
+    fn text_height(&self, text: &str, width: f32) -> f32 {
+        let per_line = (width / self.char_width).max(8.0);
+        let lines: f32 = text
+            .lines()
+            .map(|l| (l.chars().count() as f32 / per_line).ceil().max(1.0))
+            .sum();
+        lines.max(1.0) * self.row
+    }
+}
+
+/// A guess at the height of `item` at `width`, before it is first drawn.
+fn estimate_height(item: &ChatItem, width: f32, m: &TextMetrics) -> f32 {
+    match item {
+        ChatItem::User(text) | ChatItem::VoiceUser(text) => {
+            let shown: String = if is_long(text) {
+                text.lines()
+                    .take(COLLAPSED_LINES)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                text.clone()
+            };
+            m.text_height(&shown, width * 0.8 - 24.0) + 14.0
+        }
+        ChatItem::Assistant { text, .. } => m.text_height(text, width) + m.row * 0.5,
+        ChatItem::Permission(card) if card.decision.is_none() => m.row * 8.0,
+        ChatItem::Error(text) => m.text_height(text, width),
+        ChatItem::Tool(_) | ChatItem::Permission(_) | ChatItem::Notice(_) | ChatItem::System(_) => {
+            m.row
+        }
+    }
 }
 
 /// Whether the newest item is reply text still streaming in (the thinking indicator hides).
@@ -277,7 +429,13 @@ fn input_box(
     }
 }
 
-fn item_ui(ui: &mut Ui, item: &ChatItem, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
+/// Draws one message; returns a node whose link was clicked.
+fn item_ui(
+    ui: &mut Ui,
+    item: &ChatItem,
+    is_node: &dyn Fn(&NodeId) -> bool,
+    actions: &mut Vec<ChatAction>,
+) -> Option<NodeId> {
     match item {
         ChatItem::User(text) => user_bubble(ui, text),
         ChatItem::VoiceUser(text) => user_bubble(ui, &voice_bubble_text(text)),
@@ -289,10 +447,8 @@ fn item_ui(ui: &mut Ui, item: &ChatItem, view: &ChatView<'_>, actions: &mut Vec<
                     ui.add_space(4.0);
                 }
             }
-            if (split.say.is_none() || !split.rest.trim().is_empty())
-                && let Some(id) = markdown(ui, &split.rest, view.is_node)
-            {
-                actions.push(ChatAction::SelectNode(id));
+            if split.say.is_none() || !split.rest.trim().is_empty() {
+                return markdown(ui, &split.rest, is_node);
             }
         }
         ChatItem::Tool(call) => tool_row(ui, call),
@@ -312,6 +468,7 @@ fn item_ui(ui: &mut Ui, item: &ChatItem, view: &ChatView<'_>, actions: &mut Vec<
             ui.colored_label(ui.visuals().error_fg_color, text);
         }
     }
+    None
 }
 
 /// Marker in front of the Queen's spoken line.
@@ -368,7 +525,33 @@ pub fn voice_bubble_text(text: &str) -> String {
     format!("{VOICE_MARKER} {text}")
 }
 
+/// Whether a user message is long enough to show collapsed.
+fn is_long(text: &str) -> bool {
+    text.len() > COLLAPSED_CHARS || text.lines().count() > COLLAPSED_LINES
+}
+
+/// The start of a long message shown collapsed: its first lines, cut to the size limit.
+fn collapsed(text: &str) -> String {
+    let head: String = text
+        .lines()
+        .take(COLLAPSED_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "{}…",
+        truncate(&head, COLLAPSED_CHARS)
+            .trim_end_matches('…')
+            .trim_end()
+    )
+}
+
+/// Text of the toggle under a collapsed message.
+pub const SHOW_MORE: &str = "Show more";
+
 fn user_bubble(ui: &mut Ui, text: &str) {
+    let long = is_long(text);
+    let id = ui.id().with("expanded");
+    let mut expanded = long && ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
         egui::Frame::new()
             .fill(ui.visuals().selection.bg_fill.gamma_multiply(0.35))
@@ -376,29 +559,44 @@ fn user_bubble(ui: &mut Ui, text: &str) {
             .inner_margin(egui::Margin::symmetric(12, 7))
             .show(ui, |ui| {
                 ui.set_max_width(ui.available_width() * 0.8);
-                let mut spans = Vec::new();
-                push_plain(&mut spans, text, &|_| false, false);
-                if !spans.iter().any(|s| matches!(s, Span::Link { .. })) {
-                    ui.add(egui::Label::new(text).wrap());
-                    return;
-                }
-                ui.vertical(|ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0;
-                        for span in spans {
-                            match span {
-                                Span::Link { text, url, .. } => {
-                                    link_ui(ui, RichText::new(text), &url)
-                                }
-                                Span::Plain(s) => {
-                                    ui.label(s);
-                                }
-                                _ => {}
-                            }
+                // The bubble sits on the right; its lines read left to right.
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                    if long && !expanded {
+                        bubble_text(ui, &collapsed(text));
+                    } else {
+                        bubble_text(ui, text);
+                    }
+                    if long {
+                        let label = if expanded { "Show less" } else { SHOW_MORE };
+                        if ui.link(RichText::new(label).small()).clicked() {
+                            expanded = !expanded;
+                            ui.data_mut(|d| d.insert_temp(id, expanded));
                         }
-                    })
+                    }
                 });
             });
+    });
+}
+
+/// A user message's text, its web links clickable.
+fn bubble_text(ui: &mut Ui, text: &str) {
+    let mut spans = Vec::new();
+    push_plain(&mut spans, text, &|_| false, false);
+    if !spans.iter().any(|s| matches!(s, Span::Link { .. })) {
+        ui.add(egui::Label::new(text).wrap());
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for span in spans {
+            match span {
+                Span::Link { text, url, .. } => link_ui(ui, RichText::new(text), &url),
+                Span::Plain(s) => {
+                    ui.label(s);
+                }
+                _ => {}
+            }
+        }
     });
 }
 
@@ -411,24 +609,71 @@ pub fn tool_status_mark(call: &ToolCall) -> &'static str {
     }
 }
 
-/// A tool row's title: name, outcome and, when auto mode allowed it, an `auto` marker.
+/// A tool row's title: name, outcome, what it ran on (the command, file, …) and, when auto
+/// mode allowed it, an `auto` marker.
 pub fn tool_title(call: &ToolCall) -> String {
-    let marker = if call.auto { " · auto" } else { "" };
-    format!(
-        "🔧 {} {}{marker}",
-        short_tool_name(&call.name),
-        tool_status_mark(call)
-    )
+    let (name, rest) = tool_parts(call);
+    format!("🔧 {name} {}{rest}", tool_status_mark(call))
+}
+
+/// The text a tool row draws after its status icon: [`tool_title`] without the marks.
+pub fn tool_label(call: &ToolCall) -> String {
+    let (name, rest) = tool_parts(call);
+    format!("{name}{rest}")
+}
+
+/// A tool call's short name, and what follows it: ` · summary` and ` · auto`.
+fn tool_parts(call: &ToolCall) -> (String, String) {
+    let mut rest = String::new();
+    if let Some(summary) = call
+        .input
+        .as_ref()
+        .map(crate::claude::transcript::tool_summary)
+        .filter(|s| !s.is_empty())
+    {
+        rest.push_str(" · ");
+        rest.push_str(&summary);
+    }
+    if call.auto {
+        rest.push_str(" · auto");
+    }
+    (short_tool_name(&call.name), rest)
 }
 
 fn tool_row(ui: &mut Ui, call: &ToolCall) {
-    let title = tool_title(call);
-    let color = match &call.result {
-        Some(r) if r.is_error => ui.visuals().error_fg_color,
-        _ => ui.visuals().weak_text_color(),
+    let visuals = ui.visuals();
+    let (icon, icon_color, color) = match &call.result {
+        Some(r) if r.is_error => (
+            crate::ui::icons::X,
+            visuals.error_fg_color,
+            visuals.error_fg_color,
+        ),
+        Some(_) => (
+            crate::ui::icons::CHECK,
+            crate::ui::graph::state_color(crate::model::NodeState::Done, visuals.dark_mode),
+            visuals.weak_text_color(),
+        ),
+        None => (
+            crate::ui::icons::HOURGLASS_HIGH,
+            visuals.weak_text_color(),
+            visuals.weak_text_color(),
+        ),
     };
-    egui::CollapsingHeader::new(RichText::new(title).color(color).small())
+    let mut title = crate::ui::icons::with_icon(
+        ui,
+        icon,
+        &tool_label(call),
+        egui::TextStyle::Small,
+        Some(color),
+    );
+    if let Some(section) = title.sections.first_mut() {
+        section.format.color = icon_color;
+    }
+    title.wrap.max_width = ui.available_width() - 24.0;
+    title.wrap.max_rows = 1;
+    egui::CollapsingHeader::new(title)
         .id_salt(("chat_tool", &call.id))
+        .show_background(false)
         .default_open(false)
         .show(ui, |ui| {
             if let Some(input) = &call.input {
@@ -565,11 +810,13 @@ pub enum Block {
     /// A list item: indent level, marker (`•` or `3.`), text.
     Item(usize, String, String),
     Code(String),
+    /// A table's rows of cells, the header first (the `|---|` row is dropped).
+    Table(Vec<Vec<String>>),
     Rule,
 }
 
 /// Splits `text` into blocks: headings, paragraphs (soft line breaks joined), list items,
-/// fenced code (tables kept as code) and rules.
+/// fenced code, tables and rules.
 pub fn parse_blocks(text: &str) -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut paragraph: Vec<&str> = Vec::new();
@@ -581,6 +828,8 @@ pub fn parse_blocks(text: &str) -> Vec<Block> {
         }
     };
     for line in text.lines() {
+        let continues_table =
+            matches!(blocks.last(), Some(Block::Table(_))) && paragraph.is_empty();
         if let Some(lines) = &mut code {
             if line.trim_start().starts_with("```") {
                 blocks.push(Block::Code(lines.join("\n")));
@@ -617,12 +866,18 @@ pub fn parse_blocks(text: &str) -> Vec<Block> {
             blocks.push(Block::Item(indent, format!("{number}."), rest.to_owned()));
         } else if trimmed.starts_with('|') {
             flush(&mut paragraph, &mut blocks);
+            let cells = table_cells(trimmed);
+            let rule = cells
+                .iter()
+                .all(|c| !c.is_empty() && c.chars().all(|ch| matches!(ch, '-' | ':' | ' ')));
             match blocks.last_mut() {
-                Some(Block::Code(table)) if table.starts_with('|') => {
-                    table.push('\n');
-                    table.push_str(trimmed);
+                Some(Block::Table(rows)) if continues_table => {
+                    if !rule {
+                        rows.push(cells);
+                    }
                 }
-                _ => blocks.push(Block::Code(trimmed.to_owned())),
+                _ if rule => {}
+                _ => blocks.push(Block::Table(vec![cells])),
             }
         } else {
             paragraph.push(trimmed);
@@ -633,6 +888,13 @@ pub fn parse_blocks(text: &str) -> Vec<Block> {
     }
     flush(&mut paragraph, &mut blocks);
     blocks
+}
+
+/// The cells of a table row `| a | b |`, trimmed.
+fn table_cells(line: &str) -> Vec<String> {
+    let inner = line.trim().trim_start_matches('|');
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    inner.split('|').map(|c| c.trim().to_owned()).collect()
 }
 
 fn ordered_item(line: &str) -> Option<(&str, &str)> {
@@ -868,7 +1130,10 @@ fn is_id_char(c: char) -> bool {
 /// Renders `text` as simple markdown; returns a node whose link was clicked.
 pub fn markdown(ui: &mut Ui, text: &str, is_node: &dyn Fn(&NodeId) -> bool) -> Option<NodeId> {
     let mut clicked = None;
-    for block in parse_blocks(text) {
+    for (i, block) in parse_blocks(text).into_iter().enumerate() {
+        if i > 0 {
+            ui.add_space(4.0);
+        }
         match block {
             Block::Heading(text) => {
                 ui.add_space(2.0);
@@ -883,12 +1148,49 @@ pub fn markdown(ui: &mut Ui, text: &str, is_node: &dyn Fn(&NodeId) -> bool) -> O
                 });
             }
             Block::Code(code) => code_block(ui, &code),
+            Block::Table(rows) => table(ui, &rows, is_node, &mut clicked),
             Block::Rule => {
                 ui.separator();
             }
         }
     }
     clicked
+}
+
+/// A markdown table: header row bold, rows striped, scrolling sideways when too wide.
+fn table(
+    ui: &mut Ui,
+    rows: &[Vec<String>],
+    is_node: &dyn Fn(&NodeId) -> bool,
+    clicked: &mut Option<NodeId>,
+) {
+    let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let id = ui.id().with(("table", rows.len(), rows.first()));
+    egui::Frame::new()
+        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::symmetric(8, 6))
+        .show(ui, |ui| {
+            egui::ScrollArea::horizontal()
+                .id_salt(id.with("scroll"))
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    egui::Grid::new(id)
+                        .num_columns(columns)
+                        .striped(true)
+                        .spacing([14.0, 4.0])
+                        .show(ui, |ui| {
+                            for (r, row) in rows.iter().enumerate() {
+                                for cell in row {
+                                    ui.horizontal(|ui| {
+                                        spans_line(ui, cell, is_node, r == 0, clicked);
+                                    });
+                                }
+                                ui.end_row();
+                            }
+                        });
+                });
+        });
 }
 
 fn spans_ui(
@@ -898,36 +1200,45 @@ fn spans_ui(
     heading: bool,
     clicked: &mut Option<NodeId>,
 ) {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        for span in parse_spans(text, is_node) {
-            match span {
-                Span::Plain(s) => {
-                    let text = RichText::new(s);
-                    ui.label(if heading { text.strong() } else { text });
-                }
-                Span::Bold(s) => {
-                    ui.label(RichText::new(s).strong());
-                }
-                Span::Code(s) => {
-                    ui.label(RichText::new(s).code());
-                }
-                Span::Node(id) => {
-                    if ui
-                        .link(RichText::new(id.as_str()).monospace())
-                        .on_hover_text("Select this node")
-                        .clicked()
-                    {
-                        *clicked = Some(id);
-                    }
-                }
-                Span::Link { text, url, code } => {
-                    let text = RichText::new(text);
-                    link_ui(ui, if code { text.code() } else { text }, &url);
+    ui.horizontal_wrapped(|ui| spans_line(ui, text, is_node, heading, clicked));
+}
+
+/// The spans of `text` laid out in `ui`'s current row.
+fn spans_line(
+    ui: &mut Ui,
+    text: &str,
+    is_node: &dyn Fn(&NodeId) -> bool,
+    heading: bool,
+    clicked: &mut Option<NodeId>,
+) {
+    ui.spacing_mut().item_spacing.x = 0.0;
+    for span in parse_spans(text, is_node) {
+        match span {
+            Span::Plain(s) => {
+                let text = RichText::new(s);
+                ui.label(if heading { text.strong() } else { text });
+            }
+            Span::Bold(s) => {
+                ui.label(RichText::new(s).strong());
+            }
+            Span::Code(s) => {
+                ui.label(RichText::new(s).code());
+            }
+            Span::Node(id) => {
+                if ui
+                    .link(RichText::new(id.as_str()).monospace())
+                    .on_hover_text("Select this node")
+                    .clicked()
+                {
+                    *clicked = Some(id);
                 }
             }
+            Span::Link { text, url, code } => {
+                let text = RichText::new(text);
+                link_ui(ui, if code { text.code() } else { text }, &url);
+            }
         }
-    });
+    }
 }
 
 /// A web link: pointer cursor and underline on hover, the url as tooltip; a click opens
@@ -950,7 +1261,7 @@ mod tests {
 
     #[test]
     fn blocks_cover_headings_lists_code_and_paragraphs() {
-        let text = "# Status\nAll good,\nmostly.\n\n- one\n  - nested\n2. two\n```\nlet x = 1;\n```\n| a | b |\n| 1 | 2 |\n---";
+        let text = "# Status\nAll good,\nmostly.\n\n- one\n  - nested\n2. two\n```\nlet x = 1;\n```\n| a | b |\n|---|:-:|\n| 1 | 2 |\n---";
         assert_eq!(
             parse_blocks(text),
             vec![
@@ -960,7 +1271,10 @@ mod tests {
                 Block::Item(1, "•".into(), "nested".into()),
                 Block::Item(0, "2.".into(), "two".into()),
                 Block::Code("let x = 1;".into()),
-                Block::Code("| a | b |\n| 1 | 2 |".into()),
+                Block::Table(vec![
+                    vec!["a".into(), "b".into()],
+                    vec!["1".into(), "2".into()]
+                ]),
                 Block::Rule,
             ]
         );
@@ -1339,7 +1653,7 @@ mod tests {
             on.contains("⚙ Auto mode on: the Queen's actions run without asking"),
             "{on}"
         );
-        assert!(on.contains("send_to_agent … · auto"), "{on}");
+        assert!(on.contains("send_to_agent · auto"), "{on}");
 
         let (_, off) = draw(&Transcript::default(), false, Vec::new());
         assert!(off.contains("Auto"), "the switch is always there: {off}");

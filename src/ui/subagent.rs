@@ -1,13 +1,12 @@
-//! A selected Claude subagent: its metadata (details column) and a read-only transcript tail
+//! A selected Claude subagent: its metadata (details column) and its read-only conversation
 //! (conversation column).
 
 use eframe::egui::{self, RichText, Ui};
 
 use crate::claude::{SubagentInfo, SubagentState};
-use crate::model::Node;
+use crate::model::{Node, NodeId};
+use crate::ui::chat::TranscriptView;
 use crate::ui::graph::{format_ago, state_color};
-use crate::ui::styled_view::styled_view;
-use crate::ui::term_style::AgentKind;
 
 /// Header rows (label, value) describing `info` as of `now_ms`.
 pub fn header_rows(info: &SubagentInfo, now_ms: i64) -> Vec<(&'static str, String)> {
@@ -58,33 +57,29 @@ pub fn subagent_details(ui: &mut Ui, node: &Node, info: &SubagentInfo, now_ms: i
         });
 }
 
-/// The conversation column for a subagent: a title and its read-only transcript tail
-/// (`tail` is the rendered transcript, oldest first).
-pub fn subagent_transcript(ui: &mut Ui, node: &Node, info: &SubagentInfo, tail: &[String]) {
+/// The conversation column for a subagent: a title and its whole conversation, read from its
+/// transcript. Returns a node whose link was clicked.
+pub fn subagent_transcript(
+    ui: &mut Ui,
+    node: &Node,
+    info: &SubagentInfo,
+    view: Option<&mut TranscriptView>,
+    is_node: &dyn Fn(&NodeId) -> bool,
+) -> Option<NodeId> {
     ui.horizontal(|ui| {
         let color = state_color(node.state, ui.visuals().dark_mode);
         ui.label(RichText::new("●").color(color));
         ui.add(egui::Label::new(RichText::new(&node.label).strong()).truncate());
     });
     ui.separator();
-
-    if tail.is_empty() {
-        ui.weak("No transcript output yet.");
-        return;
-    }
-    let font_size = egui::TextStyle::Monospace.resolve(ui.style()).size;
-    egui::Frame::new()
-        .fill(ui.visuals().extreme_bg_color)
-        .inner_margin(egui::Margin::symmetric(6, 4))
-        .show(ui, |ui| {
-            styled_view(
-                ui,
-                ("subagent_tail", &info.agent_id),
-                tail,
-                AgentKind::Transcript,
-                font_size,
-            );
-        });
+    let running = !info.state.is_finished();
+    crate::ui::chat::transcript_conversation(
+        ui,
+        ("subagent_conversation", &info.agent_id),
+        view,
+        running,
+        is_node,
+    )
 }
 
 #[cfg(test)]

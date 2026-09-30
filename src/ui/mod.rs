@@ -13,6 +13,7 @@ pub mod graph;
 pub mod history;
 pub mod icons;
 pub mod keys;
+pub mod message_list;
 pub mod notifications;
 pub mod playbook;
 pub mod queen;

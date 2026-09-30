@@ -303,7 +303,7 @@ fn parse_content(content: Option<&Value>) -> Vec<ContentBlock> {
     }
 }
 
-fn parse_block(b: &Value) -> ContentBlock {
+pub(crate) fn parse_block(b: &Value) -> ContentBlock {
     match b.get("type").and_then(Value::as_str).unwrap_or_default() {
         "text" => ContentBlock::Text(str_of(b, "text").unwrap_or_default()),
         "thinking" | "redacted_thinking" => ContentBlock::Thinking,
