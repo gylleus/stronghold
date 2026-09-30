@@ -1,4 +1,4 @@
-//! The app side of starting sessions: the "New session…" dialog, spawns requested through the
+//! The app side of starting sessions: the "New ant…" dialog, spawns requested through the
 //! control API (the Queen's `spawn_session`), and selecting the new node once it appears.
 
 use std::collections::HashMap;
@@ -34,7 +34,7 @@ impl AppSpawn {
 }
 
 impl MyrstackApp {
-    /// Opens "New session…", with the sidebar repo `repo` picked.
+    /// Opens "New ant…", with the sidebar repo `repo` picked.
     pub(super) fn open_spawn_dialog(&mut self, repo: Option<&str>) {
         self.spawn.dialog.open(repo);
     }

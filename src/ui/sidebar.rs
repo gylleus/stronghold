@@ -308,7 +308,7 @@ pub struct SidebarResponse {
     pub filter_changed: bool,
     /// "Close shown…" was clicked: ask to close the nodes the filter shows.
     pub close_shown: bool,
-    /// A repo header's "+" was clicked: open "New session…" for that repo.
+    /// A repo header's "+" was clicked: open "New ant…" for that repo.
     pub new_session_repo: Option<String>,
 }
 
@@ -475,8 +475,8 @@ fn repos_section(
             ui,
             crate::ui::art::anthill(),
             140.0,
-            "No agents",
-            "The colony is quiet. New sessions show up here.",
+            "No ants",
+            "The colony is quiet. New ants show up here.",
         );
         return;
     }
@@ -491,14 +491,14 @@ fn repos_section(
     }
 }
 
-/// The repo header's "+": opens "New session…" with the repo picked.
+/// The repo header's "+": opens "New ant…" with the repo picked.
 fn new_session_button(ui: &mut Ui, group: &RepoView, response: &mut SidebarResponse) {
     if group.repo == NO_REPO {
         return;
     }
     let button = ui
         .small_button("+")
-        .on_hover_text(format!("New session in {}…", group.repo));
+        .on_hover_text(format!("New ant in {}…", group.repo));
     if button.clicked() {
         response.new_session_repo = Some(group.repo.clone());
     }

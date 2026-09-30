@@ -1,4 +1,4 @@
-//! "New session…" dialog: pick where (a worktree, a new worktree, or a run as its worker), the
+//! "New ant…" dialog: pick where (a worktree, a new worktree, or a run as its worker), the
 //! agent and an initial prompt; see the planned `orca` commands; launch and watch each step.
 
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -394,7 +394,7 @@ impl SpawnDialog {
         let mut open = true;
         let mut launch = None;
         let form_height = (ctx.content_rect().height() * 0.55).max(240.0);
-        egui::Window::new("New session")
+        egui::Window::new("New ant")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -734,7 +734,7 @@ fn prompt_field(ui: &mut egui::Ui, prompt: &mut String) -> bool {
             .id(id)
             .desired_rows(6)
             .desired_width(f32::INFINITY)
-            .hint_text("What should the agent do? (⌘↩ to launch)"),
+            .hint_text("What should the ant do? (⌘↩ to launch)"),
     );
     crate::ui::widgets::focus_ring(ui, &response);
     submit
@@ -993,7 +993,7 @@ mod tests {
         dialog.form.prompt = "Fix the flaky test".into();
         let (launched, texts) = draw(&mut dialog, 3);
         assert!(launched.is_none());
-        assert!(texts.iter().any(|t| t == "New session"), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "New ant"), "{texts:?}");
         assert!(texts.iter().any(|t| t == "Planned commands"));
         assert!(
             texts.iter().any(|t| t.contains("orca terminal create")

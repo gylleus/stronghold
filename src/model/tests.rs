@@ -319,7 +319,7 @@ fn empty_data_gives_only_the_queen() {
     assert_eq!(ids, ["queen"]);
     let queen = snap.queen().unwrap();
     assert_eq!(queen.state, NodeState::Idle);
-    assert_eq!(queen.preview.as_deref(), Some("0 coordinators · 0 agents"));
+    assert_eq!(queen.preview.as_deref(), Some("0 coordinators · 0 ants"));
 }
 
 /// Edges other than the queen's.
@@ -368,7 +368,7 @@ fn queen_links_every_coordinator_and_loose_terminal() {
     assert_eq!(agents, snap.nodes.len() - 1);
     assert_eq!(
         queen.preview.as_deref(),
-        Some(format!("1 coordinator · {agents} agents").as_str())
+        Some(format!("1 coordinator · {agents} ants").as_str())
     );
 }
 

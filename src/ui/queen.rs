@@ -143,7 +143,7 @@ pub fn queen_details(
     });
     ui.horizontal_wrapped(|ui| {
         ui.weak(format!(
-            "{} coordinator{} · {} agent{}",
+            "{} coordinator{} · {} ant{}",
             summary.coordinators,
             plural(summary.coordinators),
             summary.agents,

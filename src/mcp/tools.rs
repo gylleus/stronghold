@@ -319,8 +319,9 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "spawn_session",
-            "Start a new agent session",
-            "Starts a new Claude or Codex session in Orca with an initial prompt, and waits \
+            "Start a new ant",
+            "Starts a new ant: a dedicated Claude or Codex agent session in Orca working on one \
+             task, with an initial prompt (\"make a new ant for X\" means this). Waits \
              until the prompt visibly started (answering the Bypass Permissions / folder trust \
              modals and submitting a parked prompt). Modes: \"worktree\" runs a fresh agent in \
              an existing worktree (give worktree: id, path, <repo>/<name> or name); \

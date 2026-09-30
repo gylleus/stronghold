@@ -25,7 +25,7 @@ pub fn fleet_state<'a>(nodes: impl IntoIterator<Item = &'a Node>) -> NodeState {
     best
 }
 
-/// The queen for a snapshot with `nodes`; its preview is the "N coordinators · M agents" line.
+/// The queen for a snapshot with `nodes`; its preview is the "N coordinators · M ants" line.
 pub(super) fn queen_node(nodes: &[Node]) -> Node {
     let agents = nodes.iter().filter(|n| n.kind != NodeKind::Queen);
     let coordinators = agents
@@ -47,7 +47,7 @@ pub(super) fn queen_node(nodes: &[Node]) -> Node {
         branch: None,
         last_output_ms: None,
         preview: Some(format!(
-            "{coordinators} coordinator{} · {total} agent{}",
+            "{coordinators} coordinator{} · {total} ant{}",
             plural(coordinators),
             plural(total)
         )),

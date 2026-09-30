@@ -205,6 +205,7 @@ fn initialize_echoes_a_supported_version() {
         "subagent",
         "needs_input",
         "list_agents",
+        "An ant is one dedicated agent session",
     ] {
         assert!(instructions.contains(word), "instructions mention {word}");
     }
@@ -491,6 +492,14 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
             );
         }
     }
+    let spawn = tools.iter().find(|t| t["name"] == "spawn_session").unwrap();
+    assert_eq!(spawn["annotations"]["title"], "Start a new ant");
+    assert!(
+        spawn["description"]
+            .as_str()
+            .unwrap()
+            .contains("make a new ant for X")
+    );
     let close = tools.iter().find(|t| t["name"] == "close_agents").unwrap();
     assert_eq!(
         close["inputSchema"]["properties"]["dry_run"]["default"],

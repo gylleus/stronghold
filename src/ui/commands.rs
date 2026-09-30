@@ -111,8 +111,8 @@ pub const ACTIONS: &[Action] = &[
     action(
         ActionId::NewSession,
         "new_session",
-        "New session…",
-        "spawn start launch agent claude codex worktree worker prompt",
+        "New ant…",
+        "ant session spawn start launch agent claude codex worktree worker prompt",
         None,
     ),
     action(
@@ -487,7 +487,7 @@ pub enum Dispatch {
     ShowOnly(NodeState),
     ToggleLoose,
     ToggleReleased,
-    /// Open the "New session…" dialog.
+    /// Open the "New ant…" dialog.
     NewSession,
 }
 
