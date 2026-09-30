@@ -62,6 +62,7 @@ impl MyrstackApp {
                 self.view = View::Graph;
                 self.graph.reset_layout();
             }
+            Dispatch::ResetPanes => self.reset_panes(),
             Dispatch::SetView(view) => self.view = view,
             Dispatch::ClearFilters => self.clear_filters(),
             Dispatch::ShowOnly(state) => {

@@ -99,22 +99,24 @@ impl MyrstackApp {
         self.chat.session.poll();
     }
 
-    /// Cmd+J: hide the conversation column when it shows the Queen's chat, else show her chat
-    /// with the cursor in it.
+    /// Cmd+J: hide the conversation pane when it shows the Queen's chat, else show her chat
+    /// with the cursor in it. A chat tabbed behind another pane comes to the front instead.
     pub(super) fn toggle_chat(&mut self) {
-        if self.shows_chat() {
-            self.chat_hidden = true;
-            self.selected = None;
-            self.graph.set_selected(None);
+        use crate::ui::dock::Pane;
+        let behind =
+            self.panes.contains(Pane::Conversation) && !self.panes.is_visible(Pane::Conversation);
+        if self.shows_chat() && !behind {
+            self.hide_conversation();
         } else {
             self.open_chat();
         }
     }
 
-    /// Selects the Queen and focuses the chat's input.
+    /// Selects the Queen, brings the conversation pane forward and focuses the chat's input.
     pub(super) fn open_chat(&mut self) {
         self.chat_hidden = false;
         self.select_queen();
+        self.bring_forward = Some(crate::ui::dock::Pane::Conversation);
         self.chat.panel.focus_input = true;
     }
 
