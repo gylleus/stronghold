@@ -101,6 +101,12 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("drag", "Select the nodes in a box (⇧/⌘ adds)"),
     ("⇧/⌘ click", "Add or remove a node from the selection"),
     ("right-drag", "Pan the graph"),
+    ("two-finger swipe", "Pan the graph (trackpad)"),
+    (
+        "pinch  ⌘ scroll",
+        "Zoom the graph (a mouse wheel zooms too)",
+    ),
+    ("← ↑ ↓ →", "Pan the graph"),
     ("?", "Toggle this help"),
 ];
 
