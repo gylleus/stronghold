@@ -1,7 +1,7 @@
 //! The window's side columns: the conversation column on the right (the Queen's chat, or the
 //! selected agent's screen and input; the Queen's chat when nothing is selected, unless ⌘J hid
-//! it) and the details column on the left of the graph (the
-//! selected node's attributes and actions), which collapses to a strip.
+//! it) and, just left of it, the details column (the selected node's attributes and actions),
+//! which collapses to a strip.
 
 use serde::{Deserialize, Serialize};
 
