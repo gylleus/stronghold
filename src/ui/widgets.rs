@@ -1,4 +1,5 @@
-//! Small decorations shared by the panes: the primary action button and the input focus ring.
+//! Small decorations shared by the panes: the primary and Open in Orca buttons and the input
+//! focus ring.
 
 use eframe::egui::{self, Response, RichText, Ui};
 
@@ -45,4 +46,29 @@ pub fn section_label(ui: &mut Ui, text: &str) -> Response {
             .small()
             .color(ui.visuals().weak_text_color()),
     )
+}
+
+/// Teal of the "Open in Orca" button: apart from the accent, the Queen's gold and the state
+/// colours, so the most-pressed button is easy to find.
+pub fn orca_color(dark_mode: bool) -> egui::Color32 {
+    if dark_mode {
+        egui::Color32::from_rgb(0x3e, 0xb8, 0xa6)
+    } else {
+        egui::Color32::from_rgb(0x1c, 0x7c, 0x70)
+    }
+}
+
+/// The "Open in Orca" button: teal-filled while `enabled`, plain otherwise.
+pub fn orca_button(ui: &Ui, enabled: bool) -> egui::Button<'static> {
+    let text = "Open in Orca";
+    if !enabled {
+        return egui::Button::new(text);
+    }
+    let dark = ui.visuals().dark_mode;
+    let ink = if dark {
+        ui.visuals().extreme_bg_color
+    } else {
+        egui::Color32::WHITE
+    };
+    egui::Button::new(RichText::new(text).strong().color(ink)).fill(orca_color(dark))
 }

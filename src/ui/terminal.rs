@@ -309,7 +309,10 @@ pub fn details_panel(
     });
     ui.horizontal_wrapped(|ui| {
         let open = ui
-            .add_enabled(handle.is_some(), egui::Button::new("Open in Orca"))
+            .add_enabled(
+                handle.is_some(),
+                crate::ui::widgets::orca_button(ui, handle.is_some()),
+            )
             .on_hover_text(format!(
                 "Show this terminal's tab in Orca ({})",
                 ui.ctx().format_shortcut(&OPEN_SHORTCUT)
