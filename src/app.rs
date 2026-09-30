@@ -386,8 +386,9 @@ impl MyrstackApp {
         self.apply_terminal_response(id, response);
     }
 
-    /// The details column left of the graph: the selected node's attributes and actions, or
-    /// the Queen's fleet summary, review queue and broadcast. Collapses to a strip.
+    /// The details column between the graph and the conversation column: the selected node's
+    /// attributes and actions, or the Queen's fleet summary, review queue and broadcast.
+    /// Collapses to a strip.
     fn details_column(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         use ui::columns::{self, DetailsColumn};
         let window = ui.ctx().content_rect().width();
@@ -395,18 +396,18 @@ impl MyrstackApp {
         let toggle = match shown {
             DetailsColumn::Hidden => false,
             DetailsColumn::Collapsed => {
-                egui::Panel::left("details_strip")
+                egui::Panel::right("details_strip")
                     .resizable(false)
                     .exact_size(columns::STRIP_WIDTH)
                     .show(ui, |ui| {
-                        ui.button("»")
+                        ui.button("«")
                             .on_hover_text("Show the selection's details")
                             .clicked()
                     })
                     .inner
             }
             DetailsColumn::Open => {
-                egui::Panel::left("details")
+                egui::Panel::right("details")
                     .resizable(true)
                     .default_size(columns::DETAILS_DEFAULT_WIDTH)
                     .min_size(columns::DETAILS_MIN_WIDTH)
@@ -418,7 +419,7 @@ impl MyrstackApp {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        ui.small_button("«")
+                                        ui.small_button("»")
                                             .on_hover_text("Collapse the details column")
                                             .clicked()
                                     },
@@ -1146,6 +1147,7 @@ impl eframe::App for MyrstackApp {
             .show(ui, |ui| self.top_bar(ui, now_ms));
         // Side columns before the graph's own bars, so they run the full height.
         self.conversation_column(ui, now_ms);
+        self.details_column(ui, now_ms);
         let mut whip_pick = None;
         if self.view == View::Graph
             && let Some(snapshot) = &self.snapshot
@@ -1188,7 +1190,6 @@ impl eframe::App for MyrstackApp {
         if let Some(id) = whip_pick {
             self.select_and_focus(id);
         }
-        self.details_column(ui, now_ms);
         self.hidden_selection_notice(ui);
         if self.view == View::Graph {
             egui::Panel::bottom("legend")
