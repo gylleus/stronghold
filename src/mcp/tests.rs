@@ -1469,9 +1469,11 @@ fn notify_is_listed_with_when_to_call_it() {
     assert_eq!(tool["annotations"]["readOnlyHint"], false);
     let description = tool["description"].as_str().unwrap();
     for phrase in [
-        "blocked on him",
-        "need a decision",
-        "finished something important",
+        "Blocked on Karl",
+        "Handover",
+        "one notification per event",
+        "standalone session with no coordinator",
+        "fall back to the existing channels",
         "quiet mode",
     ] {
         assert!(
@@ -1482,6 +1484,9 @@ fn notify_is_listed_with_when_to_call_it() {
     let init = rpc(&mut server, "initialize", json!({}));
     let instructions = init["result"]["instructions"].as_str().unwrap();
     assert!(instructions.contains("notify {title, message, severity"));
+    // The tool and the server instructions give the same rules.
+    assert!(description.contains(notify::RULES));
+    assert!(instructions.ends_with(notify::RULES));
 }
 
 #[test]

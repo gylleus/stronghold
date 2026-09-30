@@ -36,7 +36,7 @@ Check live rather than trusting a table: `orca status --json` (runtime must be r
   it is a retired workflow; ignore it.
 - Tickets: Linear (VROOM) through the coordinator's Linear MCP. Orca's Linear integration is
   not connected, so workers get ticket text only through their dispatch spec.
-- No secrets tooling: agents never self-serve credentials; they summon Karl.
+- No secrets tooling: agents never self-serve credentials; they summon Karl (_Human in the loop_).
 
 ## Core principles
 
@@ -234,6 +234,8 @@ comment) so it describes the design as it now stands, then marks it.
   (deploy, cron window, dependencies).
 - Read the current body first and edit with `gh pr edit <n> --body-file -`. Say it comes from
   Karl's AI agent. `fleet-sweep.sh` reads each PR's first line.
+- After a `✅` marker, hand over: `mark_pr_ready {pr_url}` (Myrstack's review queue), then one
+  `notify` (info, the PR url, what Karl does next), per _Human in the loop_.
 
 ## Trust boundaries
 
@@ -254,9 +256,23 @@ comment) so it describes the design as it now stands, then marks it.
 
 - Karl can open and take over any terminal. Never submit his typed-but-unsent input. Ctrl+D at
   a claude prompt kills the session: leave done-looking terminals alone.
-- **Summon Karl** for passkeys, 2FA, secrets or judgment:
-  `osascript -e 'display dialog "Agent <track> needs you: <what>" with title "orca fleet"
-buttons {"OK"} giving up after 300'`, then wait ≥10 min, polling.
+- **Reaching Karl: Myrstack's `notify` tool** (`title`, `message`, `severity`, `url`). It pops
+  up on his screen with a sound and lands in his inbox, attributed to your terminal. One
+  notification per event; never for progress or routine status. The coordinator sends them,
+  and so does a standalone session with no coordinator. Workers go through their coordinator
+  (`ask`, `escalation`, `merge_ready`), except for the credential step in `_AGENT_PROTOCOL.md`.
+  - **Blocked on Karl** (a permission, credential, passkey or 2FA, prod approval, or a decision
+    only he can make): `severity: warn`, or `urgent` if work is stalled and can't wait. Say
+    what you need and what it unblocks, then wait ≥10 min, polling. A terminal sitting at a
+    prompt already shows as needs input and Myrstack notifies about it; don't add another.
+  - **Handover** (you're done and the next move is Karl's): a PR ready for his review (right
+    after the ready marker and `mark_pr_ready`), a merge waiting on him, a run or campaign
+    finished. `severity: info`, the `url`, and one line on what he needs to do next. It is a
+    status, not a merge question (principle 4). Myrstack folds it into its own "PR ready for
+    review" notification for the same PR, so Karl gets one.
+  - **If Myrstack isn't running**, `notify` errors: fall back to the old channels. Blocking
+    asks: `osascript -e 'display dialog "Agent <track> needs you: <what>" with title "orca
+fleet" buttons {"OK"} giving up after 300'`. Handovers: the chat and the ticket.
 - Secrets go only into password fields: never logs, PRs, tickets or summaries. Worker
   `.dev.vars` come from `.envrc.local` via `just`; don't hand-edit or echo them.
 - Say what you could and couldn't reach behind sign-in walls; a login page is not a verified

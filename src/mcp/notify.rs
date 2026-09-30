@@ -10,13 +10,32 @@ use crate::notify::agent::{AgentNotice, MAX_MESSAGE_CHARS, MAX_TITLE_CHARS};
 use crate::notify::dispatch::{AGENT_MAX, AGENT_WINDOW_MS};
 use crate::review::mark::Origin;
 
-/// When to call it, in the tool description.
-pub const WHEN: &str = "Call notify when you need Karl and can't go on without him: you are \
-blocked on him (access, credentials, a permission only he can grant), you need a decision or \
-an answer from him, or you finished something important he is waiting for. Don't use it for \
-progress updates or routine completions, or for what Myrstack already shows him (an agent \
-waiting at a prompt is flagged automatically; a PR ready for review goes through \
-mark_pr_ready).";
+/// When to call `notify`, as the fleet playbook's _Human in the loop_ says it. A macro so the
+/// server instructions can `concat!` the same text.
+macro_rules! rules_text {
+    () => {
+        "When to call notify (the fleet playbook's rules): \
+(1) Blocked on Karl: a permission, credential, passkey or 2FA, prod approval, or a decision only \
+he can make. Severity warn, or urgent if work is stalled and can't wait; say what you need and \
+what it unblocks. \
+(2) Handover, you're done and the next move is Karl's: a PR ready for his review (right after \
+merge_ready and mark_pr_ready; a coordinator after the ready marker), a merge waiting on him, a \
+run or campaign finished. Severity info, with the url and one line on what he needs to do next; \
+a status, never a question about merging. Myrstack folds a PR handover into its own \
+\"PR ready for review\" notification, so Karl gets one. \
+(3) Not for progress or routine status; one notification per event. A terminal waiting at a \
+prompt already shows as needs input and is notified by Myrstack. \
+(4) Workers under a coordinator go through it (ask, escalation, merge_ready) and don't call \
+notify, except to summon Karl for a credential step; a standalone session with no coordinator \
+notifies Karl directly. \
+(5) If Myrstack isn't running, notify errors: fall back to the existing channels (the osascript \
+summon dialog for blocking asks, the chat and the ticket for handovers)."
+    };
+}
+pub(crate) use rules_text;
+
+/// [`rules_text`] as a constant.
+pub const RULES: &str = rules_text!();
 
 /// The tool, for `tools/list`.
 pub fn definitions() -> Vec<Value> {
@@ -27,11 +46,9 @@ pub fn definitions() -> Vec<Value> {
             "Sends Karl, the human who runs this fleet, a notification through Myrstack (his \
              fleet dashboard): a macOS and/or in-app pop-up with a sound, as his settings say, \
              kept in his inbox and attributed to your terminal. Clicking it selects your node \
-             and opens `url`. {WHEN} Severity: info (for his information, no rush), warn \
-             (needs him soon: you are blocked or need a decision), urgent (needs him now: \
-             something is broken, at risk or on a deadline; gets through his quiet mode). Put \
-             what and which task in the title and the ask in the message. Identical repeats \
-             collapse into one; each agent gets at most {AGENT_MAX} per {} minutes.",
+             and opens `url`. {RULES} Urgent gets through Karl's quiet mode. Put what and \
+             which task in the title and the ask in the message. Identical repeats collapse \
+             into one; each agent gets at most {AGENT_MAX} per {} minutes.",
             AGENT_WINDOW_MS / 60_000
         ),
         "inputSchema": {
@@ -164,6 +181,9 @@ fn reply_text(reply: &Value) -> String {
              it once. No need to repeat it.",
             reply["count"].as_u64().unwrap_or(2)
         ),
+        Some("folded") => "Folded into Myrstack's own \"PR ready for review\" notification for \
+             this PR, so Karl gets one; your title and message replaced its text."
+            .to_owned(),
         Some("rate_limited") => {
             let mins = reply["retry_after_ms"]
                 .as_i64()

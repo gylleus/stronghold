@@ -170,7 +170,7 @@ pub fn reply(
         Outcome::RateLimited { retry_after_ms } => {
             reply["retry_after_ms"] = json!(retry_after_ms);
         }
-        Outcome::Cooldown => {}
+        Outcome::Folded { .. } | Outcome::Cooldown => {}
     }
     reply
 }

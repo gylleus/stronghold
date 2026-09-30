@@ -80,8 +80,10 @@ which does the same. See the control API's [Review queue](control-api.md#review-
 `notify` is how any agent reaches Karl without going through the Queen: a macOS and/or
 in-app pop-up with a sound (per his Notifications settings), kept in his inbox (the bell in
 the top bar, `alerts`, `fleet_status`) and attributed to the caller's terminal like
-`mark_pr_ready`. Agents should call it when they are blocked on Karl, need a decision from him,
-or finished something important he is waiting for; not for progress updates. Identical
+`mark_pr_ready`. When to call it is the fleet playbook's _Human in the loop_ rule, repeated in
+the tool description and the server instructions (`src/mcp/notify.rs`, `rules_text!`): blocked
+on Karl (warn, or urgent), handovers (info, with the url and the next step), never progress;
+workers go through their coordinator. Identical
 repeats collapse, each agent gets at most 5 per 10 minutes, and quiet mode lets only `urgent`
 through. It needs the app running. See the control API's
 [Notifications](control-api.md#notifications).

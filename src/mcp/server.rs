@@ -27,7 +27,8 @@ pub const INVALID_REQUEST: i64 = -32600;
 pub const METHOD_NOT_FOUND: i64 = -32601;
 pub const INVALID_PARAMS: i64 = -32602;
 
-pub const INSTRUCTIONS: &str = "\
+pub const INSTRUCTIONS: &str = concat!(
+    "\
 Myrstack is Karl's desktop dashboard for the agent fleet running in the Orca agent IDE. It draws \
 every agent as a node in a live graph and runs the \"whip\", which nudges stalled workers. This \
 server talks to the running app.
@@ -61,11 +62,9 @@ review_queue lists what is waiting, with CI, Ankra and ready-marker state.
 
 Reaching Karl: notify {title, message, severity: info|warn|urgent, url} sends Karl a pop-up \
 and sound through Myrstack, kept in his inbox and attributed to your terminal (clicking it \
-selects your node and opens url). Call it when you are blocked on Karl, need a decision or \
-answer from him, or finished something important he is waiting for; not for progress updates, \
-nor for what Myrstack already flags (waiting at a prompt, PRs via mark_pr_ready). urgent gets \
-through his quiet mode, so keep it for what can't wait. alerts lists his inbox (the Queen \
-reports unread notifications from fleet_status).";
+selects your node and opens url). alerts lists his inbox; fleet_status reports unread ones. ",
+    notify::rules_text!()
+);
 
 /// The MCP session state over one [`Control`].
 pub struct McpServer<C: Control> {
