@@ -45,8 +45,8 @@ pub use regions::{Region, region_color, regions};
 pub use saved::{MAX_SAVED_POSITIONS, SavedLayout, SavedView};
 pub use select::{circle_intersects_rect, is_additive};
 pub use shape::{
-    ALL_STATES, FleetNodeShape, NodePayload, StateGlyph, agent_marker, contrast_ratio, fade_alpha,
-    hexagon, legend, node_radius, pr_color, queen_color, state_color, state_glyph,
+    ALL_STATES, FleetNodeShape, NodePayload, StateGlyph, UnreadBadge, agent_marker, contrast_ratio,
+    fade_alpha, hexagon, legend, node_radius, pr_color, queen_color, state_color, state_glyph,
 };
 pub use tooltip::{coordinator_gone_note, format_ago, kind_label, preview_line, state_label};
 
@@ -117,6 +117,8 @@ pub struct GraphView {
     usage: HashMap<NodeId, Usage>,
     /// Nodes whose agent has a PR in the review queue; drawn with a "PR" badge.
     pr_ready: HashSet<NodeId>,
+    /// Unread notifications per node; drawn as a count badge.
+    unread: HashMap<NodeId, UnreadBadge>,
     id: String,
     /// Canvas point new unrelated nodes spawn around (the layout's gravity center).
     anchor: Pos2,
@@ -177,6 +179,7 @@ impl GraphView {
             repos: HashMap::new(),
             usage: HashMap::new(),
             pr_ready: HashSet::new(),
+            unread: HashMap::new(),
             id: id.into(),
             anchor: Pos2::new(640.0, 400.0),
             layout_initialized: false,
@@ -218,6 +221,23 @@ impl GraphView {
             }
         }
         self.pr_ready = nodes;
+    }
+
+    /// Marks the nodes with unread notifications (a count badge), updating drawn nodes in
+    /// place.
+    pub fn set_unread(&mut self, nodes: HashMap<NodeId, UnreadBadge>) {
+        if nodes == self.unread {
+            return;
+        }
+        for (id, &idx) in &self.index {
+            let want = nodes.get(id).copied();
+            if let Some(node) = self.graph.node_mut(idx)
+                && node.payload().unread != want
+            {
+                node.payload_mut().unread = want;
+            }
+        }
+        self.unread = nodes;
     }
 
     /// Applies a snapshot: adds new nodes and edges, removes vanished ones and updates the rest
@@ -271,6 +291,7 @@ impl GraphView {
                     if let Some(graph_node) = self.graph.node_mut(idx) {
                         let mut payload = payload(node, snapshot);
                         payload.pr_ready = self.pr_ready.contains(&node.id);
+                        payload.unread = self.unread.get(&node.id).copied();
                         if *graph_node.payload() != payload {
                             *graph_node.payload_mut() = payload;
                         }
@@ -296,6 +317,7 @@ impl GraphView {
             let label = node.label.clone();
             let mut payload = payload(node, snapshot);
             payload.pr_ready = self.pr_ready.contains(&node.id);
+            payload.unread = self.unread.get(&node.id).copied();
             let idx = self.graph.add_node_custom(payload, |n| {
                 n.set_location(location);
                 n.set_label(label);
@@ -982,6 +1004,7 @@ fn payload(node: &Node, snapshot: &FleetSnapshot) -> NodePayload {
             .as_ref()
             .and_then(|_| agent_marker(node.agent.as_ref())),
         pr_ready: false,
+        unread: None,
     }
 }
 

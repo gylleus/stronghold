@@ -19,11 +19,10 @@ use objc2_foundation::{NSBundle, NSDictionary, NSError, NSString};
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent, UNNotification,
     UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
-    UNNotificationSettings, UNNotificationSound, UNUserNotificationCenter,
-    UNUserNotificationCenterDelegate,
+    UNNotificationSettings, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
 
-use super::{Outgoing, PAYLOAD_KEY, Poster, Repaint, decode_payload, encode_payload};
+use super::{Clicked, Outgoing, PAYLOAD_KEY, Poster, Repaint, decode_payload, encode_payload};
 
 /// `CFBundleIdentifier` of `Myrstack.app`.
 pub const BUNDLE_ID: &str = "ai.depict.myrstack";
@@ -87,15 +86,15 @@ pub fn install_with(permission: Permission) {
     });
 }
 
-/// Targets of clicked notifications; `wake` is called after each click.
-pub fn clicks(wake: Option<Repaint>) -> Receiver<Vec<String>> {
+/// What clicked notifications covered; `wake` is called after each click.
+pub fn clicks(wake: Option<Repaint>) -> Receiver<Clicked> {
     if let Ok(mut slot) = click_wake().lock() {
         *slot = wake;
     }
     click_channel().1.clone()
 }
 
-type ClickChannel = (Sender<Vec<String>>, Receiver<Vec<String>>);
+type ClickChannel = (Sender<Clicked>, Receiver<Clicked>);
 
 fn click_channel() -> &'static ClickChannel {
     static CHANNEL: OnceLock<ClickChannel> = OnceLock::new();
@@ -107,8 +106,8 @@ fn click_wake() -> &'static Mutex<Option<Repaint>> {
     &WAKE
 }
 
-fn clicked(targets: Vec<String>) {
-    let _ = click_channel().0.send(targets);
+fn clicked(what: Clicked) {
+    let _ = click_channel().0.send(what);
     if let Ok(wake) = click_wake().lock()
         && let Some(wake) = wake.as_ref()
     {
@@ -184,9 +183,10 @@ define_class!(
             _notification: &UNNotification,
             completion_handler: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
         ) {
-            completion_handler.call((UNNotificationPresentationOptions::Banner
-                | UNNotificationPresentationOptions::List
-                | UNNotificationPresentationOptions::Sound,));
+            // No `Sound`: Myrstack plays the sound chosen in Settings itself.
+            completion_handler
+                .call((UNNotificationPresentationOptions::Banner
+                    | UNNotificationPresentationOptions::List,));
         }
 
         #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
@@ -204,7 +204,7 @@ define_class!(
                     .and_then(|v| v.downcast::<NSString>().ok())
                     .map(|s| s.to_string());
                 match payload.as_deref().and_then(decode_payload) {
-                    Some(targets) => clicked(targets),
+                    Some(what) => clicked(what),
                     None => log::debug!("clicked notification has no Myrstack payload"),
                 }
             }
@@ -255,9 +255,9 @@ impl Poster for NativePoster {
         let content = UNMutableNotificationContent::new();
         content.setTitle(&NSString::from_str(&notification.title));
         content.setBody(&NSString::from_str(&notification.body));
-        content.setSound(Some(&UNNotificationSound::defaultSound()));
+        // Silent: the notifier plays the sound chosen in Settings (or none).
         let key = NSString::from_str(PAYLOAD_KEY);
-        let payload = NSString::from_str(&encode_payload(&notification.targets));
+        let payload = NSString::from_str(&encode_payload(&notification.targets, &notification.ids));
         let user_info = NSDictionary::<NSString, NSString>::from_slices(&[&*key], &[&*payload]);
         // SAFETY: the generic parameters are only a compile-time view of the same NSDictionary,
         // and a dictionary of strings is a valid property-list userInfo.

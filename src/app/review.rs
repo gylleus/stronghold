@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::{MyrstackApp, now_ms, repaint_once};
 use crate::control::{ControlError, ErrorCode};
 use crate::model::NodeId;
-use crate::notify::{NotifyKind, NotifyRequest};
+use crate::notify::{Incoming, Severity, Source};
 use crate::review::github::GhCli;
 use crate::review::mark::{self, Origin};
 use crate::review::poller::{GithubPoller, POLL_INTERVAL};
@@ -87,7 +87,7 @@ impl AppReview {
 
 impl MyrstackApp {
     /// The node of the agent with identity `origin`, in the current snapshot.
-    fn review_agent(&self, origin: &Origin) -> Option<AgentRef> {
+    pub(super) fn review_agent(&self, origin: &Origin) -> Option<AgentRef> {
         let snapshot = self.snapshot.as_ref()?;
         let terminals = self.data.as_ref().map_or(&[][..], |d| &d.terminals[..]);
         resolve_agent(origin, snapshot, terminals)
@@ -121,7 +121,8 @@ impl MyrstackApp {
             self.review.dirty = true;
             if self.whip_window.whip().notify {
                 for entry in &new {
-                    self.notifier.notify(self.review_notification(entry));
+                    let notification = self.review_notification(entry);
+                    self.raise(notification);
                 }
             }
         }
@@ -176,7 +177,7 @@ impl MyrstackApp {
         }
     }
 
-    fn review_notification(&self, entry: &crate::review::Entry) -> NotifyRequest {
+    fn review_notification(&self, entry: &crate::review::Entry) -> Incoming {
         let title = entry.title();
         let agent = self
             .review_agent(&entry.origin)
@@ -187,20 +188,19 @@ impl MyrstackApp {
         if let Some(summary) = &entry.summary {
             body.push_str(&format!(": {summary}"));
         }
-        NotifyRequest {
-            target: entry.url(),
-            kind: NotifyKind::Escalation,
-            title: format!(
-                "Myrstack: PR ready for review: {}{}",
-                entry.pr.short(),
-                if title.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {title}")
-                }
-            ),
-            body,
-        }
+        let title = format!(
+            "Myrstack: PR ready for review: {}{}",
+            entry.pr.short(),
+            if title.is_empty() {
+                String::new()
+            } else {
+                format!(" {title}")
+            }
+        );
+        let mut n =
+            Incoming::new(Source::Review, Severity::Info, &title, &body).with_target(entry.url());
+        n.agent_label = Some(agent);
+        n
     }
 
     /// Whether a notification or alert is about a PR in the queue (its target is the PR URL).

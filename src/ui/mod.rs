@@ -13,6 +13,7 @@ pub mod graph;
 pub mod history;
 pub mod icons;
 pub mod keys;
+pub mod notifications;
 pub mod playbook;
 pub mod queen;
 pub mod quota;

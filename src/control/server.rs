@@ -65,6 +65,7 @@ pub const ACTION_METHODS: &[&str] = &[
     "whip",
     "spawn",
     "pr_ready",
+    "notify",
     "review_dismiss",
     "review_done",
 ];
@@ -168,11 +169,25 @@ fn status(view: &StatusView) -> Value {
             "escalated": view.whip.escalated,
         },
         "alerts": view.alerts.len(),
+        "notifications": notifications_summary(view),
         "dashboard": view.dashboard,
         "playbook": view.playbook,
         "queen_auto": view.queen_auto,
     })
 }
+
+/// Unread inbox count and the newest unread notifications, for `fleet_status`.
+fn notifications_summary(view: &StatusView) -> Value {
+    let unread: Vec<_> = view.alerts.iter().filter(|a| !a.read).collect();
+    json!({
+        "total": view.alerts.len(),
+        "unread": unread.len(),
+        "latest_unread": unread.iter().take(UNREAD_IN_STATUS).collect::<Vec<_>>(),
+    })
+}
+
+/// Unread notifications `status` includes.
+const UNREAD_IN_STATUS: usize = 5;
 
 /// The last poll's raw runs, workers, tasks, terminals and inbox (no previews or bodies).
 fn fleet_data(view: &StatusView) -> Result<Value, ControlError> {

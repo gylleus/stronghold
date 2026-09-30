@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use serde_json::{Value, json};
 
 use crate::mcp::backend::Control;
-use crate::mcp::{playbook, review, tools};
+use crate::mcp::{notify, playbook, review, tools};
 use crate::playbook::Playbook;
 
 /// Protocol versions this server speaks, newest first. `initialize` echoes the client's version
@@ -57,7 +57,15 @@ flag, content hash).
 
 Review queue: an agent whose PR is ready for Karl's review calls mark_pr_ready {pr_url} (right \
 after merge_ready); it only records in Myrstack, attributed to the agent's Orca terminal. \
-review_queue lists what is waiting, with CI, Ankra and ready-marker state.";
+review_queue lists what is waiting, with CI, Ankra and ready-marker state.
+
+Reaching Karl: notify {title, message, severity: info|warn|urgent, url} sends Karl a pop-up \
+and sound through Myrstack, kept in his inbox and attributed to your terminal (clicking it \
+selects your node and opens url). Call it when you are blocked on Karl, need a decision or \
+answer from him, or finished something important he is waiting for; not for progress updates, \
+nor for what Myrstack already flags (waiting at a prompt, PRs via mark_pr_ready). urgent gets \
+through his quiet mode, so keep it for what can't wait. alerts lists his inbox (the Queen \
+reports unread notifications from fleet_status).";
 
 /// The MCP session state over one [`Control`].
 pub struct McpServer<C: Control> {
@@ -232,6 +240,7 @@ impl<C: Control> McpServer<C> {
                 let mut all = tools::definitions();
                 all.extend(playbook::tool_definitions());
                 all.extend(review::definitions());
+                all.extend(notify::definitions());
                 Ok(json!({ "tools": all }))
             }
             "tools/call" => self.call_tool(params),
@@ -292,6 +301,7 @@ impl<C: Control> McpServer<C> {
                 )
             })
             .or_else(|| review::call(&mut self.control, &self.review, name, &args))
+            .or_else(|| notify::call(&mut self.control, &self.review.origin, name, &args))
             .or_else(|| tools::call(&mut self.control, name, &args))
             .ok_or_else(|| (INVALID_PARAMS, format!("unknown tool: {name}")))?;
         let mut output = output;

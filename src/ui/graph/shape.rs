@@ -15,6 +15,7 @@ use petgraph::EdgeType;
 use petgraph::stable_graph::IndexType;
 
 use crate::model::{NodeId, NodeKind, NodeState, RELEASED_FADE_MS};
+use crate::notify::Severity;
 use crate::orca::AgentIdentity;
 use crate::ui::{art, icons};
 
@@ -37,6 +38,15 @@ pub struct NodePayload {
     pub coordinator_gone: bool,
     /// The agent has a PR in the review queue: drawn with a "PR" badge.
     pub pr_ready: bool,
+    /// Unread notifications about the node: drawn as a count badge.
+    pub unread: Option<UnreadBadge>,
+}
+
+/// A node's unread notifications: how many, and the most severe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnreadBadge {
+    pub count: u32,
+    pub severity: Severity,
 }
 
 /// Label font size in canvas units; scaled by zoom and clamped on screen.
@@ -441,6 +451,7 @@ pub struct FleetNodeShape {
     agent_marker: Option<char>,
     coordinator_gone: bool,
     pr_ready: bool,
+    unread: Option<UnreadBadge>,
     selected: bool,
     dragged: bool,
     hovered: bool,
@@ -459,6 +470,7 @@ impl From<NodeProps<NodePayload>> for FleetNodeShape {
             agent_marker: None,
             coordinator_gone: false,
             pr_ready: false,
+            unread: None,
             selected: false,
             dragged: false,
             hovered: false,
@@ -485,6 +497,7 @@ impl FleetNodeShape {
         self.agent_marker = props.payload.agent_marker;
         self.coordinator_gone = props.payload.coordinator_gone;
         self.pr_ready = props.payload.pr_ready;
+        self.unread = props.payload.unread;
         self.selected = props.selected;
         self.dragged = props.dragged;
         self.hovered = props.hovered;
@@ -691,6 +704,42 @@ fn pr_badge(ctx: &DrawContext, center: Pos2, radius: f32, alpha: f32) -> Vec<Sha
     ]
 }
 
+/// A round count badge at the node's top right, in the color of the most severe unread
+/// notification.
+fn unread_badge(ctx: &DrawContext, center: Pos2, radius: f32, unread: UnreadBadge) -> Vec<Shape> {
+    let dark = ctx.ctx.global_style().visuals.dark_mode;
+    let size = (radius * 0.75).clamp(9.0, 15.0);
+    let text = if unread.count > 9 {
+        "9+".to_owned()
+    } else {
+        unread.count.to_string()
+    };
+    let galley = ctx.ctx.fonts_mut(|f| {
+        f.layout_no_wrap(
+            text,
+            FontId::new(size * 0.72, FontFamily::Proportional),
+            Color32::WHITE,
+        )
+    });
+    let width = (galley.size().x + size * 0.45).max(size);
+    let rect = Rect::from_center_size(
+        center + Vec2::new(radius, -radius) * 0.8,
+        Vec2::new(width, size),
+    );
+    let text_pos = rect.center() - galley.size() / 2.0;
+    vec![
+        RectShape::new(
+            rect,
+            CornerRadius::same((size / 2.0) as u8),
+            crate::ui::notifications::severity_color(unread.severity, dark),
+            Stroke::new(1.0, ctx.ctx.global_style().visuals.panel_fill),
+            StrokeKind::Outside,
+        )
+        .into(),
+        TextShape::new(text_pos, galley, Color32::WHITE).into(),
+    ]
+}
+
 impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> for FleetNodeShape {
     fn closest_boundary_point(&self, dir: Vec2) -> Pos2 {
         self.pos + dir.normalized() * self.radius()
@@ -788,6 +837,9 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
             shapes.extend(self.agent_badge(ctx, center, radius, alpha));
             if self.pr_ready {
                 shapes.extend(pr_badge(ctx, center, radius, alpha));
+            }
+            if let Some(unread) = self.unread {
+                shapes.extend(unread_badge(ctx, center, radius, unread));
             }
         }
 
