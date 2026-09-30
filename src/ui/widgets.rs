@@ -1,5 +1,5 @@
-//! Small decorations shared by the panes: the primary and Open in Orca buttons and the input
-//! focus ring.
+//! Small decorations shared by the panes: the app title, the primary and Open in Orca buttons
+//! and the input focus ring.
 
 use eframe::egui::{self, Response, RichText, Ui};
 
@@ -12,6 +12,13 @@ pub fn primary_button(ui: &Ui, enabled: bool, text: &str) -> egui::Button<'stati
     } else {
         egui::Button::new(text.to_owned())
     }
+}
+
+/// The top bar's title: the Queen's avatar and the app name.
+pub fn app_title(ui: &mut Ui) {
+    let size = ui.text_style_height(&egui::TextStyle::Heading) + 4.0;
+    ui.add(crate::ui::art::queen_avatar(size));
+    ui.heading(crate::APP_NAME);
 }
 
 /// Draws the accent ring around a text box while it has focus.

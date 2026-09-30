@@ -16,6 +16,7 @@ use petgraph::stable_graph::IndexType;
 
 use crate::model::{NodeId, NodeKind, NodeState, RELEASED_FADE_MS};
 use crate::orca::AgentIdentity;
+use crate::ui::{art, icons};
 
 use super::tooltip::state_label;
 
@@ -63,6 +64,10 @@ const ANIMATION_FRAME: Duration = Duration::from_millis(100);
 const FADE_FRAME: Duration = Duration::from_secs(1);
 /// Minimum on-screen node radius for drawing the state glyph and agent badge.
 const DETAIL_MIN_PX: f32 = 5.0;
+/// State glyph font size in node radii.
+const GLYPH_SCALE: f32 = 1.3;
+/// Width of the kind icon and its gap before a node label, in label font sizes.
+const LABEL_ICON_EM: f32 = 1.35;
 
 pub const ALL_STATES: [NodeState; 6] = [
     NodeState::Working,
@@ -128,6 +133,9 @@ fn queen_badge_offset(radius: f32) -> Vec2 {
     Vec2::new(radius, -radius) * 0.8
 }
 
+/// Size of the Queen's avatar image in node radii: its hexagon spans 60 of its 64 units.
+const QUEEN_ART_SCALE: f32 = 2.0 * 32.0 / 30.0;
+
 /// Corners of a flat-topped hexagon of circumradius `radius` around `center`.
 pub fn hexagon(center: Pos2, radius: f32) -> Vec<Pos2> {
     (0..6)
@@ -157,6 +165,25 @@ fn crown_shape(center: Pos2, radius: f32, color: Color32) -> Shape {
 fn label_px(zoom: f32, emphasized: bool) -> Option<f32> {
     let px = LABEL_SIZE * zoom;
     (px >= LABEL_MIN_PX || emphasized).then(|| px.clamp(LABEL_MIN_PX, LABEL_MAX_PX))
+}
+
+/// A node label led by its kind's icon, both at `px`.
+fn label_job(
+    ctx: &egui::Context,
+    icon: char,
+    label: &str,
+    px: f32,
+    color: Color32,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let format = |family| egui::TextFormat::simple(FontId::new(px, family), color);
+    job.append(&icon.to_string(), 0.0, format(icons::family(ctx)));
+    job.append(
+        label,
+        px * (LABEL_ICON_EM - 1.0),
+        format(FontFamily::Proportional),
+    );
+    job
 }
 
 /// Size of `label` drawn at [`LABEL_MAX_PX`]; [`node_extent`] scales it to the drawn size.
@@ -205,7 +232,10 @@ pub fn node_extent(payload: &NodePayload, label: Vec2, selected: bool, zoom: f32
     if label != Vec2::ZERO
         && let Some(px) = label_px(zoom, selected)
     {
-        let size = label * (px / LABEL_MAX_PX) + Vec2::splat(2.0);
+        let mut size = label * (px / LABEL_MAX_PX) + Vec2::splat(2.0);
+        if payload.kind != NodeKind::Queen {
+            size.x += px * LABEL_ICON_EM;
+        }
         let top = outer + 3.0;
         extent = extent.union(Rect::from_min_size(Pos2::new(-size.x / 2.0, top), size));
     }
@@ -225,32 +255,13 @@ pub fn state_color(state: NodeState, dark_mode: bool) -> Color32 {
     Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 
-/// The mark drawn inside a node so its state does not rely on color alone.
+/// The mark drawn inside a node so its state does not rely on color alone: the state's
+/// Phosphor icon (see [`icons::state_icon`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StateGlyph {
-    /// Working: a small play triangle.
-    Play,
-    /// Idle: a short dash.
-    Dash,
-    /// Needs input: "!".
-    Exclamation,
-    /// Stalled: pause bars.
-    Pause,
-    /// Done: a check mark.
-    Check,
-    /// Failed: a cross.
-    Cross,
-}
+pub struct StateGlyph(pub char);
 
 pub fn state_glyph(state: NodeState) -> StateGlyph {
-    match state {
-        NodeState::Working => StateGlyph::Play,
-        NodeState::Idle => StateGlyph::Dash,
-        NodeState::NeedsInput => StateGlyph::Exclamation,
-        NodeState::Stalled => StateGlyph::Pause,
-        NodeState::Done => StateGlyph::Check,
-        NodeState::Failed => StateGlyph::Cross,
-    }
+    StateGlyph(icons::state_icon(state))
 }
 
 /// Opacity of a node: 1 unless released, then fading linearly from [`FADE_START_ALPHA`] to
@@ -343,35 +354,26 @@ pub fn glyph_color(fill: Color32) -> Color32 {
     }
 }
 
-/// Vector shapes of `glyph` centered on `center`, fitting a node of screen radius `radius`.
-pub fn glyph_shapes(glyph: StateGlyph, center: Pos2, radius: f32, color: Color32) -> Vec<Shape> {
-    let s = radius * 0.45;
-    let stroke = Stroke::new((radius * 0.18).max(1.0), color);
-    let p = |x: f32, y: f32| center + Vec2::new(x, y) * s;
-    match glyph {
-        StateGlyph::Play => vec![Shape::convex_polygon(
-            vec![p(-0.55, -0.75), p(0.8, 0.0), p(-0.55, 0.75)],
-            color,
-            Stroke::NONE,
-        )],
-        StateGlyph::Dash => vec![Shape::line_segment([p(-0.7, 0.0), p(0.7, 0.0)], stroke)],
-        StateGlyph::Exclamation => vec![
-            Shape::line_segment([p(0.0, -0.95), p(0.0, 0.3)], stroke),
-            Shape::circle_filled(p(0.0, 0.85), stroke.width * 0.65, color),
-        ],
-        StateGlyph::Pause => vec![
-            Shape::line_segment([p(-0.4, -0.75), p(-0.4, 0.75)], stroke),
-            Shape::line_segment([p(0.4, -0.75), p(0.4, 0.75)], stroke),
-        ],
-        StateGlyph::Check => vec![Shape::line(
-            vec![p(-0.8, 0.05), p(-0.25, 0.6), p(0.85, -0.6)],
-            stroke,
-        )],
-        StateGlyph::Cross => vec![
-            Shape::line_segment([p(-0.7, -0.7), p(0.7, 0.7)], stroke),
-            Shape::line_segment([p(-0.7, 0.7), p(0.7, -0.7)], stroke),
-        ],
-    }
+/// `glyph` centered on `center`, fitting a node of screen radius `radius`. The font size is
+/// rounded to half pixels so zooming reuses a few rasterized sizes instead of one per frame.
+pub fn glyph_shape(
+    ctx: &egui::Context,
+    glyph: StateGlyph,
+    center: Pos2,
+    radius: f32,
+    color: Color32,
+) -> Shape {
+    let px = ((radius * GLYPH_SCALE * 2.0).round() / 2.0).max(1.0);
+    let font = FontId::new(px, icons::family(ctx));
+    let galley = ctx.fonts_mut(|f| f.layout_no_wrap(glyph.0.to_string(), font, color));
+    // Centered on the drawn glyph: the icon font's line box is not centered on its icons.
+    let visual = galley
+        .rows
+        .first()
+        .map_or(Rect::from_min_size(Pos2::ZERO, galley.size()), |row| {
+            row.visuals.mesh_bounds.translate(row.pos.to_vec2())
+        });
+    TextShape::new(center - visual.center().to_vec2(), galley, color).into()
 }
 
 /// A row of state swatches (color + glyph) with their names, for the app to place.
@@ -390,17 +392,7 @@ pub fn legend(ui: &mut Ui) {
         }
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            let (rect, _) = ui.allocate_exact_size(Vec2::splat(text_height), Sense::hover());
-            let fill = queen_color(dark);
-            let stroke = Stroke::new(1.0, ui.visuals().extreme_bg_color);
-            let radius = rect.width() / 2.0;
-            ui.painter().add(Shape::convex_polygon(
-                hexagon(rect.center(), radius),
-                fill,
-                stroke,
-            ));
-            ui.painter()
-                .add(crown_shape(rect.center(), radius, glyph_color(fill)));
+            ui.add(art::queen_avatar(text_height));
             ui.label(
                 egui::RichText::new("queen (fleet hub; its badge shows the most urgent state)")
                     .small()
@@ -431,7 +423,8 @@ fn paint_swatch(painter: &Painter, rect: Rect, state: NodeState, dark: bool) {
     let fill = state_color(state, dark);
     let radius = rect.width() / 2.0;
     painter.circle_filled(rect.center(), radius, fill);
-    painter.extend(glyph_shapes(
+    painter.add(glyph_shape(
+        painter.ctx(),
         state_glyph(state),
         rect.center(),
         radius,
@@ -554,8 +547,9 @@ impl FleetNodeShape {
         ))
     }
 
-    /// The queen: a gold hexagon with a crown, a badge in the fleet state's color and glyph,
-    /// and its label. It never pulses; the nodes it summarizes do.
+    /// The queen: her avatar (a crowned ant on a gold hexagon; a plain hexagon when tiny or
+    /// not loaded), a badge in the fleet state's color and glyph, and her label. It never
+    /// pulses; the nodes it summarizes do.
     fn queen_shapes(&self, ctx: &DrawContext) -> Vec<Shape> {
         let style = ctx.ctx.global_style();
         let visuals = &style.visuals;
@@ -567,7 +561,26 @@ impl FleetNodeShape {
         } else {
             Stroke::new(1.0, visuals.extreme_bg_color)
         };
-        let mut shapes = vec![Shape::convex_polygon(hexagon(center, radius), fill, stroke)];
+        let avatar = (radius >= DETAIL_MIN_PX)
+            .then(|| art::queen_texture(ctx.ctx))
+            .flatten();
+        let mut shapes = Vec::with_capacity(8);
+        match avatar {
+            Some(texture) => {
+                let rect = Rect::from_center_size(center, Vec2::splat(radius * QUEEN_ART_SCALE));
+                let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+                shapes.push(Shape::image(texture, rect, uv, Color32::WHITE));
+                if stroke.width > 1.0 {
+                    shapes.push(Shape::closed_line(hexagon(center, radius), stroke));
+                }
+            }
+            None => {
+                shapes.push(Shape::convex_polygon(hexagon(center, radius), fill, stroke));
+                if radius >= DETAIL_MIN_PX {
+                    shapes.push(crown_shape(center, radius, glyph_color(fill)));
+                }
+            }
+        }
         if self.selected {
             let ring = radius + (radius * 0.25).clamp(3.0, 6.0);
             shapes.push(Shape::circle_stroke(
@@ -577,7 +590,6 @@ impl FleetNodeShape {
             ));
         }
         if radius >= DETAIL_MIN_PX {
-            shapes.push(crown_shape(center, radius, glyph_color(fill)));
             let badge_r = queen_badge_radius(radius);
             let badge = center + queen_badge_offset(radius);
             let state_fill = state_color(self.state, visuals.dark_mode);
@@ -587,7 +599,8 @@ impl FleetNodeShape {
                 visuals.panel_fill,
             ));
             shapes.push(Shape::circle_filled(badge, badge_r, state_fill));
-            shapes.extend(glyph_shapes(
+            shapes.push(glyph_shape(
+                ctx.ctx,
                 state_glyph(self.state),
                 badge,
                 badge_r,
@@ -765,7 +778,8 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
         }
         if radius >= DETAIL_MIN_PX {
             let opaque = state_color(self.state, visuals.dark_mode);
-            shapes.extend(glyph_shapes(
+            shapes.push(glyph_shape(
+                ctx.ctx,
                 state_glyph(self.state),
                 center,
                 radius,
@@ -785,13 +799,14 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
             } else {
                 visuals.text_color().gamma_multiply(alpha)
             };
-            let galley = ctx.ctx.fonts_mut(|f| {
-                f.layout_no_wrap(
-                    self.label.clone(),
-                    FontId::new(size, FontFamily::Proportional),
-                    color,
-                )
-            });
+            let job = label_job(
+                ctx.ctx,
+                icons::kind_icon(self.kind),
+                &self.label,
+                size,
+                color,
+            );
+            let galley = ctx.ctx.fonts_mut(|f| f.layout_job(job));
             let pos = Pos2::new(center.x - galley.size().x / 2.0, center.y + outer + 3.0);
             shapes.push(TextShape::new(pos, galley, color).into());
         }
