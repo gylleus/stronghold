@@ -78,6 +78,18 @@ pub fn shows_chat(picked: Picked, chat_hidden: bool) -> bool {
     }
 }
 
+/// Where the top bar's Queen quick actions (`width` wide) start: above the conversation
+/// column's content when it is open, else at the bar's right end; always inside the bar.
+pub fn quick_actions_x(
+    bar_left: f32,
+    bar_right: f32,
+    width: f32,
+    conversation: Option<f32>,
+) -> f32 {
+    let latest = (bar_right - width).max(bar_left);
+    conversation.map_or(latest, |x| x.clamp(bar_left, latest))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,5 +146,14 @@ mod tests {
             "selecting her always shows it"
         );
         assert!(!shows_chat(Picked::Other, false));
+    }
+
+    #[test]
+    fn quick_actions_sit_above_the_conversation_or_at_the_right() {
+        assert_eq!(quick_actions_x(0.0, 1000.0, 200.0, Some(600.0)), 600.0);
+        assert_eq!(quick_actions_x(0.0, 1000.0, 200.0, None), 800.0);
+        // A narrow column still leaves the buttons room inside the bar.
+        assert_eq!(quick_actions_x(0.0, 1000.0, 200.0, Some(900.0)), 800.0);
+        assert_eq!(quick_actions_x(0.0, 150.0, 200.0, None), 0.0);
     }
 }

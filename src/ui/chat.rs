@@ -5,12 +5,12 @@
 use eframe::egui::{self, Color32, RichText, Ui};
 use serde_json::Value;
 
+use crate::chat::SessionState;
 use crate::chat::permissions::{
     DESTRUCTIVE_TOOLS, MYRSTACK_PREFIX, short_tool_name, summarize_input, truncate,
 };
 use crate::chat::say::split_say;
 use crate::chat::transcript::{ChatItem, Decision, PermissionCard, ToolCall, Transcript};
-use crate::chat::{STATUS_REPORT_PROMPT, SessionState};
 use crate::model::NodeId;
 
 /// Longest tool input/result shown in an expanded row.
@@ -98,7 +98,7 @@ pub fn chat_ui(ui: &mut Ui, state: &mut ChatPanelState, view: ChatView<'_>) -> V
         .show(ui, |ui| {
             if view.transcript.items.is_empty() {
                 ui.add_space(8.0);
-                ui.weak("Ask the Queen about the fleet, or press Status report.");
+                ui.weak("Ask the Queen about the fleet, or press Status report above.");
             }
             for (i, item) in view.transcript.items.iter().enumerate() {
                 let alpha = (((now - state.appear[i]) / FADE_IN_SECS) as f32).clamp(0.0, 1.0);
@@ -150,7 +150,6 @@ pub fn state_text(
 
 fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
     let running = view.transcript.running;
-    let can_send = *view.state == SessionState::Ready && !running;
     ui.horizontal(|ui| {
         ui.label(RichText::new("Chat").strong());
         let (text, color) = state_text(view.state, running, ui.visuals());
@@ -185,20 +184,14 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
             {
                 actions.push(ChatAction::SetAutoMode(auto));
             }
-            if running {
-                if ui
+            // Status report is in the top bar, right above this header.
+            if running
+                && ui
                     .button("⏹ Stop")
                     .on_hover_text("Interrupt this turn")
                     .clicked()
-                {
-                    actions.push(ChatAction::Interrupt);
-                }
-            } else if ui
-                .add_enabled(can_send, egui::Button::new("Status report"))
-                .on_hover_text(format!("Send \"{STATUS_REPORT_PROMPT}\""))
-                .clicked()
             {
-                actions.push(ChatAction::Send(STATUS_REPORT_PROMPT.into()));
+                actions.push(ChatAction::Interrupt);
             }
         });
     });
