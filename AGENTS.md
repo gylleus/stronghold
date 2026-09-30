@@ -13,6 +13,33 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 > source of truth; don't `bd import` during normal operation; don't
 > reach for third-party Dolt hosting before trying the default).
 
+## Finishing work in the Myrstack repo
+
+Karl's rule for every agent working in this repo. It is the repository's explicit opt-in, so
+it overrides the "Conservative" default below for commits and the local merge (not for pushes):
+
+1. Work on your own branch in your worktree; commit there.
+2. Run the gates, all green: `cargo fmt --check`, `cargo clippy --all-targets` (no new
+   warnings; the old `src/ui/theme.rs` one is tracked as a bead), `cargo test`.
+3. Merge your branch into `main` directly, in the main checkout at `~/repo/saker/myrstack`:
+   `git -C ~/repo/saker/myrstack merge --no-ff <your-branch>`. Leave unrelated uncommitted
+   files there (such as `.beads/issues.jsonl`) alone; don't stash, reset or commit them. If the
+   merge conflicts, merge `main` into your branch in your worktree, fix, rerun the gates, then
+   retry.
+4. Report a short summary (what changed; Karl gets it with `just install` and reopening
+   Myrstack), then exit your session.
+
+There is no GitHub remote: no push, no PR, no `mark_pr_ready`.
+
+## Build & Test
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets
+cargo test
+just install   # release build into ~/Applications/Myrstack.app; quit and reopen to run it
+```
+
 ## Quick Reference
 
 ```bash

@@ -329,7 +329,12 @@ pub fn definitions() -> Vec<Value> {
              worker on it (give exactly one of: repo + name for a new worktree, worktree, or \
              terminal to reuse an agent already running there); the prompt is the task spec. \
              Only when Karl asks for a new session. Returns the new terminal and node id; the \
-             dashboard selects it once it appears.",
+             dashboard selects it once it appears. A new worktree whose name or branch already \
+             exists is refused with the existing worktree and its live agents (send_to_agent \
+             them instead); allow_suffix=true lets Orca pick name-2 for a deliberate second \
+             copy. The plain shell Orca opens in a new worktree is closed once the agent runs. \
+             After an interrupted or rejected spawn_session, run list_agents for that repo \
+             before trying again: if the session started, use send_to_agent.",
             object(
                 json!({
                     "mode": { "type": "string", "enum": ["worktree", "new_worktree", "worker"] },
@@ -343,6 +348,7 @@ pub fn definitions() -> Vec<Value> {
                     "title": { "type": "string", "description": "Worker task title (default: the prompt's first line)." },
                     "agent": { "type": "string", "enum": ["claude", "codex"], "default": "claude" },
                     "model": { "type": "string", "description": "Model alias or id, e.g. opus, sonnet, gpt-6-astra (default: the agent's)." },
+                    "allow_suffix": { "type": "boolean", "default": false, "description": "New worktree: when the name or branch is taken, let Orca add a suffix (name-2) instead of failing. Only for a deliberate second copy." },
                 }),
                 &["mode", "prompt"],
             ),

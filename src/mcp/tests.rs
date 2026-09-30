@@ -1757,3 +1757,161 @@ fn fleet_status_reports_unread_notifications() {
     let t = text(&call(&mut server, "fleet_status", json!({}))).to_owned();
     assert!(t.contains("Notifications: none unread"), "{t}");
 }
+
+// ---------------------------------------------------------------------------
+// Interrupted spawns
+
+/// Answers `spawn` slowly, like a real spawn, so a cancel can arrive while it runs.
+struct SlowSpawn(FakeControl);
+
+impl Control for SlowSpawn {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, CallError> {
+        if method == "spawn" {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+        self.0.call(method, params)
+    }
+}
+
+fn wall_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+fn spawn_request(id: u64) -> String {
+    json!({
+        "jsonrpc": "2.0", "id": id, "method": "tools/call",
+        "params": {"name": "spawn_session", "arguments": {
+            "mode": "new_worktree", "repo": "myrstack", "name": "agent-notify-tool",
+            "prompt": "Add a notify tool",
+        }},
+    })
+    .to_string()
+}
+
+fn slow_spawn_server(log: &std::path::Path) -> McpServer<SlowSpawn> {
+    let reply = json!({
+        "handle": "term_new", "node": "term:term_new", "worktree_path": "/wt/agent-notify-tool",
+        "verified": true, "notes": [],
+    });
+    McpServer::new(SlowSpawn(FakeControl::default().reply("spawn", Ok(reply))))
+        .with_interrupted_log(log)
+}
+
+#[test]
+fn a_spawn_cancelled_while_it_ran_is_recorded() {
+    use std::io::{BufRead, BufReader, Write};
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("interrupted.json");
+    let mut server = slow_spawn_server(&log);
+    let (input, mut to_server) = std::io::pipe().unwrap();
+    let (from_server, output) = std::io::pipe().unwrap();
+    let serving = std::thread::spawn(move || server.serve(BufReader::new(input), output));
+    let mut replies = BufReader::new(from_server);
+    let mut line = String::new();
+
+    let cancel = json!({
+        "jsonrpc": "2.0", "method": "notifications/cancelled",
+        "params": {"requestId": 7, "reason": "user interrupted"},
+    });
+    writeln!(to_server, "{}\n{cancel}", spawn_request(7)).unwrap();
+    replies.read_line(&mut line).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["id"], 7);
+    let records = crate::spawn::interrupted::load(&log, wall_ms());
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert_eq!(records[0].reason, "cancelled");
+    assert_eq!(records[0].node.as_deref(), Some("term:term_new"));
+    assert_eq!(records[0].name.as_deref(), Some("agent-notify-tool"));
+
+    // A spawn whose result reaches the client records nothing.
+    writeln!(to_server, "{}", spawn_request(8)).unwrap();
+    line.clear();
+    replies.read_line(&mut line).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["id"], 8);
+    assert_eq!(crate::spawn::interrupted::load(&log, wall_ms()).len(), 1);
+    drop(to_server);
+    serving.join().unwrap().unwrap();
+}
+
+#[test]
+fn a_spawn_whose_client_went_away_is_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("interrupted.json");
+    let mut server = slow_spawn_server(&log);
+    let mut out = Vec::new();
+    server
+        .serve(Cursor::new(format!("{}\n", spawn_request(3))), &mut out)
+        .unwrap();
+    let records = crate::spawn::interrupted::load(&log, wall_ms());
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].reason, "disconnected");
+}
+
+#[test]
+fn fleet_status_and_list_agents_show_interrupted_spawns() {
+    use crate::spawn::interrupted::{InterruptedSpawn, record};
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("interrupted.json");
+    let mut server = McpServer::new(app()).with_interrupted_log(&log);
+    let r = call(&mut server, "fleet_status", json!({}));
+    assert!(!text(&r).contains("Interrupted spawns"));
+    assert!(r["structuredContent"].get("interrupted_spawns").is_none());
+
+    record(
+        &log,
+        InterruptedSpawn {
+            at_ms: wall_ms(),
+            reason: "cancelled".into(),
+            mode: "new_worktree".into(),
+            handle: Some(CODEX.into()),
+            prompt: "Add a notify tool".into(),
+            ..InterruptedSpawn::default()
+        },
+    )
+    .unwrap();
+    for tool in ["fleet_status", "list_agents"] {
+        let r = call(&mut server, tool, json!({}));
+        let t = text(&r);
+        assert!(t.starts_with("Interrupted spawns (1)"), "{tool}: {t}");
+        assert!(t.contains(&format!("`{CODEX}`")), "{t}");
+        assert!(t.contains("don't spawn again"), "{t}");
+        assert_eq!(
+            r["structuredContent"]["interrupted_spawns"][0]["reason"],
+            "cancelled"
+        );
+    }
+}
+
+#[test]
+fn spawn_session_offers_allow_suffix_and_passes_it_on() {
+    let r = rpc(
+        &mut McpServer::new(FakeControl::default()),
+        "tools/list",
+        json!({}),
+    );
+    let spawn = r["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "spawn_session")
+        .unwrap();
+    assert_eq!(
+        spawn["inputSchema"]["properties"]["allow_suffix"]["type"],
+        "boolean"
+    );
+    assert!(
+        spawn["description"]
+            .as_str()
+            .unwrap()
+            .contains("run list_agents")
+    );
+    let mut server = McpServer::new(FakeControl::default());
+    call(
+        &mut server,
+        "spawn_session",
+        json!({"mode": "new_worktree", "repo": "r", "name": "x", "prompt": "go", "allow_suffix": true}),
+    );
+    assert_eq!(server.control().calls[0].1["allow_suffix"], true);
+}
