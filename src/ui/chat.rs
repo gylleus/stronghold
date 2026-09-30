@@ -992,7 +992,7 @@ fn markdown_link(s: &str) -> Option<(&str, &str, usize)> {
 pub fn is_web_url(s: &str) -> bool {
     ["http://", "https://"]
         .iter()
-        .any(|p| s.len() > p.len() && s[..p.len()].eq_ignore_ascii_case(p))
+        .any(|p| s.len() > p.len() && s.as_bytes()[..p.len()].eq_ignore_ascii_case(p.as_bytes()))
 }
 
 /// The length of a bare http(s) url starting at `text[i..]`, with trailing punctuation
@@ -1397,6 +1397,8 @@ mod tests {
         }
         assert!(is_web_url("HTTPS://a.io"));
         assert!(!is_web_url("mailto:a@b.io"));
+        assert!(!is_web_url("hidden→excludes"));
+        assert!(parse_spans("hidden→excludes", &any_node).len() == 1);
     }
 
     /// Clicking a link opens its url; node links still select.
