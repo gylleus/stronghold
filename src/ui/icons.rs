@@ -22,6 +22,8 @@ pub const EXCLAMATION_MARK: char = '\u{ee44}';
 pub const HOURGLASS_HIGH: char = '\u{e2b4}';
 pub const CHECK: char = '\u{e182}';
 pub const X: char = '\u{e4f6}';
+pub const ARROW_LEFT: char = '\u{e058}';
+pub const ARROW_RIGHT: char = '\u{e06c}';
 
 fn icon_family() -> FontFamily {
     FontFamily::Name(FAMILY_NAME.into())
@@ -131,7 +133,8 @@ mod tests {
         let icons = ALL_KINDS
             .map(kind_icon)
             .into_iter()
-            .chain(ALL_STATES.map(state_icon));
+            .chain(ALL_STATES.map(state_icon))
+            .chain([ARROW_LEFT, ARROW_RIGHT]);
         ctx.fonts_mut(|f| {
             for icon in icons {
                 assert!(

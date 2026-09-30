@@ -10,6 +10,7 @@ pub mod dictation;
 pub mod dock;
 pub mod frame_stats;
 pub mod graph;
+pub mod history;
 pub mod icons;
 pub mod keys;
 pub mod playbook;
