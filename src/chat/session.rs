@@ -49,10 +49,7 @@ impl SessionStore {
     /// unreadable.
     pub fn open(dir: &Path) -> Self {
         let path = dir.join(SESSION_FILE);
-        let saved = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<SessionRecord>(&s).ok())
-            .filter(|r| is_uuid(&r.session_id));
+        let saved = Self::saved(dir);
         let fresh = saved.is_none();
         let mut store = Self {
             path,
@@ -62,6 +59,14 @@ impl SessionStore {
             store.save();
         }
         store
+    }
+
+    /// The record saved in `dir`, if any, without creating one.
+    pub fn saved(dir: &Path) -> Option<SessionRecord> {
+        std::fs::read_to_string(dir.join(SESSION_FILE))
+            .ok()
+            .and_then(|s| serde_json::from_str::<SessionRecord>(&s).ok())
+            .filter(|r| is_uuid(&r.session_id))
     }
 
     pub fn save(&mut self) {

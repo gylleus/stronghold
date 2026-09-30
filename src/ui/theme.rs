@@ -16,6 +16,13 @@ const SYSTEM_FONT_FILES: [&str; 2] = [
     "/System/Library/Fonts/SFNS.ttf",
 ];
 
+/// macOS faces with arrows (`→`, `↓`) and dingbats (`✓`, `✗`) the text faces lack, tried last
+/// for proportional and monospace text.
+const SYMBOL_FONT_FILES: [&str; 2] = [
+    "/System/Library/Fonts/Menlo.ttc",
+    "/System/Library/Fonts/Apple Symbols.ttf",
+];
+
 /// Installs the fonts, image loaders and both theme styles on `ctx`.
 pub fn install(ctx: &egui::Context) {
     ctx.set_fonts(fonts());
@@ -24,7 +31,8 @@ pub fn install(ctx: &egui::Context) {
     ctx.set_style_of(egui::Theme::Light, style(egui::Theme::Light));
 }
 
-/// egui's default fonts with a system face put first for proportional text, plus the icon font.
+/// egui's default fonts with a system face put first for proportional text, a symbol face
+/// last for both text families, plus the icon font.
 pub fn fonts() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     for path in SYSTEM_FONT_FILES {
@@ -40,6 +48,17 @@ pub fn fonts() -> egui::FontDefinitions {
             .or_default()
             .insert(0, "system".into());
         break;
+    }
+    for path in SYMBOL_FONT_FILES {
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
+        fonts
+            .font_data
+            .insert(path.into(), egui::FontData::from_owned(bytes).into());
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            fonts.families.entry(family).or_default().push(path.into());
+        }
     }
     super::icons::add_font(&mut fonts);
     fonts
@@ -148,6 +167,15 @@ mod tests {
         );
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             ui.label("themed");
+            // On macOS; elsewhere none of the files exist.
+            if SYMBOL_FONT_FILES
+                .iter()
+                .any(|f| std::path::Path::new(f).exists())
+            {
+                for symbol in ["→", "↓", "✓", "✗"] {
+                    assert!(crate::ui::chat::can_draw(ui, symbol), "{symbol}");
+                }
+            }
         });
         output.textures_delta.clear();
     }

@@ -77,6 +77,8 @@ pub struct ChatConfig {
     pub env: Vec<(String, String)>,
     /// Arguments added after the standard ones (tests).
     pub extra_args: Vec<String>,
+    /// Where Claude keeps session transcripts, for loading a resumed conversation's history.
+    pub projects_root: PathBuf,
 }
 
 impl ChatConfig {
@@ -106,6 +108,7 @@ impl ChatConfig {
             system_prompt: SYSTEM_PROMPT.to_owned(),
             env,
             extra_args: Vec::new(),
+            projects_root: crate::claude::sessions::default_projects_root(),
         }
     }
 
@@ -236,6 +239,7 @@ mod tests {
             system_prompt: "be the queen".into(),
             env: Vec::new(),
             extra_args: Vec::new(),
+            projects_root: "/p".into(),
         };
         let args = config.args(&["--resume".into(), "abc".into()]);
         let joined = args.join(" ");

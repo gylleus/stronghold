@@ -1,8 +1,5 @@
-//! Renders Claude transcript jsonl records into short readable lines for a read-only tail.
-
-use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom};
-use std::path::Path;
+//! Renders Claude transcript jsonl records into short readable lines, and one-line summaries
+//! of tool calls.
 
 use serde_json::Value;
 
@@ -10,8 +7,6 @@ use serde_json::Value;
 pub const MAX_LINE_CHARS: usize = 240;
 /// Tool input summaries and tool result lines are cut to this.
 const MAX_SUMMARY_CHARS: usize = 100;
-/// How much of the end of a transcript is read for its tail.
-pub const TAIL_BYTES: u64 = 1024 * 1024;
 
 /// Input fields that best describe a tool call, most telling first.
 const SUMMARY_KEYS: &[&str] = &[
@@ -40,28 +35,6 @@ pub fn render_transcript(text: &str) -> Vec<String> {
         }
     }
     out
-}
-
-/// The last `max_lines` rendered lines of the transcript at `path`, reading at most
-/// [`TAIL_BYTES`] from its end.
-pub fn read_transcript_tail(path: &Path, max_lines: usize) -> io::Result<Vec<String>> {
-    let mut file = File::open(path)?;
-    let len = file.metadata()?.len();
-    let start = len.saturating_sub(TAIL_BYTES);
-    file.seek(SeekFrom::Start(start))?;
-    let mut bytes = Vec::with_capacity((len - start) as usize);
-    file.read_to_end(&mut bytes)?;
-    let text = String::from_utf8_lossy(&bytes);
-    // Starting mid-file, the first line is a partial record.
-    let text = if start > 0 {
-        text.split_once('\n').map_or("", |(_, rest)| rest)
-    } else {
-        &text
-    };
-    let mut lines = render_transcript(text);
-    let excess = lines.len().saturating_sub(max_lines);
-    lines.drain(..excess);
-    Ok(lines)
 }
 
 fn render_record(record: &Value, out: &mut Vec<String>) {
@@ -152,7 +125,7 @@ fn push_text(text: &str, prefix: &str, out: &mut Vec<String>) {
 }
 
 /// A short one-line description of a tool call's input.
-fn tool_summary(input: &Value) -> String {
+pub fn tool_summary(input: &Value) -> String {
     let Some(map) = input.as_object() else {
         return String::new();
     };
@@ -270,24 +243,5 @@ mod tests {
             lines[1].chars().count(),
             "→ Bash()".chars().count() + MAX_SUMMARY_CHARS
         );
-    }
-
-    #[test]
-    fn tail_keeps_last_lines_and_skips_partial_first_record() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("agent-a.jsonl");
-        let record = |i: usize| {
-            json!({"type": "assistant", "message": {"content": [
-                {"type": "text", "text": format!("line {i} {}", "p".repeat(200))},
-            ]}})
-        };
-        let text = jsonl(&(0..6000).map(record).collect::<Vec<_>>());
-        assert!(text.len() as u64 > TAIL_BYTES);
-        std::fs::write(&path, text).unwrap();
-        let lines = read_transcript_tail(&path, 3).unwrap();
-        assert_eq!(lines.len(), 3);
-        assert!(lines[2].starts_with("line 5999 "));
-        assert!(lines[0].starts_with("line 5997 "));
-        assert!(read_transcript_tail(&dir.path().join("missing"), 3).is_err());
     }
 }

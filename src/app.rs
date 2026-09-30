@@ -17,7 +17,7 @@ mod spawn;
 mod talk;
 mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
-use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
+use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo};
 use crate::detect::detect_prompt;
 use crate::fleet::FleetData;
 use crate::hotkey::Hotkey;
@@ -82,8 +82,8 @@ pub struct MyrstackApp {
     /// Maps terminals to Claude sessions and scans subagents off the UI thread.
     claude: ClaudeWorker,
     claude_data: Option<ClaudeData>,
-    /// Tail of the selected subagent's transcript.
-    transcript: Option<TranscriptTail>,
+    /// The selected agent's or subagent's conversation, read from its session transcript.
+    transcript: Option<ui::chat::TranscriptView>,
     /// The Queen's details: fleet summary and the broadcast composer.
     queen: ui::queen::QueenPanel,
     /// Runs terminal sends and tab switches off the UI thread.
@@ -279,19 +279,27 @@ impl MyrstackApp {
         Some((node, info))
     }
 
-    /// Points the worker's transcript tail at the selected subagent and takes new tails.
-    fn sync_transcript(&mut self) {
-        let path = self
-            .selected_subagent()
-            .map(|(_, info)| info.transcript_path.clone());
-        if self.transcript.as_ref().map(|t| &t.path) != path.as_ref() {
-            self.transcript = None;
-            self.claude.watch_transcript(path.clone());
+    /// The session transcript of the selected subagent, or of the selected Claude agent.
+    fn conversation_path(&self) -> Option<std::path::PathBuf> {
+        if let Some((_, info)) = self.selected_subagent() {
+            return Some(info.transcript_path.clone());
         }
-        if let Some(tail) = self.claude.latest_transcript()
-            && Some(&tail.path) == path.as_ref()
-        {
-            self.transcript = Some(tail);
+        let handle = self.selected_node()?.terminal_handle.as_deref()?;
+        let session = self.claude_data.as_ref()?.session_by_handle.get(handle)?;
+        Some(session.session()?.transcript_path.clone())
+    }
+
+    /// Points the worker at the selected conversation's transcript and applies what it read.
+    fn sync_transcript(&mut self) {
+        let path = self.conversation_path();
+        if self.transcript.as_ref().map(|t| &t.path) != path.as_ref() {
+            self.transcript = path.clone().map(ui::chat::TranscriptView::new);
+            self.claude.watch_transcript(path);
+        }
+        for chunk in self.claude.history_chunks() {
+            if let Some(view) = &mut self.transcript {
+                view.apply(&chunk);
+            }
         }
     }
 
@@ -342,8 +350,19 @@ impl MyrstackApp {
                 self.select_and_focus(id);
             }
         } else if let Some((node, info)) = self.selected_subagent() {
-            let tail = self.transcript.as_ref().map_or(&[][..], |t| &t.lines[..]);
-            ui::subagent::subagent_transcript(ui, node, info, tail);
+            let (node, info) = (node.clone(), info.clone());
+            let snapshot = self.snapshot.as_ref();
+            let is_node = |id: &NodeId| snapshot.is_some_and(|s| s.node(id).is_some());
+            let clicked = ui::subagent::subagent_transcript(
+                ui,
+                &node,
+                &info,
+                self.transcript.as_mut(),
+                &is_node,
+            );
+            if let Some(id) = clicked {
+                self.select_and_focus(id);
+            }
         } else {
             self.terminal_contents(ui, now_ms);
         }
@@ -362,9 +381,13 @@ impl MyrstackApp {
             .terminal_handle
             .as_deref()
             .and_then(|h| self.data.as_ref()?.terminals.iter().find(|t| t.handle == h));
+        let snapshot = self.snapshot.as_ref();
+        let is_node = |id: &NodeId| snapshot.is_some_and(|s| s.node(id).is_some());
         let input = ui::terminal::PanelInput {
             state: &mut self.input,
             terminal,
+            conversation: self.transcript.as_mut(),
+            is_node: &is_node,
         };
         let response = ui::terminal::terminal_panel(ui, node, self.screen.as_ref(), input, now_ms);
         let id = node.id.clone();
@@ -415,6 +438,9 @@ impl MyrstackApp {
         if response.close {
             self.selected = None;
             self.graph.set_selected(None);
+        }
+        if let Some(id) = response.select {
+            self.select_and_focus(id);
         }
     }
 

@@ -1,5 +1,6 @@
-//! Background thread that maps terminals to Claude sessions, scans their subagents and tails
-//! the transcript the UI is showing. The UI thread never touches `~/.claude`.
+//! Background thread that maps terminals to Claude sessions, scans their subagents and reads
+//! the transcript the UI is showing (all of it, then what is appended). The UI thread never
+//! touches `~/.claude`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -13,8 +14,8 @@ use super::hook::{default_session_map_path, load_hook_mappings};
 use super::sessions::default_projects_root;
 use super::sessions::{HookMappings, SessionInfo, SessionLocator, SessionMatch};
 use super::subagents::{SubagentInfo, SubagentWatcher};
-use super::transcript::read_transcript_tail;
 use super::usage::{SessionUsage, UsageTracker};
+use crate::chat::history::{HistoryChunk, HistoryReader};
 use crate::codex::{CodexSession, CodexTracker, default_sessions_root};
 use crate::fleet::Forward;
 use crate::orca::Terminal;
@@ -54,13 +55,6 @@ impl ClaudeData {
     }
 }
 
-/// Rendered tail of a watched transcript.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TranscriptTail {
-    pub path: PathBuf,
-    pub lines: Vec<String>,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClaudeWorkerConfig {
     pub projects_root: PathBuf,
@@ -71,8 +65,6 @@ pub struct ClaudeWorkerConfig {
     pub refresh: Duration,
     /// How often the watched transcript is checked for changes.
     pub transcript_poll: Duration,
-    /// Rendered lines kept in a [`TranscriptTail`].
-    pub tail_lines: usize,
 }
 
 impl Default for ClaudeWorkerConfig {
@@ -82,8 +74,7 @@ impl Default for ClaudeWorkerConfig {
             session_map_path: default_session_map_path(),
             codex_sessions_root: default_sessions_root(),
             refresh: Duration::from_secs(3),
-            transcript_poll: Duration::from_millis(500),
-            tail_lines: 200,
+            transcript_poll: Duration::from_millis(300),
         }
     }
 }
@@ -98,7 +89,7 @@ enum Command {
 /// Handle to the Claude worker thread. Dropping it shuts the thread down and joins it.
 pub struct ClaudeWorker {
     data: Receiver<ClaudeData>,
-    tails: Receiver<TranscriptTail>,
+    history: Receiver<HistoryChunk>,
     commands: Sender<Command>,
     thread: Option<JoinHandle<()>>,
 }
@@ -110,14 +101,15 @@ impl ClaudeWorker {
 
     pub fn spawn_with(config: ClaudeWorkerConfig, repaint: Option<Repaint>) -> Self {
         let (data_tx, data_rx) = crossbeam_channel::bounded(OUTPUT_BUFFER);
-        let (tail_tx, tail_rx) = crossbeam_channel::bounded(OUTPUT_BUFFER);
+        // Unbounded: each chunk carries records the UI has not seen, none may be dropped.
+        let (history_tx, history_rx) = crossbeam_channel::unbounded();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
         let thread = std::thread::Builder::new()
             .name("claude-worker".into())
             .spawn(move || {
                 let outputs = Outputs {
                     data: data_tx,
-                    tails: tail_tx,
+                    history: history_tx,
                     repaint,
                 };
                 run_loop(config, &outputs, &cmd_rx);
@@ -125,7 +117,7 @@ impl ClaudeWorker {
             .expect("spawn claude worker thread");
         Self {
             data: data_rx,
-            tails: tail_rx,
+            history: history_rx,
             commands: cmd_tx,
             thread: Some(thread),
         }
@@ -136,7 +128,8 @@ impl ClaudeWorker {
         let _ = self.commands.send(Command::Terminals(terminals));
     }
 
-    /// Tails the transcript at `path` (or stops tailing) and publishes it on change.
+    /// Reads the transcript at `path` (or stops): all of it, then each append, published as
+    /// [`HistoryChunk`]s.
     pub fn watch_transcript(&self, path: Option<PathBuf>) {
         let _ = self.commands.send(Command::WatchTranscript(path));
     }
@@ -152,9 +145,9 @@ impl ClaudeWorker {
         self.data.try_iter().last()
     }
 
-    /// The newest pending transcript tail, discarding older ones.
-    pub fn latest_transcript(&self) -> Option<TranscriptTail> {
-        self.tails.try_iter().last()
+    /// The pending transcript chunks, oldest first.
+    pub fn history_chunks(&self) -> Vec<HistoryChunk> {
+        self.history.try_iter().collect()
     }
 }
 
@@ -200,7 +193,7 @@ pub fn collect(
 
 struct Outputs {
     data: Sender<ClaudeData>,
-    tails: Sender<TranscriptTail>,
+    history: Sender<HistoryChunk>,
     repaint: Option<Repaint>,
 }
 
@@ -223,9 +216,9 @@ impl Outputs {
     }
 }
 
-/// The transcript being tailed and the file state it was last rendered at.
+/// The transcript being read and the file state it was last read at.
 struct Watched {
-    path: PathBuf,
+    reader: HistoryReader,
     seen: Option<(u64, SystemTime)>,
 }
 
@@ -276,7 +269,7 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
         }
 
         if let Some(w) = &mut watched
-            && !poll_transcript(w, config.tail_lines, outputs)
+            && !poll_transcript(w, outputs)
         {
             return;
         }
@@ -305,8 +298,11 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
                     terminals = Some(terms);
                 }
                 Command::WatchTranscript(path) => {
-                    if watched.as_ref().map(|w| &w.path) != path.as_ref() {
-                        watched = path.map(|path| Watched { path, seen: None });
+                    if watched.as_ref().map(|w| w.reader.path()) != path.as_deref() {
+                        watched = path.map(|path| Watched {
+                            reader: HistoryReader::new(path),
+                            seen: None,
+                        });
                     }
                 }
                 Command::WatchForwards(new) => {
@@ -332,28 +328,32 @@ fn forward_transcripts(data: &ClaudeData, handles: &BTreeSet<String>) -> BTreeMa
         .collect()
 }
 
-/// Re-renders the watched transcript when its size or mtime changed; `false` once the UI
-/// side is gone.
-fn poll_transcript(watched: &mut Watched, tail_lines: usize, outputs: &Outputs) -> bool {
-    let state = std::fs::metadata(&watched.path)
+/// Reads what was appended to the watched transcript when its size or mtime changed; `false`
+/// once the UI side is gone.
+fn poll_transcript(watched: &mut Watched, outputs: &Outputs) -> bool {
+    let state = std::fs::metadata(watched.reader.path())
         .ok()
         .map(|m| (m.len(), m.modified().unwrap_or(UNIX_EPOCH)));
     if state.is_none() || state == watched.seen {
         return true;
     }
     watched.seen = state;
-    let lines = match read_transcript_tail(&watched.path, tail_lines) {
-        Ok(lines) => lines,
-        Err(e) => {
-            log::debug!("cannot read {}: {e}", watched.path.display());
-            return true;
+    match watched.reader.read_new() {
+        Ok(Some(chunk)) => {
+            if outputs.history.send(chunk).is_err() {
+                return false;
+            }
+            if let Some(repaint) = &outputs.repaint {
+                repaint();
+            }
+            true
         }
-    };
-    let tail = TranscriptTail {
-        path: watched.path.clone(),
-        lines,
-    };
-    outputs.send(&outputs.tails, tail, "transcript tail")
+        Ok(None) => true,
+        Err(e) => {
+            log::debug!("cannot read {}: {e}", watched.reader.path().display());
+            true
+        }
+    }
 }
 
 fn wall_clock_ms() -> i64 {
@@ -447,7 +447,6 @@ mod tests {
             codex_sessions_root: tree.root().join("no-codex-sessions"),
             refresh: Duration::from_millis(50),
             transcript_poll: Duration::from_millis(20),
-            tail_lines: 10,
         }
     }
 
@@ -502,31 +501,48 @@ mod tests {
         assert!(data.subagent(SESSION, "a3").is_some());
     }
 
+    /// Texts of the prompts and replies in `chunks`.
+    fn texts(chunks: &[HistoryChunk]) -> Vec<String> {
+        let mut t = crate::chat::Transcript::default();
+        for record in chunks.iter().flat_map(|c| &c.records) {
+            t.apply_history(record);
+        }
+        t.items
+            .iter()
+            .filter_map(|item| match item {
+                crate::chat::ChatItem::User(s) => Some(format!("> {s}")),
+                crate::chat::ChatItem::Assistant { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
-    fn worker_tails_the_watched_transcript() {
+    fn worker_reads_the_whole_watched_transcript_then_appends() {
         let tree = Tree::new();
         let worker = ClaudeWorker::spawn_with(config(&tree), None);
         let path = tree.transcript("a1");
         worker.watch_transcript(Some(path.clone()));
-        let tail = wait_for(|| worker.latest_transcript());
-        assert_eq!(tail.path, path);
-        assert_eq!(tail.lines, vec!["> do the thing"]);
+        let first = wait_for(|| Some(worker.history_chunks()).filter(|c| !c.is_empty()));
+        assert_eq!(first[0].path, path);
+        assert_eq!(texts(&first), vec!["> do the thing"]);
 
         let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
-        let record = json!({"type": "assistant", "message": {"content": [
+        let record = json!({"type": "assistant", "message": {"id": "m1", "content": [
             {"type": "text", "text": "on it"}]}});
         writeln!(f, "{record}").unwrap();
         drop(f);
-        let tail = wait_for(|| worker.latest_transcript());
-        assert_eq!(tail.lines, vec!["> do the thing", "on it"]);
+        let next = wait_for(|| Some(worker.history_chunks()).filter(|c| !c.is_empty()));
+        assert!(!next[0].reset);
+        assert_eq!(texts(&next), vec!["on it"], "only the new record");
 
         worker.watch_transcript(None);
         std::thread::sleep(Duration::from_millis(100));
-        let _ = worker.latest_transcript();
+        let _ = worker.history_chunks();
         let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
         writeln!(f, "{record}").unwrap();
         drop(f);
         std::thread::sleep(Duration::from_millis(150));
-        assert!(worker.latest_transcript().is_none(), "unwatched");
+        assert!(worker.history_chunks().is_empty(), "unwatched");
     }
 }

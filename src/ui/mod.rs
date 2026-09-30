@@ -12,6 +12,7 @@ pub mod frame_stats;
 pub mod graph;
 pub mod icons;
 pub mod keys;
+pub mod message_list;
 pub mod playbook;
 pub mod queen;
 pub mod quota;
