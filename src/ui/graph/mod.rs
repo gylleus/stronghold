@@ -148,6 +148,8 @@ pub struct GraphView {
     primary: Option<NodeId>,
     /// Selection box being dragged.
     box_select: Option<select::BoxSelect>,
+    /// Nodes the user dragged: the layout leaves them where they were dropped.
+    pinned: HashSet<NodeId>,
 }
 
 impl Default for GraphView {
@@ -191,6 +193,7 @@ impl GraphView {
             context_node: None,
             primary: None,
             box_select: None,
+            pinned: HashSet::new(),
         }
     }
 
@@ -224,6 +227,7 @@ impl GraphView {
         let in_snapshot: HashSet<&NodeId> = snapshot.nodes.iter().map(|n| &n.id).collect();
         self.stashed.retain(|id, _| in_snapshot.contains(id));
         self.nodes.retain(|id, _| in_snapshot.contains(id));
+        self.pinned.retain(|id| in_snapshot.contains(id));
         let gone: Vec<NodeId> = self
             .index
             .keys()
@@ -542,6 +546,11 @@ impl GraphView {
                 GraphChange::NodeDragStarted { .. } | GraphChange::NodeMoved { .. } => {
                     dragging = true;
                 }
+                GraphChange::NodeDragEnded { node } => {
+                    if let Some(id) = self.node_id(*node) {
+                        self.pin(id);
+                    }
+                }
                 _ => {}
             }
         }
@@ -793,11 +802,11 @@ impl GraphView {
             .iter()
             .filter(|e| e.to == node.id && e.kind != EdgeKind::Queen)
             .find_map(|e| placed(&e.from));
-        if parent.is_some() || node.run_id.is_some() {
+        if parent.is_some() {
             return parent;
         }
-        // Loose terminals join their repo's other loose terminals, else their repo's region, or
-        // start a region left of everything.
+        // Loose terminals join their repo's other loose terminals; they and a run's first node
+        // join their repo's region, or start a new one just outside the graph.
         let repo = self.repos.get(&node.id);
         let same_repo = |n: &&Node| n.id != node.id && self.repos.get(&n.id) == repo;
         let loose: Vec<Pos2> = self
@@ -805,6 +814,7 @@ impl GraphView {
             .values()
             .filter(same_repo)
             .filter(|n| n.run_id.is_none() && n.kind == NodeKind::Terminal)
+            .filter(|_| node.run_id.is_none())
             .filter_map(|n| placed(&n.id))
             .collect();
         let region: Vec<Pos2> = self
@@ -813,11 +823,51 @@ impl GraphView {
             .filter(same_repo)
             .filter_map(|n| placed(&n.id))
             .collect();
-        centroid(&loose).or_else(|| centroid(&region)).or_else(|| {
-            let placed: Vec<Pos2> = self.nodes.keys().filter_map(placed).collect();
-            let left = placed.iter().map(|p| p.x).reduce(f32::min)?;
-            Some(Pos2::new(left - SPAWN_CENTER, centroid(&placed)?.y))
-        })
+        centroid(&loose)
+            .or_else(|| centroid(&region))
+            .or_else(|| Some(self.outside_graph(&node.id)))
+    }
+
+    /// A point just outside the placed nodes, seen from the queen (else the layout center), in
+    /// a direction derived from `id`: new repos spread around the queen instead of piling up
+    /// on one side.
+    fn outside_graph(&self, id: &NodeId) -> Pos2 {
+        let center = self.node_position(&NodeId::queen()).unwrap_or(self.anchor);
+        let extent = self
+            .nodes
+            .keys()
+            .filter_map(|n| self.node_position(n))
+            .map(|p| (p - center).length())
+            .fold(0.0, f32::max);
+        center + jitter(id, extent + SPAWN_CENTER)
+    }
+
+    /// Keeps `id` where it is from now on, and lets the rest of the layout settle around it.
+    pub fn pin(&mut self, id: NodeId) {
+        if self.pinned.insert(id) {
+            self.wake_layout = true;
+        }
+    }
+
+    pub fn is_pinned(&self, id: &NodeId) -> bool {
+        self.pinned.contains(id)
+    }
+
+    /// Pinned flag of every node, by graph index.
+    fn pinned_flags(&self) -> Vec<bool> {
+        let len = self
+            .index
+            .values()
+            .map(|i| i.index() + 1)
+            .max()
+            .unwrap_or(0);
+        let mut flags = vec![false; len];
+        for id in &self.pinned {
+            if let Some(idx) = self.index.get(id) {
+                flags[idx.index()] = true;
+            }
+        }
+        flags
     }
 
     /// Run-cluster membership and repo region of every node, by graph index.
@@ -850,7 +900,9 @@ impl GraphView {
     /// A fresh layout state for the current graph.
     fn layout_state(&self) -> FleetLayoutState {
         let (members, repos) = self.memberships();
-        layout::state_with(members, repos)
+        let mut state = layout::state_with(members, repos);
+        state.extras.0.params.pinned = self.pinned_flags();
+        state
     }
 
     fn prepare_layout(&mut self, ui: &mut Ui) {
@@ -864,6 +916,7 @@ impl GraphView {
             let (members, repos) = self.memberships();
             state.extras.0.params.members = members;
             state.extras.0.params.repos = repos;
+            state.extras.0.params.pinned = self.pinned_flags();
             state.set_running(true);
             set_layout_state(ui, state, id);
             self.settle.reset();

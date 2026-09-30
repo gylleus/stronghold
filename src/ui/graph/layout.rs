@@ -6,6 +6,10 @@
 //! the view center as rigid wholes. The queen sits at the view center with the regions arranged
 //! around it: its edges do not attract (they would pull every cluster into one knot) and
 //! clusters and regions keep a ring of space around it.
+//!
+//! Inside a cluster or group, the base repulsion (which scales with the viewport, not the
+//! nodes) is swapped for a collision of fixed size, so groups pack as tightly as their nodes
+//! and labels allow at any window size. Nodes the user dragged are pinned where dropped.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -41,7 +45,14 @@ pub const STALL_PROGRESS: f32 = 0.9;
 pub const CLUSTER_PADDING: f32 = 24.0;
 /// Space between a repo region's edge and its outermost node centers: room for the node and
 /// its label.
-pub const REGION_PADDING: f32 = 36.0;
+pub const REGION_PADDING: f32 = 32.0;
+/// Extra space at a repo region's sides, where labels wider than their node stick out.
+pub const REGION_LABEL_OVERHANG: f32 = 24.0;
+/// Closest two nodes of one cluster or group come, per axis: wider than tall, since labels
+/// sit under the nodes.
+pub const NODE_SPACING: Vec2 = Vec2::new(96.0, 64.0);
+/// [`NODE_SPACING`] scale around a coordinator, which is drawn larger.
+const COORDINATOR_SPACING: f32 = 1.4;
 /// Extra space at the top of a repo region for its name.
 pub const REGION_LABEL_HEIGHT: f32 = 18.0;
 
@@ -183,7 +194,9 @@ pub fn repo_indices(nodes: &[ClusterNode]) -> Vec<Option<u32>> {
 /// view center as a whole, (g) its groups are pulled toward the region's centroid, and (h)
 /// overlapping regions push each other apart. Queen: (f) the queen is held at the view center,
 /// its edges' base attraction is cancelled and clusters keep [`RunClustersParams::queen_gap`]
-/// from it, and (i) regions keep out of that gap too, so they ring around it.
+/// from it, and (i) regions keep out of that gap too, so they ring around it. Nodes of one
+/// cluster or group repel only by (j) collision at [`NODE_SPACING`] and a weak spread of
+/// fixed scale; (k) pinned nodes do not move.
 #[derive(Debug, Default)]
 pub struct RunClusters;
 
@@ -226,6 +239,25 @@ pub struct RunClustersParams {
     /// (h) Free space kept between neighboring regions.
     #[serde(default = "default_repo_gap")]
     pub repo_gap: f32,
+    /// (j) Push per unit of overlap (as a share of [`NODE_SPACING`]) between two nodes of one
+    /// cluster or group.
+    #[serde(default = "default_collision")]
+    pub collision: f32,
+    /// (j) Repulsion between two nodes of one cluster or group [`NODE_SPACING`]`.x` apart,
+    /// falling off as `1 / d`: spreads a run's workers all around its coordinator.
+    #[serde(default = "default_spread")]
+    pub spread: f32,
+    /// (k) Pinned by graph index: nodes the user dragged, which keep where they were dropped.
+    #[serde(default)]
+    pub pinned: Vec<bool>,
+}
+
+fn default_collision() -> f32 {
+    400.0
+}
+
+fn default_spread() -> f32 {
+    10.0
 }
 
 fn default_repo_pull() -> f32 {
@@ -259,6 +291,9 @@ impl Default for RunClustersParams {
             repo_pull: default_repo_pull(),
             repo_separation: default_repo_separation(),
             repo_gap: default_repo_gap(),
+            collision: default_collision(),
+            spread: default_spread(),
+            pinned: Vec::new(),
         }
     }
 }
@@ -331,22 +366,23 @@ impl ExtraForce for RunClusters {
             .iter()
             .map(|i| params.repos.get(i.index()).copied().flatten())
             .collect();
-        let links = roles
+        let slot: HashMap<NodeIndex<Ix>, usize> =
+            indices.iter().enumerate().map(|(i, &n)| (n, i)).collect();
+        let links: Vec<(usize, usize)> = g
+            .g()
+            .edge_indices()
+            .filter_map(|e| g.g().edge_endpoints(e))
+            .filter_map(|(a, b)| Some((*slot.get(&a)?, *slot.get(&b)?)))
+            .collect();
+        let pinned: Vec<bool> = indices
             .iter()
-            .position(|r| *r == Some(Membership::Queen))
-            .map(|q| {
-                let slot: HashMap<NodeIndex<Ix>, usize> =
-                    indices.iter().enumerate().map(|(i, &n)| (n, i)).collect();
-                g.g()
-                    .neighbors_undirected(indices[q])
-                    .filter_map(|n| slot.get(&n).copied())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+            .map(|i| params.pinned.get(i.index()).copied().unwrap_or(false))
+            .collect();
         let nodes = ForceNodes {
             pos: &pos,
             roles: &roles,
             repos: &repos,
+            pinned: &pinned,
         };
         apply_cluster_forces(params, &nodes, &links, disp, area.center(), k);
     }
@@ -357,6 +393,7 @@ struct ForceNodes<'a> {
     pos: &'a [Pos2],
     roles: &'a [Option<Membership>],
     repos: &'a [Option<u32>],
+    pinned: &'a [bool],
 }
 
 /// `pull`, shortened to at most `max`.
@@ -364,12 +401,11 @@ fn capped(pull: Vec2, max: f32) -> Vec2 {
     pull * (max / pull.length().max(1e-3)).min(1.0)
 }
 
-/// [`RunClusters`] on plain positions; `queen_links` are the positions of the queen's
-/// neighbors.
+/// [`RunClusters`] on plain positions; `links` are the graph's edges as pairs of positions.
 fn apply_cluster_forces(
     params: &RunClustersParams,
     nodes: &ForceNodes<'_>,
-    queen_links: &[usize],
+    links: &[(usize, usize)],
     disp: &mut [Vec2],
     center: Pos2,
     k: f32,
@@ -381,14 +417,27 @@ fn apply_cluster_forces(
         .zip(nodes.repos)
         .map(|(role, repo)| role.map(|r| group_key(r, *repo)))
         .collect();
-    cancel_cross_repulsion(params, pos, &keys, disp, k);
+    let wide: Vec<bool> = nodes
+        .roles
+        .iter()
+        .map(|r| matches!(r, Some(Membership::Coordinator(_))))
+        .collect();
+    rescale_repulsion(params, pos, &keys, &wide, disp, k);
     let queen = nodes
         .roles
         .iter()
         .position(|r| *r == Some(Membership::Queen));
-    if let Some(q) = queen {
-        cancel_queen_attraction(params, pos, q, queen_links, disp, k);
-    }
+    // Edges to the queen and inside a cluster lose their base attraction: the queen's would
+    // knot every cluster around her, and a cluster's (which grows as the graph does) would
+    // crush its nodes together; the cluster's own spring holds it instead.
+    let slack: Vec<(usize, usize)> = links
+        .iter()
+        .copied()
+        .filter(|&(a, b)| {
+            Some(a) == queen || Some(b) == queen || (keys[a].is_some() && keys[a] == keys[b])
+        })
+        .collect();
+    cancel_attraction(params, pos, &slack, disp, k);
     let groups = groups(pos, &keys, nodes);
 
     for group in &groups {
@@ -485,10 +534,13 @@ fn apply_cluster_forces(
         // The queen ignores every other force: it only heads for the view center.
         disp[q] = capped((center - pos[q]) * params.queen_pull, params.max_gravity);
     }
+    for (d, _) in disp.iter_mut().zip(nodes.pinned).filter(|(_, p)| **p) {
+        *d = Vec2::ZERO;
+    }
 }
 
 /// (h) Pushes overlapping regions (with [`RunClustersParams::repo_gap`] between them) apart
-/// along the axis they overlap least on.
+/// by their overlap's depth.
 fn separate_regions(params: &RunClustersParams, regions: &[Region], disp: &mut [Vec2]) {
     let half_gap = params.repo_gap / 2.0;
     for (a, ra) in regions.iter().enumerate() {
@@ -497,12 +549,16 @@ fn separate_regions(params: &RunClustersParams, regions: &[Region], disp: &mut [
             if !overlap.is_positive() {
                 continue;
             }
+            // Along the line between their centers, not the axis they overlap least on: regions
+            // stacked in line with the center then slide off each other instead of deadlocking.
             let delta = ra.rect.center() - rb.rect.center();
-            let push = if overlap.width() < overlap.height() {
-                Vec2::new(away(delta.x) * overlap.width(), 0.0)
+            let dir = if delta.length() > 1e-3 {
+                delta.normalized()
             } else {
-                Vec2::new(0.0, away(delta.y) * overlap.height())
-            } * (params.repo_separation / 2.0);
+                Vec2::X
+            };
+            let depth = overlap.width().min(overlap.height());
+            let push = dir * depth * (params.repo_separation / 2.0);
             for &i in &ra.nodes {
                 disp[i] += push;
             }
@@ -534,52 +590,68 @@ fn queen_exclusion(rect: Rect, queen: Pos2) -> Vec2 {
     .unwrap_or(Vec2::ZERO)
 }
 
-/// Takes back the base FR attraction `c · d² / k` along the queen's edges, which would pull
-/// every coordinator and loose terminal into one knot around it.
-fn cancel_queen_attraction(
+/// Takes back the base FR attraction `c · d² / k` along `links`.
+fn cancel_attraction(
     params: &RunClustersParams,
     pos: &[Pos2],
-    queen: usize,
-    links: &[usize],
+    links: &[(usize, usize)],
     disp: &mut [Vec2],
     k: f32,
 ) {
-    for &j in links {
-        let delta = pos[j] - pos[queen];
+    for &(a, b) in links {
+        let delta = pos[b] - pos[a];
         let distance = delta.length().max(FR_EPSILON);
         let pull = delta / distance * (params.base_attract * distance * distance / k);
-        disp[queen] -= pull;
-        disp[j] += pull;
+        disp[a] -= pull;
+        disp[b] += pull;
     }
 }
 
-/// Takes back part of the base FR repulsion `k² / d` between nodes of different clusters.
-fn cancel_cross_repulsion(
+/// Takes back part of the base FR repulsion `k² / d` between nodes of different clusters,
+/// and all of it between nodes of one cluster, which (j) only collide instead.
+fn rescale_repulsion(
     params: &RunClustersParams,
     pos: &[Pos2],
     keys: &[Option<GroupKey>],
+    wide: &[bool],
     disp: &mut [Vec2],
     k: f32,
 ) {
-    let cancel = (1.0 - params.cross_repulsion) * k * k;
-    if cancel <= 0.0 {
-        return;
-    }
+    let cancel_cross = (1.0 - params.cross_repulsion).max(0.0) * k * k;
     for i in 0..pos.len() {
         let Some(gi) = keys[i] else {
             continue;
         };
         for j in i + 1..pos.len() {
-            if keys[j].is_none_or(|g| g == gi) {
+            let Some(gj) = keys[j] else {
                 continue;
-            }
+            };
             let delta = pos[i] - pos[j];
             let distance = delta.length().max(FR_EPSILON);
-            let pull = delta / distance * (cancel / distance);
-            disp[i] -= pull;
-            disp[j] += pull;
+            let dir = delta / distance;
+            let push = if gi == gj {
+                let scale = if wide[i] || wide[j] {
+                    COORDINATOR_SPACING
+                } else {
+                    1.0
+                };
+                collision(delta / scale) * params.collision
+                    + params.spread * NODE_SPACING.x / distance
+                    - k * k / distance
+            } else {
+                -cancel_cross / distance
+            };
+            disp[i] += dir * push;
+            disp[j] -= dir * push;
         }
     }
+}
+
+/// How far two nodes `delta` apart overlap, as a share of [`NODE_SPACING`] (0 when clear, 1
+/// when on top of each other).
+fn collision(delta: Vec2) -> f32 {
+    let scaled = Vec2::new(delta.x / NODE_SPACING.x, delta.y / NODE_SPACING.y);
+    (1.0 - scaled.length()).max(0.0)
 }
 
 fn groups(pos: &[Pos2], keys: &[Option<GroupKey>], nodes: &ForceNodes<'_>) -> Vec<Group> {
@@ -639,12 +711,14 @@ fn regions(pos: &[Pos2], groups: &[Group]) -> Vec<Region> {
 }
 
 /// The area a region with nodes at `points` covers: their bounding box plus
-/// [`REGION_PADDING`], with room for the repo name on top.
+/// [`REGION_PADDING`] (and [`REGION_LABEL_OVERHANG`] at the sides), with room for the repo
+/// name on top.
 pub fn region_rect(points: &[Pos2]) -> Rect {
     let bounds = Rect::from_points(points);
+    let side = REGION_PADDING + REGION_LABEL_OVERHANG;
     Rect::from_min_max(
-        bounds.min - Vec2::new(REGION_PADDING, REGION_PADDING + REGION_LABEL_HEIGHT),
-        bounds.max + Vec2::splat(REGION_PADDING),
+        bounds.min - Vec2::new(side, REGION_PADDING + REGION_LABEL_HEIGHT),
+        bounds.max + Vec2::new(side, REGION_PADDING),
     )
 }
 

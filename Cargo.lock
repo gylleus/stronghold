@@ -2514,6 +2514,7 @@ dependencies = [
  "egui_graphs",
  "env_logger",
  "global-hotkey",
+ "image",
  "jiff",
  "log",
  "notify",
