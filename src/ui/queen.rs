@@ -11,7 +11,8 @@ use crate::model::{FleetSnapshot, NodeId, NodeKind, NodeState};
 use crate::playbook::fetches::PlaybookStatus;
 use crate::quota::Quotas;
 use crate::ui::broadcast::BroadcastComposer;
-use crate::ui::graph::{ALL_STATES, hexagon, kind_label, queen_color, state_color, state_label};
+use crate::ui::graph::{ALL_STATES, kind_label, queen_color, state_color, state_label};
+use crate::ui::icons;
 use crate::ui::sidebar::run_rows;
 use crate::whip::WhipStatus;
 
@@ -209,7 +210,9 @@ pub enum QueenQuickAction {
 pub fn quick_actions(ui: &mut Ui, status_disabled: Option<&str>) -> Option<QueenQuickAction> {
     let mut action = None;
     let dark = ui.visuals().dark_mode;
-    let queen = egui::Button::new(
+    let avatar = crate::ui::art::queen_avatar(ui.text_style_height(&egui::TextStyle::Button) + 2.0);
+    let queen = egui::Button::image_and_text(
+        avatar,
         RichText::new("Queen")
             .strong()
             .color(ui.visuals().extreme_bg_color),
@@ -238,21 +241,13 @@ pub fn quick_actions(ui: &mut Ui, status_disabled: Option<&str>) -> Option<Queen
     action
 }
 
-/// The Queen's hexagon in her colour, with a dot in the fleet state's colour.
+/// The Queen's avatar with a dot in the fleet state's colour.
 fn queen_badge(ui: &mut Ui, fleet: NodeState, dark: bool) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+    let rect = ui.add(crate::ui::art::queen_avatar(28.0)).rect;
+    let center = rect.center() + egui::vec2(10.0, -10.0);
     let painter = ui.painter();
-    let center = rect.center();
-    painter.add(egui::Shape::convex_polygon(
-        hexagon(center, 9.0),
-        queen_color(dark),
-        egui::Stroke::NONE,
-    ));
-    painter.circle_filled(
-        center + egui::vec2(6.5, -6.5),
-        3.5,
-        state_color(fleet, dark),
-    );
+    painter.circle_filled(center, 5.0, ui.visuals().panel_fill);
+    painter.circle_filled(center, 3.5, state_color(fleet, dark));
 }
 
 /// A titled list of nodes whose rows select their node; nothing when empty.
@@ -263,6 +258,13 @@ fn node_list(ui: &mut Ui, title: &str, rows: &[SummaryRow], response: &mut Queen
     ui.label(RichText::new(format!("{title} ({})", rows.len())).strong());
     for row in rows {
         let text = format!("{}  ·  {}", row.label, kind_label(row.kind));
+        let text = icons::with_icon(
+            ui,
+            icons::kind_icon(row.kind),
+            &text,
+            egui::TextStyle::Button,
+            None,
+        );
         if ui
             .selectable_label(false, text)
             .on_hover_text("Select this node")

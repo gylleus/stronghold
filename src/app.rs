@@ -5,8 +5,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
 
-use crate::APP_NAME;
-
 mod chat;
 mod control;
 mod dictation;
@@ -769,7 +767,7 @@ impl MyrstackApp {
     }
 
     fn top_bar_controls(&mut self, ui: &mut egui::Ui, now_ms: i64) {
-        ui.heading(APP_NAME);
+        ui::widgets::app_title(ui);
         ui.separator();
         ui.selectable_value(&mut self.view, View::Graph, "Graph");
         ui.selectable_value(&mut self.view, View::Table, "Table");
@@ -1201,7 +1199,10 @@ impl eframe::App for MyrstackApp {
         }
         egui::CentralPanel::default().show(ui, |ui| match &self.data {
             None => {
-                ui.centered_and_justified(|ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(ui.available_height() * 0.3);
+                    ui.add(egui::Image::new(ui::art::ant_cell()).max_width(96.0));
+                    ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.spinner();
                         ui.label("Connecting to Orca…");

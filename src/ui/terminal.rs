@@ -599,7 +599,13 @@ fn header(
         .spacing([8.0, 2.0])
         .show(ui, |ui| {
             ui.weak("kind");
-            ui.label(kind_label(node.kind));
+            ui.label(crate::ui::icons::with_icon(
+                ui,
+                crate::ui::icons::kind_icon(node.kind),
+                kind_label(node.kind),
+                egui::TextStyle::Body,
+                None,
+            ));
             ui.end_row();
 
             ui.weak("state");

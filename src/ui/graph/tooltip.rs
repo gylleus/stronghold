@@ -1,6 +1,6 @@
 //! Hover tooltip for a graph node.
 
-use eframe::egui::{RichText, Ui};
+use eframe::egui::{RichText, TextStyle, Ui};
 
 use crate::claude::Usage;
 use crate::model::{Node, NodeKind, NodeState};
@@ -71,10 +71,12 @@ pub fn node_tooltip(
         ui.label(RichText::new("Click for the fleet summary and broadcast").weak());
         return;
     }
-    ui.label(format!(
-        "{} · {}",
-        kind_label(node.kind),
-        state_label(node.state)
+    ui.label(crate::ui::icons::with_icon(
+        ui,
+        crate::ui::icons::kind_icon(node.kind),
+        &format!("{} · {}", kind_label(node.kind), state_label(node.state)),
+        TextStyle::Body,
+        None,
     ));
     if let Some(repo) = repo {
         ui.label(format!("Repo: {repo}"));
