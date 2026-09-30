@@ -32,6 +32,8 @@ egui_extras = { version = "0.36", features = ["svg"] }
 sherpa-rs = { version = "0.6.8", features = ["static"] }
 cpal = "0.18"
 sha2 = "0.10"
+egui_dock = { version = "0.21", features = ["serde"] }
+ron = "0.12"
 
 # Native notifications when running from Myrstack.app (see src/notify/native.rs).
 [target.'cfg(target_os = "macos")'.dependencies]

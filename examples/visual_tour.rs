@@ -19,6 +19,10 @@ use myrstack::ui;
 use myrstack::ui::graph::GraphView;
 use myrstack::whip::WhipStatus;
 
+// The default pane widths (see `myrstack::ui::dock`), as fixed columns.
+const CONVERSATION_SHARE: f32 = 0.45;
+const DETAILS_WIDTH: f32 = 270.0;
+
 const SETTLE_TIME: Duration = Duration::from_secs(6);
 /// How long before the screenshot the graph is fitted, so the fit is drawn by then.
 const FIT_LEAD: Duration = Duration::from_secs(1);
@@ -93,7 +97,7 @@ impl Tour {
         let window = ui.ctx().content_rect().width();
         egui::Panel::right("terminal")
             .resizable(true)
-            .default_size(window * ui::columns::CONVERSATION_SHARE)
+            .default_size(window * CONVERSATION_SHARE)
             .show(ui, |ui| {
                 let view = ui::chat::ChatView {
                     transcript: &self.transcript,
@@ -105,7 +109,7 @@ impl Tour {
             });
         egui::Panel::right("details")
             .resizable(true)
-            .default_size(ui::columns::DETAILS_DEFAULT_WIDTH)
+            .default_size(DETAILS_WIDTH)
             .show(ui, |ui| {
                 ui::widgets::section_label(ui, "Details");
                 let inputs = ui::queen::QueenInputs {

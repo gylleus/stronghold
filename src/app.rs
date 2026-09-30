@@ -9,6 +9,7 @@ mod chat;
 mod control;
 mod dictation;
 mod palette;
+mod panes;
 mod playbook;
 mod review;
 mod settings;
@@ -59,12 +60,15 @@ pub struct MyrstackApp {
     /// Node selected in the graph, shared by all views and side panels.
     selected: Option<NodeId>,
     view: View,
-    /// Whether the details column is open, collapsed or follows the window width.
-    details_pref: ui::columns::DetailsPref,
-    /// ⌘J hid the Queen's chat, which otherwise fills the conversation column when nothing
+    /// The dock's pane arrangement: sidebar, graph or table, details and conversation.
+    panes: ui::dock::PaneLayout,
+    /// A pane to bring to the front of its tab group next frame (the dock is out of `panes`
+    /// while it draws).
+    bring_forward: Option<ui::dock::Pane>,
+    /// ⌘J hid the Queen's chat, which otherwise fills the conversation pane when nothing
     /// is selected.
     chat_hidden: bool,
-    /// Left edge of the conversation column's content last frame, `None` while it is closed;
+    /// Left edge of the conversation pane's content last frame, `None` while it is not drawn;
     /// the top bar puts the Queen's quick actions above it.
     conversation_left: Option<f32>,
     /// Width of the top bar's Queen quick actions last frame.
@@ -174,7 +178,8 @@ impl MyrstackApp {
             graph: GraphView::new(),
             selected: None,
             view: View::default(),
-            details_pref: ui::columns::DetailsPref::default(),
+            panes: ui::dock::PaneLayout::default(),
+            bring_forward: None,
             chat_hidden: false,
             conversation_left: None,
             quick_actions_width: 0.0,
@@ -329,25 +334,7 @@ impl MyrstackApp {
             && (self.queen_selected() || self.selected_node().is_some())
     }
 
-    /// The right-hand column, full height: the Queen's chat, the selected agent's screen and
-    /// input or transcript, or the multi-selection panel.
-    fn conversation_column(&mut self, ui: &mut egui::Ui, now_ms: i64) {
-        if !self.has_conversation() {
-            self.conversation_left = None;
-            return;
-        }
-        let window = ui.ctx().content_rect().width();
-        let margin = egui::Frame::side_top_panel(ui.style()).inner_margin.leftf();
-        let response = egui::Panel::right("terminal")
-            .resizable(true)
-            .default_size(window * ui::columns::CONVERSATION_SHARE)
-            .min_size(ui::columns::CONVERSATION_MIN_WIDTH)
-            .show(ui, |ui| self.conversation_contents(ui, now_ms))
-            .response;
-        self.conversation_left = Some(response.rect.left() + margin);
-    }
-
-    fn conversation_contents(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+    pub(super) fn conversation_contents(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         if self.graph.selection().len() > 1 {
             self.selection_contents(ui);
         } else if self.shows_chat() {
@@ -382,61 +369,6 @@ impl MyrstackApp {
         let response = ui::terminal::terminal_panel(ui, node, self.screen.as_ref(), input, now_ms);
         let id = node.id.clone();
         self.apply_terminal_response(id, response);
-    }
-
-    /// The details column between the graph and the conversation column: the selected node's
-    /// attributes and actions, or the Queen's fleet summary, review queue and broadcast.
-    /// Collapses to a strip.
-    fn details_column(&mut self, ui: &mut egui::Ui, now_ms: i64) {
-        use ui::columns::{self, DetailsColumn};
-        let window = ui.ctx().content_rect().width();
-        let shown = columns::details_column(self.details_pref, self.has_details(), window);
-        let toggle = match shown {
-            DetailsColumn::Hidden => false,
-            DetailsColumn::Collapsed => {
-                egui::Panel::right("details_strip")
-                    .resizable(false)
-                    .exact_size(columns::STRIP_WIDTH)
-                    .show(ui, |ui| {
-                        ui.button("«")
-                            .on_hover_text("Show the selection's details")
-                            .clicked()
-                    })
-                    .inner
-            }
-            DetailsColumn::Open => {
-                egui::Panel::right("details")
-                    .resizable(true)
-                    .default_size(columns::DETAILS_DEFAULT_WIDTH)
-                    .min_size(columns::DETAILS_MIN_WIDTH)
-                    .max_size(columns::DETAILS_MAX_WIDTH)
-                    .show(ui, |ui| {
-                        let collapse = ui
-                            .horizontal(|ui| {
-                                ui::widgets::section_label(ui, "Details");
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.small_button("»")
-                                            .on_hover_text("Collapse the details column")
-                                            .clicked()
-                                    },
-                                )
-                                .inner
-                            })
-                            .inner;
-                        egui::ScrollArea::vertical()
-                            .id_salt("details_scroll")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| self.details_contents(ui, now_ms));
-                        collapse
-                    })
-                    .inner
-            }
-        };
-        if toggle {
-            self.details_pref = columns::toggled(shown);
-        }
     }
 
     fn details_contents(&mut self, ui: &mut egui::Ui, now_ms: i64) {
@@ -738,7 +670,7 @@ impl MyrstackApp {
             bar.left(),
             bar.right(),
             self.quick_actions_width,
-            self.conversation_left,
+            ui::dock::quick_actions_anchor(self.conversation_left, bar),
         );
         let gap = ui.spacing().item_spacing.x;
         let left = egui::Rect::from_min_size(bar.min, egui::vec2(x - gap - bar.left(), row));
@@ -984,7 +916,13 @@ impl MyrstackApp {
             state.view
         );
         self.view = state.view;
-        self.details_pref = state.details;
+        if let Some(panes) = state
+            .panes
+            .as_deref()
+            .and_then(ui::dock::PaneLayout::decode)
+        {
+            self.panes = panes;
+        }
         self.chat_hidden = state.chat_hidden;
         self.filter = state.filter;
         self.selected = state.layout.selected.clone();
@@ -996,11 +934,11 @@ impl MyrstackApp {
     fn persisted_state(&self) -> PersistedState {
         PersistedState {
             view: self.view,
-            details: self.details_pref,
             chat_hidden: self.chat_hidden,
             filter: self.filter.clone(),
             layout: self.graph.export_layout(),
             recent_actions: self.search.recents().keys(),
+            panes: self.panes.encode(),
             ..PersistedState::default()
         }
     }
@@ -1143,94 +1081,7 @@ impl eframe::App for MyrstackApp {
                     .inner_margin(egui::Margin::symmetric(10, 6)),
             )
             .show(ui, |ui| self.top_bar(ui, now_ms));
-        // Side columns before the graph's own bars, so they run the full height.
-        self.conversation_column(ui, now_ms);
-        self.details_column(ui, now_ms);
-        let mut whip_pick = None;
-        if self.view == View::Graph
-            && let Some(snapshot) = &self.snapshot
-        {
-            let filter = &mut self.filter;
-            let (whip_log, whip_status) = (&mut self.whip_log, &self.whip_status);
-            let cache = &mut self.sidebar_cache;
-            let response = egui::Panel::left("sidebar")
-                .resizable(true)
-                .default_size(260.0)
-                .show(ui, |ui| {
-                    ui::sidebar::sidebar_cached(ui, snapshot, cache, filter, |ui| {
-                        whip_pick = whip_log.section(ui, whip_status, snapshot, now_ms);
-                    })
-                })
-                .inner;
-            if response.filter_changed {
-                self.graph.set_hidden(&self.filter.hidden(snapshot));
-            }
-            if let Some(run_id) = &response.focus_run {
-                self.graph.focus_run(run_id);
-            }
-            if let Some(repo) = &response.focus_repo {
-                self.graph.focus_repo(repo);
-            }
-            if let Some(id) = &response.focus_node {
-                self.graph.center_on(id);
-            }
-            if let Some(id) = response.select {
-                self.graph.set_selected(Some(&id));
-                self.selected = Some(id);
-            }
-            if response.close_shown {
-                self.close.request(ui::close::CloseRequest::Shown);
-            }
-            if let Some(repo) = &response.new_session_repo {
-                self.open_spawn_dialog(Some(repo));
-            }
-        }
-        if let Some(id) = whip_pick {
-            self.select_and_focus(id);
-        }
-        self.hidden_selection_notice(ui);
-        if self.view == View::Graph {
-            egui::Panel::bottom("legend")
-                .frame(
-                    egui::Frame::side_top_panel(ui.style())
-                        .inner_margin(egui::Margin::symmetric(10, 6)),
-                )
-                .show(ui, ui::graph::legend);
-        }
-        egui::CentralPanel::default().show(ui, |ui| match &self.data {
-            None => {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(ui.available_height() * 0.3);
-                    ui.add(egui::Image::new(ui::art::ant_cell()).max_width(96.0));
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label("Connecting to Orca…");
-                    });
-                });
-            }
-            Some(data) => match self.view {
-                View::Graph => {
-                    let response = self.graph.show(ui);
-                    // A node selected while filtered out is not in the graph; keep it.
-                    let hidden_selected = self
-                        .selected
-                        .as_ref()
-                        .is_some_and(|id| self.graph.hidden().contains(id));
-                    if response.selected.is_some() || !hidden_selected {
-                        self.selected = response.selected;
-                    }
-                    if !response.close_requested.is_empty() {
-                        self.close
-                            .request(ui::close::CloseRequest::Nodes(response.close_requested));
-                    }
-                    if !response.whip_requested.is_empty() {
-                        self.request_whip(response.whip_requested);
-                    }
-                }
-                View::Table => ui::table::terminal_table(ui, data, now_ms),
-            },
-        });
+        self.panes(ui, now_ms);
         self.close_dialog(ui.ctx());
         self.settings_window(ui.ctx(), now_ms);
         if self.whip_window.take_whip_stalled() {
