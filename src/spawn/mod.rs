@@ -8,6 +8,7 @@
 
 pub mod catalog;
 pub mod exec;
+pub mod interrupted;
 pub mod pending;
 pub mod resolve;
 pub mod verify;
@@ -22,7 +23,7 @@ use crate::orca::spawn::{
 
 pub use catalog::Catalog;
 pub use exec::{SpawnEvent, SpawnOutcome, SpawnRunner, StepStatus};
-pub use resolve::{ModeName, SpawnArgs};
+pub use resolve::{LiveAgent, ModeName, NameConflict, SpawnArgs, name_conflict, new_worktree_of};
 pub use verify::{Expect, ScreenVerdict, classify_screen};
 
 /// How long `terminal wait --for tui-idle` waits after launch. An agent that took its prompt
@@ -134,6 +135,9 @@ pub enum Step {
         /// Type the prompt again when the agent sits idle with an empty input box.
         retype: bool,
     },
+    /// Close the plain shell Orca opens in a new worktree next to the agent's terminal, so no
+    /// empty terminal is left behind.
+    CloseStartupShell,
 }
 
 /// What earlier steps produced; later steps read it.
@@ -164,6 +168,7 @@ impl Step {
             Step::DirenvAllow => "Trust direnv",
             Step::WaitIdle { .. } => "Wait for the agent",
             Step::Verify { .. } => "Check the prompt started",
+            Step::CloseStartupShell => "Close the startup shell",
         }
     }
 
@@ -209,7 +214,7 @@ impl Step {
             }),
             Step::WaitIdle { timeout_ms } => pick(&ctx.handle, NEW_TERMINAL, "agent terminal")
                 .map(|h| terminal_wait_idle_args(&h, *timeout_ms)),
-            Step::DirenvAllow | Step::Verify { .. } => return None,
+            Step::DirenvAllow | Step::Verify { .. } | Step::CloseStartupShell => return None,
         })
     }
 
@@ -234,6 +239,13 @@ impl Step {
                 }
                 text
             }
+            Step::CloseStartupShell => format!(
+                "orca terminal close --terminal=<startup shell> --tab  (the plain shell Orca \
+                 opened in {}, if any)",
+                ctx.worktree_path
+                    .as_deref()
+                    .map_or_else(|| NEW_WORKTREE.to_string(), shell_quote)
+            ),
             _ => match self.args_with(ctx, true) {
                 Some(Ok(args)) => format!("orca {}", display_args(&args)),
                 Some(Err(e)) => e,
@@ -362,7 +374,13 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
                 prompt: (orca_agent && !prompt.is_empty()).then(|| prompt.clone()),
             });
             if orca_agent {
-                vec![create, Step::DirenvAllow, wait, verify(true)]
+                vec![
+                    create,
+                    Step::DirenvAllow,
+                    wait,
+                    verify(true),
+                    Step::CloseStartupShell,
+                ]
             } else {
                 vec![
                     create,
@@ -373,6 +391,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
                     },
                     wait,
                     verify(true),
+                    Step::CloseStartupShell,
                 ]
             }
         }
@@ -460,6 +479,9 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
                 expect: Expect::AnyInput,
                 retype: false,
             });
+            if new_worktree {
+                steps.push(Step::CloseStartupShell);
+            }
             steps
         }
     };
