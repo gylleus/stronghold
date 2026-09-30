@@ -61,6 +61,8 @@ pub const DEFAULT_GRAPH_ID: &str = "myrstack_graph";
 const SPAWN_NEAR: f32 = 40.0;
 /// Spawn distance of a new node without relatives from the layout center.
 const SPAWN_CENTER: f32 = 80.0;
+/// Cosine of the half-angle of the cone [`GraphView::outside_graph`] looks along.
+const SPAWN_CONE_COS: f32 = 0.7;
 /// Zoom factor per scrolled point.
 const SCROLL_ZOOM_SPEED: f32 = 0.0015;
 const MIN_ZOOM: f32 = 0.05;
@@ -828,18 +830,22 @@ impl GraphView {
             .or_else(|| Some(self.outside_graph(&node.id)))
     }
 
-    /// A point just outside the placed nodes, seen from the queen (else the layout center), in
-    /// a direction derived from `id`: new repos spread around the queen instead of piling up
-    /// on one side.
+    /// A point just outside the placed nodes in a direction derived from `id`, seen from the
+    /// queen (else the layout center): new repos spread around the queen instead of piling up
+    /// on one side. Only nodes roughly in that direction count, so repos added together do
+    /// not spiral outward.
     fn outside_graph(&self, id: &NodeId) -> Pos2 {
         let center = self.node_position(&NodeId::queen()).unwrap_or(self.anchor);
+        let dir = jitter(id, 1.0);
         let extent = self
             .nodes
             .keys()
             .filter_map(|n| self.node_position(n))
-            .map(|p| (p - center).length())
+            .map(|p| p - center)
+            .filter(|d| d.dot(dir) > d.length() * SPAWN_CONE_COS)
+            .map(|d| d.length())
             .fold(0.0, f32::max);
-        center + jitter(id, extent + SPAWN_CENTER)
+        center + dir * (extent + SPAWN_CENTER)
     }
 
     /// Keeps `id` where it is from now on, and lets the rest of the layout settle around it.

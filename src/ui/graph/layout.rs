@@ -522,7 +522,8 @@ fn apply_cluster_forces(
             }
         }
     }
-    separate_regions(params, &regions, disp);
+    let hub = queen.map_or(center, |q| pos[q]);
+    separate_regions(params, &regions, hub, disp);
 
     if let Some(q) = queen {
         for region in &regions {
@@ -540,8 +541,9 @@ fn apply_cluster_forces(
 }
 
 /// (h) Pushes overlapping regions (with [`RunClustersParams::repo_gap`] between them) apart
-/// by their overlap's depth.
-fn separate_regions(params: &RunClustersParams, regions: &[Region], disp: &mut [Vec2]) {
+/// by their overlap's depth, both directly and around `hub` (the queen), so regions stacked in
+/// line with the hub fan out around it quickly instead of creeping.
+fn separate_regions(params: &RunClustersParams, regions: &[Region], hub: Pos2, disp: &mut [Vec2]) {
     let half_gap = params.repo_gap / 2.0;
     for (a, ra) in regions.iter().enumerate() {
         for rb in &regions[a + 1..] {
@@ -549,23 +551,39 @@ fn separate_regions(params: &RunClustersParams, regions: &[Region], disp: &mut [
             if !overlap.is_positive() {
                 continue;
             }
-            // Along the line between their centers, not the axis they overlap least on: regions
-            // stacked in line with the center then slide off each other instead of deadlocking.
             let delta = ra.rect.center() - rb.rect.center();
             let dir = if delta.length() > 1e-3 {
                 delta.normalized()
             } else {
                 Vec2::X
             };
-            let depth = overlap.width().min(overlap.height());
-            let push = dir * depth * (params.repo_separation / 2.0);
+            let strength = overlap.width().min(overlap.height()) * (params.repo_separation / 2.0);
+            let (to_a, to_b) = (ra.rect.center() - hub, rb.rect.center() - hub);
+            // Clockwise for `a` when `b` lies counterclockwise of it (or in line), and back.
+            let side = if to_a.x * to_b.y - to_a.y * to_b.x >= 0.0 {
+                1.0
+            } else {
+                -1.0
+            };
+            let turn_a = tangent(to_a) * -side * strength;
+            let turn_b = tangent(to_b) * side * strength;
             for &i in &ra.nodes {
-                disp[i] += push;
+                disp[i] += dir * strength + turn_a;
             }
             for &i in &rb.nodes {
-                disp[i] -= push;
+                disp[i] += -dir * strength + turn_b;
             }
         }
+    }
+}
+
+/// The counterclockwise unit tangent of a circle around the origin at `radial`.
+fn tangent(radial: Vec2) -> Vec2 {
+    let length = radial.length();
+    if length > 1e-3 {
+        Vec2::new(-radial.y, radial.x) / length
+    } else {
+        Vec2::ZERO
     }
 }
 

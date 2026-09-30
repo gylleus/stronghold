@@ -619,3 +619,18 @@ fn collision_is_zero_beyond_the_spacing_and_one_on_top() {
     assert_eq!(super::collision(egui::vec2(0.0, NODE_SPACING.y * 2.0)), 0.0);
     assert!((super::collision(NODE_SPACING * 0.5 / 2f32.sqrt()) - 0.5).abs() < 1e-5);
 }
+
+#[test]
+fn a_settled_layout_stays_settled() {
+    // A layout that only paused mid-way (slow creep caught by the stall check) would carry on
+    // at the next wake-up and reshuffle the graph.
+    let (mut view, snapshot) = settled(12, 8, 4);
+    let before = positions(&view, &snapshot);
+    settle(&mut view);
+    let after = positions(&view, &snapshot);
+    let moved = before
+        .iter()
+        .map(|(id, p)| (after[id] - *p).length())
+        .fold(0.0, f32::max);
+    assert!(moved < 30.0, "a node moved {moved} after settling again");
+}
