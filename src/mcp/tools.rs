@@ -408,9 +408,14 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "alerts",
             "Alerts",
-            "Notifications Myrstack posted (needs input, stalls, …), newest first.",
+            "Karl's notification inbox, newest first: what agents sent him with notify and what \
+             Myrstack raised itself (needs input, stalls, PRs ready), with severity, agent, \
+             link, read state and how many repeats were collapsed.",
             object(
-                json!({ "limit": { "type": "integer", "minimum": 1, "default": DEFAULT_ALERTS } }),
+                json!({
+                    "limit": { "type": "integer", "minimum": 1, "default": DEFAULT_ALERTS },
+                    "unread_only": { "type": "boolean", "default": false },
+                }),
                 &[],
             ),
             READ,
@@ -555,6 +560,7 @@ fn fleet_status(control: &mut dyn Control) -> ToolResult {
         "stalled": s.stalled.iter().map(compact).collect::<Vec<_>>(),
         "whip": if fallback { Value::Null } else { s.status.get("whip").cloned().unwrap_or_default() },
         "queen_auto": if fallback { Value::Null } else { s.status.get("queen_auto").cloned().unwrap_or(Value::Bool(false)) },
+        "notifications": if fallback { Value::Null } else { s.status.get("notifications").cloned().unwrap_or_default() },
         "quotas": s.quotas,
     });
     Ok(ToolOutput::ok(text, structured))
@@ -640,6 +646,9 @@ fn fleet_text(s: &Status, fallback: bool, now: i64) -> String {
             }
         ));
     }
+    if !fallback && let Some(n) = s.status.get("notifications") {
+        out.extend(notifications_text(n, now));
+    }
     if let Some(q) = &s.quotas {
         out.push(format!("Quotas: {}", quota_line(q, now)));
     }
@@ -648,6 +657,29 @@ fn fleet_text(s: &Status, fallback: bool, now: i64) -> String {
         out.push(format!("Orca errors: {}", errors.join("; ")));
     }
     out.join("\n")
+}
+
+/// Karl's unread notifications, newest first, from `status`'s `notifications`.
+fn notifications_text(n: &Value, now: i64) -> Vec<String> {
+    let unread = n["unread"].as_u64().unwrap_or(0);
+    if unread == 0 {
+        return vec!["Notifications: none unread".into()];
+    }
+    let latest: Vec<AlertView> = n
+        .get("latest_unread")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let mut out = vec![format!(
+        "Notifications: {unread} unread{} (alerts lists them):",
+        if latest.len() < unread as usize {
+            format!(", newest {}", latest.len())
+        } else {
+            String::new()
+        }
+    )];
+    out.extend(latest.iter().map(|a| alert_line(a, now)));
+    out
 }
 
 fn waiting_line(a: &AgentView) -> String {
@@ -1449,29 +1481,63 @@ fn simple(control: &mut dyn Control, method: &str, text: &str) -> ToolResult {
 
 fn alerts(control: &mut dyn Control, p: &Params) -> ToolResult {
     let limit = p.usize("limit")?.unwrap_or(DEFAULT_ALERTS).max(1);
+    let unread_only = p.bool("unread_only")?.unwrap_or(false);
     let result = control.call("alerts", Value::Null)?;
     let all: Vec<AlertView> = parse(result.get("alerts").unwrap_or(&Value::Null))?;
-    let shown = &all[..all.len().min(limit)];
+    let unread = all.iter().filter(|a| !a.read).count();
+    let listed: Vec<&AlertView> = all.iter().filter(|a| !unread_only || !a.read).collect();
+    let shown = &listed[..listed.len().min(limit)];
     let now = now_ms();
-    let mut out = vec![if all.is_empty() {
-        "No alerts.".to_owned()
+    let mut out = vec![if listed.is_empty() {
+        if unread_only {
+            "No unread alerts."
+        } else {
+            "No alerts."
+        }
+        .to_owned()
     } else {
         format!(
-            "{} alerts (newest first, showing {}):",
+            "{} alerts, {unread} unread (newest first, showing {}):",
             all.len(),
             shown.len()
         )
     }];
-    for a in shown {
-        let node = a
-            .node
-            .as_deref()
-            .map(|n| format!(" `{n}`"))
-            .unwrap_or_default();
-        out.push(format!("- {}: {}{node}", since(now, a.at_ms), a.title));
-    }
-    let structured = json!({ "count": all.len(), "alerts": shown });
+    out.extend(shown.iter().map(|a| alert_line(a, now)));
+    let structured = json!({ "count": all.len(), "unread": unread, "alerts": shown });
     Ok(ToolOutput::ok(out.join("\n"), structured))
+}
+
+/// `- [unread] warn · 3m ago: fix-login: Blocked on schema ×2 `term:…` — message <url>`
+fn alert_line(a: &AlertView, now: i64) -> String {
+    let mut line = format!(
+        "- {}{}{}: ",
+        if a.read { "" } else { "[unread] " },
+        if a.severity.is_empty() {
+            String::new()
+        } else {
+            format!("{} · ", a.severity)
+        },
+        since(now, a.at_ms),
+    );
+    if let Some(agent) = &a.agent
+        && a.source == "agent"
+    {
+        line.push_str(&format!("{agent}: "));
+    }
+    line.push_str(&a.title);
+    if a.count > 1 {
+        line.push_str(&format!(" ×{}", a.count));
+    }
+    if let Some(node) = &a.node {
+        line.push_str(&format!(" `{node}`"));
+    }
+    if !a.message.is_empty() {
+        line.push_str(&format!(" — {}", truncate(&a.message, 200)));
+    }
+    if let Some(url) = &a.url {
+        line.push_str(&format!(" <{url}>"));
+    }
+    line
 }
 
 fn quotas(control: &mut dyn Control) -> ToolResult {

@@ -4,7 +4,7 @@ use eframe::egui;
 
 use super::MyrstackApp;
 use crate::chat::config::MODEL_ENV;
-use crate::ui::settings::{GeneralInfo, PaneContext, QueenStatus};
+use crate::ui::settings::{GeneralInfo, NotifyStatus, PaneContext, QueenStatus};
 
 impl MyrstackApp {
     /// Opens the Settings window on the section it showed last (⌘,, "Settings…").
@@ -21,6 +21,7 @@ impl MyrstackApp {
         let env_model = std::env::var(MODEL_ENV)
             .ok()
             .filter(|m| !m.trim().is_empty());
+        let (native, last_failure, system_sounds) = self.notify_status();
         let cx = PaneContext {
             whip_status: &self.whip_status,
             now_ms,
@@ -31,6 +32,11 @@ impl MyrstackApp {
             },
             general: &general,
             voice: self.talk.voice_status(super::talk::speech_model_found()),
+            notify: NotifyStatus {
+                native,
+                last_failure: last_failure.as_deref(),
+                system_sounds: &system_sounds,
+            },
         };
         let out = self.whip_window.show(ctx, &cx);
         if let Some(whip) = out.whip {
@@ -52,6 +58,10 @@ impl MyrstackApp {
         if let Some(model) = out.download {
             self.download_voice_model(model);
         }
+        if out.notifications.is_some() {
+            log::info!("settings: notification settings saved");
+        }
+        self.notification_tests(out.test_sound, out.test_notification);
     }
 
     /// Paths, build and playbook facts for the General section.

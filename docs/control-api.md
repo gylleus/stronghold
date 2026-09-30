@@ -114,6 +114,7 @@ first poll, with `ready: false`.
                "needs_input":false,"stalled":false,"last_activity_ms":1790344260137}]},
     "whip":{"enabled":true,"dry_run":true,"last_tick_ms":…,"findings":1,"escalated":[]},
     "alerts":0,
+    "notifications":{"total":0,"unread":0,"latest_unread":[]},
     "dashboard":{"view":"graph","selected":"queen","selection":["queen"],
                  "filter":{"repos":[],"states":[],"kinds":[],"text":"","show_loose":true,
                            "show_released":true,"hidden":0},
@@ -219,12 +220,16 @@ Returns the plan quotas from `orca account list`.
 
 ### `alerts`
 
-Returns the notifications Myrstack posted, newest first. `node` is the node each alert is
-about, if that node is still in the fleet.
+Returns the notification inbox, newest first: what agents sent with `notify` and what
+Myrstack raised itself. `node` is the node each alert is about, if that node is still in the
+fleet; `count` is how many identical notifications were collapsed into it. `status` carries
+the unread count and the newest unread ones under `notifications`.
 
 ```json
 {"v":1,"method":"alerts"}
-→ {"ok":true,"result":{"alerts":[{"at_ms":…,"title":"Myrstack: … needs input","node":"term:term_…"}]}}
+→ {"ok":true,"result":{"alerts":[{"id":7,"at_ms":…,"severity":"warn","source":"agent",
+   "title":"Blocked: need prod DB access","message":"…","url":"https://…",
+   "agent":"realtime-255","node":"term:term_…","count":1,"read":false}]}}
 ```
 
 ### `fleet_data`
@@ -513,6 +518,40 @@ dismissed it) or `unchanged`.
 `{"url": …}`. Hide a PR from the queue: `review_dismiss` until it is marked ready again,
 `review_done` (reviewed) until it is marked again or its head moves. `not_found` when the PR
 is not in the queue.
+
+### `notify`
+
+`{"title", "message"?, "severity"?: "info"|"warn"|"urgent", "url"?: http(s), "agent"?,
+"origin"?: {"terminal_handle", "pane_key", "tab_id"}}`. An agent's notification to Karl (the
+`notify` MCP tool sends it with the caller's Orca identity). It goes through the app's
+dispatcher like every notification; see [Notifications](#notifications).
+
+```json
+{"v":1,"method":"notify","params":{"title":"Blocked","severity":"warn","origin":{"terminal_handle":"term_…"}}}
+→ {"ok":true,"result":{"outcome":"delivered","id":7,"severity":"warn","quiet":false,
+   "agent":{"id":"term:term_…","label":"…"},
+   "delivery":{"native":true,"in_app":true,"sound":true}}}
+```
+
+`outcome` is `delivered` (possibly silently: below Karl's thresholds or quiet mode, see
+`delivery` and `quiet`), `collapsed` (identical to one the agent sent in the last 30 min;
+`count` says how many), or `rate_limited` (at most 5 per agent per 10 min;
+`retry_after_ms`). An `agent` that matches no node is reported as `unknown_agent` and the
+notification is filed under the caller's terminal.
+
+## Notifications
+
+Every notification goes through one dispatcher in the app: agents' `notify`, nodes entering
+NeedsInput, whip escalations and long waits, PRs marked ready, and the Settings window's tests.
+It drops Myrstack's own repeats about one target within 10 minutes, collapses an agent's
+identical notifications, rate limits each agent, and records the rest in the inbox
+(`<data dir>/notifications.json`, 0600, newest 200). Delivery follows the Notifications
+settings (`notifications` in `settings.json`): macOS and in-app pop-ups from a minimum
+severity, a sound per severity (a macOS alert sound, a custom file, or none) from a minimum
+severity at a set volume, and quiet mode, in which only urgent pops up or sounds. Native
+pop-ups are capped at 5 a minute, and bursts are collapsed into one summary. Clicking a
+notification, pop-up or inbox entry selects its node and opens its link; selecting a node
+marks its notifications read.
 
 ## Review queue
 

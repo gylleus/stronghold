@@ -1,9 +1,11 @@
-//! The Settings window: a section list on the left (Queen, Whip, Voice, General) and the
+//! The Settings window: a section list on the left (Queen, Whip, Notifications, Voice,
+//! General) and the
 //! chosen section's form. It owns the settings file: every save writes the whole file with the
 //! edited section replaced. Opened from the top bar's gear, the palette's "Settings…" and ⌘,;
 //! the "Whip…" button and "Whip settings…" open it on the Whip section.
 
 pub mod general;
+pub mod notifications;
 pub mod queen;
 pub mod voice;
 pub mod whip;
@@ -13,10 +15,12 @@ use std::path::PathBuf;
 use eframe::egui::{self, RichText};
 
 use crate::chat::settings::QueenSettings;
+use crate::notify::{NotifySettings, Severity, Sound};
 use crate::voice::settings::VoiceSettings;
 use crate::whip::{Settings, WhipSettings, WhipStatus};
 
 pub use general::GeneralInfo;
+pub use notifications::NotifyStatus;
 pub use queen::QueenStatus;
 pub use voice::{ModelStatus, VoiceModel, VoiceStatus};
 
@@ -26,14 +30,16 @@ pub enum Section {
     #[default]
     Queen,
     Whip,
+    Notifications,
     Voice,
     General,
 }
 
 impl Section {
-    pub const ALL: [Section; 4] = [
+    pub const ALL: [Section; 5] = [
         Section::Queen,
         Section::Whip,
+        Section::Notifications,
         Section::Voice,
         Section::General,
     ];
@@ -42,6 +48,7 @@ impl Section {
         match self {
             Section::Queen => "Queen",
             Section::Whip => "Whip",
+            Section::Notifications => "Notifications",
             Section::Voice => "Voice",
             Section::General => "General",
         }
@@ -57,6 +64,8 @@ pub struct PaneContext<'a> {
     pub general: &'a GeneralInfo,
     /// Voices and speech model states for the Voice section.
     pub voice: VoiceStatus<'a>,
+    /// Delivery state and sound names for the Notifications section.
+    pub notify: NotifyStatus<'a>,
 }
 
 /// What the user changed this frame.
@@ -76,6 +85,12 @@ pub struct PaneOutput {
     pub download: Option<VoiceModel>,
     /// "Whip all stalled now" was clicked.
     pub whip_stalled: bool,
+    /// Saved notification settings.
+    pub notifications: Option<NotifySettings>,
+    /// A sound's "Test": play it at this volume (percent).
+    pub test_sound: Option<(Sound, u8)>,
+    /// "Send a test notification" of this severity, delivered with these (unsaved) settings.
+    pub test_notification: Option<(Severity, NotifySettings)>,
 }
 
 /// Window state: the applied settings, a draft per section and the file they live in.
@@ -90,6 +105,7 @@ pub struct SettingsPane {
     whip_draft: WhipSettings,
     queen_draft: queen::QueenDraft,
     voice_draft: VoiceSettings,
+    notify_draft: NotifySettings,
     /// "Whip all stalled now" was clicked; see [`SettingsPane::take_whip_stalled`].
     whip_stalled: bool,
 }
@@ -113,6 +129,7 @@ impl SettingsPane {
             whip_draft: applied.whip.clone(),
             queen_draft: queen::QueenDraft::new(&applied.queen),
             voice_draft: applied.voice.clone(),
+            notify_draft: applied.notifications.clone(),
             applied,
             path,
             message,
@@ -143,6 +160,7 @@ impl SettingsPane {
         self.whip_draft = self.applied.whip.clone();
         self.queen_draft = queen::QueenDraft::new(&self.applied.queen);
         self.voice_draft = self.applied.voice.clone();
+        self.notify_draft = self.applied.notifications.clone();
         self.section = section;
         self.open = true;
     }
@@ -247,6 +265,7 @@ impl SettingsPane {
                     out.whip_stalled = true;
                 }
             }
+            Section::Notifications => notifications::section(self, ui, &cx.notify, out),
             Section::Voice => {
                 voice::voice_section(ui, &mut self.voice_draft, &cx.voice, out);
                 ui.separator();
