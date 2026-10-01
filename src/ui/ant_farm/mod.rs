@@ -8,6 +8,8 @@ pub mod layout;
 #[cfg(test)]
 mod layout_tests;
 pub mod motion;
+pub mod nature;
+pub mod scenery;
 pub mod sprites;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -202,7 +204,14 @@ impl AntFarmView {
         let palette = Palette::new(ui.visuals().dark_mode);
         let selection = graph.selection();
 
-        paint_ground(&painter, sprites, &scene, palette);
+        paint_ground(
+            &painter,
+            sprites,
+            &scene,
+            palette,
+            now_s,
+            ui.visuals().dark_mode,
+        );
         paint_calls(&painter, sprites, &scene, &effects, now_s, true);
         let pointer = response.hover_pos();
         let hovered = pointer.and_then(|p| hit(&scene, &placed, p));
@@ -395,10 +404,38 @@ fn hit(scene: &Scene, placed: &[Placed], pointer: Pos2) -> Option<NodeId> {
         .map(|(ant, _)| ant.id.clone())
 }
 
-fn paint_ground(painter: &egui::Painter, sprites: &Sprites, scene: &Scene, palette: Palette) {
+fn paint_ground(
+    painter: &egui::Painter,
+    sprites: &Sprites,
+    scene: &Scene,
+    palette: Palette,
+    now_s: f64,
+    dark: bool,
+) {
     let px = scene.px;
     let a = scene.cell();
     sprites.ground(painter, scene.rect, scene.surface_y, px, palette);
+    // The sky, then roots under the plants (passages are dug through them).
+    if dark {
+        for (at, bright) in scenery::stars(scene, now_s) {
+            sprites.star(painter, at, px, bright);
+        }
+    }
+    for piece in scenery::sky(scene, now_s, dark) {
+        let alpha = if piece.deco == nature::Deco::Cloud && dark {
+            0.35
+        } else {
+            1.0
+        };
+        sprites.deco(painter, piece.deco, piece.foot, px, alpha);
+    }
+    let plants = scenery::surface(scene);
+    for (i, plant) in plants.iter().enumerate() {
+        if plant.deco.rooted() {
+            let width = plant.deco.extent(px)[0];
+            sprites.roots(painter, plant.foot, width, px, i);
+        }
+    }
     // Shafts up from the gallery to the landing, the Queen's chamber and storage.
     let gy = scene.gallery.center().y;
     let up = |x: f32, top: f32| {
@@ -418,6 +455,10 @@ fn paint_ground(painter: &egui::Painter, sprites: &Sprites, scene: &Scene, palet
         sprites.passage(painter, tunnel.shaft, px);
     }
     sprites.passage(painter, scene.gallery, px);
+    sprites.mound(painter, scene.landing.center().x, scene.surface_y, a, px);
+    for plant in &plants {
+        sprites.deco(painter, plant.deco, plant.foot, px, 1.0);
+    }
     sprites.passage(painter, scene.queen_chamber, px);
     sprites.passage(painter, scene.storage, px);
     for tunnel in &scene.tunnels {

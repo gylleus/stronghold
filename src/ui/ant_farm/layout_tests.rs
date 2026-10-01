@@ -732,3 +732,58 @@ fn new_ants_emerge_from_the_queen() {
         ant(&after, "hatchling").pos
     );
 }
+
+/// Plants stand on the surface past the landing, in order and apart, the same every frame;
+/// the sky's pieces stay in the sky.
+#[test]
+fn scenery_stays_on_the_surface_and_in_the_sky() {
+    use super::nature::Deco;
+    use super::scenery;
+    let scene = scene(&snapshot());
+    let plants = scenery::surface(&scene);
+    assert!(plants.len() > 5, "the surface has nature on it");
+    assert_eq!(plants, scenery::surface(&scene), "deterministic");
+    let mut right = scene.landing.right();
+    for p in &plants {
+        let [w, h] = p.deco.extent(scene.px);
+        assert_eq!(
+            p.foot.y,
+            scene.surface_y + scene.px,
+            "{:?} stands in the grass",
+            p.deco
+        );
+        assert!(
+            p.foot.x - w / 2.0 >= right,
+            "{:?} overlaps its neighbour",
+            p.deco
+        );
+        assert!(p.foot.x + w / 2.0 <= scene.rect.right());
+        assert!(
+            p.foot.y - h >= scene.rect.top(),
+            "{:?} fits under the top",
+            p.deco
+        );
+        right = p.foot.x + w / 2.0;
+    }
+    for now in [0.0, 37.5, 10_000.0] {
+        for dark in [false, true] {
+            for piece in scenery::sky(&scene, now, dark) {
+                let h = piece.deco.extent(scene.px)[1];
+                assert!(
+                    piece.foot.y <= scene.surface_y,
+                    "{:?} in the sky",
+                    piece.deco
+                );
+                assert!(piece.foot.y - h >= scene.rect.top() - 0.1);
+                if piece.deco == Deco::Cloud {
+                    let w = piece.deco.extent(scene.px)[0];
+                    assert!(piece.foot.x + w / 2.0 >= scene.rect.left() - 0.1, "wrapped");
+                    assert!(piece.foot.x - w / 2.0 <= scene.rect.right() + 0.1);
+                }
+            }
+        }
+        for (star, _) in scenery::stars(&scene, now) {
+            assert!(scene.rect.contains(star) && star.y < scene.surface_y);
+        }
+    }
+}
