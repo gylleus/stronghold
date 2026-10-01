@@ -19,6 +19,7 @@ mod tests;
 use crate::orca::spawn::{
     self as cmd, WorkerPlacement, WorkerStart, WorktreeCreate, task_create_args,
     terminal_create_args, terminal_wait_idle_args, worker_start_args, worktree_create_args,
+    worktree_name_args,
 };
 
 pub use catalog::Catalog;
@@ -102,6 +103,9 @@ pub struct SpawnRequest {
     pub model: Option<String>,
     /// Initial prompt; for a worker, the task spec.
     pub prompt: String,
+    /// Short name Myrstack shows for the agent: the worktree's Orca display name (new or
+    /// existing worktree), or a worker's task display name.
+    pub label: Option<String>,
 }
 
 /// One step of a plan.
@@ -121,6 +125,14 @@ pub enum Step {
         coordinator: String,
         spec: String,
         title: String,
+        /// `--display-name`: the worker's name in Myrstack.
+        display_name: Option<String>,
+    },
+    /// `orca worktree set --display-name`: names the agent's worktree (shown by Orca and, for
+    /// its terminals, by Myrstack). `worktree_id` `None` means the one an earlier step created.
+    NameWorktree {
+        worktree_id: Option<String>,
+        name: String,
     },
     /// `orca orchestration worker-start` for the task an earlier step created.
     StartWorker(WorkerStart),
@@ -164,6 +176,7 @@ impl Step {
             Step::CreateWorktree(_) => "Create worktree",
             Step::CreateTerminal { .. } => "Launch agent terminal",
             Step::CreateTask { .. } => "Create task",
+            Step::NameWorktree { .. } => "Name the worktree",
             Step::StartWorker(_) => "Start worker",
             Step::DirenvAllow => "Trust direnv",
             Step::WaitIdle { .. } => "Wait for the agent",
@@ -205,7 +218,21 @@ impl Step {
                 coordinator,
                 spec,
                 title,
-            } => Ok(task_create_args(run_id, coordinator, spec, Some(title))),
+                display_name,
+            } => Ok(task_create_args(
+                run_id,
+                coordinator,
+                spec,
+                Some(title),
+                display_name.as_deref(),
+            )),
+            Step::NameWorktree { worktree_id, name } => {
+                let worktree = match worktree_id {
+                    Some(id) => Ok(id.clone()),
+                    None => pick(&ctx.worktree_id, NEW_WORKTREE, "worktree"),
+                };
+                worktree.map(|w| worktree_name_args(&w, name))
+            }
             Step::StartWorker(req) => pick(&ctx.task_id, NEW_TASK, "task").map(|task_id| {
                 worker_start_args(&WorkerStart {
                     task_id,
@@ -333,8 +360,14 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
     let wait = Step::WaitIdle {
         timeout_ms: WAIT_IDLE_MS,
     };
+    let label = request
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned);
     let mut initial = SpawnContext::default();
-    let steps = match &request.target {
+    let mut steps = match &request.target {
         SpawnTarget::Worktree { worktree_id, path } => {
             if worktree_id.is_empty() {
                 return err("pick a worktree");
@@ -460,6 +493,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
                     coordinator: coordinator.clone(),
                     spec: prompt.clone(),
                     title,
+                    display_name: label.clone(),
                 },
                 Step::StartWorker(WorkerStart {
                     task_id: String::new(),
@@ -485,8 +519,29 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
             steps
         }
     };
+    // Name the worktree once it exists: an existing one first, a new one after its creation.
+    if let Some(name) = &label {
+        match &request.target {
+            SpawnTarget::Worktree { worktree_id, .. } => steps.insert(
+                0,
+                Step::NameWorktree {
+                    worktree_id: Some(worktree_id.clone()),
+                    name: name.clone(),
+                },
+            ),
+            SpawnTarget::NewWorktree { .. } => steps.insert(
+                1,
+                Step::NameWorktree {
+                    worktree_id: None,
+                    name: name.clone(),
+                },
+            ),
+            SpawnTarget::Worker { .. } => {}
+        }
+    }
     Ok(SpawnPlan {
         request: SpawnRequest {
+            label,
             prompt,
             model,
             ..request.clone()

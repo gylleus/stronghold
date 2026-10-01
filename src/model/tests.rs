@@ -189,6 +189,22 @@ fn loose_terminal_is_labelled_by_title() {
     assert_eq!(loose[0].state, NodeState::Idle);
 }
 
+/// A name chosen for the worktree (by the Queen at spawn, or in Orca) beats the title.
+#[test]
+fn loose_terminal_goes_by_its_worktree_name() {
+    let mut data = scenario();
+    let path = data
+        .terminal(LOOSE)
+        .and_then(|t| t.worktree_path.clone())
+        .expect("the loose terminal has a worktree");
+    data.worktree_names.insert(
+        path.trim_end_matches('/').to_string(),
+        "Replay sessions".into(),
+    );
+    let snap = FleetSnapshot::build(&data, NOW);
+    assert_eq!(snap.node(&term(LOOSE)).unwrap().label, "Replay sessions");
+}
+
 #[test]
 fn released_workers_fade_within_window_only() {
     let snap = FleetSnapshot::build(&scenario(), NOW);

@@ -17,6 +17,7 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError};
 
 use crate::detect::{PromptKind, detect_prompt};
 use crate::fleet::FleetData;
+use crate::orca::spawn::Worktree;
 use crate::orca::{
     AgentIdentity, InboxMessage, OrcaClient, OrcaError, Run, Task, Terminal, TerminalRead,
     TerminalStatus, Worker,
@@ -89,6 +90,10 @@ pub trait FleetSource: Send + 'static {
     fn workers(&self) -> Result<Vec<Worker>, OrcaError>;
     fn tasks(&self, run_id: &str) -> Result<Vec<Task>, OrcaError>;
     fn inbox(&self, limit: u64) -> Result<Vec<InboxMessage>, OrcaError>;
+    /// Orca's worktrees, for the names chosen for them; none by default.
+    fn worktrees(&self) -> Result<Vec<Worktree>, OrcaError> {
+        Ok(Vec::new())
+    }
 }
 
 impl FleetSource for OrcaClient {
@@ -106,6 +111,10 @@ impl FleetSource for OrcaClient {
 
     fn tasks(&self, run_id: &str) -> Result<Vec<Task>, OrcaError> {
         self.task_list(run_id)
+    }
+
+    fn worktrees(&self) -> Result<Vec<Worktree>, OrcaError> {
+        self.worktree_list().map(|l| l.worktrees)
     }
 
     fn inbox(&self, limit: u64) -> Result<Vec<InboxMessage>, OrcaError> {
@@ -484,6 +493,7 @@ enum CallKey {
     Workers,
     Tasks(String),
     Inbox,
+    Worktrees,
 }
 
 /// The poller's merge state: latest values plus outstanding errors. Pure apart from the calls
@@ -564,6 +574,10 @@ impl PollState {
             let result = source.workers();
             self.apply(CallKey::Workers, "worker list", result, |d, v| {
                 d.workers = v
+            });
+            let result = source.worktrees();
+            self.apply(CallKey::Worktrees, "worktree list", result, |d, v| {
+                d.worktree_names = crate::fleet::chosen_worktree_names(&v)
             });
         }
         if due.tasks {

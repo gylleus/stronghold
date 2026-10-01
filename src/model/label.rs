@@ -34,15 +34,21 @@ pub fn terminal_label(terminal: &Terminal) -> String {
     truncate_label(text)
 }
 
-/// The task's display name or title, else the terminal's label, else the dispatch id.
-pub fn worker_label(task: Option<&Task>, terminal: Option<&Terminal>, worker: &Worker) -> String {
+/// The task's display name or title, else the worktree's chosen name, else the terminal's
+/// label, else the dispatch id.
+pub fn worker_label(
+    task: Option<&Task>,
+    worktree_name: Option<&str>,
+    terminal: Option<&Terminal>,
+    worker: &Worker,
+) -> String {
     let task_text = task.and_then(|t| {
         t.display_name
             .as_deref()
             .or(t.task_title.as_deref())
             .filter(|s| !s.trim().is_empty())
     });
-    match (task_text, terminal) {
+    match (task_text.or(worktree_name), terminal) {
         (Some(text), _) => truncate_label(text),
         (None, Some(t)) => terminal_label(t),
         (None, None) => truncate_label(worker.task_id.as_deref().unwrap_or(&worker.dispatch_id)),
