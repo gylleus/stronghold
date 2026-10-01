@@ -2,14 +2,16 @@
 //! positions and poses from [`super::layout`]; it draws pixel-art sprites from
 //! `assets/art/farm` (see `assets/LICENSES.md`) and generates the soil tiles.
 //!
-//! To change the art, replace the PNGs (16×16 cells; the ant sheets stack two walk frames)
-//! or the tile generators below; nothing outside this file draws farm art.
+//! To change the art, replace the PNGs (16×16 cells; the ant sheets stack two walk frames),
+//! the tile generators below or the surface's pixel maps in [`super::nature`]; nothing outside
+//! these files draws farm art.
 
 use eframe::egui::{
     self, Color32, ColorImage, Painter, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2,
 };
 
 use super::layout::Mark;
+use super::nature::Deco;
 
 const ANT_GREY: &[u8] = include_bytes!("../../../assets/art/farm/ant_grey.png");
 const ANT_RED: &[u8] = include_bytes!("../../../assets/art/farm/ant_red.png");
@@ -93,6 +95,7 @@ pub struct Sprites {
     soil: TextureHandle,
     tunnel: TextureHandle,
     grass: TextureHandle,
+    nature: std::collections::HashMap<Deco, TextureHandle>,
 }
 
 impl Sprites {
@@ -125,6 +128,82 @@ impl Sprites {
             soil: tile("soil", soil_tile(SOIL)),
             tunnel: tile("tunnel", soil_tile(TUNNEL)),
             grass: tile("grass", grass_tile()),
+            nature: Deco::ALL
+                .into_iter()
+                .map(|d| {
+                    let name = format!("ant_farm/nature/{d:?}");
+                    (
+                        d,
+                        ctx.load_texture(name, d.image(), TextureOptions::NEAREST),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// A piece of scenery standing on `foot` (the middle of its bottom edge).
+    pub fn deco(&self, painter: &Painter, deco: Deco, foot: Pos2, px: f32, alpha: f32) {
+        let Some(texture) = self.nature.get(&deco) else {
+            return;
+        };
+        let [w, h] = deco.extent(px);
+        let size = vec2(w, h);
+        let rect = Rect::from_min_size(foot - vec2(size.x / 2.0, size.y), size);
+        painter.image(
+            texture.id(),
+            rect,
+            unit_uv(),
+            Color32::WHITE.gamma_multiply(alpha),
+        );
+    }
+
+    /// Roots spreading into the soil under a plant `width` points wide at `foot`.
+    pub fn roots(&self, painter: &Painter, foot: Pos2, width: f32, px: f32, seed: usize) {
+        let color = Color32::from_rgb(0x5a, 0x38, 0x1c);
+        let strands = 3;
+        for s in 0..strands {
+            let h = noise(s, seed, 5);
+            let lean = (s as f32 - 1.0) * 0.6 + (h % 3) as f32 * 0.2 - 0.2;
+            let len = 4 + (h % 5) as usize;
+            for i in 0..len {
+                let x = foot.x + lean * i as f32 * px + ((h >> i) & 1) as f32 * px;
+                let y = foot.y + (i as f32 + 2.0) * px;
+                if (x - foot.x).abs() > width {
+                    break;
+                }
+                let p = pos2((x / px).round() * px, y);
+                painter.rect_filled(Rect::from_min_size(p, vec2(px, px)), 0.0, color);
+            }
+        }
+    }
+
+    /// The anthill's mound of dug-out dirt around the shaft at `x` on the surface.
+    pub fn mound(&self, painter: &Painter, x: f32, surface_y: f32, a: f32, px: f32) {
+        let dirt = Color32::from_rgb(0x9c, 0x6a, 0x3c);
+        let light = Color32::from_rgb(0xb5, 0x80, 0x4c);
+        let hole = 0.6 * a;
+        for (step, (w, color)) in [(1.4, dirt), (1.0, light), (0.7, dirt)].iter().enumerate() {
+            let y = surface_y - (step as f32 + 1.0) * 2.0 * px;
+            for side in [-1.0, 1.0] {
+                let inner = x + side * hole;
+                let outer = inner + side * w * a * 0.5;
+                let rect = Rect::from_two_pos(pos2(inner, y), pos2(outer, y + 2.0 * px));
+                painter.rect_filled(rect, 0.0, *color);
+            }
+        }
+    }
+
+    /// A star: a dot, or a little cross while it twinkles.
+    pub fn star(&self, painter: &Painter, at: Pos2, px: f32, bright: bool) {
+        let color = Color32::from_rgb(0xfb, 0xf4, 0xd0);
+        if bright {
+            self.sparkle(painter, at, px, color, false);
+        } else {
+            painter.rect_filled(
+                Rect::from_center_size(at, vec2(px, px)),
+                0.0,
+                color.gamma_multiply(0.7),
+            );
         }
     }
 
@@ -329,7 +408,7 @@ impl Sprites {
         painter.text(pos, egui::Align2::CENTER_CENTER, "z", font, color);
     }
 
-    /// Dirt flying from the dig face at `now_s`: clods flung up and back over the digger,
+    /// Dirt flying from the digger's feet at `now_s`: clods kicked up and back behind it,
     /// falling in arcs and fading. `seed` staggers diggers so they don't throw in step.
     pub fn dirt(
         &self,
@@ -347,12 +426,9 @@ impl Sprites {
             Color32::from_rgb(0x8a, 0x5a, 0x34),
             Color32::from_rgb(0xc8, 0x94, 0x5c),
         ];
-        let face = if facing_right {
-            cell.right_center() - vec2(3.0 * px, 0.0)
-        } else {
-            cell.left_center() + vec2(3.0 * px, 0.0)
-        };
         let back = if facing_right { -1.0 } else { 1.0 };
+        // The sprite's feet: the bottom rows of the cell, a little behind its middle.
+        let face = pos2(cell.center().x + back * 2.0 * px, cell.top() + 13.0 * px);
         for i in 0..CLODS {
             let k = i as f32 / CLODS as f32;
             let t = ((now_s / LIFE_S) + f64::from(k) + f64::from(seed)).fract() as f32;
