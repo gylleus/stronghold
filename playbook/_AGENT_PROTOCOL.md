@@ -22,7 +22,8 @@ messages.
    orca worktree set --worktree active --workspace-status in-progress --comment "plan posted, awaiting review" --json
    ```
 2. **Review.** Spawn fresh-context review subagents over your own plan and diff:
-   `claudemd-style-reviewer`, `comment-style-auditor`, and `/code-review high`. Require them
+   `claudemd-style-reviewer`, `comment-style-auditor`, and `/code-review high`. Run them on
+   Claude Opus 5.5 (Agent tool `model: "opus"`), never Fable unless Karl asked. Require them
    to independently VERIFY the plan's load-bearing facts against the code — wrong facts are
    the single biggest killer. Post their findings on the ticket.
 3. **Iterate** until `APPROVED — <one line>`. Rebuttal is first-class: a convincingly
