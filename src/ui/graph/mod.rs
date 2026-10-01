@@ -95,9 +95,9 @@ type EdgeKey = (NodeId, NodeId, EdgeKind);
 
 /// What a node's context menu asked for this frame.
 #[derive(Debug, Default)]
-struct MenuPick {
-    close: Vec<NodeId>,
-    whip: Vec<NodeId>,
+pub struct MenuPick {
+    pub close: Vec<NodeId>,
+    pub whip: Vec<NodeId>,
 }
 
 /// Interactive force-directed view of a [`FleetSnapshot`].
@@ -224,6 +224,11 @@ impl GraphView {
             }
         }
         self.pr_ready = nodes;
+    }
+
+    /// The nodes with a PR ready for review.
+    pub fn pr_ready(&self) -> &HashSet<NodeId> {
+        &self.pr_ready
     }
 
     /// Marks the nodes with unread notifications (a count badge), updating drawn nodes in
@@ -610,28 +615,13 @@ impl GraphView {
         }
 
         let hovered = self.graph.hovered_node().and_then(|idx| self.node_id(idx));
-        if let Some(node) = hovered.as_ref().and_then(|id| self.nodes.get(id))
+        if let Some(id) = hovered.as_ref().filter(|id| self.nodes.contains_key(*id))
             && !dragging
         {
-            let objective = node
-                .run_id
-                .as_ref()
-                .and_then(|r| self.objectives.get(r))
-                .map(String::as_str);
-            let now_ms = now_ms();
-            let usage = self.usage.get(&node.id);
-            let gone = self
-                .index
-                .get(&node.id)
-                .and_then(|&i| self.graph.node(i))
-                .is_some_and(|n| n.payload().coordinator_gone);
-            response.response.clone().on_hover_ui_at_pointer(|ui| {
-                let repo = self.repos.get(&node.id).map(String::as_str);
-                tooltip::node_tooltip(ui, node, objective, repo, usage, now_ms);
-                if gone {
-                    tooltip::coordinator_gone_note(ui);
-                }
-            });
+            response
+                .response
+                .clone()
+                .on_hover_ui_at_pointer(|ui| self.node_tooltip_ui(ui, id));
         }
 
         let menu = self.node_context_menu(&response.response, hovered.as_ref());
@@ -656,7 +646,39 @@ impl GraphView {
         if response.secondary_clicked() {
             self.context_node = hovered.cloned();
         }
-        let Some(node) = self.context_node.as_ref().and_then(|id| self.nodes.get(id)) else {
+        match self.context_node.clone() {
+            Some(id) => self.node_menu(response, &id),
+            None => MenuPick::default(),
+        }
+    }
+
+    /// The tooltip of node `id`: what it is, its run, repo, agent, branch and usage.
+    pub fn node_tooltip_ui(&self, ui: &mut Ui, id: &NodeId) {
+        let Some(node) = self.nodes.get(id) else {
+            return;
+        };
+        let objective = node
+            .run_id
+            .as_ref()
+            .and_then(|r| self.objectives.get(r))
+            .map(String::as_str);
+        let usage = self.usage.get(&node.id);
+        let gone = self
+            .index
+            .get(&node.id)
+            .and_then(|&i| self.graph.node(i))
+            .is_some_and(|n| n.payload().coordinator_gone);
+        let repo = self.repos.get(&node.id).map(String::as_str);
+        tooltip::node_tooltip(ui, node, objective, repo, usage, now_ms());
+        if gone {
+            tooltip::coordinator_gone_note(ui);
+        }
+    }
+
+    /// The context menu of node `id` on `response`; returns the nodes to close or whip, if
+    /// picked. On a node of a multi-selection it acts on the whole selection.
+    pub fn node_menu(&self, response: &egui::Response, id: &NodeId) -> MenuPick {
+        let Some(node) = self.nodes.get(id) else {
             return MenuPick::default();
         };
         let selection = self.selection();

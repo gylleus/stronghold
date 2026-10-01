@@ -391,9 +391,9 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "set_view",
             "Set dashboard view",
-            "Switches the dashboard between the graph and the table.",
+            "Switches the dashboard between the graph, the table and the ant farm.",
             object(
-                json!({ "view": { "type": "string", "enum": ["graph", "table"] } }),
+                json!({ "view": { "type": "string", "enum": ["graph", "table", "ant_farm"] } }),
                 &["view"],
             ),
             DASHBOARD,

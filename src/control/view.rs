@@ -430,6 +430,7 @@ pub fn view_name(view: View) -> &'static str {
     match view {
         View::Graph => "graph",
         View::Table => "table",
+        View::AntFarm => "ant_farm",
     }
 }
 
@@ -437,6 +438,7 @@ pub fn parse_view(s: &str) -> Option<View> {
     match squash(s).as_str() {
         "graph" => Some(View::Graph),
         "table" => Some(View::Table),
+        "antfarm" | "farm" | "ants" => Some(View::AntFarm),
         _ => None,
     }
 }
