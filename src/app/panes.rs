@@ -219,6 +219,21 @@ impl MyrstackApp {
                         self.graph.set_selected(None);
                         self.selected = None;
                     }
+                    if let Some((hits, additive)) = response.boxed {
+                        let mut selection = if additive {
+                            self.graph.selection()
+                        } else {
+                            Default::default()
+                        };
+                        selection.extend(hits.iter().cloned());
+                        let primary = self
+                            .graph
+                            .selected()
+                            .filter(|p| selection.contains(p))
+                            .or_else(|| hits.first().cloned());
+                        self.graph.set_selection(&selection, primary.as_ref());
+                        self.selected = self.graph.selected();
+                    }
                     if !response.close_requested.is_empty() {
                         self.close
                             .request(ui::close::CloseRequest::Nodes(response.close_requested));
