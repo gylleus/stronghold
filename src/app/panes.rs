@@ -25,6 +25,7 @@ impl TabViewer for Panes<'_> {
         match tab {
             Pane::Sidebar => "Fleet".into(),
             Pane::Graph if self.app.view == View::Table => "Table".into(),
+            Pane::Graph if self.app.view == View::AntFarm => "Ant farm".into(),
             Pane::Graph => "Graph".into(),
             Pane::Details => "Details".into(),
             Pane::Conversation => self.app.conversation_title().into(),
@@ -203,6 +204,29 @@ impl MyrstackApp {
                     }
                 }
                 View::Table => ui::table::terminal_table(ui, data, now_ms),
+                View::AntFarm => {
+                    let Some(snapshot) = &self.snapshot else {
+                        return;
+                    };
+                    let response = self.ant_farm.show(ui, snapshot, &self.graph);
+                    if let Some(id) = &response.clicked {
+                        let additive = ui.input(|i| ui::graph::is_additive(i.modifiers));
+                        self.graph.click_node(id, additive);
+                        self.selected = self.graph.selected();
+                    } else if response.clicked_empty
+                        && !ui.input(|i| ui::graph::is_additive(i.modifiers))
+                    {
+                        self.graph.set_selected(None);
+                        self.selected = None;
+                    }
+                    if !response.close_requested.is_empty() {
+                        self.close
+                            .request(ui::close::CloseRequest::Nodes(response.close_requested));
+                    }
+                    if !response.whip_requested.is_empty() {
+                        self.request_whip(response.whip_requested);
+                    }
+                }
             },
         });
     }

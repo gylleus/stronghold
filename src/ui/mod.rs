@@ -1,5 +1,6 @@
 //! UI panels drawn by the app.
 
+pub mod ant_farm;
 pub mod art;
 pub mod broadcast;
 pub mod chat;

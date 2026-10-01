@@ -46,6 +46,8 @@ pub enum View {
     #[default]
     Graph,
     Table,
+    /// The fleet as an ant farm; see [`ui::ant_farm`].
+    AntFarm,
 }
 
 /// Top-level application state.
@@ -58,6 +60,7 @@ pub struct MyrstackApp {
     /// Graph model built from `data`.
     snapshot: Option<FleetSnapshot>,
     graph: GraphView,
+    ant_farm: ui::ant_farm::AntFarmView,
     /// Node selected in the graph, shared by all views and side panels.
     selected: Option<NodeId>,
     /// The nodes selected so far, for back/forward.
@@ -177,6 +180,7 @@ impl MyrstackApp {
             data: None,
             snapshot: None,
             graph: GraphView::new(),
+            ant_farm: ui::ant_farm::AntFarmView::new(),
             selected: None,
             history: ui::history::SelectionHistory::default(),
             view: View::default(),
@@ -500,9 +504,12 @@ impl MyrstackApp {
         self.selected = Some(id);
     }
 
-    /// Switches to the graph and selects and focuses `id` there, as `focus_agent` does.
+    /// Switches to the graph (unless the ant farm is shown) and selects and focuses `id`
+    /// there, as `focus_agent` does.
     fn focus_in_graph(&mut self, id: NodeId) {
-        self.view = View::Graph;
+        if self.view == View::Table {
+            self.view = View::Graph;
+        }
         self.select_and_focus(id);
     }
 
@@ -684,7 +691,7 @@ impl MyrstackApp {
         let Some(id) = self.selected.clone() else {
             return;
         };
-        if self.view != View::Graph || !self.graph.hidden().contains(&id) {
+        if self.view == View::Table || !self.graph.hidden().contains(&id) {
             return;
         }
         let clear = egui::Panel::top("hidden_selection")
@@ -751,6 +758,8 @@ impl MyrstackApp {
         }
         ui.selectable_value(&mut self.view, View::Graph, "Graph");
         ui.selectable_value(&mut self.view, View::Table, "Table");
+        ui.selectable_value(&mut self.view, View::AntFarm, "Ant farm")
+            .on_hover_text("The fleet as an ant farm: an ant's place shows its state");
         if self.view == View::Graph && ui.button("Fit").clicked() {
             self.graph.fit_to_screen();
         }
