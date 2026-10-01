@@ -329,21 +329,44 @@ impl Sprites {
         painter.text(pos, egui::Align2::CENTER_CENTER, "z", font, color);
     }
 
-    /// Flecks of dirt thrown from the dig face, `phase` stepping the animation.
-    pub fn dirt(&self, painter: &Painter, cell: Rect, facing_right: bool, px: f32, phase: usize) {
-        let color = Color32::from_rgb(0xb0, 0x7a, 0x45);
+    /// Dirt flying from the dig face at `now_s`: clods flung up and back over the digger,
+    /// falling in arcs and fading. `seed` staggers diggers so they don't throw in step.
+    pub fn dirt(
+        &self,
+        painter: &Painter,
+        cell: Rect,
+        facing_right: bool,
+        px: f32,
+        now_s: f64,
+        seed: f32,
+    ) {
+        const CLODS: usize = 8;
+        const LIFE_S: f64 = 0.9;
+        let shades = [
+            Color32::from_rgb(0xb0, 0x7a, 0x45),
+            Color32::from_rgb(0x8a, 0x5a, 0x34),
+            Color32::from_rgb(0xc8, 0x94, 0x5c),
+        ];
         let face = if facing_right {
-            cell.right_center()
+            cell.right_center() - vec2(3.0 * px, 0.0)
         } else {
-            cell.left_center()
+            cell.left_center() + vec2(3.0 * px, 0.0)
         };
-        let dir = if facing_right { -1.0 } else { 1.0 };
-        for (i, (dx, dy)) in [(1.0, -2.0), (3.0, -4.0), (5.0, -3.0)].iter().enumerate() {
-            if (phase + i).is_multiple_of(3) {
-                continue;
-            }
-            let p = face + vec2(dir * dx * px, dy * px + (phase % 2) as f32 * px);
-            painter.rect_filled(Rect::from_min_size(p, vec2(px, px)), 0.0, color);
+        let back = if facing_right { -1.0 } else { 1.0 };
+        for i in 0..CLODS {
+            let k = i as f32 / CLODS as f32;
+            let t = ((now_s / LIFE_S) + f64::from(k) + f64::from(seed)).fract() as f32;
+            // Each clod has its own throw, from a hash of its slot.
+            let h = noise(i, (seed * 97.0) as usize, 11);
+            let vx = 8.0 + (h % 9) as f32;
+            let vy = 24.0 + (h / 9 % 9) as f32;
+            let x = back * vx * t;
+            let y = -vy * t + 22.0 * t * t;
+            let p = face + vec2(x * px, y * px);
+            let snapped = pos2((p.x / px).round() * px, (p.y / px).round() * px);
+            let size = if h.is_multiple_of(3) { px } else { 2.0 * px };
+            let color = shades[(h % 3) as usize].gamma_multiply(1.0 - t * t);
+            painter.rect_filled(Rect::from_min_size(snapped, vec2(size, size)), 0.0, color);
         }
     }
 }

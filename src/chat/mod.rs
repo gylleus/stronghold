@@ -253,6 +253,11 @@ impl ChatSession {
         }
     }
 
+    /// Whether the Queen is working on a turn.
+    pub fn is_thinking(&self) -> bool {
+        self.transcript.running
+    }
+
     pub fn can_send(&self) -> bool {
         self.state == SessionState::Ready && !self.transcript.running
     }
