@@ -30,6 +30,8 @@ pub struct BroadcastComposer {
     /// `None` shows every repo.
     repo_filter: Option<String>,
     stage: Stage,
+    /// A send was confirmed since [`BroadcastComposer::take_sent`] last looked.
+    sent: bool,
 }
 
 impl Default for BroadcastComposer {
@@ -39,6 +41,7 @@ impl Default for BroadcastComposer {
             unchecked: HashSet::new(),
             repo_filter: None,
             stage: Stage::Compose,
+            sent: false,
         }
     }
 }
@@ -46,6 +49,11 @@ impl Default for BroadcastComposer {
 impl BroadcastComposer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Whether a send was confirmed since the last call (for the ant farm's ripple).
+    pub fn take_sent(&mut self) -> bool {
+        std::mem::take(&mut self.sent)
     }
 
     /// Draws the composer. `make_sender` is called once, when the user confirms a send.
@@ -270,6 +278,7 @@ impl BroadcastComposer {
                     Some(Box::new(move || repaint.request_repaint())),
                 );
                 self.stage = Stage::Sending { plan, job };
+                self.sent = true;
             } else if ui.button("Back").clicked() {
                 self.stage = Stage::Compose;
             }

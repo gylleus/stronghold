@@ -145,6 +145,8 @@ impl MyrstackApp {
     pub(super) fn status_report(&mut self) {
         self.open_chat();
         self.chat.session.send(STATUS_REPORT_PROMPT);
+        self.ant_farm
+            .pulse(crate::ui::ant_farm::Pulse::StatusReport);
     }
 }
 

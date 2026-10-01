@@ -676,3 +676,59 @@ fn dragging_a_box_selects_the_ants_in_it() {
         .collect();
     assert_eq!(hits, expected);
 }
+
+/// A ripple grows from the Queen to the farthest corner and is gone after; an ant hops only
+/// while the ring is on it.
+#[test]
+fn ripples_spread_and_ants_hop_as_they_pass() {
+    use super::{hop, ripple_radius};
+    assert_eq!(ripple_radius(-0.1, 1000.0), None);
+    assert_eq!(ripple_radius(0.0, 1000.0), Some(0.0));
+    let early = ripple_radius(0.3, 1000.0).unwrap();
+    let late = ripple_radius(1.5, 1000.0).unwrap();
+    assert!(0.0 < early && early < late && late < 1000.0);
+    assert_eq!(ripple_radius(5.0, 1000.0), None);
+    assert_eq!(hop(300.0, 300.0, 40.0, 8.0), 8.0, "the ring is on it");
+    assert_eq!(hop(300.0, 280.0, 40.0, 8.0), 4.0);
+    assert_eq!(hop(300.0, 100.0, 40.0, 8.0), 0.0, "not reached yet");
+}
+
+/// Ants present when the farm opens are placed; one that appears later walks out of the
+/// Queen's chamber.
+#[test]
+fn new_ants_emerge_from_the_queen() {
+    let mut farm = AntFarmView::new();
+    let mut s = snapshot();
+    let first = scene(&s);
+    assert!(
+        farm.advance(&first, 0.0)
+            .iter()
+            .all(|p| p.heading.is_none()),
+        "everyone already there is placed"
+    );
+    s.nodes.push(node(
+        "hatchling",
+        NodeKind::Worker,
+        Some("r1"),
+        NodeState::Working,
+    ));
+    let after = scene(&s);
+    let i = after
+        .ants
+        .iter()
+        .position(|a| a.id == id("hatchling"))
+        .unwrap();
+    let placed = farm.advance(&after, 1.0);
+    assert!(placed[i].heading.is_some(), "walks");
+    assert!(
+        after
+            .queen_chamber
+            .expand(after.cell())
+            .contains(placed[i].pos),
+        "from the Queen's chamber"
+    );
+    assert_eq!(
+        farm.advance(&after, 10.0)[i].pos,
+        ant(&after, "hatchling").pos
+    );
+}

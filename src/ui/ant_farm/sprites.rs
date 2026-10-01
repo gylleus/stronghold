@@ -264,6 +264,71 @@ impl Sprites {
         }
     }
 
+    /// A soft pixel glow around `center`: stacked translucent squares, brightest inside.
+    pub fn glow(&self, painter: &Painter, center: Pos2, radius: f32, color: Color32, alpha: f32) {
+        for i in (1..=4).rev() {
+            let r = radius * i as f32 / 4.0;
+            let a = alpha * 0.12 * (5 - i) as f32;
+            painter.rect_filled(
+                Rect::from_center_size(center, vec2(2.0 * r, 2.0 * r)),
+                r * 0.6,
+                color.gamma_multiply(a),
+            );
+        }
+    }
+
+    /// A four-pointed pixel sparkle at `center`.
+    pub fn sparkle(&self, painter: &Painter, center: Pos2, px: f32, color: Color32, big: bool) {
+        let dot = |dx: f32, dy: f32| {
+            painter.rect_filled(
+                Rect::from_center_size(center + vec2(dx * px, dy * px), vec2(px, px)),
+                0.0,
+                color,
+            );
+        };
+        dot(0.0, 0.0);
+        for d in if big { 1..=2 } else { 1..=1 } {
+            let d = d as f32;
+            dot(d, 0.0);
+            dot(-d, 0.0);
+            dot(0.0, d);
+            dot(0.0, -d);
+        }
+    }
+
+    /// A ring of the Queen's call at `radius` around `center`, drawn as pixel dashes.
+    pub fn ring(&self, painter: &Painter, center: Pos2, radius: f32, px: f32, color: Color32) {
+        let dashes = ((radius * std::f32::consts::TAU) / (6.0 * px)).clamp(12.0, 400.0) as usize;
+        for i in 0..dashes {
+            if i % 3 == 2 {
+                continue;
+            }
+            let angle = i as f32 / dashes as f32 * std::f32::consts::TAU;
+            let p = center + vec2(angle.cos(), angle.sin()) * radius;
+            let snapped = pos2((p.x / px).round() * px, (p.y / px).round() * px);
+            painter.rect_filled(
+                Rect::from_center_size(snapped, vec2(2.0 * px, 2.0 * px)),
+                0.0,
+                color,
+            );
+        }
+    }
+
+    /// A small "z" drifting up from a sleeper, at `pos`.
+    pub fn snore(&self, painter: &Painter, pos: Pos2, px: f32, alpha: f32, palette: Palette) {
+        let font = egui::FontId::monospace(6.0 + 2.5 * px);
+        let shadow = palette.label_shadow.gamma_multiply(alpha);
+        let color = palette.label.gamma_multiply(alpha);
+        painter.text(
+            pos + vec2(1.0, 1.0),
+            egui::Align2::CENTER_CENTER,
+            "z",
+            font.clone(),
+            shadow,
+        );
+        painter.text(pos, egui::Align2::CENTER_CENTER, "z", font, color);
+    }
+
     /// Flecks of dirt thrown from the dig face, `phase` stepping the animation.
     pub fn dirt(&self, painter: &Painter, cell: Rect, facing_right: bool, px: f32, phase: usize) {
         let color = Color32::from_rgb(0xb0, 0x7a, 0x45);
