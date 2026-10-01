@@ -611,3 +611,68 @@ fn clicking_an_ant_reports_it() {
     assert_eq!(responses[1].clicked, None);
     assert!(responses[1].clicked_empty);
 }
+
+/// Dragging a box from empty ground over a chamber selects the ants in it, as in the graph.
+#[test]
+fn dragging_a_box_selects_the_ants_in_it() {
+    use eframe::egui::{self, Event, PointerButton};
+    let s = snapshot();
+    let mut graph = crate::ui::graph::GraphView::new();
+    graph.sync(&s);
+    let mut farm = AntFarmView::new();
+    let ctx = egui::Context::default();
+    let mut time = 0.0;
+    let mut frame = |events: Vec<Event>, farm: &mut AntFarmView| {
+        time += 1.0 / 60.0;
+        let input = egui::RawInput {
+            screen_rect: Some(RECT),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        let mut out = None;
+        let mut output = ctx.run_ui(input, |ui| {
+            let rect = ui.available_rect_before_wrap();
+            out = Some((rect, farm.show(ui, &s, &graph)));
+        });
+        output.textures_delta.clear();
+        out.expect("a frame ran")
+    };
+    let (rect, _) = frame(vec![], &mut farm);
+    let pr_ready = HashSet::new();
+    let hidden = BTreeSet::new();
+    let input = FarmInput {
+        snapshot: &s,
+        hidden: &hidden,
+        pr_ready: &pr_ready,
+        now_ms: 0,
+    };
+    let scene = layout(&input, rect);
+    let chamber = scene.tunnels[tunnel_of(&scene, "working")].chamber;
+    let (from, to) = (
+        chamber.left_top() - vec2(4.0, 4.0),
+        chamber.right_bottom() + vec2(4.0, 4.0),
+    );
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    frame(vec![Event::PointerMoved(from)], &mut farm);
+    frame(vec![button(from, true)], &mut farm);
+    let mut boxed = None;
+    for step in 1..=10 {
+        let at = from + (to - from) * (step as f32 / 10.0);
+        boxed = boxed.or(frame(vec![Event::PointerMoved(at)], &mut farm).1.boxed);
+    }
+    boxed = boxed.or(frame(vec![button(to, false)], &mut farm).1.boxed);
+    let (hits, additive) = boxed.expect("the box was released");
+    assert!(!additive);
+    let hits: BTreeSet<NodeId> = hits.into_iter().collect();
+    let expected: BTreeSet<NodeId> = ["working", "idle", "stalled", "failed"]
+        .iter()
+        .map(|n| id(n))
+        .collect();
+    assert_eq!(hits, expected);
+}

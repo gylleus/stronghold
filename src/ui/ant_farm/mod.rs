@@ -39,6 +39,9 @@ pub struct AntFarmResponse {
     /// Empty ground was clicked (clears the selection, as in the graph).
     pub clicked_empty: bool,
     pub hovered: Option<NodeId>,
+    /// Ants inside a selection box dragged from empty ground, when it was released this
+    /// frame, and whether Shift/Cmd was held (add to the selection rather than replace it).
+    pub boxed: Option<(Vec<NodeId>, bool)>,
     /// Nodes to close or whip, picked in an ant's context menu.
     pub close_requested: Vec<NodeId>,
     pub whip_requested: Vec<NodeId>,
@@ -67,6 +70,8 @@ pub struct AntFarmView {
     tracks: HashMap<NodeId, Track>,
     /// Ant whose context menu is open (the one right-clicked last).
     context_node: Option<NodeId>,
+    /// Where a selection box being dragged started, in screen points.
+    box_origin: Option<Pos2>,
 }
 
 impl AntFarmView {
@@ -83,7 +88,7 @@ impl AntFarmView {
         snapshot: &FleetSnapshot,
         graph: &GraphView,
     ) -> AntFarmResponse {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click());
+        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let now_s = ui.input(|i| i.time);
         let input = FarmInput {
             snapshot,
@@ -130,6 +135,7 @@ impl AntFarmView {
         if response.secondary_clicked() {
             self.context_node = hovered.clone();
         }
+        let boxed = self.box_select(ui, &response, &scene, &placed);
         let menu = match &self.context_node {
             Some(id) => graph.node_menu(&response, id),
             None => Default::default(),
@@ -140,7 +146,40 @@ impl AntFarmView {
             hovered,
             close_requested: menu.close,
             whip_requested: menu.whip,
+            boxed,
         }
+    }
+
+    /// Starts, draws and finishes a selection box dragged with the primary button from empty
+    /// ground, as in the graph. Returns the ants it covers once released.
+    fn box_select(
+        &mut self,
+        ui: &Ui,
+        response: &egui::Response,
+        scene: &Scene,
+        placed: &[Placed],
+    ) -> Option<(Vec<NodeId>, bool)> {
+        let pointer = ui.input(|i| i.pointer.latest_pos());
+        if response.drag_started_by(egui::PointerButton::Primary) {
+            let origin = ui.input(|i| i.pointer.press_origin()).or(pointer);
+            self.box_origin = origin.filter(|o| hit(scene, placed, *o).is_none());
+        }
+        let origin = self.box_origin?;
+        let current = pointer.unwrap_or(origin);
+        let rect = Rect::from_two_pos(origin, current);
+        let released = response.drag_stopped_by(egui::PointerButton::Primary)
+            || !ui.input(|i| i.pointer.primary_down());
+        if released {
+            self.box_origin = None;
+            let additive = ui.input(|i| crate::ui::graph::is_additive(i.modifiers));
+            return Some((boxed_ants(scene, placed, rect), additive));
+        }
+        let stroke = ui.visuals().selection.stroke;
+        let fill = ui.visuals().selection.bg_fill.gamma_multiply(0.2);
+        ui.painter_at(response.rect)
+            .rect(rect, 2.0, fill, stroke, StrokeKind::Inside);
+        ui.ctx().request_repaint();
+        None
     }
 
     /// Starts a walk for every ant whose spot changed, drops finished walks and gone ants,
@@ -211,6 +250,17 @@ impl AntFarmView {
         }
         placed
     }
+}
+
+/// The ants whose cell overlaps `rect`, in draw order.
+pub fn boxed_ants(scene: &Scene, placed: &[Placed], rect: Rect) -> Vec<NodeId> {
+    scene
+        .ants
+        .iter()
+        .zip(placed)
+        .filter(|(ant, at)| Rect::from_center_size(at.pos, Vec2::splat(ant.size)).intersects(rect))
+        .map(|(ant, _)| ant.id.clone())
+        .collect()
 }
 
 /// The ant under `pointer`, topmost first.
