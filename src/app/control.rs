@@ -420,6 +420,7 @@ impl MyrstackApp {
             reply.send(Err(e.clone()));
             return Err(e);
         }
+        self.ant_farm.pulse(crate::ui::ant_farm::Pulse::Broadcast);
         let spawned = std::thread::Builder::new()
             .name("control-broadcast".into())
             .spawn(move || {

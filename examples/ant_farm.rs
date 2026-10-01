@@ -2,8 +2,10 @@
 //! agents), one of each state, to check how it looks.
 //!
 //! `cargo run --example ant_farm [--light] [--shot out.png]`: every few seconds one worker
-//! flips between working and waiting on Karl, so ants walk. With `--shot`, it saves a
-//! screenshot once settled and another mid-walk (`-walk`), then exits.
+//! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
+//! report and N hatches a new worker. With `--shot`, it saves a screenshot once settled and
+//! another while a worker walks, a new one emerges and a broadcast ripples (`-walk`), then
+//! exits.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -12,7 +14,7 @@ use eframe::egui;
 use myrstack::model::{
     Edge, EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
 };
-use myrstack::ui::ant_farm::AntFarmView;
+use myrstack::ui::ant_farm::{AntFarmView, Pulse};
 use myrstack::ui::graph::GraphView;
 
 const WINDOW: [f32; 2] = [1280.0, 800.0];
@@ -73,6 +75,21 @@ struct Demo {
 }
 
 impl Demo {
+    /// A new worker in run 2, emerging from the Queen.
+    fn hatch(&mut self) {
+        let n = self.snapshot.nodes.len();
+        let mut worker = node(
+            &format!("new-{n}"),
+            NodeKind::Worker,
+            Some("run2"),
+            NodeState::Working,
+            "myrstack",
+        );
+        worker.label = "Fresh hatchling".into();
+        self.snapshot.nodes.push(worker);
+        self.graph.sync(&self.snapshot);
+    }
+
     fn flip(&mut self) {
         let node = self
             .snapshot
@@ -117,6 +134,22 @@ impl eframe::App for Demo {
             if self.flipped_at.elapsed() >= FLIP_EVERY {
                 self.flip();
             }
+            let (b, st, n) = ui.input(|i| {
+                (
+                    i.key_pressed(egui::Key::B),
+                    i.key_pressed(egui::Key::S),
+                    i.key_pressed(egui::Key::N),
+                )
+            });
+            if b {
+                self.farm.pulse(Pulse::Broadcast);
+            }
+            if st {
+                self.farm.pulse(Pulse::StatusReport);
+            }
+            if n {
+                self.hatch();
+            }
             ui.ctx().request_repaint_after(Duration::from_millis(200));
             return;
         }
@@ -139,6 +172,8 @@ impl eframe::App for Demo {
                 if let Some(image) = image {
                     self.save_shot(&image, "");
                     self.flip();
+                    self.hatch();
+                    self.farm.pulse(Pulse::Broadcast);
                     self.stage = 2;
                 }
             }

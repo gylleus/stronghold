@@ -395,6 +395,13 @@ impl PlanRun<'_> {
                 self.ctx.task_id = Some(task.id.clone());
                 Ok(StepStatus::Done(Some(task.id)))
             }
+            // A name is a nicety: failing to set it only warns.
+            Step::NameWorktree { name, .. } => {
+                Ok(match self.call(step, backend, TASK_CREATE_TIMEOUT) {
+                    Ok(_) => StepStatus::Done(Some(name.clone())),
+                    Err(e) => StepStatus::Warned(format!("could not name the worktree: {e}")),
+                })
+            }
             Step::StartWorker(req) => {
                 let timeout = Duration::from_millis(req.timeout_ms.unwrap_or(0))
                     + WORKER_START_GRACE

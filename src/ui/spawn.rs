@@ -225,6 +225,7 @@ impl SpawnForm {
             agent: self.agent,
             model: Some(self.model.clone()).filter(|m| !m.trim().is_empty()),
             prompt: self.prompt.clone(),
+            label: None,
         })
     }
 

@@ -84,6 +84,7 @@ fn request(target: SpawnTarget) -> SpawnRequest {
         agent: Agent::Claude,
         model: None,
         prompt: PROMPT.into(),
+        label: None,
     }
 }
 
@@ -289,6 +290,63 @@ fn worker_plan_creates_the_task_as_the_coordinator_then_starts_it() {
             expect: Expect::AnyInput,
             retype: false
         }
+    );
+}
+
+/// A label names the worktree right after it exists, or becomes a worker's task display name.
+#[test]
+fn a_label_names_the_agent() {
+    let named = |target| SpawnRequest {
+        label: Some("  Checkout retries ".into()),
+        ..request(target)
+    };
+    let name_args = |worktree: &str| {
+        args(&[
+            "worktree",
+            "set",
+            &format!("--worktree=id:{worktree}"),
+            "--display-name=Checkout retries",
+        ])
+    };
+
+    let plan = build_plan(&named(existing())).unwrap();
+    assert_eq!(plan.request.label.as_deref(), Some("Checkout retries"));
+    assert_eq!(
+        plan.steps[0].orca_args(&plan.initial).unwrap().unwrap(),
+        name_args(WT_ID)
+    );
+
+    let plan = build_plan(&named(new_worktree())).unwrap();
+    assert!(matches!(plan.steps[0], Step::CreateWorktree(_)));
+    let ctx = SpawnContext {
+        worktree_id: Some("new-wt".into()),
+        ..SpawnContext::default()
+    };
+    assert_eq!(
+        plan.steps[1].orca_args(&ctx).unwrap().unwrap(),
+        name_args("new-wt")
+    );
+
+    let plan = build_plan(&named(worker(WorkerPlacement::Worktree {
+        worktree_id: WT_ID.into(),
+    })))
+    .unwrap();
+    assert!(
+        !plan
+            .steps
+            .iter()
+            .any(|s| matches!(s, Step::NameWorktree { .. })),
+        "a worker's worktree may be shared; its task carries the name"
+    );
+    let task = plan.steps[0].orca_args(&plan.initial).unwrap().unwrap();
+    assert_eq!(task.last().unwrap(), "--display-name=Checkout retries");
+
+    let plan = build_plan(&request(existing())).unwrap();
+    assert!(
+        !plan
+            .steps
+            .iter()
+            .any(|s| matches!(s, Step::NameWorktree { .. }))
     );
 }
 

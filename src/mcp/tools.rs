@@ -335,7 +335,12 @@ pub fn definitions() -> Vec<Value> {
              them instead); allow_suffix=true lets Orca pick name-2 for a deliberate second \
              copy. The plain shell Orca opens in a new worktree is closed once the agent runs. \
              After an interrupted or rejected spawn_session, run list_agents for that repo \
-             before trying again: if the session started, use send_to_agent.",
+             before trying again: if the session started, use send_to_agent. Give every \
+             session a label: a short human name (2-4 words, e.g. \"Checkout retries\") that \
+             Myrstack shows on its node and ant. It becomes the worktree's Orca name (all \
+             agents in that worktree go by it) or, for a worker, its task's display name. To \
+             rename an agent later, run `orca worktree set --worktree path:<path> \
+             --display-name <name>`.",
             object(
                 json!({
                     "mode": { "type": "string", "enum": ["worktree", "new_worktree", "worker"] },
@@ -347,6 +352,7 @@ pub fn definitions() -> Vec<Value> {
                     "run_id": { "type": "string", "description": "Run to add a worker to (worker mode)." },
                     "terminal": { "type": "string", "description": "Worker mode: agent id, handle or label of a live agent terminal to run the task in." },
                     "title": { "type": "string", "description": "Worker task title (default: the prompt's first line)." },
+                    "label": { "type": "string", "description": "Short human name for the agent (2-4 words), shown in Myrstack's graph and ant farm. Sets the worktree's Orca display name, or a worker's task display name." },
                     "agent": { "type": "string", "enum": ["claude", "codex"], "default": "claude" },
                     "model": { "type": "string", "description": "Model alias or id, e.g. opus, sonnet, gpt-6-astra (default: the agent's)." },
                     "allow_suffix": { "type": "boolean", "default": false, "description": "New worktree: when the name or branch is taken, let Orca add a suffix (name-2) instead of failing. Only for a deliberate second copy." },

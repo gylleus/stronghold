@@ -10,7 +10,7 @@ mod layout_tests;
 pub mod motion;
 pub mod sprites;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::Duration;
 
 use eframe::egui::{self, Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, vec2};
@@ -30,6 +30,60 @@ const STEP_FRAME: Duration = Duration::from_millis(250);
 const WALK_FPS: f64 = 8.0;
 /// Dig and wave steps per second; matches [`STEP_FRAME`].
 const STEP_FPS: f64 = 4.0;
+/// How long a Queen's call takes to ripple across the farm.
+const RIPPLE_S: f64 = 1.8;
+/// Delay of a ripple's second ring.
+const ECHO_S: f64 = 0.3;
+/// How long the Queen glows after an ant emerges from her chamber.
+const BIRTH_GLOW_S: f64 = 1.2;
+/// A gap between frames longer than this means the farm was not on screen: ants that
+/// appeared meanwhile are placed, not born.
+const AWAY_S: f64 = 2.5;
+
+/// A call of the Queen that ripples across the farm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pulse {
+    /// A broadcast to the coordinators: a golden ring.
+    Broadcast,
+    /// Karl asked for a status report: a cyan ring.
+    StatusReport,
+}
+
+impl Pulse {
+    fn color(self) -> egui::Color32 {
+        match self {
+            Pulse::Broadcast => egui::Color32::from_rgb(0xff, 0xd5, 0x4a),
+            Pulse::StatusReport => egui::Color32::from_rgb(0x6f, 0xe3, 0xff),
+        }
+    }
+}
+
+/// A call rippling out from the Queen, started at `start_s`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Ripple {
+    pulse: Pulse,
+    start_s: f64,
+}
+
+/// The radius a ripple has reached `elapsed_s` after it started, growing to `max_r` with an
+/// ease-out; `None` once it has passed.
+pub fn ripple_radius(elapsed_s: f64, max_r: f32) -> Option<f32> {
+    if !(0.0..RIPPLE_S).contains(&elapsed_s) {
+        return None;
+    }
+    let t = (elapsed_s / RIPPLE_S) as f32;
+    Some(max_r * (1.0 - (1.0 - t) * (1.0 - t)))
+}
+
+/// How far an ant `dist` from the Queen hops while a ripple of `radius` passes it: a jump of
+/// up to `height` when the ring is on it, tapering within `width`.
+pub fn hop(dist: f32, radius: f32, width: f32, height: f32) -> f32 {
+    let off = (dist - radius).abs();
+    if off >= width {
+        return 0.0;
+    }
+    height * (1.0 - off / width)
+}
 
 /// What happened in the farm this frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -72,11 +126,28 @@ pub struct AntFarmView {
     context_node: Option<NodeId>,
     /// Where a selection box being dragged started, in screen points.
     box_origin: Option<Pos2>,
+    /// Every ant drawn so far: a new one walks out of the Queen's chamber.
+    seen: HashSet<NodeId>,
+    /// Time of the last frame drawn; see [`AWAY_S`].
+    last_frame_s: Option<f64>,
+    /// This frame follows a gap: the farm was not on screen.
+    away: bool,
+    /// When ants last emerged from the Queen, for her glow.
+    births: Vec<f64>,
+    /// Calls asked for since the last frame; see [`AntFarmView::pulse`].
+    pending: Vec<Pulse>,
+    ripples: Vec<Ripple>,
 }
 
 impl AntFarmView {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Ripples a call of the Queen across the farm, from the next frame it is drawn. Calls
+    /// made while the farm is not shown are dropped then.
+    pub fn pulse(&mut self, pulse: Pulse) {
+        self.pending.push(pulse);
     }
 
     /// Draws the farm filling the available space and handles clicks, hover and the context
@@ -97,13 +168,32 @@ impl AntFarmView {
             now_ms: now_ms(),
         };
         let scene = layout(&input, rect);
+        let away = self.last_frame_s.is_none_or(|t| now_s - t > AWAY_S);
+        self.last_frame_s = Some(now_s);
+        self.away = away;
+        if away {
+            self.pending.clear();
+        }
+        self.ripples
+            .extend(self.pending.drain(..).map(|pulse| Ripple {
+                pulse,
+                start_s: now_s,
+            }));
+        self.ripples
+            .retain(|r| now_s - r.start_s < RIPPLE_S + ECHO_S);
+        self.births.retain(|t| now_s - t < BIRTH_GLOW_S);
         let placed = self.advance(&scene, now_s);
+        let effects = Effects {
+            ripples: &self.ripples,
+            births: &self.births,
+        };
         let sprites = self.sprites.get_or_insert_with(|| Sprites::load(ui.ctx()));
         let painter = ui.painter_at(rect);
         let palette = Palette::new(ui.visuals().dark_mode);
         let selection = graph.selection();
 
         paint_ground(&painter, sprites, &scene, palette);
+        paint_calls(&painter, sprites, &scene, &effects, now_s, true);
         let pointer = response.hover_pos();
         let hovered = pointer.and_then(|p| hit(&scene, &placed, p));
         paint_ants(
@@ -114,12 +204,19 @@ impl AntFarmView {
             now_s,
             &selection,
             hovered.as_ref(),
+            &effects,
             ui,
         );
+        paint_calls(&painter, sprites, &scene, &effects, now_s, false);
 
-        let walking = placed.iter().any(|p| p.heading.is_some());
+        // Smooth while ants walk or a call ripples; stepped while anyone digs, waves, sleeps
+        // or is whipped (the Queen always breathes).
+        let walking = placed.iter().any(|p| p.heading.is_some())
+            || !self.ripples.is_empty()
+            || !self.births.is_empty();
         let stepping = scene.ants.iter().any(|a| {
-            matches!(a.pose, Pose::Dig | Pose::Wait) || a.mark == Some(layout::Mark::Whip)
+            matches!(a.pose, Pose::Dig | Pose::Wait | Pose::Sleep | Pose::Queen)
+                || a.mark == Some(layout::Mark::Whip)
         });
         if walking {
             ui.ctx().request_repaint_after(WALK_FRAME);
@@ -184,7 +281,11 @@ impl AntFarmView {
 
     /// Starts a walk for every ant whose spot changed, drops finished walks and gone ants,
     /// and returns where each of `scene.ants` is at `now_s`.
+    ///
+    /// An ant never drawn before walks out of the Queen's chamber, unless the farm was just
+    /// opened (everyone is placed then).
     pub fn advance(&mut self, scene: &Scene, now_s: f64) -> Vec<Placed> {
+        let fresh = self.seen.is_empty() || self.away;
         self.tracks
             .retain(|id, _| scene.ants.iter().any(|a| &a.id == id));
         let mut current: HashMap<&NodeId, Placed> = HashMap::new();
@@ -206,15 +307,24 @@ impl AntFarmView {
                         walk: None,
                     },
                 );
+                self.seen.insert(ant.id.clone());
                 current.insert(&ant.id, at);
                 placed.push(at);
                 continue;
             }
+            let born = !fresh && ant.spot != Spot::Queen && self.seen.insert(ant.id.clone());
+            self.seen.insert(ant.id.clone());
             let track = self.tracks.entry(ant.id.clone()).or_insert_with(|| Track {
                 spot: ant.spot.clone(),
                 at: motion::to_unit(ant.pos, scene.rect),
                 walk: None,
             });
+            if born {
+                let from = scene.queen_chamber.center() + vec2(0.0, 0.3 * scene.cell());
+                let path = route(from, ant.pos, false, scene.gallery.center().y);
+                track.walk = Some(Walk::new(&path, scene.rect, now_s));
+                self.births.push(now_s);
+            }
             if track.spot != ant.spot {
                 let from = match &track.walk {
                     Some(walk) => walk.sample(scene.rect, now_s).0,
@@ -384,9 +494,12 @@ fn paint_ants(
     now_s: f64,
     selection: &BTreeSet<NodeId>,
     hovered: Option<&NodeId>,
+    effects: &Effects,
     ui: &Ui,
 ) {
     let px = scene.px;
+    let origin = queen_center(scene);
+    let max_r = farthest(scene, origin);
     let walk_frame = (now_s * WALK_FPS) as usize;
     let step = (now_s * STEP_FPS) as usize;
     let accent = ui.visuals().selection.bg_fill;
@@ -403,6 +516,7 @@ fn paint_ants(
         let frame = match ant.pose {
             _ if walking => walk_frame,
             Pose::Dig => step,
+            Pose::Queen => step / 4,
             _ => 0,
         };
         if !walking {
@@ -410,8 +524,21 @@ fn paint_ants(
                 Pose::Wait => cell = cell.translate(vec2(0.0, -((step % 2) as f32) * 2.0 * tpx)),
                 Pose::Dig => cell = cell.translate(vec2(0.0, -((step % 2) as f32) * tpx)),
                 Pose::Sleep => cell = cell.translate(vec2(0.0, tpx)),
+                // The Queen breathes: a slow rise and fall.
+                Pose::Queen => cell = cell.translate(vec2(0.0, -((step / 2 % 2) as f32) * tpx)),
                 _ => {}
             }
+        }
+        // Ants hop as a call's ring passes them.
+        if ant.pose != Pose::Queen {
+            let dist = (at.pos - origin).length();
+            let lift: f32 = effects
+                .ripples
+                .iter()
+                .filter_map(|r| ripple_radius(now_s - r.start_s, max_r))
+                .map(|radius| hop(dist, radius, scene.cell(), 4.0 * tpx))
+                .fold(0.0, f32::max);
+            cell = cell.translate(vec2(0.0, -(lift / tpx).round() * tpx));
         }
         let look = AntLook {
             red: ant.pose == Pose::Failed,
@@ -455,7 +582,22 @@ fn paint_ants(
             && !walking
         {
             let size = layout::CELL * (tpx - 1.0).max(1.0);
-            let anchor = cell.center() + vec2(0.25 * ant.size, -tpx);
+            let mut anchor = cell.center() + vec2(0.25 * ant.size, -tpx);
+            if mark == layout::Mark::Sleep {
+                // The bubble floats, and z's drift up from it and fade.
+                anchor.y -= SLEEP_BOB[step % SLEEP_BOB.len()] * tpx;
+                let offset = (ant.pos.x * 0.37 + ant.pos.y * 0.11).rem_euclid(1.0) as f64;
+                for i in 0..2 {
+                    let t = ((step as f64 / 10.0) + offset + i as f64 * 0.5).fract() as f32;
+                    let pos = anchor
+                        + vec2(
+                            0.35 * size + (t * 6.0).sin() * 2.0 * tpx,
+                            -size - t * 1.2 * size,
+                        );
+                    let snapped = egui::pos2((pos.x / px).round() * px, (pos.y / px).round() * px);
+                    sprites.snore(painter, snapped, tpx, (1.0 - t) * ant.alpha, palette);
+                }
+            }
             sprites.bubble(painter, anchor, size, mark, ant.alpha);
         }
         if let Some(name) = &ant.tag {
@@ -476,6 +618,112 @@ fn paint_ants(
             painter.rect_stroke(ring, 0.0, Stroke::new(px, accent), StrokeKind::Outside);
         } else if hovered == Some(&ant.id) {
             painter.rect_stroke(ring, 0.0, Stroke::new(1.0, hover), StrokeKind::Outside);
+        }
+    }
+}
+
+/// The sleep bubble's float, in texels per step.
+const SLEEP_BOB: [f32; 4] = [0.0, 1.0, 2.0, 1.0];
+
+/// The effects running this frame, from [`AntFarmView`].
+struct Effects<'a> {
+    ripples: &'a [Ripple],
+    births: &'a [f64],
+}
+
+/// Where the Queen sits.
+fn queen_center(scene: &Scene) -> Pos2 {
+    scene
+        .ants
+        .iter()
+        .find(|a| a.pose == Pose::Queen)
+        .map_or(scene.queen_chamber.center(), |q| q.pos)
+}
+
+/// Distance from `origin` to the farm's farthest corner.
+fn farthest(scene: &Scene, origin: Pos2) -> f32 {
+    let r = scene.rect;
+    [
+        r.left_top(),
+        r.right_top(),
+        r.left_bottom(),
+        r.right_bottom(),
+    ]
+    .iter()
+    .map(|c| (*c - origin).length())
+    .fold(0.0, f32::max)
+}
+
+/// The Queen's calls: her glow and the rings behind the ants (`behind`), then the sparkles
+/// riding the rings and those of a birth over them.
+fn paint_calls(
+    painter: &egui::Painter,
+    sprites: &Sprites,
+    scene: &Scene,
+    effects: &Effects,
+    now_s: f64,
+    behind: bool,
+) {
+    let px = scene.px;
+    let a = scene.cell();
+    let origin = queen_center(scene);
+    let max_r = farthest(scene, origin);
+    let step = (now_s * 12.0) as usize;
+    for ripple in effects.ripples {
+        let color = ripple.pulse.color();
+        let elapsed = now_s - ripple.start_s;
+        let fade = (1.0 - elapsed / (RIPPLE_S + ECHO_S)).clamp(0.0, 1.0) as f32;
+        if behind {
+            sprites.glow(painter, origin, 2.5 * a, color, fade);
+        }
+        for (delay, strength) in [(0.0, 1.0), (ECHO_S, 0.5)] {
+            let Some(radius) = ripple_radius(elapsed - delay, max_r) else {
+                continue;
+            };
+            let alpha = fade * strength;
+            if behind {
+                sprites.ring(
+                    painter,
+                    origin,
+                    radius,
+                    px,
+                    color.gamma_multiply(alpha * 0.8),
+                );
+                continue;
+            }
+            // Sparkles ride the ring, twinkling.
+            for i in 0..24 {
+                if (i + step).is_multiple_of(3) {
+                    continue;
+                }
+                let angle = i as f32 / 24.0 * std::f32::consts::TAU + radius * 0.002;
+                let jitter = ((i * 7) % 5) as f32 * px;
+                let p = origin + vec2(angle.cos(), angle.sin()) * (radius - jitter);
+                if scene.rect.contains(p) {
+                    let big = (i + step).is_multiple_of(5);
+                    sprites.sparkle(painter, p, px, color.gamma_multiply(alpha), big);
+                }
+            }
+        }
+    }
+    // A birth: the Queen glows warm and sparkles.
+    for &born in effects.births {
+        let t = ((now_s - born) / BIRTH_GLOW_S).clamp(0.0, 1.0) as f32;
+        let warm = egui::Color32::from_rgb(0xff, 0xe0, 0x8a);
+        if behind {
+            sprites.glow(painter, origin, 1.6 * a, warm, 1.0 - t);
+            continue;
+        }
+        for i in 0..6 {
+            let angle = i as f32 / 6.0 * std::f32::consts::TAU + t * 2.0;
+            let p = origin + vec2(angle.cos(), angle.sin() * 0.6) * (0.8 + t) * a;
+            sprites.sparkle(
+                painter,
+                p,
+                px,
+                warm.gamma_multiply(1.0 - t),
+                (i + step).is_multiple_of(2),
+            );
         }
     }
 }

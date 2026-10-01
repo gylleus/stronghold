@@ -66,6 +66,8 @@ pub struct SpawnArgs {
     pub terminal: Option<String>,
     /// Worker task title.
     pub title: Option<String>,
+    /// Short name Myrstack shows for the agent; see [`SpawnRequest::label`].
+    pub label: Option<String>,
     pub prompt: String,
     pub agent: Agent,
     pub model: Option<String>,
@@ -106,6 +108,7 @@ impl SpawnArgs {
             run_id: opt("run_id")?,
             terminal: opt("terminal")?,
             title: opt("title")?,
+            label: opt("label")?,
             prompt: p.str("prompt")?.unwrap_or_default().trim().to_string(),
             agent,
             model: opt("model")?,
@@ -130,6 +133,7 @@ impl SpawnArgs {
             ("run_id", &self.run_id),
             ("terminal", &self.terminal),
             ("title", &self.title),
+            ("label", &self.label),
             ("model", &self.model),
         ];
         for (key, value) in fields {
@@ -257,6 +261,7 @@ impl SpawnArgs {
             agent: self.agent,
             model: self.model.clone(),
             prompt: self.prompt.clone(),
+            label: self.label.clone(),
         })
     }
 }

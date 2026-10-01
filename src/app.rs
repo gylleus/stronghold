@@ -475,6 +475,9 @@ impl MyrstackApp {
         };
         let response =
             ui::queen::queen_details(ui, &mut self.queen, inputs, || Box::new(OrcaClient::new()));
+        if self.queen.broadcast.take_sent() {
+            self.ant_farm.pulse(ui::ant_farm::Pulse::Broadcast);
+        }
         if response.whip_stalled {
             self.request_whip_stalled(None);
         }

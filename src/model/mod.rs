@@ -547,7 +547,9 @@ fn terminal_node(
     Node {
         id: NodeId::terminal(&terminal.handle),
         kind,
-        label: label::terminal_label(terminal),
+        label: data
+            .worktree_name(terminal.worktree_path.as_deref())
+            .map_or_else(|| label::terminal_label(terminal), label::truncate_label),
         terminal_handle: Some(terminal.handle.clone()),
         live: true,
         run_id: None,
@@ -604,7 +606,8 @@ fn worker_node(
     node.worker_state = worker.worker_state.clone();
     node.dispatch_status = worker.dispatch_status.clone();
     node.worker_terminal_state = worker.terminal_state.clone();
-    node.label = label::worker_label(task, terminal, worker);
+    let worktree_name = data.worktree_name(terminal.and_then(|t| t.worktree_path.as_deref()));
+    node.label = label::worker_label(task, worktree_name, terminal, worker);
     node.state = derive_state(&StateInputs {
         needs_input: terminal.and_then(|t| data.screen_needs_input(&t.handle)),
         stalled: terminal.is_some_and(|t| stalled.contains(&t.handle)),
