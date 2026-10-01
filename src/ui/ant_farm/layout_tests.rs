@@ -188,6 +188,8 @@ fn ants_go_where_their_state_says() {
 
     let coord = ant(&scene, "r1-coord");
     assert!(matches!(coord.spot, Spot::Mouth(..)));
+    assert_eq!(coord.tag, None, "its tunnel's label names it");
+    assert_eq!(ant(&scene, "working").tag.as_deref(), Some("working"));
     assert!(
         (coord.pos.x - tunnel.shaft.center().x).abs() < 1.0,
         "at the mouth"
@@ -238,6 +240,12 @@ fn everyone_waiting_on_karl_shares_the_landing() {
     s.nodes
         .push(node("t", NodeKind::Terminal, None, NodeState::NeedsInput));
     let scene = scene(&s);
+    assert_eq!(
+        ant(&scene, "a-coord").tag.as_deref(),
+        Some("Objective a"),
+        "a coordinator away from its tunnel is named by its run"
+    );
+    assert_eq!(ant(&scene, "b1").tag.as_deref(), Some("b1"));
     let spots: Vec<Spot> = ["a-coord", "b1", "t"]
         .iter()
         .map(|n| ant(&scene, n).spot.clone())
@@ -299,6 +307,10 @@ fn one_tunnel_per_run_then_per_repo() {
     );
     assert_eq!(tunnel_of(&scene, "a1"), tunnel_of(&scene, "a2"));
     assert_eq!(scene.tunnels[0].label, "Objective second");
+    assert_eq!(
+        scene.tunnels[0].tasks, None,
+        "no task counts, no progress bar"
+    );
     let xs: Vec<f32> = scene.tunnels.iter().map(|t| t.shaft.center().x).collect();
     assert!(xs.windows(2).all(|w| w[0] < w[1]), "left to right: {xs:?}");
 }
@@ -323,6 +335,8 @@ fn tunnels_deepen_with_progress() {
     let (early, late) = (&scene.tunnels[0], &scene.tunnels[1]);
     assert_eq!(early.progress, Some(0.0));
     assert_eq!(late.progress, Some(1.0));
+    assert_eq!(early.tasks, Some((0, 4)));
+    assert_eq!(late.tasks, Some((4, 4)));
     assert!(late.chamber.top() > early.chamber.top() + 50.0);
     assert!(late.chamber.bottom() <= RECT.bottom());
 }
