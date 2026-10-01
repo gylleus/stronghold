@@ -1,6 +1,6 @@
 # Agent Fleet Playbook: parallel Claude Code agents under Orca
 
-**v6, 2026-09-25.** How Karl runs a multi-agent engineering effort: one coordinator session,
+**v6, 2026-10-01.** How Karl runs a multi-agent engineering effort: one coordinator session,
 long-lived worker worktrees, adversarial review inside each, everything as Orca terminals Karl
 can watch and join. Workers follow `_AGENT_PROTOCOL.md`; this file is for coordinators and
 attendants.
@@ -9,13 +9,13 @@ attendants.
 
 ```
 Karl: talks only to the coordinator. Does not read tickets.
- ├─ Coordinator: interactive Claude Code session. Dispatches tracks, relays decisions, runs
- │  the merge gate, owns every merge. Does NOT watch the bus.
+ ├─ Coordinator: interactive Claude Code session (`claude --model claude-opus-5-5`). Dispatches
+ │  tracks, relays decisions, runs the merge gate, owns every merge. Does NOT watch the bus.
  │   ├─ Attendant: cheap watcher (`claude --model sonnet`, ATTENDANT-BRIEF-TEMPLATE.md).
  │   │  Binds the Run, absorbs heartbeats and acks, forwards real events as one line.
  │   └─ Orca Run (per campaign)
- │       ├─ Task → Dispatch → worker terminal in its own worktree (one track)
- │       │    └─ review subagents inside the worker: fresh context, read-only
+ │       ├─ Task → Dispatch → Codex worker terminal in its own worktree (one track)
+ │       │    └─ review subagents inside the worker: fresh context, read-only, Opus 5.5
  │       └─ Task → Dispatch → soak/verification track (telemetry only, ships no code)
  └─ Myrstack: Karl's desktop view of the whole fleet (graph, terminals, alerts). Its whip
     nudges stalled tasks (`Myrstack:` messages from `myrstack-whip`).
@@ -49,9 +49,9 @@ Check live rather than trusting a table: `orca status --json` (runtime must be r
    agents editing one checkout; a second reader is fine. Branch from `origin/main`
    (`--no-parent` for independent tracks; child lineage only for genuinely stacked work).
 3. **Fresh context is the review.** Reviewers are subagents inside the worker
-   (`claudemd-style-reviewer`, `comment-style-auditor`, `/code-review high`) plus Ankra. A
-   reviewer must independently verify the plan's load-bearing facts against the code; wrong
-   facts are the top killer.
+   (`claudemd-style-reviewer`, `comment-style-auditor`, `/code-review high`, all on Opus 5.5,
+   never Fable) plus Ankra. A reviewer must independently verify the plan's load-bearing
+   facts against the code; wrong facts are the top killer.
    - On expensive-if-wrong tracks, add a `codex` review lane: `codex exec --sandbox read-only
 < /dev/null` (never `--full-auto`; without `< /dev/null` it blocks forever on stdin). It
      reviews the uncommitted working tree, which the PR bot cannot see. Claim complementary
@@ -90,9 +90,9 @@ orca terminal create --command "claude --model sonnet" --json
 orca orchestration run-create --objective "<campaign>" --json         # from the attendant
 orca orchestration task-create --spec "<track spec>" --json
 
-# Start every independent worker before waiting on any.
+# Start every independent worker before waiting on any. Coding workers are Codex.
 orca orchestration worker-start --task <task> \
-  --worktree new-top-level --name <track> --repo id:<repoId> --agent claude --setup run --json
+  --worktree new-top-level --name <track> --repo id:<repoId> --agent codex --setup run --json
 ```
 
 - **Read the receipt**, then **read the terminal tail.** `worker-start` can report `ready` /
@@ -104,10 +104,16 @@ orca orchestration worker-start --task <task> \
   missing.
 - Failed start: inspect `stage`, `effects`, `residualResources`; don't blind-retry.
 - `--repo id:<repoId>` comes from `orca repo list`; a worktree id is `<repoId>::<path>`.
-- Same-checkout work: `orca terminal create --worktree active --command "claude"`.
-- **Model tiering:** `--model <id> [--effort high]` on `worker-start` (fresh terminals only).
-  Strongest tier for design, root cause and soak verdicts; cheaper for mechanical ports,
-  config PRs and review passes.
+- Same-checkout work: `orca terminal create --worktree active --command "claude --model claude-opus-5-5"`.
+- **Model tiering** (Karl's rule since 2026-10-01; `--model <id> [--effort high]` on
+  `worker-start`, fresh terminals only):
+  - **Coding workers: Codex** (`--agent codex`).
+  - **Coordinators, planners, initial drafters and reviewers: Claude Opus 5.5.** Launch them
+    as `claude --model claude-opus-5-5`; Claude reviewer subagents run on Opus too (Agent
+    tool `model: "opus"`, which is Opus 5.5).
+  - **Attendant: sonnet**, unchanged.
+  - **Fable (`claude-fable-5-1`) is never a default.** Use it only when Karl explicitly asks
+    for it, and say so in the brief.
 - **Delivery is not execution.** `--inject` delivers the spec plus Orca's lifecycle preamble;
   follow-ups go by `orca orchestration send --to dispatch:<id>`. A send receipt is not
   delivery either: check `inbox` for `delivered_at`/`read_at` before blaming a worker, and
