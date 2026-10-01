@@ -27,6 +27,83 @@ pub struct SectionState {
     pub scroll: bool,
 }
 
+/// Compact links for one agent, using exactly the rows behind the graph's PR badge.
+/// Excess links live in a menu so they cannot displace the header's other controls.
+pub fn agent_pr_buttons(ui: &mut Ui, node: &NodeId, rows: &[ReviewRow]) -> Option<ReviewAction> {
+    let rows: Vec<_> = rows
+        .iter()
+        .filter(|row| row.agent.as_ref().is_some_and(|agent| &agent.id == node))
+        .collect();
+    let mut action = None;
+    ui.push_id(("agent_prs", node), |ui| {
+        for (index, row) in rows.iter().enumerate() {
+            let label = pr_button_text(row);
+            let font = egui::TextStyle::Button.resolve(ui.style());
+            let width = ui.fonts_mut(|fonts| {
+                fonts
+                    .layout_no_wrap(label.clone(), font, Color32::WHITE)
+                    .size()
+                    .x
+            }) + ui.spacing().button_padding.x * 2.0;
+            let remaining = rows.len() - index;
+            let reserve = if remaining > 1 { 80.0 } else { 0.0 };
+            if width + reserve > ui.available_width() {
+                ui.menu_button(format!("+{remaining} PRs"), |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(280.0)
+                        .show(ui, |ui| {
+                            for row in &rows[index..] {
+                                if pr_button(ui, row, &pr_button_text(row)) {
+                                    action = Some(ReviewAction::Open(row.url.clone()));
+                                    ui.close();
+                                }
+                            }
+                        });
+                });
+                break;
+            }
+            if pr_button(ui, row, &label) {
+                action = Some(ReviewAction::Open(row.url.clone()));
+            }
+        }
+    });
+    action
+}
+
+fn pr_button_text(row: &ReviewRow) -> String {
+    let repo = row.repo.rsplit('/').next().unwrap_or(&row.repo);
+    let cue = row.state_note().or_else(|| row.ci.map(Ci::symbol));
+    match cue {
+        Some(cue) => format!("{repo}#{} {cue}", row.number),
+        None => format!("{repo}#{}", row.number),
+    }
+}
+
+fn pr_button(ui: &mut Ui, row: &ReviewRow, text: &str) -> bool {
+    let mut tooltip = format!(
+        "{}\n{}\n{}",
+        row.title,
+        row.url,
+        row.state.map_or("Reading GitHub…", |state| state.name())
+    );
+    if let Some(ci) = row.ci {
+        tooltip.push_str(&format!("\n{}", ci.describe()));
+    }
+    if let Some(marker) = row.marker_text() {
+        tooltip.push_str(&format!("\n{marker}"));
+    }
+    if let Some(error) = &row.error {
+        tooltip.push_str(&format!("\n{error}"));
+    }
+    ui.button(
+        RichText::new(text)
+            .small()
+            .color(pr_color(ui.visuals().dark_mode)),
+    )
+    .on_hover_text(tooltip)
+    .clicked()
+}
+
 /// The "Ready for review (N)" section; `github_note` explains a GitHub outage.
 pub fn review_section(
     ui: &mut Ui,
@@ -308,6 +385,89 @@ mod tests {
                 scroll: false,
             },
         )
+    }
+
+    #[test]
+    fn agent_buttons_open_each_pr_and_only_show_the_selected_agents_rows() {
+        let first = row();
+        let mut second = row();
+        second.number = 256;
+        second.url = "https://github.com/depict-org/realtime/pull/256".into();
+        second.ci = Some(Ci::Pending {
+            pending: 1,
+            total: 9,
+        });
+        let rows = [first, second];
+        for row in &rows {
+            assert_eq!(
+                click_label(&pr_button_text(row), |ui| {
+                    ui.horizontal(|ui| agent_pr_buttons(ui, &NodeId::terminal("term_a"), &rows))
+                        .inner
+                }),
+                Some(ReviewAction::Open(row.url.clone()))
+            );
+        }
+        let ctx = egui::Context::default();
+        // Reuse the context as selection and queue contents change: no stale links.
+        for (node, rows, expected) in [
+            (NodeId::terminal("term_a"), &rows[..1], true),
+            (NodeId::terminal("term_b"), &rows[..], false),
+            (NodeId::terminal("term_a"), &rows[..], true),
+            (NodeId::terminal("term_a"), &[][..], false),
+        ] {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.horizontal(|ui| agent_pr_buttons(ui, &node, rows));
+            });
+            output.textures_delta.clear();
+            assert_eq!(
+                crate::ui::test_util::text_center(&output, "realtime#255 ✓").is_some(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn agent_button_overflow_keeps_every_pr_clickable() {
+        use egui::{Event, PointerButton, Pos2, Rect};
+        let rows = [row(), {
+            let mut r = row();
+            r.number = 256;
+            r.url.push_str("/files");
+            r
+        }];
+        let ctx = egui::Context::default();
+        let mut action = None;
+        let mut frame = |events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(500.0, 400.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_max_width(100.0);
+                    action = ui
+                        .horizontal(|ui| agent_pr_buttons(ui, &NodeId::terminal("term_a"), &rows))
+                        .inner;
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        for label in ["+2 PRs", "realtime#256 ✓"] {
+            let output = frame(vec![]);
+            let at = crate::ui::test_util::text_center(&output, label).expect(label);
+            frame(vec![Event::PointerMoved(at)]);
+            for pressed in [true, false] {
+                frame(vec![Event::PointerButton {
+                    pos: at,
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }]);
+            }
+        }
+        assert_eq!(action, Some(ReviewAction::Open(rows[1].url.clone())));
     }
 
     #[test]

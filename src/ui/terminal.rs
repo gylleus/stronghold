@@ -40,6 +40,8 @@ pub struct TerminalPanelResponse {
     /// Actions to run; the caller submits each and reports the id via
     /// [`InputPanelState::submitted`].
     pub requests: Vec<ActionRequest>,
+    /// Open a PR through the review queue's browser action.
+    pub review: Option<crate::ui::review::ReviewAction>,
     /// A node link in the conversation was clicked.
     pub select: Option<NodeId>,
 }
@@ -272,6 +274,8 @@ pub fn take_submit_enter(events: &mut Vec<egui::Event>) -> bool {
 /// Input for the selected node's terminal, from the app.
 pub struct PanelInput<'a> {
     pub state: &'a mut InputPanelState,
+    /// The same live rows that drive the graph PR badges.
+    pub review_rows: &'a [crate::review::view::ReviewRow],
     /// The node's row in `terminal list`, if live.
     pub terminal: Option<&'a Terminal>,
     /// The agent's conversation read from its session transcript, when it has one (Claude
@@ -368,6 +372,7 @@ pub fn terminal_panel(
         terminal,
         mut conversation,
         is_node,
+        review_rows,
     } = input;
     let has_chat = conversation.is_some();
     // A narrow pane gives the actions their own row, so the title keeps its room.
@@ -404,11 +409,35 @@ pub fn terminal_panel(
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 let color = state_color(node.state, ui.visuals().dark_mode);
                 crate::ui::widgets::state_pill(ui, color, state_label(node.state));
-                ui.add(egui::Label::new(egui::RichText::new(&node.label).strong()).truncate());
+                let has_prs = review_rows
+                    .iter()
+                    .any(|row| row.agent.as_ref().is_some_and(|agent| agent.id == node.id));
+                let name_width = if has_prs && !actions_below {
+                    ui.available_width() * 0.4
+                } else {
+                    ui.available_width()
+                };
+                ui.add_sized(
+                    [name_width, ui.spacing().interact_size.y],
+                    egui::Label::new(egui::RichText::new(&node.label).strong()).truncate(),
+                )
+                .on_hover_text(&node.label);
+                if !actions_below {
+                    response.review =
+                        crate::ui::review::agent_pr_buttons(ui, &node.id, review_rows);
+                }
             });
         });
     });
     if actions_below {
+        if review_rows
+            .iter()
+            .any(|row| row.agent.as_ref().is_some_and(|agent| agent.id == node.id))
+        {
+            ui.horizontal(|ui| {
+                response.review = crate::ui::review::agent_pr_buttons(ui, &node.id, review_rows);
+            });
+        }
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 agent_actions(ui, node, handle, &mut response);
@@ -887,6 +916,7 @@ mod tests {
         let mut state = InputPanelState::default();
         crate::ui::test_util::click_label(label, |ui| {
             let input = PanelInput {
+                review_rows: &[],
                 state: &mut state,
                 terminal: None,
                 conversation: None,
@@ -925,6 +955,7 @@ mod tests {
         let response = crate::ui::test_util::click_label("Open in Orca", |ui| {
             ui.set_max_width(ACTIONS_INLINE_MIN_WIDTH - 1.0);
             let input = PanelInput {
+                review_rows: &[],
                 state: &mut state,
                 terminal: None,
                 conversation: None,
@@ -998,6 +1029,7 @@ mod tests {
             };
             let mut output = ctx.run_ui(input, |ui| {
                 let input = PanelInput {
+                    review_rows: &[],
                     state: &mut *state,
                     terminal: None,
                     conversation: Some(&mut *view),
@@ -1107,6 +1139,7 @@ mod tests {
         let mut state = InputPanelState::default();
         frame(|ui| {
             let input = PanelInput {
+                review_rows: &[],
                 state: &mut state,
                 terminal: None,
                 conversation: None,
