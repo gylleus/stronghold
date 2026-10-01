@@ -677,17 +677,24 @@ fn dragging_a_box_selects_the_ants_in_it() {
     assert_eq!(hits, expected);
 }
 
-/// A ripple grows from the Queen to the farthest corner and is gone after; an ant hops only
-/// while the ring is on it.
+/// A broadcast grows from the Queen to the farthest corner, a status report closes in from
+/// there to her, and both are gone after; an ant hops only while the ring is on it.
 #[test]
 fn ripples_spread_and_ants_hop_as_they_pass() {
-    use super::{hop, ripple_radius};
-    assert_eq!(ripple_radius(-0.1, 1000.0), None);
-    assert_eq!(ripple_radius(0.0, 1000.0), Some(0.0));
-    let early = ripple_radius(0.3, 1000.0).unwrap();
-    let late = ripple_radius(1.5, 1000.0).unwrap();
+    use super::{Pulse, hop, ripple_radius};
+    let out = |t| ripple_radius(Pulse::Broadcast, t, 1000.0);
+    assert_eq!(out(-0.1), None);
+    assert_eq!(out(0.0), Some(0.0));
+    let early = out(0.3).unwrap();
+    let late = out(1.5).unwrap();
     assert!(0.0 < early && early < late && late < 1000.0);
-    assert_eq!(ripple_radius(5.0, 1000.0), None);
+    assert_eq!(out(5.0), None);
+    let inward = |t| ripple_radius(Pulse::StatusReport, t, 1000.0);
+    assert_eq!(inward(0.0), Some(1000.0));
+    let early = inward(0.3).unwrap();
+    let late = inward(1.5).unwrap();
+    assert!(1000.0 > early && early > late && late > 0.0);
+    assert_eq!(inward(5.0), None);
     assert_eq!(hop(300.0, 300.0, 40.0, 8.0), 8.0, "the ring is on it");
     assert_eq!(hop(300.0, 280.0, 40.0, 8.0), 4.0);
     assert_eq!(hop(300.0, 100.0, 40.0, 8.0), 0.0, "not reached yet");
