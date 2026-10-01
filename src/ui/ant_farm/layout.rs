@@ -21,8 +21,13 @@ const LABEL_CHARS: usize = 28;
 const UNKNOWN_PROGRESS_DEPTH: f32 = 0.6;
 /// Shallowest tunnel, as a share of the room below the gallery (a run with nothing done).
 const MIN_DEPTH: f32 = 0.35;
-/// Distance between rows of ants, in cells: room for the bubbles of the row below.
-const ROW: f32 = 1.5;
+/// Distance between rows of ants, in cells: room for a row's bubbles above and name tags
+/// below.
+const ROW: f32 = 2.0;
+/// Width of an ant's slot in a row, in cells: room for its name tag.
+const SLOT: f32 = 2.0;
+/// Room under an ant for its name tag, in cells.
+const TAG: f32 = 0.45;
 
 /// What a tunnel belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -120,6 +125,10 @@ pub struct Ant {
     pub facing_right: bool,
     /// Opacity, for released workers and finished subagents.
     pub alpha: f32,
+    /// Name shown under the ant (its node label, or a coordinator's run away from its
+    /// tunnel); `None` for the Queen, coordinators at their tunnel's mouth (the tunnel is
+    /// labelled) and subagents.
+    pub tag: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -132,6 +141,8 @@ pub struct Tunnel {
     pub chamber: Rect,
     /// Completed share of the run's tasks, when known.
     pub progress: Option<f32>,
+    /// `(completed, total)` tasks of the run, when known.
+    pub tasks: Option<(usize, usize)>,
 }
 
 /// The farm laid out in a rect.
@@ -174,13 +185,53 @@ pub struct FarmInput<'a> {
     pub now_ms: i64,
 }
 
-/// Points per texel for a view of `size` with `tunnels` tunnels: the biggest whole scale
-/// that leaves each tunnel room for a few ants side by side and the farm room for its depth.
-pub fn pixel_scale(size: Vec2, tunnels: usize) -> f32 {
-    let column = size.x / tunnels.max(1) as f32;
+/// How many ants the farm's places hold, which decides how big they can be drawn.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Crowd {
+    pub tunnels: usize,
+    /// Ants in the fullest chamber.
+    pub chamber: usize,
+    pub landing: usize,
+    pub storage: usize,
+}
+
+/// The surface band's geometry at `a` points per cell: (surface y offset, landing rows per
+/// row, storage rows per row, storage height), shared by [`pixel_scale`] and [`layout`].
+fn band(size: Vec2, a: f32, crowd: Crowd) -> (f32, usize, usize, f32) {
+    let rows = |n: usize, per_row: usize| n.div_ceil(per_row).max(1) as f32;
+    let landing_w = (size.x * 0.3).max(5.0 * a) - 2.5 * a;
+    let landing_per_row = ((landing_w / (SLOT * a)).floor() as usize).max(1);
+    let landing_h = (rows(crowd.landing, landing_per_row) - 1.0) * ROW * a + 1.4 * a;
+    let surface = (2.4 * a).max(size.y * 0.16).max(landing_h + 0.8 * a);
+    let storage_w = (size.x * 0.26).max(3.0 * a);
+    let storage_per_row = ((storage_w / (SLOT * a)).floor() as usize).max(1);
+    let storage_h =
+        ((rows(crowd.storage, storage_per_row) - 1.0) * ROW * a + (2.2 + TAG) * a).max(2.4 * a);
+    (surface, landing_per_row, storage_per_row, storage_h)
+}
+
+/// Height of a chamber holding `n` ants, `per_row` to a row.
+fn chamber_height(n: usize, per_row: usize, a: f32) -> f32 {
+    let rows = n.div_ceil(per_row).max(1) as f32;
+    (rows - 1.0) * ROW * a + (1.4 + TAG) * a
+}
+
+/// Points per texel for a view of `size`: the biggest whole scale that leaves each tunnel
+/// room for an ant and its name tag side by side, and fits the crowds on the landing, in
+/// storage and in the fullest chamber.
+pub fn pixel_scale(size: Vec2, crowd: Crowd) -> f32 {
+    let column = size.x / crowd.tunnels.max(1) as f32;
+    let fits = |px: f32| {
+        let a = CELL * px;
+        let per_row = (((column - 0.6 * a) / (SLOT * a)).floor() as usize).max(1);
+        let (surface, _, _, storage_h) = band(size, a, crowd);
+        let gallery_bottom = surface + 0.4 * a + storage_h + 1.8 * a;
+        let bottom = gallery_bottom + a + chamber_height(crowd.chamber, per_row, a) + 0.3 * a;
+        column >= (SLOT + 0.6) * a && bottom <= size.y
+    };
     [4.0, 3.0, 2.0]
         .into_iter()
-        .find(|px| column >= 2.6 * CELL * px && size.y >= 15.0 * CELL * px)
+        .find(|px| fits(*px))
         .unwrap_or(1.0)
 }
 
@@ -327,18 +378,29 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
     keys.sort_by_key(run_order);
     let tunnel_of: HashMap<&TunnelKey, usize> =
         keys.iter().enumerate().map(|(i, k)| (k, i)).collect();
-    let px = pixel_scale(rect.size(), keys.len());
+    let mut chamber_counts = vec![0usize; keys.len()];
+    for node in &visible {
+        if homes[&node.id] == Home::Chamber {
+            chamber_counts[tunnel_of[&tunnel_key(node, &repos)]] += 1;
+        }
+    }
+    let count = |home: Home| homes.values().filter(|h| **h == home).count();
+    let crowd = Crowd {
+        tunnels: keys.len(),
+        chamber: chamber_counts.iter().copied().max().unwrap_or(0),
+        landing: count(Home::Landing),
+        storage: count(Home::Storage),
+    };
+    let px = pixel_scale(rect.size(), crowd);
     let a = CELL * px;
 
     // Surface band: sky, the landing on the surface, chambers just under it. The landing
     // and storage grow a row per row-full of ants.
-    let count = |home: Home| homes.values().filter(|h| **h == home).count();
-    let rows = |n: usize, per_row: usize| n.div_ceil(per_row).max(1) as f32;
+    let (surface, landing_per_row, storage_per_row, storage_h) = band(rect.size(), a, crowd);
+    let surface_y = rect.top() + surface;
     let landing_left = rect.left() + 2.5 * a;
     let landing_right = rect.left() + (rect.width() * 0.3).max(5.0 * a);
-    let landing_per_row = (((landing_right - landing_left) / a).floor() as usize).max(1);
-    let landing_h = (rows(count(Home::Landing), landing_per_row) - 1.0) * ROW * a + 1.4 * a;
-    let surface_y = rect.top() + (2.4 * a).max(rect.height() * 0.16).max(landing_h + 0.8 * a);
+    let landing_h = surface_y - (rect.top() + 0.4 * a);
     let landing = Rect::from_min_max(
         pos2(landing_left, surface_y - landing_h),
         pos2(landing_right, surface_y),
@@ -349,9 +411,6 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         vec2(4.0 * a, chamber_h),
     );
     let storage_w = (rect.width() * 0.26).max(3.0 * a);
-    let storage_per_row = ((storage_w / a).floor() as usize).max(1);
-    let storage_h =
-        ((rows(count(Home::Storage), storage_per_row) - 1.0) * ROW * a + 2.2 * a).max(chamber_h);
     let storage = Rect::from_min_size(
         pos2(rect.right() - 0.5 * a - storage_w, surface_y + 0.4 * a),
         vec2(storage_w, storage_h),
@@ -365,32 +424,26 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
     // Each tunnel's chamber needs a row per chamber-full of its ants.
     let n = keys.len().max(1);
     let column_w = rect.width() / n as f32;
-    let chamber_w = (column_w - 0.6 * a).max(a);
-    let per_row = ((chamber_w / a).floor() as usize).max(1);
-    let mut chamber_counts = vec![0usize; keys.len()];
-    for node in &visible {
-        if homes[&node.id] == Home::Chamber {
-            chamber_counts[tunnel_of[&tunnel_key(node, &repos)]] += 1;
-        }
-    }
+    let chamber_w = (column_w - 0.6 * a).max(SLOT * a);
+    let per_row = ((chamber_w / (SLOT * a)).floor() as usize).max(1);
     let below = (rect.bottom() - 0.3 * a) - (gallery.bottom() + a);
     let tunnels: Vec<Tunnel> = keys
         .iter()
         .enumerate()
         .map(|(i, key)| {
             let x = rect.left() + column_w * (i as f32 + 0.5);
-            let rows = chamber_counts[i].div_ceil(per_row).max(1);
-            let height = (rows as f32 - 1.0) * ROW * a + 1.4 * a;
-            let progress = match key {
+            let height = chamber_height(chamber_counts[i], per_row, a);
+            let tasks = match key {
                 TunnelKey::Run(id) => snapshot
                     .runs
                     .iter()
                     .find(|r| &r.id == id)
                     .and_then(|r| r.task_counts)
                     .filter(|c| c.total() > 0)
-                    .map(|c| c.completed as f32 / c.total() as f32),
+                    .map(|c| (c.completed, c.total())),
                 TunnelKey::Repo(_) => None,
             };
+            let progress = tasks.map(|(done, total)| done as f32 / total as f32);
             let depth = progress.map_or(UNKNOWN_PROGRESS_DEPTH, |p| {
                 MIN_DEPTH + (1.0 - MIN_DEPTH) * p
             });
@@ -417,6 +470,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                 shaft,
                 chamber,
                 progress,
+                tasks,
             }
         })
         .collect();
@@ -447,7 +501,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                 landing_n += 1;
                 let (row, col) = (k / landing_per_row, k % landing_per_row);
                 let pos = pos2(
-                    landing.left() + (col as f32 + 0.5) * a,
+                    landing.left() + (col as f32 + 0.5) * SLOT * a,
                     surface_y - 0.5 * a - row as f32 * ROW * a,
                 );
                 (Spot::Landing(k), pos)
@@ -458,8 +512,8 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                 pr_ready += usize::from(is_pr);
                 let (row, col) = (k / storage_per_row, k % storage_per_row);
                 let pos = pos2(
-                    storage.right() - (col as f32 + 0.5) * a,
-                    storage.bottom() - 0.5 * a - row as f32 * ROW * a,
+                    storage.right() - (col as f32 + 0.5) * SLOT * a,
+                    storage.bottom() - (0.5 + TAG) * a - row as f32 * ROW * a,
                 );
                 (Spot::Storage(k), pos)
             }
@@ -473,7 +527,19 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                 (Spot::Mouth(t, k), pos2(x, gallery.bottom() - 0.5 * a))
             }
         };
-        ants.push(ant(node, spot, pos, a, home, is_pr, input.now_ms));
+        let mut placed = ant(node, spot, pos, a, home, is_pr, input.now_ms);
+        // A coordinator away from its tunnel's mouth is named by its run.
+        if matches!(node.kind, NodeKind::Coordinator | NodeKind::Attendant)
+            && matches!(home, Home::Landing | Home::Storage)
+        {
+            let objective = snapshot
+                .runs
+                .iter()
+                .find(|r| node.run_id.as_ref() == Some(&r.id))
+                .and_then(|r| r.objective.as_deref());
+            placed.tag = Some(objective.unwrap_or(&node.label).to_string());
+        }
+        ants.push(placed);
     }
     for (t, nodes) in chamber_nodes.iter_mut().enumerate() {
         nodes.sort_by_key(|n| chamber_rank(n.state));
@@ -481,8 +547,8 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         for (k, node) in nodes.iter().enumerate() {
             let (row, col) = (k / per_row, k % per_row);
             let pos = pos2(
-                chamber.right() - (col as f32 + 0.5) * a,
-                chamber.bottom() - 0.5 * a - row as f32 * ROW * a,
+                chamber.right() - (col as f32 + 0.5) * SLOT * a,
+                chamber.bottom() - (0.5 + TAG) * a - row as f32 * ROW * a,
             );
             let is_pr = input.pr_ready.contains(&node.id);
             ants.push(ant(
@@ -564,6 +630,12 @@ fn ant(node: &Node, spot: Spot, pos: Pos2, size: f32, home: Home, pr: bool, now_
             mark(node.state, pr)
         },
         facing_right: pose == Pose::Dig,
+        tag: match node.kind {
+            NodeKind::Worker | NodeKind::Terminal => Some(node.label.clone()),
+            NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Subagent | NodeKind::Queen => {
+                None
+            }
+        },
         alpha: crate::ui::graph::fade_alpha(node.released_at_ms, now_ms),
     }
 }

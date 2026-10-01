@@ -157,6 +157,22 @@ impl eframe::App for Demo {
     }
 }
 
+/// Task display names, as coordinators give them.
+const TASKS: [&str; 12] = [
+    "Layout tests",
+    "Sprite layer",
+    "Repaint budget",
+    "Cache warmup",
+    "Fix flaky poller test",
+    "Rerank eval harness",
+    "Migrate invoices table",
+    "Docs: install guide",
+    "Retry checkout calls",
+    "Index rebuild",
+    "Remove dead flags",
+    "Bump egui to 0.36",
+];
+
 fn id(s: &str) -> NodeId {
     NodeId(s.to_string())
 }
@@ -235,8 +251,9 @@ fn fleet() -> FleetSnapshot {
         for w in 0..(3 + r % 3) {
             let name = format!("{run}-w{w}");
             let state = states[(w + r) % states.len()];
-            s.nodes
-                .push(node(&name, NodeKind::Worker, Some(&run), state, "myrstack"));
+            let mut worker = node(&name, NodeKind::Worker, Some(&run), state, "myrstack");
+            worker.label = TASKS[(r * 5 + w) % TASKS.len()].into();
+            s.nodes.push(worker);
             s.edges.push(Edge {
                 from: id(&coord),
                 to: id(&name),

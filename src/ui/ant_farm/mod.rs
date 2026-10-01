@@ -267,15 +267,28 @@ fn paint_ground(painter: &egui::Painter, sprites: &Sprites, scene: &Scene, palet
             width,
             palette,
         );
-        if let Some(progress) = tunnel.progress {
+        // The run's task progress: a bar filling as tasks complete, and the count.
+        if let (Some(progress), Some((done, total))) = (tunnel.progress, tunnel.tasks) {
+            let count = format!("{done}/{total} tasks done");
+            let small = FontId::monospace(8.0 + 1.5 * px);
+            let bar_w = width.min(text.width().max(3.0 * a));
             let bar = Rect::from_center_size(
                 egui::pos2(top.x, text.bottom() + 3.0 * px),
-                vec2(width.min(text.width().max(3.0 * a)), 2.0 * px),
+                vec2(bar_w, 2.0 * px),
             );
             painter.rect_filled(bar.expand(px), 0.0, palette.label_shadow);
             painter.rect_filled(bar, 0.0, egui::Color32::from_rgb(0x5a, 0x3a, 0x22));
-            let done = Rect::from_min_size(bar.min, vec2(bar.width() * progress, bar.height()));
-            painter.rect_filled(done, 0.0, egui::Color32::from_rgb(0x8f, 0xd0, 0x5a));
+            let filled = Rect::from_min_size(bar.min, vec2(bar.width() * progress, bar.height()));
+            painter.rect_filled(filled, 0.0, egui::Color32::from_rgb(0x8f, 0xd0, 0x5a));
+            label(
+                painter,
+                egui::pos2(top.x, bar.bottom() + 2.0 * px),
+                Align2::CENTER_TOP,
+                &count,
+                small,
+                width,
+                palette,
+            );
         }
     }
     sprites.sign(
@@ -327,6 +340,7 @@ fn paint_ants(
     let walk_frame = (now_s * WALK_FPS) as usize;
     let step = (now_s * STEP_FPS) as usize;
     let accent = ui.visuals().selection.bg_fill;
+    let palette = Palette::new(ui.visuals().dark_mode);
     let hover = ui.visuals().widgets.hovered.fg_stroke.color;
     for (ant, at) in scene.ants.iter().zip(placed) {
         let walking = at.heading.is_some();
@@ -394,6 +408,19 @@ fn paint_ants(
             let anchor = cell.center() + vec2(0.25 * ant.size, -tpx);
             sprites.bubble(painter, anchor, size, mark, ant.alpha);
         }
+        if let Some(name) = &ant.tag {
+            let selected = selection.contains(&ant.id);
+            let width = 2.0 * scene.cell() - 2.0 * px;
+            tag(
+                painter,
+                cell.center_bottom(),
+                name,
+                px,
+                width,
+                selected.then_some(accent),
+                palette,
+            );
+        }
         let ring = cell.expand(px);
         if selection.contains(&ant.id) {
             painter.rect_stroke(ring, 0.0, Stroke::new(px, accent), StrokeKind::Outside);
@@ -424,6 +451,27 @@ fn label(
     painter.galley(rect.min + vec2(1.0, 1.0), shadow, palette.label_shadow);
     painter.galley(rect.min, galley(palette.label), palette.label);
     rect
+}
+
+/// An ant's name tag under `top`: light text on a dark chip, or on `highlight` when the ant is
+/// selected.
+fn tag(
+    painter: &egui::Painter,
+    top: Pos2,
+    name: &str,
+    px: f32,
+    width: f32,
+    highlight: Option<egui::Color32>,
+    palette: Palette,
+) {
+    let font = FontId::proportional(8.0 + 1.5 * px);
+    let mut job = egui::text::LayoutJob::simple_singleline(name.to_string(), font, palette.label);
+    job.wrap = egui::text::TextWrapping::truncate_at_width((width - 2.0 * px).max(8.0));
+    let galley = painter.layout_job(job);
+    let chip = Align2::CENTER_TOP.anchor_size(top, galley.size() + vec2(2.0 * px, 0.0));
+    let fill = highlight.unwrap_or(palette.label_shadow.gamma_multiply(0.75));
+    painter.rect_filled(chip, 0.0, fill);
+    painter.galley(chip.min + vec2(px, 0.0), galley, palette.label);
 }
 
 fn now_ms() -> i64 {
