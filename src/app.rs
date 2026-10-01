@@ -383,9 +383,11 @@ impl MyrstackApp {
             .terminal_handle
             .as_deref()
             .and_then(|h| self.data.as_ref()?.terminals.iter().find(|t| t.handle == h));
+        let review_rows = self.review_rows(now_ms);
         let snapshot = self.snapshot.as_ref();
         let is_node = |id: &NodeId| snapshot.is_some_and(|s| s.node(id).is_some());
         let input = ui::terminal::PanelInput {
+            review_rows: &review_rows,
             state: &mut self.input,
             terminal,
             conversation: self.transcript.as_mut(),
@@ -427,6 +429,9 @@ impl MyrstackApp {
         id: NodeId,
         response: ui::terminal::TerminalPanelResponse,
     ) {
+        if let Some(action) = response.review {
+            self.apply_review_action(action);
+        }
         for request in &response.requests {
             let action = self.actions.submit(request.action.clone());
             self.input.submitted(action, request);

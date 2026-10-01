@@ -194,6 +194,7 @@ impl eframe::App for Pane {
             } => {
                 self.input.show_screen = *show_screen;
                 let input = ui::terminal::PanelInput {
+                    review_rows: &[],
                     state: &mut self.input,
                     terminal: None,
                     conversation: view.as_mut().as_mut(),

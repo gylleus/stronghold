@@ -109,6 +109,7 @@ impl Tour {
                 .default_size(window * CONVERSATION_SHARE)
                 .show(ui, |ui| {
                     let input = ui::terminal::PanelInput {
+                        review_rows: &[],
                         state: &mut self.input,
                         terminal: None,
                         conversation: None,
