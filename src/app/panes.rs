@@ -209,6 +209,7 @@ impl MyrstackApp {
                         return;
                     };
                     self.ant_farm.set_queen_busy(self.queen_thinking());
+                    self.ant_farm.set_queen_focused(self.shows_chat());
                     let response = self.ant_farm.show(ui, snapshot, &self.graph);
                     if let Some(id) = &response.clicked {
                         let additive = ui.input(|i| ui::graph::is_additive(i.modifiers));

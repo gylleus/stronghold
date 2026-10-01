@@ -143,6 +143,8 @@ pub struct AntFarmView {
     ripples: Vec<Ripple>,
     /// The Queen is working on something (her chat turn runs): she hops about.
     queen_busy: bool,
+    /// Her chat is the conversation shown: she gets the selection ring.
+    queen_focused: bool,
 }
 
 impl AntFarmView {
@@ -155,6 +157,11 @@ impl AntFarmView {
     /// Whether the Queen is busy (thinking on a chat turn). Otherwise she sits still.
     pub fn set_queen_busy(&mut self, busy: bool) {
         self.queen_busy = busy;
+    }
+
+    /// Whether the Queen's chat is the conversation shown; she is ringed then.
+    pub fn set_queen_focused(&mut self, focused: bool) {
+        self.queen_focused = focused;
     }
 
     pub fn pulse(&mut self, pulse: Pulse) {
@@ -198,6 +205,7 @@ impl AntFarmView {
             ripples: &self.ripples,
             births: &self.births,
             queen_busy: self.queen_busy,
+            queen_focused: self.queen_focused,
         };
         let sprites = self.sprites.get_or_insert_with(|| Sprites::load(ui.ctx()));
         let painter = ui.painter_at(rect);
@@ -613,6 +621,18 @@ fn paint_ants(
                 Vec2::splat(ant.size * 0.5),
             );
             sprites.item(painter, crown, Item::Crown, 1.0);
+            // Ringed while selected or while her chat is the conversation shown.
+            if selection.contains(&ant.id) || effects.queen_focused {
+                let ring = cell.expand(px);
+                painter.rect_stroke(ring, 0.0, Stroke::new(px, accent), StrokeKind::Outside);
+            } else if hovered == Some(&ant.id) {
+                painter.rect_stroke(
+                    cell.expand(px),
+                    0.0,
+                    Stroke::new(1.0, hover),
+                    StrokeKind::Outside,
+                );
+            }
             continue;
         }
         sprites.ant(painter, cell, look);
@@ -679,6 +699,9 @@ fn paint_ants(
     }
 }
 
+/// Lines a name tag wraps onto before it is cut.
+const TAG_ROWS: usize = 2;
+
 /// The sleep bubble's float, in texels per step.
 const SLEEP_BOB: [f32; 4] = [0.0, 1.0, 2.0, 1.0];
 
@@ -687,6 +710,7 @@ struct Effects<'a> {
     ripples: &'a [Ripple],
     births: &'a [f64],
     queen_busy: bool,
+    queen_focused: bool,
 }
 
 /// Where the Queen sits.
@@ -821,13 +845,22 @@ fn tag(
     palette: Palette,
 ) {
     let font = FontId::proportional(8.0 + 1.5 * px);
-    let mut job = egui::text::LayoutJob::simple_singleline(name.to_string(), font, palette.label);
-    job.wrap = egui::text::TextWrapping::truncate_at_width((width - 2.0 * px).max(8.0));
+    let mut job = egui::text::LayoutJob::simple(name.to_string(), font, palette.label, 0.0);
+    job.wrap = egui::text::TextWrapping {
+        max_width: (width - 2.0 * px).max(8.0),
+        max_rows: TAG_ROWS,
+        break_anywhere: false,
+        overflow_character: Some('…'),
+    };
+    job.halign = egui::Align::Center;
     let galley = painter.layout_job(job);
-    let chip = Align2::CENTER_TOP.anchor_size(top, galley.size() + vec2(2.0 * px, 0.0));
+    // Centered lines sit around x = 0 in the galley; place its rect's middle under `top`.
+    let text = galley.rect;
+    let origin = top - vec2(text.center().x, text.top());
+    let chip = text.translate(origin.to_vec2()).expand2(vec2(px, 0.0));
     let fill = highlight.unwrap_or(palette.label_shadow.gamma_multiply(0.75));
     painter.rect_filled(chip, 0.0, fill);
-    painter.galley(chip.min + vec2(px, 0.0), galley, palette.label);
+    painter.galley(origin, galley, palette.label);
 }
 
 fn now_ms() -> i64 {

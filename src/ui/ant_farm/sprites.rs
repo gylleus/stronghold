@@ -408,7 +408,7 @@ impl Sprites {
         painter.text(pos, egui::Align2::CENTER_CENTER, "z", font, color);
     }
 
-    /// Dirt flying from the dig face at `now_s`: clods flung up and back over the digger,
+    /// Dirt flying from the digger's feet at `now_s`: clods kicked up and back behind it,
     /// falling in arcs and fading. `seed` staggers diggers so they don't throw in step.
     pub fn dirt(
         &self,
@@ -426,12 +426,9 @@ impl Sprites {
             Color32::from_rgb(0x8a, 0x5a, 0x34),
             Color32::from_rgb(0xc8, 0x94, 0x5c),
         ];
-        let face = if facing_right {
-            cell.right_center() - vec2(3.0 * px, 0.0)
-        } else {
-            cell.left_center() + vec2(3.0 * px, 0.0)
-        };
         let back = if facing_right { -1.0 } else { 1.0 };
+        // The sprite's feet: the bottom rows of the cell, a little behind its middle.
+        let face = pos2(cell.center().x + back * 2.0 * px, cell.top() + 13.0 * px);
         for i in 0..CLODS {
             let k = i as f32 / CLODS as f32;
             let t = ((now_s / LIFE_S) + f64::from(k) + f64::from(seed)).fract() as f32;

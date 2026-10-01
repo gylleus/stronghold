@@ -53,7 +53,12 @@ fn main() -> eframe::Result {
             Ok(Box::new(Demo {
                 snapshot,
                 graph,
-                farm: AntFarmView::new(),
+                farm: {
+                    // As in the app with the Queen's chat showing.
+                    let mut farm = AntFarmView::new();
+                    farm.set_queen_focused(true);
+                    farm
+                },
                 shot,
                 started: Instant::now(),
                 flipped_at: Instant::now(),
@@ -295,6 +300,9 @@ fn fleet() -> FleetSnapshot {
             let state = states[(w + r) % states.len()];
             let mut worker = node(&name, NodeKind::Worker, Some(&run), state, "myrstack");
             worker.label = TASKS[(r * 5 + w) % TASKS.len()].into();
+            if w == 0 {
+                worker.label = format!("{} and tidy the follow-ups", worker.label);
+            }
             s.nodes.push(worker);
             s.edges.push(Edge {
                 from: id(&coord),

@@ -23,11 +23,11 @@ const UNKNOWN_PROGRESS_DEPTH: f32 = 0.6;
 const MIN_DEPTH: f32 = 0.35;
 /// Distance between rows of ants, in cells: room for a row's bubbles above and name tags
 /// below.
-const ROW: f32 = 2.0;
+const ROW: f32 = 2.5;
 /// Width of an ant's slot in a row, in cells: room for its name tag.
-const SLOT: f32 = 2.0;
+const SLOT: f32 = 2.4;
 /// Room under an ant for its name tag, in cells.
-const TAG: f32 = 0.45;
+const TAG: f32 = 0.85;
 
 /// What a tunnel belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -217,8 +217,8 @@ fn chamber_height(n: usize, per_row: usize, a: f32) -> f32 {
 }
 
 /// Points per texel for a view of `size`: the biggest whole scale that leaves each tunnel
-/// room for an ant and its name tag side by side, and fits the crowds on the landing, in
-/// storage and in the fullest chamber.
+/// room for an ant and its name tag, and fits the crowds on the landing,
+/// in storage and in the fullest chamber.
 pub fn pixel_scale(size: Vec2, crowd: Crowd) -> f32 {
     let column = size.x / crowd.tunnels.max(1) as f32;
     let fits = |px: f32| {
