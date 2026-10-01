@@ -23,13 +23,15 @@ use sprites::{AntLook, Item, Palette, Sprites};
 
 /// Redraw interval while an ant walks.
 const WALK_FRAME: Duration = Duration::from_millis(33);
-/// Redraw interval of the idle animations (digging, waving, the whip): stepped like pixel
-/// art, and slow enough that a farm full of working ants stays cheap.
-const STEP_FRAME: Duration = Duration::from_millis(250);
+/// Redraw interval of the idle animations (digging and its dirt, waving, snoring, the whip):
+/// stepped like pixel art, and slow enough that a farm full of working ants stays cheap.
+const STEP_FRAME: Duration = Duration::from_millis(150);
 /// Walk frames per second.
 const WALK_FPS: f64 = 8.0;
 /// Dig and wave steps per second; matches [`STEP_FRAME`].
 const STEP_FPS: f64 = 4.0;
+/// The busy Queen's hop, in texels per step.
+const QUEEN_HOP: [f32; 4] = [0.0, 2.0, 4.0, 2.0];
 /// How long a Queen's call takes to ripple across the farm.
 const RIPPLE_S: f64 = 1.8;
 /// Delay of a ripple's second ring.
@@ -137,6 +139,8 @@ pub struct AntFarmView {
     /// Calls asked for since the last frame; see [`AntFarmView::pulse`].
     pending: Vec<Pulse>,
     ripples: Vec<Ripple>,
+    /// The Queen is working on something (her chat turn runs): she hops about.
+    queen_busy: bool,
 }
 
 impl AntFarmView {
@@ -146,6 +150,11 @@ impl AntFarmView {
 
     /// Ripples a call of the Queen across the farm, from the next frame it is drawn. Calls
     /// made while the farm is not shown are dropped then.
+    /// Whether the Queen is busy (thinking on a chat turn). Otherwise she sits still.
+    pub fn set_queen_busy(&mut self, busy: bool) {
+        self.queen_busy = busy;
+    }
+
     pub fn pulse(&mut self, pulse: Pulse) {
         self.pending.push(pulse);
     }
@@ -186,6 +195,7 @@ impl AntFarmView {
         let effects = Effects {
             ripples: &self.ripples,
             births: &self.births,
+            queen_busy: self.queen_busy,
         };
         let sprites = self.sprites.get_or_insert_with(|| Sprites::load(ui.ctx()));
         let painter = ui.painter_at(rect);
@@ -215,7 +225,8 @@ impl AntFarmView {
             || !self.ripples.is_empty()
             || !self.births.is_empty();
         let stepping = scene.ants.iter().any(|a| {
-            matches!(a.pose, Pose::Dig | Pose::Wait | Pose::Sleep | Pose::Queen)
+            matches!(a.pose, Pose::Dig | Pose::Wait | Pose::Sleep)
+                || (a.pose == Pose::Queen && self.queen_busy)
                 || a.mark == Some(layout::Mark::Whip)
         });
         if walking {
@@ -516,16 +527,19 @@ fn paint_ants(
         let frame = match ant.pose {
             _ if walking => walk_frame,
             Pose::Dig => step,
-            Pose::Queen => step / 4,
+            Pose::Queen if effects.queen_busy => step,
             _ => 0,
         };
         if !walking {
             match ant.pose {
                 Pose::Wait => cell = cell.translate(vec2(0.0, -((step % 2) as f32) * 2.0 * tpx)),
                 Pose::Dig => cell = cell.translate(vec2(0.0, -((step % 2) as f32) * tpx)),
-                Pose::Sleep => cell = cell.translate(vec2(0.0, tpx)),
-                // The Queen breathes: a slow rise and fall.
-                Pose::Queen => cell = cell.translate(vec2(0.0, -((step / 2 % 2) as f32) * tpx)),
+                // Belly up: the flipped sprite needs lowering to lie on the floor.
+                Pose::Sleep | Pose::Failed => cell = cell.translate(vec2(0.0, 2.0 * tpx)),
+                // A busy Queen hops about; otherwise she sits still.
+                Pose::Queen if effects.queen_busy => {
+                    cell = cell.translate(vec2(0.0, -QUEEN_HOP[step % QUEEN_HOP.len()] * tpx))
+                }
                 _ => {}
             }
         }
@@ -544,7 +558,7 @@ fn paint_ants(
             red: ant.pose == Pose::Failed,
             frame,
             facing_right,
-            upside_down: ant.pose == Pose::Failed && !walking,
+            upside_down: matches!(ant.pose, Pose::Failed | Pose::Sleep) && !walking,
             alpha: ant.alpha,
         };
         if ant.pose == Pose::Queen {
@@ -573,7 +587,9 @@ fn paint_ants(
             sprites.item(painter, crumb, Item::Crumb, ant.alpha);
         }
         if !walking && ant.pose == Pose::Dig {
-            sprites.dirt(painter, cell, facing_right, tpx, step);
+            let seed = (ant.pos.x * 0.37 + ant.pos.y * 0.11).rem_euclid(1.0);
+            let t = (now_s * 6.0).floor() / 6.0;
+            sprites.dirt(painter, cell, facing_right, tpx, t, seed);
         }
         if !walking && ant.mark == Some(layout::Mark::Whip) {
             sprites.whip(painter, cell, tpx, step);
@@ -629,6 +645,7 @@ const SLEEP_BOB: [f32; 4] = [0.0, 1.0, 2.0, 1.0];
 struct Effects<'a> {
     ripples: &'a [Ripple],
     births: &'a [f64],
+    queen_busy: bool,
 }
 
 /// Where the Queen sits.

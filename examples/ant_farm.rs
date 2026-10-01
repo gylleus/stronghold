@@ -3,7 +3,7 @@
 //!
 //! `cargo run --example ant_farm [--light] [--shot out.png]`: every few seconds one worker
 //! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
-//! report and N hatches a new worker. With `--shot`, it saves a screenshot once settled and
+//! report, N hatches a new worker and T toggles the Queen thinking. With `--shot`, it saves a screenshot once settled and
 //! another while a worker walks, a new one emerges and a broadcast ripples (`-walk`), then
 //! exits.
 
@@ -58,6 +58,7 @@ fn main() -> eframe::Result {
                 started: Instant::now(),
                 flipped_at: Instant::now(),
                 stage: 0,
+                thinking: false,
             }))
         }),
     )
@@ -70,6 +71,7 @@ struct Demo {
     shot: Option<String>,
     started: Instant,
     flipped_at: Instant,
+    thinking: bool,
     /// 0 settling, 1 waiting for the settled shot, 2 walking, 3 waiting for the walk shot.
     stage: u8,
 }
@@ -134,13 +136,18 @@ impl eframe::App for Demo {
             if self.flipped_at.elapsed() >= FLIP_EVERY {
                 self.flip();
             }
-            let (b, st, n) = ui.input(|i| {
+            let (b, st, n, t) = ui.input(|i| {
                 (
                     i.key_pressed(egui::Key::B),
                     i.key_pressed(egui::Key::S),
                     i.key_pressed(egui::Key::N),
+                    i.key_pressed(egui::Key::T),
                 )
             });
+            if t {
+                self.thinking = !self.thinking;
+                self.farm.set_queen_busy(self.thinking);
+            }
             if b {
                 self.farm.pulse(Pulse::Broadcast);
             }

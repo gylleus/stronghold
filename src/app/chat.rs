@@ -140,6 +140,11 @@ impl MyrstackApp {
         self.chat.session.can_send()
     }
 
+    /// Whether the Queen is working on a chat turn.
+    pub(super) fn queen_thinking(&self) -> bool {
+        self.chat.session.is_thinking()
+    }
+
     /// Opens the chat and sends the Status report prompt, as its button's `ChatAction::Send`
     /// does.
     pub(super) fn status_report(&mut self) {
