@@ -38,6 +38,8 @@ const QUEEN_HOP: [f32; 4] = [0.0, 2.0, 4.0, 2.0];
 const RIPPLE_S: f64 = 1.8;
 /// Delay of a ripple's second ring.
 const ECHO_S: f64 = 0.3;
+/// How long the Queen glows after an inward call's last ring reaches her.
+const ARRIVAL_S: f64 = 0.5;
 /// How long the Queen glows after an ant emerges from her chamber.
 const BIRTH_GLOW_S: f64 = 1.2;
 /// A gap between frames longer than this means the farm was not on screen: ants that
@@ -49,11 +51,16 @@ const AWAY_S: f64 = 2.5;
 pub enum Pulse {
     /// A broadcast to the coordinators: a golden ring.
     Broadcast,
-    /// Karl asked for a status report: a cyan ring.
+    /// Karl asked for a status report: a cyan ring gathering in to the Queen.
     StatusReport,
 }
 
 impl Pulse {
+    /// Whether the call's rings close in on the Queen instead of spreading from her.
+    fn inward(self) -> bool {
+        self == Pulse::StatusReport
+    }
+
     fn color(self) -> egui::Color32 {
         match self {
             Pulse::Broadcast => egui::Color32::from_rgb(0xff, 0xd5, 0x4a),
@@ -62,21 +69,35 @@ impl Pulse {
     }
 }
 
-/// A call rippling out from the Queen, started at `start_s`.
+/// A call rippling across the farm, started at `start_s`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Ripple {
     pulse: Pulse,
     start_s: f64,
 }
 
-/// The radius a ripple has reached `elapsed_s` after it started, growing to `max_r` with an
-/// ease-out; `None` once it has passed.
-pub fn ripple_radius(elapsed_s: f64, max_r: f32) -> Option<f32> {
+/// The radius a ripple of `pulse` has reached `elapsed_s` after it started, with an
+/// ease-out: growing from the Queen to `max_r`, or for an inward call shrinking from `max_r`
+/// to her; `None` once it has passed.
+pub fn ripple_radius(pulse: Pulse, elapsed_s: f64, max_r: f32) -> Option<f32> {
     if !(0.0..RIPPLE_S).contains(&elapsed_s) {
         return None;
     }
-    let t = (elapsed_s / RIPPLE_S) as f32;
-    Some(max_r * (1.0 - (1.0 - t) * (1.0 - t)))
+    let left = 1.0 - (elapsed_s / RIPPLE_S) as f32;
+    let out = 1.0 - left * left;
+    Some(max_r * if pulse.inward() { 1.0 - out } else { out })
+}
+
+/// How brightly the Queen glows `elapsed_s` into an inward call: rising as the first ring
+/// closes in, peaking when it reaches her and fading over [`ECHO_S`] + [`ARRIVAL_S`].
+fn arrival_glow(elapsed_s: f64) -> f32 {
+    let since = elapsed_s - RIPPLE_S;
+    let glow = if since < 0.0 {
+        1.0 + since / ECHO_S
+    } else {
+        1.0 - since / (ECHO_S + ARRIVAL_S)
+    };
+    glow.clamp(0.0, 1.0) as f32
 }
 
 /// How far an ant `dist` from the Queen hops while a ripple of `radius` passes it: a jump of
@@ -198,7 +219,7 @@ impl AntFarmView {
                 start_s: now_s,
             }));
         self.ripples
-            .retain(|r| now_s - r.start_s < RIPPLE_S + ECHO_S);
+            .retain(|r| now_s - r.start_s < RIPPLE_S + ECHO_S + ARRIVAL_S);
         self.births.retain(|t| now_s - t < BIRTH_GLOW_S);
         let placed = self.advance(&scene, now_s);
         let effects = Effects {
@@ -598,7 +619,7 @@ fn paint_ants(
             let lift: f32 = effects
                 .ripples
                 .iter()
-                .filter_map(|r| ripple_radius(now_s - r.start_s, max_r))
+                .filter_map(|r| ripple_radius(r.pulse, now_s - r.start_s, max_r))
                 .map(|radius| hop(dist, radius, scene.cell(), 4.0 * tpx))
                 .fold(0.0, f32::max);
             cell = cell.translate(vec2(0.0, -(lift / tpx).round() * tpx));
@@ -754,12 +775,26 @@ fn paint_calls(
     for ripple in effects.ripples {
         let color = ripple.pulse.color();
         let elapsed = now_s - ripple.start_s;
-        let fade = (1.0 - elapsed / (RIPPLE_S + ECHO_S)).clamp(0.0, 1.0) as f32;
+        // An outward call fades as it spreads; an inward one holds until it reaches the Queen,
+        // who glows and sparkles as it arrives.
+        let (fade, glow) = if ripple.pulse.inward() {
+            (1.0, arrival_glow(elapsed))
+        } else {
+            let fade = (1.0 - elapsed / (RIPPLE_S + ECHO_S)).clamp(0.0, 1.0) as f32;
+            (fade, fade)
+        };
         if behind {
-            sprites.glow(painter, origin, 2.5 * a, color, fade);
+            sprites.glow(painter, origin, 2.5 * a, color, glow);
+        } else if ripple.pulse.inward() && glow > 0.0 {
+            for i in 0..8 {
+                let angle = i as f32 / 8.0 * std::f32::consts::TAU + elapsed as f32;
+                let p = origin + vec2(angle.cos(), angle.sin() * 0.6) * (0.6 + glow * 0.6) * a;
+                let big = (i + step).is_multiple_of(2);
+                sprites.sparkle(painter, p, px, color.gamma_multiply(glow), big);
+            }
         }
         for (delay, strength) in [(0.0, 1.0), (ECHO_S, 0.5)] {
-            let Some(radius) = ripple_radius(elapsed - delay, max_r) else {
+            let Some(radius) = ripple_radius(ripple.pulse, elapsed - delay, max_r) else {
                 continue;
             };
             let alpha = fade * strength;
