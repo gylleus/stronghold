@@ -21,7 +21,7 @@ use crate::orca::{
 pub use label::{MAX_LABEL_CHARS, strip_spinner, truncate_label};
 pub use queen::{QUEEN_ID, QUEEN_LABEL, fleet_state};
 pub use repo::{NO_REPO, RepoIndex, node_repo, repo_of, run_repo};
-pub use state::{StateInputs, WORKING_WINDOW_MS, derive_state};
+pub use state::{StateInputs, WORKING_WINDOW_MS, derive_state, dispatch_ended};
 
 /// How long a released worker stays in the snapshot after its release, so the UI can fade it.
 pub const RELEASED_FADE_MS: i64 = 10 * 60 * 1_000;
