@@ -24,6 +24,11 @@ pub const REVIVAL_GRACE_MS: i64 = 2 * 60_000;
 pub struct FleetData {
     /// Wall-clock time the poll finished, in ms since the Unix epoch.
     pub polled_at_ms: i64,
+    /// When the terminal list (polled most often) last succeeded; `None` if it never has.
+    /// How fresh the data is: see [`crate::stale`].
+    pub fresh_at_ms: Option<i64>,
+    /// Terminal list calls that failed in a row since it last succeeded.
+    pub failed_polls: u32,
     pub terminals: Vec<Terminal>,
     pub runs: Vec<Run>,
     pub workers: Vec<Worker>,
