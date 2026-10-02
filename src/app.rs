@@ -812,7 +812,7 @@ impl MyrstackApp {
         }
         self.whip_window.gear_button(ui);
         self.whip_window.button(ui);
-        self.inbox_menu(ui, now_ms);
+        self.notifications_bell(ui);
         self.review_badge(ui);
         self.close.log_menu(ui, now_ms);
         if let Some(data) = &self.data
@@ -939,6 +939,7 @@ impl MyrstackApp {
         {
             self.panes = panes;
         }
+        self.panes.notifications = state.notifications_panel;
         self.chat_hidden = state.chat_hidden;
         self.filter = state.filter;
         self.selected = state.layout.selected.clone();
@@ -955,6 +956,7 @@ impl MyrstackApp {
             layout: self.graph.export_layout(),
             recent_actions: self.search.recents().keys(),
             panes: self.panes.encode(),
+            notifications_panel: self.panes.notifications,
             ..PersistedState::default()
         }
     }

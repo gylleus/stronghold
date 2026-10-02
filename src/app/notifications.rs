@@ -2,7 +2,7 @@
 //! nodes entering NeedsInput, the whip, the review queue, the Settings window's tests) goes
 //! through [`MyrstackApp::raise`], which runs the dispatcher and carries out its delivery:
 //! a toast, and a post to the notifier thread for the macOS pop-up and the sound. It also keeps
-//! the inbox saved, draws the bell and the node badges, and routes clicks on notifications,
+//! the inbox saved, draws the bell, the notifications panel and the node badges, and routes clicks on notifications,
 //! toasts and inbox entries (select the node, open the link, mark read).
 
 use std::collections::HashMap;
@@ -19,8 +19,9 @@ use crate::notify::history::{Entry, History};
 use crate::notify::{
     self, Incoming, NotificationCenter, NotifySettings, Outcome, Post, Severity, Sound, Source,
 };
+use crate::ui::dock::{Pane, Side};
 use crate::ui::graph::UnreadBadge;
-use crate::ui::notifications::{NoticeAction, Toasts};
+use crate::ui::notifications::{NoticeAction, NotificationsPanel, PanelAction, Toasts};
 
 /// The dispatcher and inbox, the toasts on screen and what the badges were built from.
 pub(super) struct AppNotifications {
@@ -29,6 +30,10 @@ pub(super) struct AppNotifications {
     path: Option<PathBuf>,
     dirty: bool,
     toasts: Toasts,
+    /// The notifications panel's expanded entries.
+    panel: NotificationsPanel,
+    /// The panel's collapse or side switch, applied once the dock is drawn.
+    layout_request: Option<PanelAction>,
     /// The last error posting a notification or playing a sound, for the Settings window.
     last_failure: Option<String>,
     /// History generation and snapshot time the node badges were built from.
@@ -54,6 +59,8 @@ impl AppNotifications {
             path,
             dirty: false,
             toasts: Toasts::default(),
+            panel: NotificationsPanel::default(),
+            layout_request: None,
             last_failure: None,
             badges_from: None,
             last_selected: None,
@@ -230,9 +237,16 @@ impl MyrstackApp {
         let notes = &mut self.notifications;
         match action {
             NoticeAction::Activate { id, open_url } => self.activate_notice(id, open_url),
-            NoticeAction::Dismiss(id) => {
+            NoticeAction::Dismiss(id) | NoticeAction::MarkRead(id) => {
                 notes.dirty |= notes.center.history.mark_read(id);
                 notes.toasts.remove(id);
+            }
+            NoticeAction::OpenUrl(id) => {
+                notes.dirty |= notes.center.history.mark_read(id);
+                notes.toasts.remove(id);
+                if let Some(url) = notes.center.history.get(id).and_then(|e| e.url.as_deref()) {
+                    open_in_browser(url);
+                }
             }
             NoticeAction::MarkAllRead => {
                 notes.dirty |= notes.center.history.mark_all_read() > 0;
@@ -306,13 +320,74 @@ impl MyrstackApp {
         self.graph.set_unread(badges);
     }
 
-    /// The top bar's bell and inbox.
-    pub(super) fn inbox_menu(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+    /// The top bar's bell: opens the notifications panel, or collapses it when it is in front.
+    pub(super) fn notifications_bell(&mut self, ui: &mut egui::Ui) {
         let quiet = self.whip_window.notifications().quiet;
-        let action =
-            crate::ui::notifications::inbox_menu(ui, self.notifications.entries(), quiet, now_ms);
-        if let Some(action) = action {
-            self.apply_notice_action(action);
+        let open = self.panes.is_visible(Pane::Notifications);
+        if crate::ui::notifications::bell_button(ui, self.notifications.entries(), quiet, open) {
+            self.toggle_notifications();
+        }
+    }
+
+    /// Opens the notifications panel, or collapses it when it is in front.
+    pub(super) fn toggle_notifications(&mut self) {
+        if self.panes.is_visible(Pane::Notifications) {
+            self.panes.collapse_notifications();
+        } else {
+            self.panes.open_notifications();
+        }
+    }
+
+    /// Carries out the panel's collapse or side switch, which wait until the dock is drawn.
+    pub(super) fn apply_panel_layout(&mut self) {
+        match self.notifications.layout_request.take() {
+            Some(PanelAction::Collapse) => self.panes.collapse_notifications(),
+            Some(PanelAction::SwitchSide) => self.panes.switch_notifications_side(),
+            Some(PanelAction::Notice(_)) | None => {}
+        }
+    }
+
+    /// The collapsed notifications panel's strip at its side of the window, if collapsed.
+    pub(super) fn notifications_strip(&mut self, ui: &mut egui::Ui) {
+        let dock = self.panes.notifications;
+        if dock.open {
+            return;
+        }
+        let quiet = self.whip_window.notifications().quiet;
+        let panel = match dock.side {
+            Side::Left => egui::Panel::left("notifications_strip"),
+            Side::Right => egui::Panel::right("notifications_strip"),
+        };
+        let entries = self.notifications.entries();
+        let clicked = panel
+            .resizable(false)
+            .exact_size(crate::ui::notifications::STRIP_WIDTH)
+            .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0))
+            .show(ui, |ui| {
+                crate::ui::notifications::collapsed_strip(ui, entries, quiet)
+            })
+            .inner;
+        if clicked {
+            self.panes.open_notifications();
+        }
+    }
+
+    /// The notifications pane: the history, newest first.
+    pub(super) fn notifications_pane(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+        let quiet = self.whip_window.notifications().quiet;
+        let right = ui.max_rect().center().x > ui.ctx().content_rect().center().x;
+        let action = self.notifications.panel.show(
+            ui,
+            self.notifications.center.history.entries(),
+            quiet,
+            right,
+            now_ms,
+        );
+        match action {
+            Some(PanelAction::Notice(action)) => self.apply_notice_action(action),
+            // The dock is out of `self.panes` while it draws.
+            layout @ Some(_) => self.notifications.layout_request = layout,
+            None => {}
         }
     }
 
