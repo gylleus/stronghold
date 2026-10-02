@@ -107,11 +107,14 @@ pub fn prompts_get(
         return template_prompt(playbook, control, template, params, log);
     }
     let role = Role::parse(name).ok_or_else(|| {
+        let names: Vec<&str> = Role::ALL
+            .map(Role::name)
+            .into_iter()
+            .chain(TEMPLATES.map(Template::name))
+            .collect();
         (
             INVALID_PARAMS,
-            format!(
-                "unknown prompt: {name} (coordinator, attendant, worker, attendant-brief, kickoff)"
-            ),
+            format!("unknown prompt: {name} ({})", names.join(", ")),
         )
     })?;
     let section = params
@@ -284,9 +287,9 @@ pub fn tool_definitions() -> Vec<Value> {
             "title": "Get playbook",
             "description": "The fleet playbook rules for a role (coordinator: playbook + worker \
                 protocol; attendant: attendant brief + Coordinator duties and Token economy; \
-                worker: agent protocol) or one playbook file, optionally just one `## ` section. \
-                Starts with a version line (git commit, dirty flag, content hash). Works \
-                without the app running.",
+                worker: agent protocol; envoy: Envoy playbook) or one playbook file, optionally \
+                just one `## ` section. Starts with a version line (git commit, dirty flag, \
+                content hash). Works without the app running.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

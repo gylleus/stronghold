@@ -991,6 +991,11 @@ fn playbook_server() -> (tempfile::TempDir, McpServer<FakeControl>) {
         "# Attendant <campaign>\n\n## Loop\n\nPoll.\n",
     )
     .unwrap();
+    std::fs::write(
+        dir.path().join(crate::playbook::ENVOY),
+        "# Envoy\n\n## Guardrails\n\nDraft only.\n",
+    )
+    .unwrap();
     let server = McpServer::new(FakeControl::default()).with_playbook_dir(dir.path());
     (dir, server)
 }
@@ -1012,7 +1017,7 @@ fn initialize_advertises_prompts_and_resources() {
 }
 
 #[test]
-fn prompts_list_has_the_three_roles() {
+fn prompts_list_has_the_roles_and_templates() {
     let (_d, mut server) = playbook_server();
     let r = rpc(&mut server, "prompts/list", json!({}));
     let prompts = r["result"]["prompts"].as_array().unwrap();
@@ -1026,11 +1031,12 @@ fn prompts_list_has_the_three_roles() {
             "coordinator",
             "attendant",
             "worker",
+            "envoy",
             "attendant-brief",
             "kickoff"
         ]
     );
-    for p in &prompts[..3] {
+    for p in &prompts[..4] {
         assert!(!p["description"].as_str().unwrap().is_empty());
         assert_eq!(p["arguments"][0]["name"], "section");
         assert_eq!(p["arguments"][0]["required"], false);
@@ -1067,6 +1073,11 @@ fn prompts_get_returns_the_roles_rules_as_a_user_message() {
 
     let r = rpc(&mut server, "prompts/get", json!({"name": "queen"}));
     assert_eq!(r["error"]["code"], INVALID_PARAMS);
+    let message = r["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("worker, envoy, attendant-brief"),
+        "{message}"
+    );
     let r = rpc(
         &mut server,
         "prompts/get",
@@ -1105,6 +1116,7 @@ fn resources_list_and_read() {
             "myrstack://playbook/AGENT-FLEET-PLAYBOOK.md",
             "myrstack://playbook/_AGENT_PROTOCOL.md",
             "myrstack://playbook/ATTENDANT-BRIEF-TEMPLATE.md",
+            "myrstack://playbook/ENVOY-PLAYBOOK.md",
         ]
     );
     assert!(resources.iter().all(|r| r["mimeType"] == "text/markdown"));
@@ -1156,6 +1168,14 @@ fn playbook_tools_work_without_the_app() {
         json!(["_AGENT_PROTOCOL.md"])
     );
     assert!(r["structuredContent"]["version"]["hash"].is_string());
+
+    let r = call(&mut server, "get_playbook", json!({"role": "envoy"}));
+    assert!(text(&r).starts_with("Playbook version: "), "{}", text(&r));
+    assert!(text(&r).ends_with("# Envoy\n\n## Guardrails\n\nDraft only."));
+    assert_eq!(
+        r["structuredContent"]["files"],
+        json!(["ENVOY-PLAYBOOK.md"])
+    );
 
     let r = call(&mut server, "get_playbook", json!({"section": "topo"}));
     assert!(text(&r).contains("section \"Topology\""), "{}", text(&r));
@@ -1321,7 +1341,7 @@ fn kickoff_prompt_fills_the_task_and_argument_errors_are_invalid_params() {
     );
     assert_eq!(r["error"]["code"], INVALID_PARAMS);
     let r = rpc(&mut server, "prompts/list", json!({}));
-    let brief = &r["result"]["prompts"][3];
+    let brief = &r["result"]["prompts"][crate::playbook::Role::ALL.len()];
     assert_eq!(brief["name"], "attendant-brief");
     assert_eq!(brief["arguments"][0]["name"], "run_id");
     assert_eq!(brief["arguments"][0]["required"], true);

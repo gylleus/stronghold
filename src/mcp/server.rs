@@ -52,7 +52,7 @@ only shows the plan unless dry_run=false is passed. spawn_session \
 starts a new session (existing worktree, new worktree, or a run's worker) with a prompt.
 
 This server also serves the fleet playbook, the standing rules the fleet runs by, read from disk \
-(no app needed): the prompts coordinator, attendant and worker (slash commands such as \
+(no app needed): the prompts coordinator, attendant, worker and envoy (slash commands such as \
 /mcp__myrstack__coordinator) load a role's rules; get_playbook and list_playbook fetch a role, a \
 file or one section; resources myrstack://playbook/<file> hold each file. attendant_brief \
 {run_id} and kickoff {task_id} (also prompts attendant-brief and kickoff) return those templates \

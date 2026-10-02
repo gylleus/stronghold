@@ -239,6 +239,52 @@ fn worker_gets_protocol_only() {
 }
 
 #[test]
+fn envoy_gets_its_playbook_only() {
+    let (dir, pb) = temp_playbook();
+    std::fs::write(
+        dir.path().join(ENVOY),
+        "# Envoy\n\n## Guardrails\n\nDraft only.\n",
+    )
+    .unwrap();
+    assert_eq!(Role::parse(" Envoy "), Some(Role::Envoy));
+    let got = pb.get(&Target::parse("envoy"), None).unwrap();
+    assert_eq!(got.target, Target::Role(Role::Envoy));
+    assert_eq!(got.files, [ENVOY]);
+    assert_eq!(got.body, "# Envoy\n\n## Guardrails\n\nDraft only.");
+    assert!(
+        got.text().starts_with("Playbook version: hash "),
+        "{}",
+        got.text()
+    );
+}
+
+#[test]
+fn the_repo_envoy_playbook_has_its_tool_reference() {
+    let got = Playbook::at(BAKED_DIR)
+        .get(&Target::Role(Role::Envoy), Some("tool reference"))
+        .unwrap();
+    for tool in [
+        "envoy_inbox",
+        "envoy_event",
+        "envoy_draft",
+        "envoy_drafts",
+        "envoy_relay",
+        "envoy_propose_task",
+    ] {
+        assert!(got.body.contains(&format!("`{tool}`")), "{tool}");
+    }
+}
+
+#[test]
+fn envoy_launch_prompt_loads_the_role_and_states_dry_run() {
+    for (dry_run, mode) in [(true, "Dry-run is ON"), (false, "Dry-run is OFF")] {
+        let prompt = envoy_launch_prompt(dry_run);
+        assert!(prompt.contains("get_playbook (role=envoy)"), "{prompt}");
+        assert!(prompt.contains(mode), "{prompt}");
+    }
+}
+
+#[test]
 fn files_by_loose_name() {
     let (_d, pb) = temp_playbook();
     for name in [
@@ -378,7 +424,11 @@ fn cli_rejects_bad_options() {
     assert!(cli_text(&args(&["--bogus"])).is_err());
     assert!(cli_text(&args(&["worker", "coordinator"])).is_err());
     assert!(cli_text(&args(&["--section"])).is_err());
-    assert!(cli_text(&args(&["--help"])).unwrap().starts_with("usage:"));
+    let usage = cli_text(&args(&["--help"])).unwrap();
+    assert!(
+        usage.starts_with("usage:") && usage.contains("|envoy|"),
+        "{usage}"
+    );
     assert!(run_cli(&args(&["mcp"])).is_none());
 }
 
