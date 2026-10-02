@@ -44,7 +44,9 @@ pub struct Settings {
 pub struct WhipSettings {
     /// Master switch: when off the whip evaluates nothing and sends nothing.
     pub enabled: bool,
-    /// Log intended actions without sending anything. On until Karl turns it off.
+    /// Log intended nudges, escalations and NeedsInput notifications without sending them. On
+    /// until Karl turns it off. Event forwarding (`forward_events`) stays live: it only
+    /// delivers facts to coordinators.
     pub dry_run: bool,
     /// Silence longer than this is a stall.
     pub threshold_ms: i64,
@@ -59,7 +61,7 @@ pub struct WhipSettings {
     /// A Run with no activity at all for longer than this is abandoned and never nudged.
     pub abandon_after_ms: i64,
     /// Type each Run's real bus events into its coordinator's terminal; see
-    /// [`crate::whip::forward`]. Replaces the attendant session.
+    /// [`crate::whip::forward`]. Replaces the attendant session. Live even in dry run.
     pub forward_events: bool,
 }
 

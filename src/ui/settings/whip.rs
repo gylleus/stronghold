@@ -23,7 +23,10 @@ pub fn mode_badge(ui: &mut egui::Ui, whip: &WhipSettings) {
     ui.label(RichText::new(text).strong().small().color(color))
         .on_hover_text(match text {
             "LIVE" => "The whip sends nudges and notifications",
-            "DRY RUN" => "The whip only logs what it would do",
+            "DRY RUN" => {
+                "The whip only logs the nudges it would send; event forwarding to coordinators \
+                 stays live"
+            }
             _ => "The whip is disabled",
         });
 }
@@ -32,7 +35,8 @@ pub fn mode_badge(ui: &mut egui::Ui, whip: &WhipSettings) {
 pub(super) fn form(pane: &mut SettingsPane, ui: &mut egui::Ui) -> Option<WhipSettings> {
     let d = &mut pane.whip_draft;
     ui.checkbox(&mut d.enabled, "Enabled");
-    ui.checkbox(&mut d.dry_run, "Dry run (log only, send nothing)");
+    ui.checkbox(&mut d.dry_run, "Dry run (log nudges, send none)")
+        .on_hover_text("Event forwarding to coordinators stays live in dry run");
     if d.enabled && !d.dry_run {
         ui.colored_label(
             ui.visuals().warn_fg_color,

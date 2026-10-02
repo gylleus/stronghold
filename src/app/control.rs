@@ -70,6 +70,7 @@ struct Fingerprint {
     whip_window_open: bool,
     playbook: u64,
     queen_auto: bool,
+    health: u64,
 }
 
 impl AppControl {
@@ -128,6 +129,7 @@ impl MyrstackApp {
             whip_window_open: self.whip_window.open,
             playbook: self.playbook_watch.generation,
             queen_auto: self.chat.auto_mode(),
+            health: self.health.generation,
         }
     }
 
@@ -157,6 +159,7 @@ impl MyrstackApp {
             view.playbook = status.view();
         }
         view.queen_auto = self.chat.auto_mode();
+        view.health = self.health.report.clone();
         self.control.status.publish(view);
         self.control.published = Some(fingerprint);
     }

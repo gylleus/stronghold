@@ -396,6 +396,9 @@ fn whip_quotas_alerts() {
     assert_eq!(few["log"][0]["seq"], 29);
 
     assert_eq!(h.ok("quotas", Value::Null)["fetched_at_ms"], 7);
+    let health = h.ok("health", Value::Null);
+    assert_eq!(health["level"], "ok");
+    assert_eq!(health["checks"], json!([]));
     assert_eq!(
         h.ok("alerts", Value::Null)["alerts"][0]["title"],
         "Myrstack: needs input"
@@ -974,6 +977,27 @@ fn fleet_data_serves_the_raw_poll_and_status_carries_the_playbook() {
 
     h.status.publish(StatusView::default());
     assert_eq!(h.err("fleet_data", Value::Null), ErrorCode::Unavailable);
+}
+
+#[test]
+fn health_serves_the_published_report() {
+    use crate::health::{AppFacts, QueenFact, evaluate};
+    let h = Harness::new();
+    let mut view = status_view();
+    let facts = AppFacts {
+        whip_enabled: true,
+        whip_dry_run: false,
+        queen: QueenFact::Crashed("exit 1".into()),
+    };
+    view.health = evaluate(&facts, None, 0);
+    h.status.publish(view);
+    let health = h.ok("health", Value::Null);
+    assert_eq!(health["level"], "error");
+    assert_eq!(health["checked_at_ms"], Value::Null);
+    assert_eq!(health["checks"][1]["key"], "queen");
+    assert_eq!(health["checks"][1]["detail"], "crashed: exit 1");
+    assert!(health["checks"][1]["fix"].is_string());
+    assert!(crate::control::server::READ_METHODS.contains(&"health"));
 }
 
 #[test]

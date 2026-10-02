@@ -62,13 +62,14 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `open_whip_settings` | – | `open_whip_settings` | idempotent |
 | `alerts` | `limit` (default 20), `unread_only` | `alerts` | read-only |
 | `quotas` | – | `quotas` | read-only |
+| `health` | – | `health` | read-only |
 | `get_playbook` | `role` (default `coordinator`) or `file`, `section` | – (reads the playbook) | read-only |
 | `list_playbook` | – | – (reads the playbook) | read-only |
 | `attendant_brief` | `run_id` | `fleet_data` (headless fallback) | read-only |
 | `kickoff` | `task_id` | `fleet_data` (headless fallback) | read-only |
 | `mark_pr_ready` | `pr_url`, `title`, `summary` | `pr_ready` (queued in `pr-ready.jsonl` when the app is down) | not destructive, idempotent |
 | `review_queue` | – | `review_queue` (the saved queue when the app is down) | read-only |
-| `notify` | `title`, `message`, `severity` (`info` \| `warn` \| `urgent`), `url`, `agent` | `notify` | not destructive |
+| `notify` | `title`, `message`, `severity` (`info` \| `warn` \| `urgent`), `url`, `agent` | `notify` (queued in `pending-notifications.jsonl` when the app is down) | not destructive |
 | `ask_karl` | `question`, `context`, `severity` (`info` \| `warn` \| `urgent`), `url` | `ask` | not destructive |
 | `finish_session` | `summary`, `approval` (`karl` \| `trivial`), `outcome` (`done` \| `handed_over` \| `abandoned`), `pr_url`, `force` | `finish` (a `dry_run` check, then the real one) | destructive |
 | `clean_worktrees` | `dry_run` (**default true**), `ids` (needed with `dry_run: false`) | – (runs `orca`, `git`, `gh` itself) | destructive |
@@ -88,7 +89,10 @@ the tool description and the server instructions (`src/mcp/notify.rs`, `rules_te
 on Karl (warn, or urgent), handovers (info, with the url and the next step), never progress;
 workers go through their coordinator. Identical
 repeats collapse, each agent gets at most 5 per 10 minutes, and quiet mode lets only `urgent`
-through. It needs the app running. See the control API's
+through. When the app isn't running, `notify` appends the notification to
+`<data dir>/pending-notifications.jsonl` (like `mark_pr_ready`'s `pr-ready.jsonl`) and answers
+that it is queued; on start the app takes the file into the inbox with the sender's
+attribution and link, popping up only those sent in the last 5 minutes. See the control API's
 [Notifications](control-api.md#notifications).
 
 `ask_karl` is for a question an agent waits on Karl to answer, which Myrstack can't see on

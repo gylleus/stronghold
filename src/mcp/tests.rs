@@ -442,6 +442,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "open_whip_settings",
         "alerts",
         "quotas",
+        "health",
         "get_playbook",
         "list_playbook",
         "attendant_brief",
@@ -467,6 +468,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "whip_status",
         "alerts",
         "quotas",
+        "health",
         "get_playbook",
         "list_playbook",
         "attendant_brief",
@@ -654,6 +656,7 @@ fn each_tool_maps_to_its_control_request() {
         ),
         ("alerts", json!({}), vec![("alerts", Value::Null)]),
         ("quotas", json!({}), vec![("quotas", Value::Null)]),
+        ("health", json!({}), vec![("health", Value::Null)]),
     ];
     for (tool, args, expected) in cases {
         let control = FakeControl::default()
@@ -665,6 +668,10 @@ fn each_tool_maps_to_its_control_request() {
             .reply(
                 "quotas",
                 Ok(json!({"fetched_at_ms": 0, "error": null, "providers": []})),
+            )
+            .reply(
+                "health",
+                Ok(serde_json::to_value(crate::health::HealthReport::default()).unwrap()),
             )
             .reply(
                 "agent",
@@ -835,6 +842,31 @@ fn control_errors_map_to_readable_tool_errors() {
 
 // ---------------------------------------------------------------------------
 // Read tools against real control responses
+
+#[test]
+fn health_lists_checks_with_fixes() {
+    use crate::health::{AppFacts, QueenFact, evaluate};
+    let mut view = status_view();
+    let facts = AppFacts {
+        whip_enabled: true,
+        whip_dry_run: true,
+        queen: QueenFact::Running,
+    };
+    view.health = evaluate(&facts, None, NOW);
+    let mut server = McpServer::new(HeadlessControl::from_view(view, Arc::new(Screens)));
+    let r = call(&mut server, "health", json!({}));
+    assert!(!is_error(&r), "{}", text(&r));
+    let t = text(&r);
+    assert!(
+        t.starts_with("Health: WARN — 1 problem (checks still running)."),
+        "{t}"
+    );
+    assert!(t.contains("- [warn] Whip: dry run"), "{t}");
+    assert!(t.contains("— fix: Settings › Whip"), "{t}");
+    assert!(t.contains("- [ok] Queen: chat process running"), "{t}");
+    assert_eq!(r["structuredContent"]["level"], "warn");
+    assert_eq!(r["structuredContent"]["checks"][0]["key"], "whip");
+}
 
 #[test]
 fn fleet_status_summarises_the_fleet() {
@@ -1494,6 +1526,7 @@ fn agent_server<C: Control>(control: C) -> McpServer<C> {
         origin: agent_origin(),
         pending: None,
         queue_file: None,
+        notify_pending: None,
     })
 }
 
@@ -1516,7 +1549,7 @@ fn notify_is_listed_with_when_to_call_it() {
         "Handover",
         "one notification per event",
         "standalone session with no coordinator",
-        "fall back to the existing channels",
+        "Karl sees it in his inbox when Myrstack starts",
         "quiet mode",
     ] {
         assert!(
@@ -1639,12 +1672,40 @@ fn notify_refuses_bad_arguments_before_calling_the_app() {
 }
 
 #[test]
-fn notify_says_when_myrstack_is_down() {
+fn notify_queues_when_myrstack_is_down() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(crate::notify::pending::PENDING_FILE);
+    let control = FakeControl::default().reply("notify", Err(CallError::NotRunning));
+    let mut server = McpServer::new(control).with_review_env(review::ReviewEnv {
+        origin: agent_origin(),
+        notify_pending: Some(path.clone()),
+        ..review::ReviewEnv::default()
+    });
+    let args = json!({
+        "title": "Blocked: need prod access",
+        "message": "for cp-12",
+        "severity": "warn",
+        "url": "https://github.com/o/r/pull/7",
+    });
+    let r = call(&mut server, "notify", args);
+    assert!(!is_error(&r), "{}", text(&r));
+    assert!(text(&r).contains("queued"), "{}", text(&r));
+    assert!(text(&r).contains("when Myrstack starts"), "{}", text(&r));
+    assert_eq!(r["structuredContent"]["outcome"], "queued");
+
+    let taken = crate::notify::pending::take(&path);
+    assert_eq!(taken.len(), 1);
+    let notice = &taken[0].notice;
+    assert_eq!(notice.title, "Blocked: need prod access");
+    assert_eq!(notice.url.as_deref(), Some("https://github.com/o/r/pull/7"));
+    assert_eq!(notice.origin, agent_origin());
+
+    // Without a data dir to queue in, it still says so.
     let mut server =
         agent_server(FakeControl::default().reply("notify", Err(CallError::NotRunning)));
     let r = call(&mut server, "notify", json!({"title": "t"}));
     assert!(is_error(&r));
-    assert!(text(&r).starts_with("Myrstack isn't running, so Karl can't be notified"));
+    assert!(text(&r).starts_with("Myrstack isn't running and there is no data dir"));
 }
 
 /// Answers `notify` like the app: through a real dispatcher.

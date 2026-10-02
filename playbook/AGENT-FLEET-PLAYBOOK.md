@@ -283,9 +283,10 @@ comment) so it describes the design as it now stands, then marks it.
     finished. `severity: info`, the `url`, and one line on what he needs to do next. It is a
     status, not a merge question (principle 4). Myrstack folds it into its own "PR ready for
     review" notification for the same PR, so Karl gets one.
-  - **If Myrstack isn't running**, `notify` errors: fall back to the old channels. Blocking
-    asks: `osascript -e 'display dialog "Agent <track> needs you: <what>" with title "orca
-fleet" buttons {"OK"} giving up after 300'`. Handovers: the chat and the ticket.
+  - **If Myrstack isn't running**, `notify` queues the notification and Karl sees it in his
+    inbox when Myrstack starts. A handover can wait for that. A blocking ask that can't also
+    gets `osascript -e 'display dialog "Agent <track> needs you: <what>" with title "orca
+fleet" buttons {"OK"} giving up after 300'`.
 - **A question you wait on goes through `ask_karl`** (`question`, `context`, `severity:
   info|warn|urgent`, `url`). Myrstack sees prompts and menus on your screen, not a question typed
   in the chat, so whenever you end a turn waiting for Karl's answer (which way to go, may I

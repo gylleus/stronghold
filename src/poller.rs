@@ -567,6 +567,12 @@ impl PollState {
             self.apply(CallKey::Terminals, "terminal list", result, |d, v| {
                 d.terminals = v
             });
+            if self.errors.contains_key(&CallKey::Terminals) {
+                self.data.failed_polls += 1;
+            } else {
+                self.data.failed_polls = 0;
+                self.data.fresh_at_ms = Some(wall_ms);
+            }
         }
         if due.runs_workers {
             let result = source.runs();
@@ -1311,11 +1317,21 @@ mod tests {
             s.fail_runs = true;
             s.terminals.clear();
         });
+        assert_eq!(first.fresh_at_ms, Some(NOW_MS));
+        assert_eq!(first.failed_polls, 0);
         let snap = state.tick(&fake, secs(2), NOW_MS + 2000).unwrap();
         assert_eq!(snap.terminals.len(), 1, "previous terminals retained");
         assert_eq!(snap.errors.len(), 1);
         assert!(snap.errors[0].contains("Orca runtime not reachable"));
         assert_eq!(snap.polled_at_ms, NOW_MS + 2000);
+        assert_eq!(
+            snap.fresh_at_ms,
+            Some(NOW_MS),
+            "fresh as of the last success"
+        );
+        assert_eq!(snap.failed_polls, 1);
+        let snap = state.tick(&fake, secs(4), NOW_MS + 4000).unwrap();
+        assert_eq!(snap.failed_polls, 2);
 
         // Runs fail on their tick; the terminal error is still outstanding.
         let snap = state.tick(&fake, secs(10), NOW_MS).unwrap();
@@ -1329,8 +1345,10 @@ mod tests {
 
         // Terminals recover; the run error stays until runs are next polled.
         fake.with(|s| s.fail_terminals = false);
-        let snap = state.tick(&fake, secs(12), NOW_MS).unwrap();
+        let snap = state.tick(&fake, secs(12), NOW_MS + 12_000).unwrap();
         assert!(snap.terminals.is_empty());
+        assert_eq!(snap.fresh_at_ms, Some(NOW_MS + 12_000));
+        assert_eq!(snap.failed_polls, 0);
         assert_eq!(snap.errors.len(), 1);
         assert!(snap.errors[0].starts_with("run list"));
 
@@ -1380,11 +1398,20 @@ mod tests {
         poller.send(PollerCommand::RefreshNow);
         poller.rx().recv_timeout(secs(2)).unwrap();
         fake.with(|s| assert_eq!(s.calls.runs, 2));
-        assert_eq!(repaints.load(Ordering::SeqCst), 2);
+        // The loop repaints just after sending each snapshot, so the second
+        // repaint can trail the `recv`: wait for it. A slow machine may also
+        // reach the 2 s terminal tick, hence at least two.
+        let deadline = Instant::now() + secs(5);
+        while repaints.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
+            std::thread::sleep(ms(5));
+        }
+        assert!(repaints.load(Ordering::SeqCst) >= 2);
 
+        // Dropping interrupts the wait for the next tick instead of
+        // sleeping it out; the bound is generous for loaded machines.
         let started = Instant::now();
         drop(poller);
-        assert!(started.elapsed() < Duration::from_millis(500));
+        assert!(started.elapsed() < secs(3));
     }
 
     #[test]

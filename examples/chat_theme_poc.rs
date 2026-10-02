@@ -97,7 +97,10 @@ impl eframe::App for Demo {
                         self.transcript.decide(&request_id, decision);
                     }
                     ChatAction::NewChat => self.transcript = scripted_transcript(),
-                    ChatAction::Interrupt | ChatAction::Retry | ChatAction::SelectNode(_) => {}
+                    ChatAction::Interrupt
+                    | ChatAction::Compact
+                    | ChatAction::Retry
+                    | ChatAction::SelectNode(_) => {}
                 }
             }
         });

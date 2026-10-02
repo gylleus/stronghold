@@ -6,6 +6,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::detect::claude_session_live;
 use crate::fleet::FleetData;
 use crate::orca::{Task, TaskStatus, Timestamp};
 use crate::whip::progress::{ProgressReport, ProgressSource, RunProgress, TaskProgress};
@@ -74,6 +75,10 @@ impl StallTarget {
 pub enum StallReason {
     /// A dispatched task's owner has shown no progress within the threshold.
     WorkerNoProgress,
+    /// A dispatched task's owner sits idle at its Claude prompt past the threshold and never
+    /// reported (`worker_done` / `merge_ready`) on this dispatch: it looks finished, but its
+    /// report never reached the bus (e.g. its `orca orchestration send` failed).
+    MissingReport,
     /// The coordinator has been idle while it has work: `ready` tasks nobody started, or
     /// finished tasks it has not acted on.
     CoordinatorIdle {
@@ -91,7 +96,7 @@ impl StallReason {
     fn severity(&self) -> u8 {
         match self {
             Self::QuietNoTasks => 0,
-            Self::WorkerNoProgress | Self::CoordinatorIdle { .. } => 1,
+            Self::WorkerNoProgress | Self::MissingReport | Self::CoordinatorIdle { .. } => 1,
             Self::UnansweredAsk { .. } => 2,
         }
     }
@@ -201,6 +206,11 @@ pub fn effective_coordinator(run_id: &str, data: &FleetData) -> Option<String> {
 /// a failed task whose worker kept working (see [`TaskProgress::failed_but_alive`]) and then
 /// went silent. A worker waiting on an unanswered ask is the coordinator's stall (rule 3), not
 /// its own.
+///
+/// Rule 1b takes precedence over it for the same stall: when the dispatched task's owner is a
+/// live Claude session idle at its prompt (silent past the threshold, so not mid-turn) and has
+/// not sent `worker_done` / `merge_ready` on this dispatch, the reason is
+/// [`StallReason::MissingReport`].
 fn worker_stalled(
     task: &TaskProgress,
     data: &FleetData,
@@ -225,12 +235,26 @@ fn worker_stalled(
         .as_deref()
         .map(|p| format!(", last phase {p}"))
         .unwrap_or_default();
+    let target = StallTarget::Worker {
+        handle: owner.to_string(),
+        task_id: task.task_id.clone(),
+        run_id: task.run_id.clone(),
+    };
+    if looks_unreported(task, data, owner) {
+        return Some(StallFinding {
+            target,
+            reason: StallReason::MissingReport,
+            idle_for_ms: idle,
+            evidence: format!(
+                "task {} dispatched, worker idle at its prompt for {} and no worker_done or \
+                 merge_ready on the bus{phase}",
+                task_label(data, &task.run_id, &task.task_id),
+                fmt_duration(idle),
+            ),
+        });
+    }
     Some(StallFinding {
-        target: StallTarget::Worker {
-            handle: owner.to_string(),
-            task_id: task.task_id.clone(),
-            run_id: task.run_id.clone(),
-        },
+        target,
         reason: StallReason::WorkerNoProgress,
         idle_for_ms: idle,
         evidence: format!(
@@ -245,6 +269,14 @@ fn worker_stalled(
             source_label(&task.source),
         ),
     })
+}
+
+/// See rule 1b on [`worker_stalled`]; the caller has checked the silence.
+fn looks_unreported(task: &TaskProgress, data: &FleetData, owner: &str) -> bool {
+    task.status == TaskStatus::Dispatched
+        && !task.failed_but_alive
+        && !task.reported
+        && data.terminal(owner).is_some_and(claude_session_live)
 }
 
 /// Rule 2: the coordinator has `ready` tasks nobody started, or tasks that finished more than
@@ -539,6 +571,7 @@ mod tests {
             phase: Some("implementing".into()),
             waiting_on_ask: false,
             failed_but_alive: false,
+            reported: false,
         }
     }
 
@@ -738,6 +771,85 @@ mod tests {
                 vec![],
             ),
         ]);
+    }
+
+    /// Puts a live, idle Claude session in the worker's terminal and silences `t1` for 20 min.
+    fn idle_claude_worker(s: &mut Scenario) {
+        let worker = s
+            .data
+            .terminals
+            .iter_mut()
+            .find(|t| t.handle == WORKER)
+            .unwrap();
+        worker.agent_identity = Some(crate::orca::AgentIdentity::Claude);
+        worker.preview = Some("⏺ Done, PR #9 open.\nnew task? /clear to save 80k tokens".into());
+        s.t1().last_progress_ms = Some(NOW - 20 * MIN);
+    }
+
+    #[test]
+    fn missing_report_rule() {
+        let missing = || vec![(worker_target(), StallReason::MissingReport, 20)];
+        let no_progress = || vec![(worker_target(), StallReason::WorkerNoProgress, 20)];
+        run_cases(vec![
+            (
+                "idle Claude worker, never reported",
+                idle_claude_worker,
+                missing(),
+            ),
+            (
+                "still within the threshold",
+                |s| {
+                    idle_claude_worker(s);
+                    s.t1().last_progress_ms = Some(NOW - 10 * MIN);
+                },
+                vec![],
+            ),
+            (
+                "already sent merge_ready: plain stall",
+                |s| {
+                    idle_claude_worker(s);
+                    s.t1().reported = true;
+                },
+                no_progress(),
+            ),
+            (
+                "not a live Claude session: plain stall",
+                |s| s.t1().last_progress_ms = Some(NOW - 20 * MIN),
+                no_progress(),
+            ),
+            (
+                "failed but alive: plain stall",
+                |s| {
+                    idle_claude_worker(s);
+                    s.t1().status = TaskStatus::Failed;
+                    s.t1().failed_but_alive = true;
+                },
+                no_progress(),
+            ),
+            (
+                "pending ask: the coordinator's stall",
+                |s| {
+                    idle_claude_worker(s);
+                    s.ask("q1", NOW - 5 * MIN);
+                },
+                vec![],
+            ),
+            (
+                "waiting on Karl",
+                |s| {
+                    idle_claude_worker(s);
+                    s.needs_input.insert(WORKER.into());
+                },
+                vec![],
+            ),
+        ]);
+        let mut s = Scenario::new();
+        idle_claude_worker(&mut s);
+        let evidence = &s.eval()[0].evidence;
+        assert!(
+            evidence.contains("no worker_done or merge_ready on the bus"),
+            "{evidence}"
+        );
     }
 
     #[test]

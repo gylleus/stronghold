@@ -9,6 +9,7 @@ mod chat;
 mod control;
 mod dictation;
 pub mod envoy;
+mod health;
 mod lifecycle;
 mod notifications;
 mod palette;
@@ -157,6 +158,8 @@ pub struct MyrstackApp {
     review: review::AppReview,
     pub envoy_core: envoy::AppEnvoy,
     envoy_panel: ui::envoy::DraftsPanel,
+    /// Health checks for silent misconfigurations, and the badge showing them.
+    health: health::AppHealth,
 }
 
 impl MyrstackApp {
@@ -176,12 +179,13 @@ impl MyrstackApp {
         let whip_window = ui::settings::SettingsPane::load(whip::Settings::path());
         let notifier = Arc::new(Notifier::spawn(Some(repaint_once(ctx))));
         let whip_notifier = notifier.clone();
-        let whip = WhipRunner::spawn(
+        let whip = WhipRunner::spawn_with_store(
             whip_window.whip().clone(),
             Box::new(move || {
                 Box::new(whip::OrcaExecutor::default().with_notifier(whip_notifier.clone()))
             }),
             Some(repaint_once(ctx)),
+            whip::Settings::path().map(|p| p.with_file_name(whip::forward::FORWARDED_FILE)),
         );
         let quota = QuotaPoller::spawn(
             OrcaClient::new(),
@@ -248,6 +252,7 @@ impl MyrstackApp {
             review: review::AppReview::start(ctx),
             envoy_core: envoy::AppEnvoy::start(ctx),
             envoy_panel: ui::envoy::DraftsPanel::default(),
+            health: health::AppHealth::start(ctx),
         };
         app.talk_startup();
         app.restore_state(cc.storage);
@@ -736,6 +741,57 @@ impl MyrstackApp {
         }
     }
 
+    /// How fresh the fleet data is; `None` before the first poll.
+    fn freshness(&self, now_ms: i64) -> Option<crate::stale::Freshness> {
+        let data = self.data.as_ref()?;
+        Some(crate::stale::freshness(
+            data.fresh_at_ms,
+            data.failed_polls,
+            now_ms,
+            PollerConfig::default().terminals,
+        ))
+    }
+
+    /// While Orca keeps failing: a banner with the error, how old the data is and "Retry now".
+    fn stale_banner(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+        let Some(crate::stale::Freshness::Failing { age_ms, failures }) = self.freshness(now_ms)
+        else {
+            return;
+        };
+        let error = self
+            .data
+            .as_ref()
+            .and_then(|d| d.errors.first().cloned())
+            .unwrap_or_default();
+        let all_errors = self
+            .data
+            .as_ref()
+            .map(|d| d.errors.join("\n"))
+            .unwrap_or_default();
+        let shown = age_ms.map_or_else(
+            || "no data yet".to_owned(),
+            |ms| format!("showing data from {} ago", ui::table::format_age(ms)),
+        );
+        let retry = egui::Panel::top("stale_banner")
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let retry = ui.button("Retry now").clicked();
+                    ui.colored_label(
+                        ui.visuals().error_fg_color,
+                        format!("Orca isn't answering ({failures} failed polls): {shown}."),
+                    );
+                    ui.add(egui::Label::new(egui::RichText::new(error).weak()).truncate())
+                        .on_hover_text(all_errors);
+                    retry
+                })
+                .inner
+            })
+            .inner;
+        if retry {
+            self.poller.send(PollerCommand::RefreshNow);
+        }
+    }
+
     /// A bar offering to clear the filters while the selected node is filtered out.
     fn hidden_selection_notice(&mut self, ui: &mut egui::Ui) {
         let Some(id) = self.selected.clone() else {
@@ -826,11 +882,18 @@ impl MyrstackApp {
             ui.weak(format!("{} terminals", data.terminals.len()));
             ui.separator();
             self.worktrees.top_bar(ui, &data.worktrees);
+        }
+        if let Some(freshness) = self.freshness(now_ms)
+            && let Some(label) = crate::stale::age_label(freshness)
+        {
             ui.separator();
-            ui.weak(format!(
-                "updated {} ago",
-                ui::table::format_age(now_ms - data.polled_at_ms)
-            ));
+            let color = if freshness.is_failing() {
+                ui.visuals().error_fg_color
+            } else {
+                ui.visuals().warn_fg_color
+            };
+            ui.colored_label(color, label)
+                .on_hover_text("Orca hasn't answered lately: the fleet shown may be out of date");
         }
         if ui.button("Refresh").clicked() {
             self.poller.send(PollerCommand::RefreshNow);
@@ -847,6 +910,7 @@ impl MyrstackApp {
         self.whip_window.button(ui);
         self.notifications_bell(ui);
         self.review_badge(ui);
+        self.health_badge(ui, now_ms);
         self.close.log_menu(ui, now_ms);
         if let Some(data) = &self.data
             && let Some(first) = data.errors.first()
@@ -1131,6 +1195,7 @@ impl eframe::App for MyrstackApp {
         self.poll_control(ctx);
         self.poll_review();
         self.poll_envoy();
+        self.poll_health();
         self.poll_whip_now();
         self.poll_spawn();
         self.run_finish_closes();

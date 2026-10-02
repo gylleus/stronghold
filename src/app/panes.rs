@@ -191,6 +191,7 @@ impl MyrstackApp {
 
     /// The graph with its legend and hidden-selection notice, or the table.
     fn graph_pane(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+        self.stale_banner(ui, now_ms);
         self.hidden_selection_notice(ui);
         if self.view == View::Graph {
             egui::Panel::bottom("legend")
@@ -200,7 +201,7 @@ impl MyrstackApp {
                 )
                 .show(ui, ui::graph::legend);
         }
-        egui::CentralPanel::default().show(ui, |ui| match &self.data {
+        let canvas = egui::CentralPanel::default().show(ui, |ui| match &self.data {
             None => {
                 ui.vertical_centered(|ui| {
                     ui.add_space(ui.available_height() * 0.3);
@@ -277,6 +278,14 @@ impl MyrstackApp {
                 }
             },
         });
+        if self
+            .freshness(now_ms)
+            .is_some_and(crate::stale::Freshness::is_failing)
+        {
+            // Dims the old data; paint only, so the canvas stays usable.
+            let veil = ui.visuals().panel_fill.gamma_multiply(0.45);
+            ui.painter().rect_filled(canvas.response.rect, 0.0, veil);
+        }
     }
 
     /// The selected node's attributes and actions, or the Queen's review queue, fleet
