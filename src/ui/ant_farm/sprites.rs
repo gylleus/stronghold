@@ -193,7 +193,7 @@ impl Sprites {
         }
     }
 
-    /// A star: a dot, or a little cross while it twinkles.
+    /// A star: a dot, or a little cross for a bright one.
     pub fn star(&self, painter: &Painter, at: Pos2, px: f32, bright: bool) {
         let color = Color32::from_rgb(0xfb, 0xf4, 0xd0);
         if bright {
