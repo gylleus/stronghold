@@ -537,7 +537,7 @@ fn each_tool_maps_to_its_control_request() {
             json!({"id": "term:a", "text": "continue"}),
             vec![(
                 "send",
-                json!({"id": "term:a", "text": "continue", "enter": true}),
+                json!({"id": "term:a", "text": "continue", "enter": true, "origin": agent_origin()}),
             )],
         ),
         (
@@ -545,7 +545,7 @@ fn each_tool_maps_to_its_control_request() {
             json!({"id": "term:a", "text": "draft", "submit": false}),
             vec![(
                 "send",
-                json!({"id": "term:a", "text": "draft", "enter": false}),
+                json!({"id": "term:a", "text": "draft", "enter": false, "origin": agent_origin()}),
             )],
         ),
         (
@@ -664,7 +664,7 @@ fn each_tool_maps_to_its_control_request() {
                           "children": [], "screen": null}),
                 ),
             );
-        let mut server = McpServer::new(control);
+        let mut server = agent_server(control);
         let r = call(&mut server, tool, args.clone());
         assert!(!is_error(&r), "{tool} {args}: {}", text(&r));
         let expected: Vec<(String, Value)> = expected
