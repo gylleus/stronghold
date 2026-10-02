@@ -132,3 +132,95 @@ mod tests {
         assert!(request(0).text().starts_with(RELAY_PREFIX));
     }
 }
+
+/// Keep the broadcast routing while replacing the Queen's authority with the Envoy's.
+pub fn attribute_broadcast(plan: &mut crate::broadcast::BroadcastPlan, from: &str, text: &str) {
+    for delivery in &mut plan.deliveries {
+        delivery.message.from = Some(from.into());
+        delivery.message.subject = text
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .chars()
+            .take(100)
+            .collect();
+        delivery.message.body = Some(text.into());
+    }
+}
+
+pub fn deliver_broadcast(
+    sender: &mut dyn crate::broadcast::BroadcastSender,
+    plan: &crate::broadcast::BroadcastPlan,
+    traffic: &crate::traffic::TrafficSender,
+    from: &str,
+) -> serde_json::Value {
+    let result = crate::control::commands::deliver_broadcast(sender, plan);
+    for delivery in result["deliveries"].as_array().into_iter().flatten() {
+        if delivery["ok"] == true
+            && let Some(to) = delivery["coordinator"].as_str()
+        {
+            traffic.send(crate::traffic::AgentMessage::new(
+                from,
+                to,
+                crate::traffic::MessageKind::Relay,
+            ));
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod traffic_tests {
+    use super::*;
+    use crate::broadcast::{BroadcastPlan, BroadcastSender, Delivery};
+    use crate::orca::OutgoingMessage;
+    use crate::traffic::{AgentMessage, MessageKind, Traffic};
+    struct Sender(Vec<OutgoingMessage>);
+    impl BroadcastSender for Sender {
+        fn send(&mut self, m: &OutgoingMessage) -> Result<Option<String>, String> {
+            self.0.push(m.clone());
+            if m.to.as_deref() == Some("run:failed") {
+                Err("offline".into())
+            } else {
+                Ok(None)
+            }
+        }
+    }
+    #[test]
+    fn broadcast_keeps_envoy_attribution_and_draws_only_delivered_relays() {
+        let mut plan = BroadcastPlan {
+            deliveries: ["ok", "failed"]
+                .into_iter()
+                .map(|id| Delivery {
+                    coordinator_handle: format!("term_{id}"),
+                    run_ids: vec![id.into()],
+                    message: crate::broadcast::broadcast_message(id, "context"),
+                })
+                .collect(),
+            skipped: vec![],
+        };
+        let text = format!("{RELAY_PREFIX} Context");
+        attribute_broadcast(&mut plan, "term_envoy", &text);
+        let mut sender = Sender(Vec::new());
+        let traffic = Traffic::default();
+        let result = deliver_broadcast(&mut sender, &plan, &traffic.sender(), "term_envoy");
+        assert_eq!(result["sent"], 1);
+        assert_eq!(result["failed"], 1);
+        assert_eq!(
+            traffic.drain(),
+            [AgentMessage::new(
+                "term_envoy",
+                "term_ok",
+                MessageKind::Relay
+            )]
+        );
+        assert!(
+            sender
+                .0
+                .iter()
+                .all(|m| m.from.as_deref() == Some("term_envoy")
+                    && m.subject.starts_with(RELAY_PREFIX)
+                    && m.body.as_deref() == Some(&text))
+        );
+    }
+}

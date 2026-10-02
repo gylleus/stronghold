@@ -197,7 +197,7 @@ impl MyrstackApp {
     }
 
     /// Submits `actions` for one command; its reply goes out when they all finish.
-    fn submit_control_actions(
+    pub(super) fn submit_control_actions(
         &mut self,
         actions: Vec<Action>,
         reply: Reply,

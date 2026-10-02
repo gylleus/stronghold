@@ -2,12 +2,12 @@
 
 use eframe::egui;
 use serde_json::{Value, json};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
 use super::{MyrstackApp, now_ms};
 use crate::actions::{Action, ActionId, ActionResult};
-use crate::control::{ControlCommand, ControlError, ErrorCode, Reply};
+use crate::control::{ControlError, ErrorCode, Reply};
 use crate::envoy::channel::InboundEvent;
 use crate::envoy::control::EnvoyCommand;
 use crate::envoy::drafts::{Draft, DraftKind, DraftQueue, DraftStatus, ReplyTo};
@@ -18,6 +18,7 @@ use crate::envoy::worker::{Update, Work, Worker};
 use crate::envoy::{BridgeStatus, EnvoyIdentity, EnvoyStatus};
 use crate::notify::{Incoming, Severity, Source};
 use crate::orca::TerminalInput;
+use crate::traffic::{AgentMessage, MessageKind};
 
 pub const DRAFTS_TARGET: &str = "envoy:drafts";
 
@@ -32,6 +33,9 @@ pub struct AppEnvoy {
     relay_path: PathBuf,
     pending: VecDeque<InboundEvent>,
     forwarding: Option<(ActionId, Vec<InboundEvent>)>,
+    relay_actions: HashMap<ActionId, AgentMessage>,
+    outgoing: HashMap<String, String>,
+    traffic_handle: Option<String>,
     forward_after_ms: i64,
     notices: HashSet<String>,
     pub open_request: bool,
@@ -77,6 +81,9 @@ impl AppEnvoy {
             relay_path,
             pending: VecDeque::new(),
             forwarding: None,
+            relay_actions: HashMap::new(),
+            outgoing: HashMap::new(),
+            traffic_handle: None,
             forward_after_ms: 0,
             notices: HashSet::new(),
             open_request: false,
@@ -97,6 +104,7 @@ impl AppEnvoy {
         if self.handle.is_none() {
             self.pending = self.inbox.unforwarded().into();
         }
+        self.traffic_handle = Some(handle.clone());
         self.handle = Some(handle);
         self.settings = settings;
         Ok(())
@@ -188,6 +196,9 @@ impl MyrstackApp {
                 self.open_chat();
             }
         } else {
+            if let Some(from) = &self.envoy_core.traffic_handle {
+                self.envoy_core.outgoing.insert(id.into(), from.clone());
+            }
             let result = self.envoy_core.worker()?.submit(Work::Send {
                 id: id.into(),
                 message: draft.outbound()?,
@@ -214,7 +225,7 @@ impl MyrstackApp {
 
     pub(super) fn control_envoy(
         &mut self,
-        ctx: &egui::Context,
+        _ctx: &egui::Context,
         command: EnvoyCommand,
         reply: Reply,
     ) -> Result<(), ControlError> {
@@ -258,21 +269,7 @@ impl MyrstackApp {
                     reply.send(Ok(json!({"dry_run":true,"relay":record})));
                     Ok(())
                 }
-                Ok(record) => {
-                    let command = if record.request.to == "coordinators" {
-                        ControlCommand::Broadcast {
-                            text: record.request.text(),
-                            runs: None,
-                        }
-                    } else {
-                        ControlCommand::Send {
-                            agent: record.request.to.clone(),
-                            text: record.request.text(),
-                            enter: true,
-                        }
-                    };
-                    self.run_control_command(ctx, command, reply)
-                }
+                Ok(record) => self.deliver_envoy_relay(&record.request, reply),
                 Err(error) => {
                     let error = ControlError::new(ErrorCode::Refused, error);
                     reply.send(Err(error.clone()));
@@ -286,6 +283,70 @@ impl MyrstackApp {
         let error = result.as_ref().err().cloned();
         reply.send(result);
         error.map_or(Ok(()), Err)
+    }
+
+    fn deliver_envoy_relay(
+        &mut self,
+        request: &RelayRequest,
+        reply: Reply,
+    ) -> Result<(), ControlError> {
+        let from = self.envoy_core.handle.clone().expect("authorized Envoy");
+        if request.to == "coordinators" {
+            let Some(snapshot) = &self.snapshot else {
+                let error = ControlError::new(ErrorCode::Unavailable, "Fleet snapshot unavailable");
+                reply.send(Err(error.clone()));
+                return Err(error);
+            };
+            let selection = crate::broadcast::BroadcastSelection::new(
+                snapshot.runs.iter().map(|r| r.id.clone()),
+            );
+            let mut plan = crate::broadcast::plan_broadcast(snapshot, &selection, &request.text());
+            crate::envoy::relay::attribute_broadcast(&mut plan, &from, &request.text());
+            if plan.deliveries.is_empty() {
+                let error = ControlError::not_found("No live coordinators");
+                reply.send(Err(error.clone()));
+                return Err(error);
+            }
+            let traffic = self.traffic.sender();
+            std::thread::spawn(move || {
+                let mut sender = crate::orca::OrcaClient::new();
+                reply.send(Ok(crate::envoy::relay::deliver_broadcast(
+                    &mut sender,
+                    &plan,
+                    &traffic,
+                    &from,
+                )));
+            });
+            return Ok(());
+        }
+        let target = self.control_node(&request.to).and_then(|node| {
+            crate::ui::terminal::watch_handle(node)
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    ControlError::new(ErrorCode::Refused, "Relay target has no live terminal")
+                })
+        });
+        let handle = match target {
+            Ok(handle) => handle,
+            Err(error) => {
+                reply.send(Err(error.clone()));
+                return Err(error);
+            }
+        };
+        let message = AgentMessage::new(from, handle.clone(), MessageKind::Relay);
+        let ids = self.submit_control_actions(
+            vec![Action::Send {
+                handle: handle.clone(),
+                input: TerminalInput::line(request.text()),
+            }],
+            reply,
+            json!({"handle":handle,"sent":"relay"}),
+            false,
+        );
+        for id in ids {
+            self.envoy_core.relay_actions.insert(id, message.clone());
+        }
+        Ok(())
     }
 
     fn envoy_request(&mut self, method: &str, args: &Value) -> Result<Value, String> {
@@ -406,6 +467,15 @@ impl MyrstackApp {
                     self.envoy_core.notices = current;
                 }
                 Update::Sent { id, result } => {
+                    if let Some(from) = self.envoy_core.outgoing.remove(&id)
+                        && result.is_ok()
+                    {
+                        self.traffic.sender().send(AgentMessage::new(
+                            from,
+                            "slack",
+                            MessageKind::Relay,
+                        ));
+                    }
                     if let Err(e) = self
                         .envoy_core
                         .queue()
@@ -472,6 +542,11 @@ impl MyrstackApp {
     }
 
     pub(super) fn envoy_action_done(&mut self, result: &ActionResult) {
+        if let Some(message) = self.envoy_core.relay_actions.remove(&result.id)
+            && result.outcome.is_ok()
+        {
+            self.traffic.sender().send(message);
+        }
         if self
             .envoy_core
             .forwarding
@@ -482,6 +557,13 @@ impl MyrstackApp {
         }
         let (_, batch) = self.envoy_core.forwarding.take().expect("matching action");
         if result.outcome.is_ok() {
+            for _ in &batch {
+                self.traffic.sender().send(AgentMessage::new(
+                    "slack",
+                    result.action.handle(),
+                    MessageKind::Relay,
+                ));
+            }
             let ids: Vec<_> = batch.iter().map(InboundEvent::id).collect();
             self.envoy_core.inbox.mark_forwarded(&ids);
             if let Some(worker) = &self.envoy_core.worker {
