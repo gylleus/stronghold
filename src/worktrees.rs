@@ -9,8 +9,12 @@
 //! `orca worktree rm` (never a raw `rm`), and logs each removal to `worktree-cleanup.jsonl`.
 //!
 //! The rules match `finish_session`'s guards and the playbook's post-merge cleanup: clean
-//! `git status`, and HEAD an ancestor of the base (or the PR merged or closed with every
-//! commit on a remote).
+//! `git status`, and HEAD's work already in the base or on GitHub. That is HEAD an ancestor of
+//! the base, every commit patch-equivalent to one in it (a rebase merge), the branch's changes
+//! already in its tree (a squash merge), HEAD inside a merged PR's head, or the PR merged or
+//! closed with every commit on a remote. Untracked agent notes (`*.md`) and logs (`*.log`)
+//! don't keep a worktree: the notes are saved under `~/Documents/agents/notes/` and the logs
+//! deleted right before removal. Any other untracked file keeps it.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, OpenOptions};
@@ -37,6 +41,12 @@ pub const MIN_AGE_MS: i64 = 2 * 60 * 60 * 1000;
 pub const REMOVE_TIMEOUT: Duration = Duration::from_secs(180);
 /// Paths `git status` may show without counting as uncommitted work: the beads export.
 const IGNORED_DIRTY: &[&str] = &[".beads/"];
+/// Build output directories reported in a worktree's size breakdown.
+const BUILD_DIRS: &[&str] = &["target", ".venv", "node_modules", ".yarn"];
+/// How deep below the worktree build output directories are looked for.
+const BUILD_DEPTH: usize = 4;
+/// Smaller build output directories are left out of the size text.
+const MIN_BUILD_SHOWN: u64 = 1024 * 1024;
 /// How many worktrees are checked at once.
 const PARALLEL: usize = 8;
 /// PRs fetched per repo to match branches against.
@@ -124,6 +134,68 @@ pub fn disk_usage(path: &Path) -> Option<u64> {
     Some(kb * 1024)
 }
 
+/// A build output directory inside a worktree, relative to it, and its size.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuildDir {
+    pub path: String,
+    pub bytes: u64,
+}
+
+/// A worktree's disk usage and the build output in it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiskBreakdown {
+    pub total: u64,
+    /// Biggest first.
+    pub build: Vec<BuildDir>,
+}
+
+/// Disk usage of a worktree with its build output (`du -k -d 4`), one walk of the tree.
+pub fn disk_breakdown(path: &Path) -> Option<DiskBreakdown> {
+    let out = Command::new("du")
+        .arg("-k")
+        .arg("-d")
+        .arg(BUILD_DEPTH.to_string())
+        .arg(path)
+        .output()
+        .ok()?;
+    parse_du_breakdown(path, &String::from_utf8_lossy(&out.stdout))
+}
+
+/// Parses `du -k -d N <root>` output: the root's line is the total; the outermost
+/// [`BUILD_DIRS`] below it are the build output.
+pub fn parse_du_breakdown(root: &Path, text: &str) -> Option<DiskBreakdown> {
+    let mut total = None;
+    let mut build = Vec::new();
+    for line in text.lines() {
+        let Some((kb, path)) = line.split_once('\t') else {
+            continue;
+        };
+        let Ok(kb) = kb.trim().parse::<u64>() else {
+            continue;
+        };
+        let Ok(rel) = Path::new(path).strip_prefix(root) else {
+            continue;
+        };
+        if rel.as_os_str().is_empty() {
+            total = Some(kb * 1024);
+            continue;
+        }
+        let parts: Vec<&str> = rel.iter().filter_map(|c| c.to_str()).collect();
+        let is_build = |c: &&str| BUILD_DIRS.contains(c);
+        if parts.last().is_some_and(is_build) && !parts[..parts.len() - 1].iter().any(is_build) {
+            build.push(BuildDir {
+                path: parts.join("/"),
+                bytes: kb * 1024,
+            });
+        }
+    }
+    build.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.path.cmp(&b.path)));
+    Some(DiskBreakdown {
+        total: total?,
+        build,
+    })
+}
+
 /// Disk usage of each path, measured in parallel.
 pub fn disk_usages(paths: &[PathBuf]) -> HashMap<PathBuf, u64> {
     let mut sizes = HashMap::new();
@@ -196,16 +268,33 @@ pub enum PrLookup {
 /// A worktree's git state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GitFacts {
+    pub head: String,
     /// Local branch, `None` on a detached HEAD.
     pub branch: Option<String>,
-    /// `git status --porcelain` lines that count as uncommitted work.
+    /// `git status --porcelain` lines for tracked files that count as uncommitted work.
     pub dirty: Vec<String>,
+    /// Untracked agent notes (`*.md`), relative paths: saved before removal.
+    pub notes: Vec<String>,
+    /// Untracked logs (`*.log`), relative paths: deleted before removal.
+    pub logs: Vec<String>,
+    /// Other untracked files, grouped by their top-level folder (`demo-check/`) or file, with
+    /// their size: they keep the worktree until Karl decides.
+    pub untracked: Vec<(String, u64)>,
     /// A base branch HEAD is an ancestor of, e.g. `main` or `origin/main`.
     pub merged_into: Option<String>,
     /// A remote-tracking ref HEAD is an ancestor of.
     pub on_remote: Option<String>,
     /// Commits on HEAD not in the first base branch.
     pub ahead: Option<u64>,
+    /// A base branch that has a patch-equivalent commit for every commit on HEAD
+    /// (`git cherry`: a rebase or cherry-pick merge).
+    pub patches_in: Option<String>,
+    /// A base branch whose tree already has all of HEAD's changes: merging HEAD into it changes
+    /// nothing (a squash merge).
+    pub content_in: Option<String>,
+    /// A merged PR whose head commit is HEAD or has HEAD in its history, so GitHub keeps every
+    /// commit (`refs/pull/<n>/head`) even after the branch is deleted.
+    pub merged_pr_head: Option<u64>,
 }
 
 /// Everything [`decide`] looks at for one worktree.
@@ -227,11 +316,17 @@ pub struct Facts {
 }
 
 /// Keep or remove, and why.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Verdict {
     pub remove: bool,
     /// For a kept worktree, every reason to keep it; for a removed one, why it is safe.
     pub reasons: Vec<String>,
+    /// For a removed one: untracked notes to save under [`notes_root`] first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+    /// For a removed one: untracked logs to delete first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<String>,
 }
 
 impl Verdict {
@@ -239,13 +334,16 @@ impl Verdict {
         Self {
             remove: false,
             reasons,
+            notes: Vec::new(),
+            logs: Vec::new(),
         }
     }
 }
 
 /// Decides one worktree. It is removed only when every check passed and was answered: no
-/// terminal, process or dispatch in it, no uncommitted change, no open PR, and HEAD merged
-/// into a base branch (or its PR merged or closed with every commit on a remote).
+/// terminal, process or dispatch in it, no uncommitted change or untracked file other than
+/// notes and logs, no open PR, and HEAD's work in a base branch or on GitHub (see the module
+/// docs).
 pub fn decide(facts: &Facts) -> Verdict {
     let mut keep = Vec::new();
     if facts.is_main {
@@ -305,11 +403,28 @@ pub fn decide(facts: &Facts) -> Verdict {
             }
         ));
     }
+    if !git.untracked.is_empty() {
+        let listed: Vec<String> = git
+            .untracked
+            .iter()
+            .map(|(path, bytes)| format!("{path} ({})", format_bytes(*bytes)))
+            .collect();
+        keep.push(format!(
+            "untracked files need a decision: {}",
+            shortlist(&listed, 4)
+        ));
+    }
     let safe_because = if let Some(base) = &git.merged_into {
         Some(match git.ahead {
             Some(0) | None => format!("everything is in {base}"),
             Some(_) => format!("merged into {base}"),
         })
+    } else if let Some(base) = &git.patches_in {
+        Some(format!("every commit's patch is in {base}"))
+    } else if let Some(base) = &git.content_in {
+        Some(format!("its changes are already in {base} (squash-merged)"))
+    } else if let Some(number) = git.merged_pr_head {
+        Some(format!("HEAD is in merged PR #{number}'s head"))
     } else {
         let ahead = match git.ahead {
             Some(n) => format!("{n} commit{}", plural(n as usize)),
@@ -347,12 +462,37 @@ pub fn decide(facts: &Facts) -> Verdict {
         }
     };
     match safe_because {
-        Some(reason) if keep.is_empty() => Verdict {
-            remove: true,
-            reasons: vec![reason],
-        },
+        Some(reason) if keep.is_empty() => {
+            let mut reasons = vec![reason];
+            if let Some(first) = cleanup_note(&git.notes, &git.logs) {
+                reasons.push(first);
+            }
+            Verdict {
+                remove: true,
+                reasons,
+                notes: git.notes.clone(),
+                logs: git.logs.clone(),
+            }
+        }
         _ => Verdict::keep(keep),
     }
+}
+
+/// "first saves 3 notes (PLAN.md, …) and deletes 1 log".
+fn cleanup_note(notes: &[String], logs: &[String]) -> Option<String> {
+    let mut parts = Vec::new();
+    if !notes.is_empty() {
+        parts.push(format!(
+            "saves {} note{} ({})",
+            notes.len(),
+            plural(notes.len()),
+            shortlist(notes, 3)
+        ));
+    }
+    if !logs.is_empty() {
+        parts.push(format!("deletes {} log{}", logs.len(), plural(logs.len())));
+    }
+    (!parts.is_empty()).then(|| format!("first {}", parts.join(" and ")))
 }
 
 /// The first `n` items, then "+k more".
@@ -397,6 +537,66 @@ pub fn dirty_lines(porcelain: &str) -> Vec<String> {
         .collect()
 }
 
+/// `git status --porcelain` split into what decides a worktree.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StatusSplit {
+    /// Lines for tracked files.
+    pub dirty: Vec<String>,
+    /// Untracked `*.md` paths.
+    pub notes: Vec<String>,
+    /// Untracked `*.log` paths.
+    pub logs: Vec<String>,
+    /// Every other untracked path.
+    pub other: Vec<String>,
+}
+
+/// Splits `git status --porcelain --untracked-files=all` output. A quoted path (special
+/// characters) is never a note or a log, so it lands in `other` and keeps the worktree.
+pub fn split_status(porcelain: &str) -> StatusSplit {
+    let mut split = StatusSplit::default();
+    for line in dirty_lines(porcelain) {
+        let Some(path) = line.strip_prefix("?? ") else {
+            split.dirty.push(line);
+            continue;
+        };
+        let lower = path.to_ascii_lowercase();
+        let plain = !path.starts_with('"') && safe_relative(path);
+        if plain && lower.ends_with(".md") {
+            split.notes.push(path.to_owned());
+        } else if plain && lower.ends_with(".log") {
+            split.logs.push(path.to_owned());
+        } else {
+            split.other.push(path.to_owned());
+        }
+    }
+    split
+}
+
+/// A relative path that stays inside the directory it is relative to.
+fn safe_relative(path: &str) -> bool {
+    let p = Path::new(path);
+    !path.is_empty()
+        && p.components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
+/// Untracked paths grouped by their first component (`demo-check/` for anything in it), with
+/// the summed size of their files, biggest first.
+pub fn group_untracked(dir: &Path, paths: &[String]) -> Vec<(String, u64)> {
+    let mut groups: BTreeMap<String, u64> = BTreeMap::new();
+    for path in paths {
+        let key = match path.split_once('/') {
+            Some((top, _)) => format!("{top}/"),
+            None => path.clone(),
+        };
+        let bytes = fs::symlink_metadata(dir.join(path)).map_or(0, |m| m.len());
+        *groups.entry(key).or_default() += bytes;
+    }
+    let mut groups: Vec<(String, u64)> = groups.into_iter().collect();
+    groups.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    groups
+}
+
 /// One process and its working directory, from `lsof -d cwd -Fpcn`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessCwd {
@@ -432,7 +632,9 @@ pub fn parse_lsof_cwd(text: &str) -> Vec<ProcessCwd> {
     out
 }
 
-/// The processes working inside `dir`, as `command (pid)`, excluding `own_pid`.
+/// The processes working inside `dir`, as `command (pid)`, excluding `own_pid`. Only the
+/// working directory counts: a process elsewhere whose command line merely mentions the path
+/// (an orphaned watch loop from a dead session) doesn't hold the worktree.
 pub fn processes_inside(dir: &Path, processes: &[ProcessCwd], own_pid: u32) -> Vec<String> {
     processes
         .iter()
@@ -474,7 +676,7 @@ pub fn dispatches_in(w: &Worktree, workers: &[Worker]) -> Vec<String> {
         .collect()
 }
 
-/// One PR from `gh pr list --json number,state,headRefName`.
+/// One PR from `gh pr list --json number,state,headRefName,headRefOid`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrRow {
@@ -482,6 +684,8 @@ pub struct PrRow {
     pub state: String,
     #[serde(default)]
     pub head_ref_name: String,
+    #[serde(default)]
+    pub head_ref_oid: String,
 }
 
 /// The PR for a worktree: its linked PR when Orca knows one, else the PRs whose head is the
@@ -531,7 +735,7 @@ pub fn pr_for(w: &Worktree, branch: Option<&str>, prs: &Result<Vec<PrRow>, Strin
 // The plan
 
 /// One linked worktree in the plan.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlanEntry {
     /// Orca's `<repoId>::<path>`.
     pub id: String,
@@ -540,7 +744,39 @@ pub struct PlanEntry {
     pub path: String,
     pub branch: Option<String>,
     pub bytes: Option<u64>,
+    /// Build output inside it, biggest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub build: Vec<BuildDir>,
     pub verdict: Verdict,
+}
+
+impl PlanEntry {
+    /// "12 GB: target 9.1 GB, .venv 1.2 GB" (build output of 1 MB or more); empty when
+    /// unmeasured.
+    pub fn size_text(&self) -> String {
+        let Some(bytes) = self.bytes else {
+            return String::new();
+        };
+        let mut text = format_bytes(bytes);
+        let parts: Vec<String> = self
+            .build
+            .iter()
+            .filter(|b| b.bytes >= MIN_BUILD_SHOWN)
+            .map(|b| format!("{} {}", b.path, format_bytes(b.bytes)))
+            .collect();
+        if !parts.is_empty() {
+            text.push_str(&format!(": {}", shortlist(&parts, 4)));
+        }
+        text
+    }
+
+    /// Where its notes are saved: `<notes root>/<repo>/<worktree folder>`.
+    pub fn notes_dir(&self, root: &Path) -> PathBuf {
+        let folder = Path::new(&self.path)
+            .file_name()
+            .map_or_else(|| self.name.clone(), |n| n.to_string_lossy().into_owned());
+        root.join(&self.repo).join(folder)
+    }
 }
 
 /// The evaluated cleanup: every linked worktree with its verdict.
@@ -566,15 +802,21 @@ impl Plan {
         self.removable().filter_map(|e| e.bytes).sum()
     }
 
+    /// Bytes the kept worktrees hold (the measured ones).
+    pub fn kept_bytes(&self) -> u64 {
+        self.kept().filter_map(|e| e.bytes).sum()
+    }
+
     /// A plain-text rendering, for the MCP tool and logs.
     pub fn text(&self) -> String {
         let removable: Vec<&PlanEntry> = self.removable().collect();
         let mut out = vec![format!(
-            "{} linked worktrees: {} to remove (frees {}), {} kept.",
+            "{} linked worktrees: {} to remove (frees {}), {} kept (holding {}).",
             self.entries.len(),
             removable.len(),
             format_bytes(self.freed_bytes()),
-            self.entries.len() - removable.len()
+            self.entries.len() - removable.len(),
+            format_bytes(self.kept_bytes())
         )];
         if !removable.is_empty() {
             out.push("Remove:".into());
@@ -586,16 +828,27 @@ impl Plan {
                     e.bytes.map_or("size ?".into(), format_bytes),
                     e.verdict.reasons.join("; ")
                 ));
+                if !e.verdict.notes.is_empty()
+                    && let Some(root) = notes_root()
+                {
+                    out.push(format!("  notes go to {}", e.notes_dir(&root).display()));
+                }
             }
         }
         let kept: Vec<&PlanEntry> = self.kept().collect();
         if !kept.is_empty() {
             out.push("Keep:".into());
             for e in kept {
+                let size = e.size_text();
                 out.push(format!(
-                    "- {}/{}: {}",
+                    "- {}/{}{}: {}",
                     e.repo,
                     e.name,
+                    if size.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({size})")
+                    },
                     e.verdict.reasons.join("; ")
                 ));
             }
@@ -647,14 +900,19 @@ impl Context {
     fn facts(&self, w: &Worktree) -> Facts {
         let path = Path::new(&w.path);
         let exists = path.is_dir();
-        let git = if exists {
+        let mut git = if exists {
             git_facts(path, w.base_ref.as_deref())
         } else {
             Err("missing".into())
         };
-        let branch = git.as_ref().ok().and_then(|g| g.branch.clone());
         let no_prs = Err("not looked up".to_owned());
         let prs = w.repo().and_then(|r| self.prs.get(r)).unwrap_or(&no_prs);
+        if let (Ok(g), Ok(rows)) = (&mut git, prs)
+            && g.merged_into.is_none()
+        {
+            g.merged_pr_head = merged_pr_containing(path, &g.head, rows);
+        }
+        let branch = git.as_ref().ok().and_then(|g| g.branch.clone());
         Facts {
             is_main: w.is_main_worktree,
             pinned: w.is_pinned,
@@ -698,7 +956,7 @@ fn repo_prs(repo_path: &Path) -> Result<Vec<PrRow>, String> {
             "--limit",
             &PR_LIST_LIMIT.to_string(),
             "--json",
-            "number,state,headRefName",
+            "number,state,headRefName,headRefOid",
         ])
         .output()
         .map_err(|e| format!("gh: {e}"))?;
@@ -736,7 +994,13 @@ pub fn git_facts(dir: &Path, base_ref: Option<&str>) -> Result<GitFacts, String>
             String::from_utf8_lossy(&out.stdout).trim().to_owned(),
         ))
     };
-    let (ok, status) = git(&["status", "--porcelain", "--untracked-files=all"])?;
+    let (ok, status) = git(&[
+        "-c",
+        "core.quotePath=false",
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+    ])?;
     if !ok {
         return Err("git status failed".into());
     }
@@ -773,13 +1037,121 @@ pub fn git_facts(dir: &Path, base_ref: Option<&str>) -> Result<GitFacts, String>
         .map(str::trim)
         .find(|r| !r.is_empty() && !r.ends_with("/HEAD"))
         .map(str::to_owned);
+    let (mut patches_in, mut content_in) = (None, None);
+    if merged_into.is_none() {
+        for base in &bases {
+            let (ok, cherry) = git(&["cherry", base, &head])?;
+            if ok && all_patches_upstream(&cherry) {
+                patches_in = Some(base.clone());
+                break;
+            }
+        }
+        for base in &bases {
+            let (ok, merged) = git(&["merge-tree", "--write-tree", base, &head])?;
+            let (tree_ok, tree) = git(&["rev-parse", &format!("{base}^{{tree}}")])?;
+            if ok && tree_ok && merged.lines().next() == Some(tree.as_str()) {
+                content_in = Some(base.clone());
+                break;
+            }
+        }
+    }
+    let split = split_status(&status);
     Ok(GitFacts {
         branch: Some(branch).filter(|b| !b.is_empty()),
-        dirty: dirty_lines(&status),
+        untracked: group_untracked(dir, &split.other),
+        dirty: split.dirty,
+        notes: split.notes,
+        logs: split.logs,
         merged_into,
         on_remote,
         ahead,
+        patches_in,
+        content_in,
+        merged_pr_head: None,
+        head,
     })
+}
+
+/// Whether `git cherry` output marks every commit `-` (an equivalent change is upstream).
+pub fn all_patches_upstream(cherry: &str) -> bool {
+    let lines: Vec<&str> = cherry.lines().filter(|l| !l.trim().is_empty()).collect();
+    !lines.is_empty() && lines.iter().all(|l| l.starts_with("- "))
+}
+
+/// The merged PR whose head commit is `head` or has it in its history. Only heads present in
+/// the local object store can be checked; nothing is fetched.
+pub fn merged_pr_containing(dir: &Path, head: &str, prs: &[PrRow]) -> Option<u64> {
+    let mut merged: Vec<&PrRow> = prs
+        .iter()
+        .filter(|p| PrState::parse(&p.state) == Some(PrState::Merged))
+        .filter(|p| is_oid(&p.head_ref_oid))
+        .collect();
+    merged.sort_by_key(|p| std::cmp::Reverse(p.number));
+    if let Some(p) = merged.iter().find(|p| p.head_ref_oid == head) {
+        return Some(p.number);
+    }
+    let present = present_commits(dir, merged.iter().map(|p| p.head_ref_oid.as_str()));
+    let merged: Vec<&&PrRow> = merged
+        .iter()
+        .filter(|p| present.contains(&p.head_ref_oid))
+        .collect();
+    if merged.is_empty() {
+        return None;
+    }
+    // One walk: nothing left of HEAD once every merged head is excluded means some head has it.
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-list", "--count", head, "--not"])
+        .args(merged.iter().map(|p| p.head_ref_oid.as_str()))
+        .output()
+        .ok()?;
+    if !out.status.success() || String::from_utf8_lossy(&out.stdout).trim() != "0" {
+        return None;
+    }
+    merged.into_iter().find_map(|p| {
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["merge-base", "--is-ancestor", head, &p.head_ref_oid])
+            .status()
+            .is_ok_and(|s| s.success())
+            .then_some(p.number)
+    })
+}
+
+fn is_oid(s: &str) -> bool {
+    s.len() >= 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The commits among `oids` that exist locally (`git cat-file --batch-check`).
+fn present_commits<'a>(dir: &Path, oids: impl Iterator<Item = &'a str>) -> HashSet<String> {
+    let input: String = oids.map(|o| format!("{o}\n")).collect();
+    let child = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["cat-file", "--batch-check"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let Ok(mut child) = child else {
+        return HashSet::new();
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(input.as_bytes());
+    }
+    let Ok(out) = child.wait_with_output() else {
+        return HashSet::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut parts = l.split_whitespace();
+            let oid = parts.next()?;
+            (parts.next() == Some("commit")).then(|| oid.to_owned())
+        })
+        .collect()
 }
 
 /// Branches that count as the base, in order: the worktree's base ref, `origin/HEAD`'s target,
@@ -811,8 +1183,8 @@ pub fn base_branches(base_ref: Option<&str>, exists: impl Fn(&str) -> bool) -> V
     bases
 }
 
-/// Evaluates every linked worktree Orca lists. `sizes` are known disk usages by path; the
-/// removable ones without a size are measured.
+/// Evaluates every linked worktree Orca lists. Every worktree is measured with its build
+/// output; `sizes` are known disk usages by path, used where measuring fails.
 pub fn evaluate(
     client: &OrcaClient,
     sizes: &HashMap<PathBuf, u64>,
@@ -860,16 +1232,17 @@ pub fn evaluate(
         });
         entries.extend(decided);
     }
-    let unmeasured: Vec<PathBuf> = entries
-        .iter()
-        .filter(|e| e.verdict.remove)
-        .map(|e| PathBuf::from(&e.path))
-        .filter(|p| !sizes.contains_key(p))
-        .collect();
-    let measured = disk_usages(&unmeasured);
+    let paths: Vec<PathBuf> = entries.iter().map(|e| PathBuf::from(&e.path)).collect();
+    let measured = disk_breakdowns(&paths);
     for e in &mut entries {
         let path = PathBuf::from(&e.path);
-        e.bytes = sizes.get(&path).or(measured.get(&path)).copied();
+        match measured.get(&path) {
+            Some(m) => {
+                e.bytes = Some(m.total);
+                e.build = m.build.clone();
+            }
+            None => e.bytes = sizes.get(&path).copied(),
+        }
     }
     entries.sort_by(|a, b| {
         b.verdict
@@ -891,6 +1264,23 @@ pub fn evaluate(
     })
 }
 
+/// [`disk_breakdown`] of each existing path, measured in parallel.
+fn disk_breakdowns(paths: &[PathBuf]) -> HashMap<PathBuf, DiskBreakdown> {
+    let mut sizes = HashMap::new();
+    for chunk in paths.chunks(PARALLEL) {
+        let measured: Vec<(PathBuf, Option<DiskBreakdown>)> = std::thread::scope(|s| {
+            let handles: Vec<_> = chunk
+                .iter()
+                .filter(|p| p.is_dir())
+                .map(|p| s.spawn(move || (p.clone(), disk_breakdown(p))))
+                .collect();
+            handles.into_iter().filter_map(|h| h.join().ok()).collect()
+        });
+        sizes.extend(measured.into_iter().filter_map(|(p, b)| Some((p, b?))));
+    }
+    sizes
+}
+
 fn plan_entry(w: &Worktree, facts: &Facts) -> PlanEntry {
     PlanEntry {
         id: w.id.clone(),
@@ -899,6 +1289,7 @@ fn plan_entry(w: &Worktree, facts: &Facts) -> PlanEntry {
         path: w.path.clone(),
         branch: w.branch_name().map(str::to_owned),
         bytes: None,
+        build: Vec::new(),
         verdict: decide(facts),
     }
 }
@@ -933,6 +1324,9 @@ pub struct Removal {
     pub bytes: Option<u64>,
     /// Why it was judged safe.
     pub reason: String,
+    /// Where its notes were saved before removal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes_saved_to: Option<String>,
     #[serde(flatten)]
     pub outcome: Outcome,
     pub at_ms: i64,
@@ -985,6 +1379,7 @@ pub fn execute(
             branch: entry.branch.clone(),
             bytes: entry.bytes,
             reason: entry.verdict.reasons.join("; "),
+            notes_saved_to: None,
             outcome: Outcome::Removed,
             at_ms: 0,
         };
@@ -1003,17 +1398,44 @@ pub fn execute(
                     ctx.prs.insert(repo_id.to_owned(), prs);
                 }
                 let verdict = decide(&ctx.facts(w));
-                if !verdict.remove {
-                    Outcome::Skipped {
+                let tidied = if !verdict.remove {
+                    Err(Outcome::Skipped {
                         reasons: verdict.reasons,
-                    }
+                    })
+                } else if verdict.notes.is_empty() && verdict.logs.is_empty() {
+                    Ok(())
                 } else {
-                    match remover.call_value(&worktree_rm_args(&w.id)) {
+                    match notes_root() {
+                        None => Err(Outcome::Failed {
+                            error: "no home directory to save notes in".into(),
+                        }),
+                        Some(root) => {
+                            let dest = entry.notes_dir(&root);
+                            match save_notes(
+                                Path::new(&w.path),
+                                &dest,
+                                &verdict.notes,
+                                &verdict.logs,
+                            ) {
+                                Ok(()) => {
+                                    if !verdict.notes.is_empty() {
+                                        removal.notes_saved_to = Some(dest.display().to_string());
+                                    }
+                                    Ok(())
+                                }
+                                Err(error) => Err(Outcome::Failed { error }),
+                            }
+                        }
+                    }
+                };
+                match tidied {
+                    Err(outcome) => outcome,
+                    Ok(()) => match remover.call_value(&worktree_rm_args(&w.id)) {
                         Ok(_) => Outcome::Removed,
                         Err(e) => Outcome::Failed {
                             error: rm_error(&e),
                         },
-                    }
+                    },
                 }
             }
         };
@@ -1026,6 +1448,65 @@ pub fn execute(
     }
     let _ = fs::remove_file(&marker);
     Ok(done)
+}
+
+/// `~/Documents/agents/notes`, where a removed worktree's notes are saved.
+pub fn notes_root() -> Option<PathBuf> {
+    directories::BaseDirs::new()
+        .map(|b| b.home_dir().join("Documents").join("agents").join("notes"))
+}
+
+/// Copies each note from `dir` to the same relative path under `dest`, checks every copy, and
+/// only then deletes the originals and the logs, so `orca worktree rm` (no force) finds the
+/// worktree clean. A note never overwrites a different file: it gets a `-2`, `-3`… suffix.
+pub fn save_notes(
+    dir: &Path,
+    dest: &Path,
+    notes: &[String],
+    logs: &[String],
+) -> Result<(), String> {
+    if let Some(bad) = notes.iter().chain(logs).find(|p| !safe_relative(p)) {
+        return Err(format!("unsafe path {bad:?}"));
+    }
+    for note in notes {
+        let src = dir.join(note);
+        let content = fs::read(&src).map_err(|e| format!("read {note}: {e}"))?;
+        let target = free_target(&dest.join(note), &content);
+        if !target.exists() {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("create {}: {e}", parent.display()))?;
+            }
+            fs::write(&target, &content).map_err(|e| format!("save {}: {e}", target.display()))?;
+        }
+        if fs::read(&target).ok().as_deref() != Some(content.as_slice()) {
+            return Err(format!("saved copy of {note} doesn't match"));
+        }
+    }
+    for path in notes.iter().chain(logs) {
+        fs::remove_file(dir.join(path)).map_err(|e| format!("delete {path}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// `path` if it is free or already holds `content`, else the first free `<stem>-<n>.<ext>`.
+fn free_target(path: &Path, content: &[u8]) -> PathBuf {
+    let holds = |p: &Path| fs::read(p).ok().as_deref() == Some(content);
+    if !path.exists() || holds(path) {
+        return path.to_owned();
+    }
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = path
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    (2..)
+        .map(|n| path.with_file_name(format!("{stem}-{n}{ext}")))
+        .find(|p| !p.exists() || holds(p))
+        .expect("an unbounded range finds a free name")
 }
 
 /// The sweep marker's contents.

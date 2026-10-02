@@ -34,8 +34,6 @@ pub const VERIFY_POLL: Duration = Duration::from_millis(1500);
 /// Most times each fix is tried.
 const MAX_MODAL_ANSWERS: u32 = 2;
 const MAX_ENTERS: u32 = 3;
-/// Idle reads with an empty input box before the prompt is typed again.
-const IDLE_READS_BEFORE_RETYPE: u32 = 2;
 /// The note when a Codex session came up asking for approval.
 pub const CODEX_APPROVALS_ON: &str = "Codex started with approvals on (its header lacks \
      \"permissions: YOLO mode\"); it will ask before every action. Relaunch it with \
@@ -496,9 +494,8 @@ impl PlanRun<'_> {
             }
             Step::Verify {
                 expect,
-                retype,
                 allow_bypass,
-            } => self.verify(expect, *retype, *allow_bypass, backend),
+            } => self.verify(expect, *allow_bypass, backend),
             Step::CloseStartupShell => Ok(self.close_startup_shell(backend)),
         }
     }
@@ -562,7 +559,6 @@ impl PlanRun<'_> {
     fn verify(
         &mut self,
         expect: &Expect,
-        retype: bool,
         allow_bypass: bool,
         backend: &mut dyn SpawnBackend,
     ) -> Result<StepStatus, String> {
@@ -572,7 +568,7 @@ impl PlanRun<'_> {
             .clone()
             .ok_or("no agent terminal from an earlier step")?;
         let agent = self.plan.request.agent;
-        let mut check = Verifier::new(agent, expect, retype);
+        let mut check = Verifier::new(agent, expect);
         let deadline = backend.elapsed() + VERIFY_DEADLINE;
         loop {
             let screen = match backend.read_screen(&handle) {
@@ -615,6 +611,13 @@ impl PlanRun<'_> {
                     check.notes.push(CODEX_APPROVALS_ON.into());
                 }
                 self.notes.append(&mut check.notes);
+                if check.idle() {
+                    return Ok(StepStatus::Warned(format!(
+                        "prompt not seen yet after {} s (idle with an empty input box); check \
+                         the terminal",
+                        VERIFY_DEADLINE.as_secs()
+                    )));
+                }
                 return Ok(StepStatus::Warned(format!(
                     "could not confirm the prompt started within {} s (last screen: {}); check \
                      the terminal",
@@ -647,16 +650,18 @@ pub enum VerifyStep {
 }
 
 /// The screen check's state between reads: which fixes it tried.
+///
+/// It never types the prompt: every launch hands it to the agent itself (on the command line or
+/// through Orca), and an empty input box can just mean the agent hasn't submitted it yet (hooks
+/// or MCP servers still connecting) or that its echo scrolled away after a quick reply. Typing
+/// it again would run it twice.
 #[derive(Debug, Clone)]
 pub struct Verifier {
     agent: Agent,
     expect: Expect,
-    retype: bool,
     bypass: u32,
     trust: u32,
     enters: u32,
-    retyped: bool,
-    idle_reads: u32,
     /// Codex's header showed it asking for approval (no "YOLO mode").
     pub approvals_on: bool,
     last: Option<ScreenVerdict>,
@@ -664,16 +669,13 @@ pub struct Verifier {
 }
 
 impl Verifier {
-    pub fn new(agent: Agent, expect: &Expect, retype: bool) -> Self {
+    pub fn new(agent: Agent, expect: &Expect) -> Self {
         Self {
             agent,
             expect: expect.clone(),
-            retype: retype && matches!(expect, Expect::Prompt(_)),
             bypass: 0,
             trust: 0,
             enters: 0,
-            retyped: false,
-            idle_reads: 0,
             approvals_on: false,
             last: None,
             notes: Vec::new(),
@@ -687,9 +689,6 @@ impl Verifier {
         }
         let verdict = classify_screen(lines, self.agent, &self.expect);
         self.last = Some(verdict.clone());
-        if verdict != ScreenVerdict::IdleEmpty {
-            self.idle_reads = 0;
-        }
         match verdict {
             ScreenVerdict::Started => VerifyStep::Done,
             ScreenVerdict::BypassModal if self.bypass < MAX_MODAL_ANSWERS => {
@@ -710,24 +709,13 @@ impl Verifier {
                 self.note("submitted the parked prompt (Enter)");
                 VerifyStep::Send(TerminalInput::enter_key(), "submit the parked prompt")
             }
-            ScreenVerdict::IdleEmpty => {
-                self.idle_reads += 1;
-                match &self.expect {
-                    Expect::Prompt(prompt)
-                        if self.retype
-                            && !self.retyped
-                            && self.idle_reads >= IDLE_READS_BEFORE_RETYPE =>
-                    {
-                        let input = TerminalInput::line(prompt.clone());
-                        self.retyped = true;
-                        self.note("the prompt was lost; typed it again");
-                        VerifyStep::Send(input, "retype the prompt")
-                    }
-                    _ => VerifyStep::Wait,
-                }
-            }
             _ => VerifyStep::Wait,
         }
+    }
+
+    /// Whether the last read showed the agent idle with an empty input box.
+    pub fn idle(&self) -> bool {
+        self.last == Some(ScreenVerdict::IdleEmpty)
     }
 
     fn note(&mut self, text: &str) {

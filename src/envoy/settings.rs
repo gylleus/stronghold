@@ -56,6 +56,7 @@ mod tests {
         assert!(s.dry_run);
         assert_eq!(s.channels, vec![AGENT_COMMS.to_string()]);
     }
+
     #[test]
     fn loaded_poll_interval_has_a_thirty_second_floor() {
         for (input, expected) in [(0, 30), (1, 30), (29, 30), (30, 30), (120, 120)] {

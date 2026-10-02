@@ -144,8 +144,6 @@ pub enum Step {
     /// Permissions and folder trust modals and submitting a parked prompt on the way.
     Verify {
         expect: Expect,
-        /// Type the prompt again when the agent sits idle with an empty input box.
-        retype: bool,
         /// Whether this launch permits accepting the bypass-permissions warning.
         allow_bypass: bool,
     },
@@ -256,17 +254,13 @@ impl Step {
                     .as_deref()
                     .map_or_else(|| NEW_WORKTREE.to_string(), shell_quote)
             ),
-            Step::Verify { retype, .. } => {
+            Step::Verify { .. } => {
                 let handle = ctx.handle.as_deref().unwrap_or(NEW_TERMINAL);
-                let mut text = format!(
+                format!(
                     "orca terminal read --terminal={handle} --screen until the prompt shows as \
                      submitted; accept Bypass Permissions (2) / folder trust (1), submit a \
                      parked prompt (Enter)"
-                );
-                if *retype {
-                    text.push_str(", retype a lost prompt");
-                }
-                text
+                )
             }
             Step::CloseStartupShell => format!(
                 "orca terminal close --terminal=<startup shell> --tab  (the plain shell Orca \
@@ -351,13 +345,12 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
     };
     let agent = request.agent;
     let launch = || launch_command(agent, model.as_deref(), &prompt);
-    let verify = |retype: bool| Step::Verify {
+    let verify = || Step::Verify {
         expect: if prompt.is_empty() {
             Expect::Ready
         } else {
             Expect::Prompt(prompt.clone())
         },
-        retype,
         allow_bypass: true,
     };
     let wait = Step::WaitIdle {
@@ -383,7 +376,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
                     command: launch(),
                 },
                 wait,
-                verify(true),
+                verify(),
             ]
         }
         SpawnTarget::NewWorktree {
@@ -415,7 +408,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
                     create,
                     Step::DirenvAllow,
                     wait,
-                    verify(true),
+                    verify(),
                     Step::CloseStartupShell,
                 ]
             } else {
@@ -427,7 +420,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
                         command: launch(),
                     },
                     wait,
-                    verify(true),
+                    verify(),
                     Step::CloseStartupShell,
                 ]
             }
@@ -515,7 +508,6 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
             // Orca already waited for the agent and typed its preamble (with the spec).
             steps.push(Step::Verify {
                 expect: Expect::AnyInput,
-                retype: false,
                 allow_bypass: true,
             });
             if new_worktree {

@@ -262,6 +262,10 @@ impl MyrstackApp {
                 notes.dirty |= notes.center.history.mark_all_read() > 0;
                 notes.toasts.clear();
             }
+            NoticeAction::Remove(id) => {
+                notes.dirty |= notes.center.history.remove(id);
+                notes.toasts.remove(id);
+            }
             NoticeAction::Clear => {
                 notes.center.history.clear();
                 notes.toasts.clear();

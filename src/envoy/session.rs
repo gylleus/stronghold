@@ -258,7 +258,7 @@ impl Session {
             error,
         };
         if session.handle.is_some() && !session.restricted {
-            session.error = Some("Restart Envoy to apply the required tool restrictions".into());
+            session.error = Some("Restart Envoy: the previous launch was incomplete or lacks required tool restrictions".into());
         }
         if dry_run && let Err(error) = session.enable_dry_run() {
             session.error = Some(error);
@@ -795,6 +795,7 @@ mod tests {
             assert!(plan.request.prompt.contains(expected));
         }
     }
+
     #[test]
     fn dry_run_on_survives_pending_launch_running_save_and_recovery() {
         let dir = tempfile::tempdir().unwrap();

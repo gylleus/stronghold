@@ -142,6 +142,7 @@ mod tests {
         assert_eq!(loaded.queen(), pane.queen());
         assert!(!loaded.envoy().dry_run);
     }
+
     #[test]
     fn draft_cannot_save_a_poll_interval_below_thirty() {
         let mut draft = EnvoyDraft::new(&EnvoySettings::default());
