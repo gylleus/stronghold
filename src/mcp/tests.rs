@@ -457,6 +457,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "envoy_drafts",
         "envoy_relay",
         "envoy_propose_task",
+        "clean_worktrees",
     ];
     assert_eq!(names, expected);
     let reads = [
@@ -484,6 +485,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "whip_agents",
         "spawn_session",
         "finish_session",
+        "clean_worktrees",
     ];
     for tool in tools {
         let name = tool["name"].as_str().unwrap();
@@ -544,7 +546,7 @@ fn each_tool_maps_to_its_control_request() {
             json!({"id": "term:a", "text": "continue"}),
             vec![(
                 "send",
-                json!({"id": "term:a", "text": "continue", "enter": true}),
+                json!({"id": "term:a", "text": "continue", "enter": true, "origin": agent_origin()}),
             )],
         ),
         (
@@ -552,7 +554,7 @@ fn each_tool_maps_to_its_control_request() {
             json!({"id": "term:a", "text": "draft", "submit": false}),
             vec![(
                 "send",
-                json!({"id": "term:a", "text": "draft", "enter": false}),
+                json!({"id": "term:a", "text": "draft", "enter": false, "origin": agent_origin()}),
             )],
         ),
         (
@@ -671,7 +673,7 @@ fn each_tool_maps_to_its_control_request() {
                           "children": [], "screen": null}),
                 ),
             );
-        let mut server = McpServer::new(control);
+        let mut server = agent_server(control);
         let r = call(&mut server, tool, args.clone());
         assert!(!is_error(&r), "{tool} {args}: {}", text(&r));
         let expected: Vec<(String, Value)> = expected
@@ -2238,4 +2240,32 @@ fn envoy_tools_preserve_args_and_have_no_approval_tool() {
     assert_eq!(params["text"], args["text"]);
     assert_eq!(params["origin"], json!(agent_origin()));
     assert!(!crate::envoy::control::METHODS.contains(&"envoy_approve"));
+}
+
+/// A real cleanup needs the approved ids; bad arguments fail before Orca is asked anything.
+#[test]
+fn clean_worktrees_refuses_a_real_run_without_ids() {
+    let mut server = McpServer::new(FakeControl::default());
+    for args in [
+        json!({"dry_run": false}),
+        json!({"dry_run": false, "ids": []}),
+        json!({"dry_run": "no"}),
+        json!({"ids": "r::/w/a"}),
+        json!({"dry_run": false, "ids": [1]}),
+    ] {
+        let r = call(&mut server, "clean_worktrees", args.clone());
+        assert_eq!(r["isError"], true, "{args}");
+    }
+    let tools = rpc(&mut server, "tools/list", json!({}));
+    let tool = tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "clean_worktrees")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        tool["inputSchema"]["properties"]["dry_run"]["default"],
+        true
+    );
 }

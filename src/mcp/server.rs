@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use serde_json::{Value, json};
 
 use crate::mcp::backend::Control;
-use crate::mcp::{envoy, lifecycle, notify, playbook, review, tools};
+use crate::mcp::{envoy, lifecycle, notify, playbook, review, tools, worktrees};
 use crate::playbook::Playbook;
 
 /// Protocol versions this server speaks, newest first. `initialize` echoes the client's version
@@ -65,7 +65,10 @@ review_queue lists what is waiting, with CI, Ankra and ready-marker state.
 
 Reaching Karl: notify {title, message, severity: info|warn|urgent, url} sends Karl a pop-up \
 and sound through Myrstack, kept in his inbox and attributed to your terminal (clicking it \
-selects your node and opens url). alerts lists his inbox; fleet_status reports unread ones. ",
+selects your node and opens url). alerts lists his inbox; fleet_status reports unread ones.
+
+Worktrees: clean_worktrees plans removing Orca worktrees nothing needs any more (dry run by \
+default; a real run takes the approved ids). ",
     notify::rules_text!(),
     "
 
@@ -249,6 +252,7 @@ impl<C: Control> McpServer<C> {
                 all.extend(notify::definitions());
                 all.extend(lifecycle::definitions());
                 all.extend(envoy::definitions());
+                all.extend(worktrees::definitions());
                 Ok(json!({ "tools": all }))
             }
             "tools/call" => self.call_tool(params),
@@ -315,7 +319,8 @@ impl<C: Control> McpServer<C> {
                 let cwd = std::env::current_dir().ok();
                 lifecycle::call(&mut self.control, &self.review.origin, cwd, name, &args)
             })
-            .or_else(|| tools::call(&mut self.control, name, &args))
+            .or_else(|| worktrees::call(name, &args))
+            .or_else(|| tools::call(&mut self.control, &self.review.origin, name, &args))
             .ok_or_else(|| (INVALID_PARAMS, format!("unknown tool: {name}")))?;
         let mut output = output;
         match name {

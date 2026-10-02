@@ -27,9 +27,11 @@ pub mod poller;
 pub mod quota;
 pub mod review;
 pub mod spawn;
+pub mod traffic;
 pub mod ui;
 pub mod voice;
 pub mod whip;
+pub mod worktrees;
 
 pub use app::MyrstackApp;
 

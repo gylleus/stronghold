@@ -18,6 +18,7 @@ mod review;
 mod settings;
 mod spawn;
 mod talk;
+mod traffic;
 mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo};
@@ -123,6 +124,8 @@ pub struct MyrstackApp {
     finish_closes: Vec<lifecycle::PendingClose>,
     /// Asks or finished sessions changed: rebuild the snapshot.
     overlays_changed: bool,
+    /// Messages between agents, for the graph and the ant farm to draw.
+    traffic: crate::traffic::Traffic,
     /// Every notification's dispatcher, the saved inbox, toasts and node badges.
     notifications: notifications::AppNotifications,
     /// Debug-logged frames per second and repaint causes.
@@ -134,6 +137,8 @@ pub struct MyrstackApp {
     control: control::AppControl,
     /// "Close session" confirmation dialog and the log of closes.
     close: ui::close::CloseDialog,
+    /// Worktree count in the top bar, the cleanup window and its broom.
+    worktrees: ui::worktrees::WorktreePanel,
     /// Who fetched which playbook version, re-read off the UI thread.
     playbook_watch: playbook::PlaybookWatch,
     /// The Queen's chat, drawn in the conversation column.
@@ -223,11 +228,13 @@ impl MyrstackApp {
             ),
             finish_closes: Vec::new(),
             overlays_changed: true,
+            traffic: Default::default(),
             notifications: notifications::AppNotifications::load(),
             search: ui::search::SearchPalette::default(),
             help_open: false,
             frame_stats: ui::frame_stats::FrameStats::default(),
             close: ui::close::CloseDialog::default(),
+            worktrees: ui::worktrees::WorktreePanel::new(ctx),
             playbook_watch: playbook::PlaybookWatch::spawn(repaint_once(ctx)),
             chat,
             whip_now: whip_now::WhipNowState::default(),
@@ -263,6 +270,9 @@ impl MyrstackApp {
             return false;
         };
         if !status.new_log.is_empty() {
+            for message in status.new_log.iter().filter_map(crate::traffic::from_whip) {
+                self.traffic.push(message);
+            }
             let new = status.new_log.len();
             self.whip_log.extend(status.new_log.drain(..));
             log::debug!(
@@ -456,6 +466,15 @@ impl MyrstackApp {
             self.apply_review_action(action);
         }
         for request in &response.requests {
+            if let (crate::actions::Action::Send { handle, .. }, ui::terminal::InputKind::Text) =
+                (&request.action, request.kind)
+            {
+                self.traffic.push(crate::traffic::AgentMessage::new(
+                    "karl",
+                    handle.clone(),
+                    crate::traffic::MessageKind::Instruction,
+                ));
+            }
             let action = self.actions.submit(request.action.clone());
             self.input.submitted(action, request);
         }
@@ -797,6 +816,8 @@ impl MyrstackApp {
         if let Some(data) = &self.data {
             ui.weak(format!("{} terminals", data.terminals.len()));
             ui.separator();
+            self.worktrees.top_bar(ui, &data.worktrees);
+            ui.separator();
             ui.weak(format!(
                 "updated {} ago",
                 ui::table::format_age(now_ms - data.polled_at_ms)
@@ -906,6 +927,16 @@ impl MyrstackApp {
     }
 
     /// Draws the dialog and submits a confirmed plan's steps, in order.
+    /// The worktree cleanup window and the broom while it removes.
+    fn worktree_cleanup(&mut self, ctx: &egui::Context, now_ms: i64) {
+        let worktrees = self.data.as_ref().map(|d| &d.worktrees[..]);
+        if self.worktrees.tick(worktrees, now_ms) {
+            self.poller.send(PollerCommand::RefreshNow);
+        }
+        self.worktrees.window(ctx);
+        self.worktrees.broom(ctx);
+    }
+
     fn close_dialog(&mut self, ctx: &egui::Context) {
         let terminals = self.data.as_ref().map_or(&[][..], |d| &d.terminals[..]);
         let confirmed =
@@ -1006,6 +1037,9 @@ impl eframe::App for MyrstackApp {
                 data.needs_input
                     .insert(screen.handle.clone(), verdict.clone());
             }
+            for message in self.traffic.inbox.update(&data.inbox, now_ms()) {
+                self.traffic.push(message);
+            }
             self.data = Some(data);
             rebuild = true;
         }
@@ -1077,6 +1111,7 @@ impl eframe::App for MyrstackApp {
             self.spawn_select_pending();
         }
         self.poll_notifications(ctx);
+        self.poll_traffic(ctx);
         self.poll_chat();
         self.talk_logic(ctx);
         self.poll_control(ctx);
@@ -1116,6 +1151,7 @@ impl eframe::App for MyrstackApp {
         self.panes(ui, now_ms);
         self.notification_toasts(ui.ctx(), top_bar.response.rect.bottom());
         self.close_dialog(ui.ctx());
+        self.worktree_cleanup(ui.ctx(), now_ms);
         self.settings_window(ui.ctx(), now_ms);
         if self.whip_window.take_whip_stalled() {
             self.request_whip_stalled(None);
