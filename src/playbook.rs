@@ -1,5 +1,5 @@
-//! The fleet playbook: the Markdown rules coordinators, attendants, workers and the Envoy run by. Myrstack
-//! serves them (MCP prompts, resources and tools; `myrstack playbook`) straight from disk on
+//! The fleet playbook: the Markdown rules coordinators, attendants, workers and the Envoy run
+//! by. Myrstack serves them (MCP prompts, resources and tools; `myrstack playbook`) straight from disk on
 //! every request, stamped with the git version they came from. See `playbook/README.md`.
 
 use std::fmt;
@@ -137,7 +137,7 @@ pub fn envoy_launch_prompt(dry_run: bool) -> String {
     let mode = if dry_run {
         "Dry-run is ON: drafts and relays are recorded and shown, nothing leaves."
     } else {
-        "Dry-run is OFF: drafts Karl approves are posted to Slack."
+        "Dry-run is OFF: drafts Karl approves are posted and relays are delivered."
     };
     format!(
         "You are the Envoy. Load your standing rules with the myrstack MCP tool get_playbook \
