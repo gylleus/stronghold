@@ -1124,9 +1124,9 @@ impl eframe::App for MyrstackApp {
         self.poll_traffic(ctx);
         self.poll_chat();
         self.talk_logic(ctx);
+        let envoy_before = self.envoy_status();
         self.poll_control(ctx);
         self.poll_review();
-        let envoy_before = self.envoy_status();
         self.poll_envoy();
         self.overlays_changed |= envoy_before != self.envoy_status();
         self.poll_whip_now();

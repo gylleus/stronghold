@@ -467,6 +467,8 @@ mod tests {
         };
         assert!(session.reconcile(&data));
         assert_eq!(session.state(), SessionState::Running);
+        assert_eq!(session.running_handle(), Some("envoy-terminal"));
+        assert!(session.settings().dry_run);
         assert!(
             session
                 .start(&EnvoySettings::default(), Box::new(|| {}))
@@ -534,6 +536,7 @@ mod tests {
         assert!(!session.reconcile(&stale));
         assert_eq!(session.handle(), Some("partial"));
         assert_eq!(session.state(), SessionState::Running);
+        assert_eq!(session.running_handle(), Some("partial"));
         assert!(session.error.is_some());
         assert!(
             session
