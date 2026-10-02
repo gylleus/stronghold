@@ -233,7 +233,10 @@ impl MyrstackApp {
                     };
                     self.ant_farm.set_queen_busy(self.queen_thinking());
                     self.ant_farm.set_queen_focused(self.shows_chat());
+                    let farm = egui::Rect::from_min_size(ui.cursor().min, ui.available_size());
                     let response = self.ant_farm.show(ui, snapshot, &self.graph);
+                    self.worktrees.broom_in_farm(ui, farm);
+                    self.broom_in_farm = true;
                     if let Some(id) = &response.clicked {
                         let additive = ui.input(|i| ui::graph::is_additive(i.modifiers));
                         self.graph.click_node(id, additive);

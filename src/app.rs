@@ -139,6 +139,8 @@ pub struct MyrstackApp {
     close: ui::close::CloseDialog,
     /// Worktree count in the top bar, the cleanup window and its broom.
     worktrees: ui::worktrees::WorktreePanel,
+    /// The ant farm drew the broom this frame, so it skips the window's bottom edge.
+    broom_in_farm: bool,
     /// Who fetched which playbook version, re-read off the UI thread.
     playbook_watch: playbook::PlaybookWatch,
     /// The Queen's chat, drawn in the conversation column.
@@ -235,6 +237,7 @@ impl MyrstackApp {
             frame_stats: ui::frame_stats::FrameStats::default(),
             close: ui::close::CloseDialog::default(),
             worktrees: ui::worktrees::WorktreePanel::new(ctx),
+            broom_in_farm: false,
             playbook_watch: playbook::PlaybookWatch::spawn(repaint_once(ctx)),
             chat,
             whip_now: whip_now::WhipNowState::default(),
@@ -934,7 +937,9 @@ impl MyrstackApp {
             self.poller.send(PollerCommand::RefreshNow);
         }
         self.worktrees.window(ctx);
-        self.worktrees.broom(ctx);
+        if !std::mem::take(&mut self.broom_in_farm) {
+            self.worktrees.broom(ctx);
+        }
     }
 
     fn close_dialog(&mut self, ctx: &egui::Context) {
