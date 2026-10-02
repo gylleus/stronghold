@@ -314,6 +314,8 @@ impl MyrstackApp {
             ControlCommand::Review(command) => self.control_review(command),
             ControlCommand::Spawn(args) => return self.control_spawn(args, reply),
             ControlCommand::Notify(notice) => self.control_notify(notice),
+            ControlCommand::Ask(ask) => self.control_ask(ask),
+            ControlCommand::Finish(request) => self.control_finish(request),
         };
         let error = result.as_ref().err().cloned();
         reply.send(result);
@@ -577,7 +579,7 @@ impl MyrstackApp {
     }
 }
 
-fn plan_json(plan: &ClosePlan, labels: &[String]) -> Value {
+pub(super) fn plan_json(plan: &ClosePlan, labels: &[String]) -> Value {
     json!({
         "targets": plan.targets.iter().map(|t| json!({
             "id": t.id,

@@ -14,6 +14,7 @@ use super::hook::{default_session_map_path, load_hook_mappings};
 use super::sessions::default_projects_root;
 use super::sessions::{HookMappings, SessionInfo, SessionLocator, SessionMatch};
 use super::subagents::{SubagentInfo, SubagentWatcher};
+use super::turns::{Turn, TurnTracker};
 use super::usage::{SessionUsage, UsageTracker};
 use crate::chat::history::{HistoryChunk, HistoryReader};
 use crate::codex::{CodexSession, CodexTracker, default_sessions_root};
@@ -38,6 +39,8 @@ pub struct ClaudeData {
     /// Terminals forwarded to with `orca terminal send`, per watched handle (see
     /// [`ClaudeWorker::watch_forwards`]) with a mapped session.
     pub forwards: BTreeMap<String, Vec<Forward>>,
+    /// How each session's last turn ended, per session id.
+    pub turns: BTreeMap<String, Turn>,
     /// Wall-clock time of the scan, in ms since the Unix epoch.
     pub at_ms: i64,
 }
@@ -48,6 +51,12 @@ impl ClaudeData {
             .get(session_id)?
             .iter()
             .find(|a| a.agent_id == agent_id)
+    }
+
+    /// The last turn of the session mapped to terminal `handle`.
+    pub fn turn(&self, handle: &str) -> Option<&Turn> {
+        let session = self.session_by_handle.get(handle)?.session()?;
+        self.turns.get(&session.session_id)
     }
 
     pub fn subagent_count(&self) -> usize {
@@ -167,6 +176,7 @@ pub fn collect(
     locator: &SessionLocator,
     watcher: &mut SubagentWatcher,
     usage: &mut UsageTracker,
+    turns: &mut TurnTracker,
     terminals: &[Terminal],
     hooks: &HookMappings,
     now_ms: i64,
@@ -181,10 +191,12 @@ pub fn collect(
         .collect();
     let subagents = watcher.refresh(&sessions, now_ms);
     let usage = usage.refresh(&sessions);
+    let turns = turns.refresh(&sessions);
     ClaudeData {
         session_by_handle,
         subagents,
         usage,
+        turns,
         codex: BTreeMap::new(),
         forwards: BTreeMap::new(),
         at_ms: now_ms,
@@ -226,6 +238,7 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
     let locator = SessionLocator::new(&config.projects_root);
     let mut watcher = SubagentWatcher::new();
     let mut usage = UsageTracker::new();
+    let mut turns = TurnTracker::new();
     let mut codex = CodexTracker::new(&config.codex_sessions_root);
     let mut forwards = ForwardScanner::new();
     let mut forward_handles: BTreeSet<String> = BTreeSet::new();
@@ -242,7 +255,15 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let hooks = load_hook_mappings(&config.session_map_path);
                 let now_ms = wall_clock_ms();
-                let mut data = collect(&locator, &mut watcher, &mut usage, terms, &hooks, now_ms);
+                let mut data = collect(
+                    &locator,
+                    &mut watcher,
+                    &mut usage,
+                    &mut turns,
+                    terms,
+                    &hooks,
+                    now_ms,
+                );
                 data.codex = codex.refresh(terms, now_ms);
                 data.forwards = forwards.refresh(&forward_transcripts(&data, &forward_handles));
                 data
@@ -471,6 +492,7 @@ mod tests {
             &locator,
             &mut watcher,
             &mut UsageTracker::new(),
+            &mut TurnTracker::new(),
             &terminals,
             &HookMappings::default(),
             wall_clock_ms(),

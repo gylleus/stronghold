@@ -8,6 +8,7 @@ use eframe::egui;
 mod chat;
 mod control;
 mod dictation;
+mod lifecycle;
 mod notifications;
 mod palette;
 mod panes;
@@ -113,6 +114,14 @@ pub struct MyrstackApp {
     /// through it.
     notifier: Arc<Notifier>,
     needs_input_detector: NeedsInputDetector,
+    /// Questions agents asked Karl with `ask_karl`, until answered.
+    asks: crate::ask::Asks,
+    /// Sessions that ended themselves with `finish_session`, shown done while they fade.
+    finished: crate::finish::FinishLog,
+    /// Self-finished terminals waiting to be closed, once the agent got its reply.
+    finish_closes: Vec<lifecycle::PendingClose>,
+    /// Asks or finished sessions changed: rebuild the snapshot.
+    overlays_changed: bool,
     /// Every notification's dispatcher, the saved inbox, toasts and node badges.
     notifications: notifications::AppNotifications,
     /// Debug-logged frames per second and repaint causes.
@@ -205,6 +214,13 @@ impl MyrstackApp {
             whip_window,
             notifier,
             needs_input_detector: NeedsInputDetector::new(),
+            asks: crate::ask::Asks::new(),
+            finished: crate::finish::FinishLog::load(
+                crate::finish::FinishLog::default_path(),
+                now_ms() - crate::model::RELEASED_FADE_MS,
+            ),
+            finish_closes: Vec::new(),
+            overlays_changed: true,
             notifications: notifications::AppNotifications::load(),
             search: ui::search::SearchPalette::default(),
             help_open: false,
@@ -1019,15 +1035,21 @@ impl eframe::App for MyrstackApp {
             self.screen = Some(update);
         }
         rebuild |= self.poll_whip();
+        rebuild |= std::mem::take(&mut self.overlays_changed);
         self.poll_quota();
         self.poll_playbook();
         if rebuild && let Some(data) = &self.data {
-            let snapshot = FleetSnapshot::build_with_stalled(
+            let now = now_ms();
+            let mut snapshot = FleetSnapshot::build_with_stalled(
                 data,
                 self.claude_data.as_ref(),
                 &self.whip_status.escalated,
-                now_ms(),
+                now,
             );
+            self.asks.prune(data, self.claude_data.as_ref());
+            snapshot.mark_waiting(&self.asks.waiting(data, self.claude_data.as_ref()));
+            self.finished.prune(now, crate::model::RELEASED_FADE_MS);
+            snapshot.add_finished(self.finished.recent(now, crate::model::RELEASED_FADE_MS));
             self.graph.set_hidden(&self.filter.hidden(&snapshot));
             self.graph.sync(&snapshot);
             if let Some(claude) = &self.claude_data {
@@ -1054,6 +1076,7 @@ impl eframe::App for MyrstackApp {
         self.poll_review();
         self.poll_whip_now();
         self.poll_spawn();
+        self.run_finish_closes();
         for result in self.actions.poll() {
             self.control_action_done(&result);
             if self.input.on_result(&result, now_ms()) {

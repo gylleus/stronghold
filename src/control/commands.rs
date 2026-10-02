@@ -136,6 +136,11 @@ pub enum ControlCommand {
     Spawn(crate::spawn::SpawnArgs),
     /// A notification from an agent to Karl, through the app's dispatcher.
     Notify(crate::notify::agent::AgentNotice),
+    /// An agent's question to Karl (`ask_karl`): notifies him and shows the agent waiting.
+    Ask(crate::ask::AskRequest),
+    /// An agent ending its own session (`finish_session`), or with `dry_run` checking whether
+    /// it may.
+    Finish(crate::finish::FinishRequest),
 }
 
 impl ControlCommand {
@@ -267,6 +272,8 @@ impl ControlCommand {
             })(),
             "spawn" => crate::spawn::SpawnArgs::parse(params).map(Self::Spawn),
             "notify" => crate::notify::agent::AgentNotice::from_params(params).map(Self::Notify),
+            "ask" => crate::ask::AskRequest::from_params(params).map(Self::Ask),
+            "finish" => crate::finish::FinishRequest::from_params(params).map(Self::Finish),
             _ => return None,
         };
         Some(result)
