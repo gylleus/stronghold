@@ -1,9 +1,11 @@
 # Agent Fleet Playbook: parallel Claude Code agents under Orca
 
-**v6, 2026-10-01.** How Karl runs a multi-agent engineering effort: one coordinator session,
+**v7, 2026-10-02.** How Karl runs a multi-agent engineering effort: one coordinator session,
 long-lived worker worktrees, adversarial review inside each, everything as Orca terminals Karl
-can watch and join. Workers follow `_AGENT_PROTOCOL.md`; this file is for coordinators and
-attendants.
+can watch and join. Workers follow `_AGENT_PROTOCOL.md`; this file is for coordinators. v7 drops
+the attendant (Myrstack forwards events now) and tiers the plan gate by risk; see
+`~/Documents/agents/tracks/playbook-evaluation-REPORT.md`. v7.1 adds `ask_karl` for questions
+you wait on and `finish_session` for leaving (_Human in the loop_).
 
 ## Topology
 
@@ -11,14 +13,13 @@ attendants.
 Karl: talks only to the coordinator. Does not read tickets.
  ├─ Coordinator: interactive Claude Code session (`claude --model claude-opus-5-5`). Dispatches
  │  tracks, relays decisions, runs the merge gate, owns every merge. Does NOT watch the bus.
- │   ├─ Attendant: cheap watcher (`claude --model sonnet`, ATTENDANT-BRIEF-TEMPLATE.md).
- │   │  Binds the Run, absorbs heartbeats and acks, forwards real events as one line.
  │   └─ Orca Run (per campaign)
  │       ├─ Task → Dispatch → Codex worker terminal in its own worktree (one track)
  │       │    └─ review subagents inside the worker: fresh context, read-only, Opus 5.5
  │       └─ Task → Dispatch → soak/verification track (telemetry only, ships no code)
- └─ Myrstack: Karl's desktop view of the whole fleet (graph, terminals, alerts). Its whip
-    nudges stalled tasks (`Myrstack:` messages from `myrstack-whip`).
+ └─ Myrstack: Karl's desktop view of the whole fleet (graph, terminals, alerts). It types each
+    real bus event into the coordinator (`Fleet event: …`) and its whip nudges stalled agents
+    (`Myrstack: …` from `myrstack-whip`). No LLM watches the bus.
 ```
 
 ## Environment
@@ -82,26 +83,33 @@ Check live rather than trusting a table: `orca status --json` (runtime must be r
 
 ```bash
 orca status --json                                    # runtime reachable
+orca orchestration run-create --objective "<campaign>" --json         # from the coordinator
+```
 
-# Attendant FIRST so the Run binds to it, not to the coordinator. Fill in every <…> of
-# ATTENDANT-BRIEF-TEMPLATE.md; the attendant runs run-create, and you pass --run <id>
-# explicitly everywhere. Verify one test message lands on the attendant.
-orca terminal create --command "claude --model sonnet" --json
-orca orchestration run-create --objective "<campaign>" --json         # from the attendant
-orca orchestration task-create --spec "<track spec>" --json
+**Start each worker with Myrstack's `spawn_session`** (mode `worker`, `run_id`, `repo` + `name`
+for a new worktree or `worktree`/`terminal` to reuse one, `agent: codex`, a `title`, the spec
+as `prompt`). It creates the task, starts the agent, accepts the Bypass Permissions and folder
+trust modals, submits a parked brief, trusts direnv and waits for the `⏺` line. Start every
+independent worker before waiting on any. Write the spec with `kickoff {task_id}` or by hand
+from `KICKOFF-TEMPLATE.md`.
 
-# Start every independent worker before waiting on any. Coding workers are Codex.
+Fallback when Myrstack isn't running, or for a task created ahead with `task-create --deps`:
+
+```bash
 orca orchestration worker-start --task <task> \
   --worktree new-top-level --name <track> --repo id:<repoId> --agent codex --setup run --json
 ```
 
-- **Read the receipt**, then **read the terminal tail.** `worker-start` can report `ready` /
-  `dispatch_input: accepted` while the brief sits unsubmitted at the `❯` prompt (bracketed
-  paste, or behind the "Bypass Permissions" modal on a new worktree). A started worker shows a
-  `⏺` line. Fixes: `terminal send --text "2"` to accept the modal (Karl authorized this for
-  Orca worktrees), `terminal send --text "" --enter` to submit a parked brief.
-- **Trust direnv** right after start: `direnv allow <worktree>`, or the repo tooling is
-  missing.
+then read the receipt **and** the terminal tail: `worker-start` can say `ready` while the brief
+sits unsubmitted at the `❯` prompt or behind the Bypass Permissions modal. `terminal send --text
+"2"` accepts the modal (Karl authorized this for Orca worktrees), `terminal send --text ""
+--enter` submits a parked brief, and `direnv allow <worktree>` loads the repo tooling.
+
+- **Codex launches can fail while the agent starts anyway** (`agent_prompt_blocked` /
+  `agent_prompt_stalled`). Orca marks the task failed and rejects the worker's heartbeats and
+  reports. Myrstack shows such a worker as live and sends you `Fleet event: task … is marked
+  failed in Orca but … is still working`. Don't relaunch it: read its terminal for the result,
+  and when it finishes record that with a new task or in your report to Karl.
 - Failed start: inspect `stage`, `effects`, `residualResources`; don't blind-retry.
 - `--repo id:<repoId>` comes from `orca repo list`; a worktree id is `<repoId>::<path>`.
 - Same-checkout work: `orca terminal create --worktree active --command "claude --model claude-opus-5-5"`.
@@ -111,7 +119,7 @@ orca orchestration worker-start --task <task> \
   - **Coordinators, planners, initial drafters and reviewers: Claude Opus 5.5.** Launch them
     as `claude --model claude-opus-5-5`; Claude reviewer subagents run on Opus too (Agent
     tool `model: "opus"`, which is Opus 5.5).
-  - **Attendant: sonnet**, unchanged.
+  - **Attendant** (fallback only, below): sonnet.
   - **Fable (`claude-fable-5-1`) is never a default.** Use it only when Karl explicitly asks
     for it, and say so in the brief.
 - **Delivery is not execution.** `--inject` delivers the spec plus Orca's lifecycle preamble;
@@ -125,21 +133,29 @@ orca orchestration worker-start --task <task> \
 
 ## The per-track loop
 
-1. **Kickoff.** The spec is `KICKOFF-TEMPLATE.md` filled in: track scope, blockers,
-   load-bearing facts to verify, definition of done. The worker reads the ticket, posts a
-   detailed plan as a ticket comment, sets its Orca card
-   (`orca worktree set --worktree active --workspace-status in-progress --comment "<state>"`)
-   and stops.
-2. **Review.** Fresh-context subagents verify the plan's facts and post severity-ordered
-   findings with "what earns my APPROVED" on the ticket.
-3. **Iterate** until `APPROVED — <one line>`. A convincing rebuttal resolves a finding.
+1. **Kickoff.** The spec is `KICKOFF-TEMPLATE.md` filled in: risk, scope, files owned, merge
+   order, blockers, load-bearing facts to verify, definition of done. **Dispatch only with
+   `Open decisions: none`**: settle product questions with Karl first; a decision made after
+   the work is a rework round. Parallel tracks that touch the same files get a merge order or
+   run in sequence.
+2. **Plan and review.** The worker posts a detailed plan on the ticket, and fresh-context
+   subagents verify its facts and post severity-ordered findings with "what earns my
+   APPROVED". A convincing rebuttal resolves a finding.
+3. **The plan gate depends on the kickoff's `Risk`.**
+   - `standard` (the default): the worker proceeds on its reviewers' `APPROVED — <one line>`.
+     Nobody waits on the coordinator.
+   - `gated` (auth/security, write paths, live merchant data, anything Karl flagged): the
+     worker stops after APPROVED and asks (`ask`); it starts implementing only on your reply.
+     Answer within the hour, or send a `holding:` status saying when.
 4. **Implement** in the worktree: own venv/node_modules inside it, a track-derived port range
    (track 423 owns 42300–42399), shared dev DBs read-only. Gate per repo's CLAUDE.md/CI (in
    `recommendations`: `just check`, plus `just test-integration` after `just dev-up` when the
    binding or wire types change). Heartbeat throughout (`_AGENT_PROTOCOL.md` _Heartbeats_).
 5. **PR gates.** Title `VROOM-<n>: <title>` → Ankra verdict → answer every thread → after
    rework, Ankra's pass on the new head → `/simplify` deletion pass → verification evidence in
-   the PR body. E2E means at least one working path returning real data. UI changes need a
+   the PR body. **No nit rounds:** when your gate review says APPROVE with only low or medium
+   items, the worker fixes them in place before `merge_ready`; a REWORK file is for blocking
+   findings. E2E means at least one working path returning real data. UI changes need a
    real browser pass; if auth blocks it, say so and escalate.
 6. **Hand off.** `merge_ready`, then stop. `merge_ready` keeps the dispatch open (the gate can
    send work back); `worker_done` only when the track is finished.
@@ -154,10 +170,9 @@ Every wake replays the whole context: cost = context size × wakes. A coordinato
 the bus watcher burns hundreds of millions of cache-read tokens on "nothing to do" wakes.
 
 1. **The coordinator never watches.** No Monitor, no recurring cron, no bus binding. Karl or
-   the attendant wakes it.
-2. **The attendant is cheap and fixed:** `claude --model sonnet` with the filled-in
-   `ATTENDANT-BRIEF-TEMPLATE.md`, never improvised. It forwards one line per real event and
-   never analyzes content.
+   Myrstack's event forwarding wakes it.
+2. **Myrstack forwards, at no token cost.** It types one `Fleet event:` line per batch of real
+   events into the coordinator and never forwards heartbeats.
 3. **Keep the coordinator small.** Worker terminals, diffs, transcripts and long tickets go
    through subagents with a ≤10-line summary contract. `/compact` at wave boundaries.
 4. **Crons are fallbacks:** ≥60 min, one-shot where possible, deleted at wave end.
@@ -165,28 +180,17 @@ the bus watcher burns hundreds of millions of cache-read tokens on "nothing to d
 
 ## Coordinator duties
 
-- **The attendant waits on the bus; the coordinator waits on the attendant.** Attendant loop:
-  `check --wait --types worker_done,escalation,question,merge_ready --timeout-ms 900000 --json`
-  → ack heartbeats silently → forward a real event as one line
-  (`orca terminal send --terminal <coord> --text "<type> from <track>: <subject> — msg <id>"
---enter`) → re-arm. A timeout is a checkpoint, not a failure. The coordinator reads a
-  forwarded id with `check --run <id> --all` and never arms a waiter of its own. One waiter per
-  Run: a second returns `waitInterrupted: "waiter_exists"` with `count: 0`.
-- **Forward only into a live Claude prompt.** A dead coordinator's terminal is a bare shell
-  that executes forwarded lines. The attendant checks `orca terminal show` for a Claude `❯`
-  prompt first; if absent it queues events and summons Karl.
-- **Never exit with a live Run.** Before `/exit` or `/clear`, hand the Run to a successor
-  (`run-use --run <id>`, then give the attendant the new handle) or tell the attendant to
-  escalate straight to Karl.
-- **Karl outranks the brief.** Karl's instructions typed into the attendant's terminal, or the
-  coordinator's via `terminal send`, are not bus content: the attendant relays them to the
-  worker. Relays cover continue/report/push/open-the-PR; merge, deploy, delete and force-push
-  stay Karl's.
-- **Silence is an event.** Heartbeats mean alive, not done, and an unchanged `phase` is not a
-  stall. But a dead turn (API error, laptop sleep) sends nothing: after ~20 min of silence read
-  the tail and act. After any fleet-wide stall (usage limit, sleep), nudge every dispatch.
-- **Sweep what the bus doesn't carry** (PR state, CI, ticket threads) with
-  `~/Documents/agents/fleet-sweep.sh` on the attendant's 30–60 min cron.
+- **Myrstack wakes you; you never arm a waiter.** A `Fleet event: <type> from <track>: <subject>
+  — msg <id>` line typed into your terminal is a real `worker_done`, `merge_ready`, `question`
+  or `escalation` (or a failed-but-alive worker). Read it in full with
+  `check --run <id> --all` and act on it. Myrstack types only into a live Claude session; if
+  yours exited, events wait and Karl is notified, so before `/exit` or `/clear` with a live Run
+  hand it to a successor (`run-use --run <id>` from the new session) or tell Karl.
+- **Silence is the whip's job.** It nudges a worker silent for 15 min (twice, then notifies
+  Karl), and you when you sit on ready or finished tasks or an unanswered ask. After a
+  fleet-wide stall (usage limit, laptop sleep), check the tails yourself once.
+- **Sweep what the bus doesn't carry** (PR state, CI, ticket threads) when you need it, with
+  `~/Documents/agents/fleet-sweep.sh`.
 - **Account for every settled worker.** After an accepted `worker_done`, reuse the terminal
   (`worker-start --task <next> --terminal <handle> --worktree <selector>`) or
   `worker-release --dispatch <id>`. Never release on a timeout, idle TUI, heartbeat, question
@@ -267,10 +271,10 @@ comment) so it describes the design as it now stands, then marks it.
   notification per event; never for progress or routine status. The coordinator sends them,
   and so does a standalone session with no coordinator. Workers go through their coordinator
   (`ask`, `escalation`, `merge_ready`), except for the credential step in `_AGENT_PROTOCOL.md`.
-  - **Blocked on Karl** (a permission, credential, passkey or 2FA, prod approval, or a decision
-    only he can make): `severity: warn`, or `urgent` if work is stalled and can't wait. Say
-    what you need and what it unblocks, then wait ≥10 min, polling. A terminal sitting at a
-    prompt already shows as needs input and Myrstack notifies about it; don't add another.
+  - **Blocked on Karl** for something he must do (a permission, credential, passkey or 2FA,
+    prod approval): `severity: warn`, or `urgent` if work is stalled and can't wait. Say what
+    you need and what it unblocks, then wait ≥10 min, polling. A terminal sitting at a prompt
+    already shows as needs input and Myrstack notifies about it; don't add another.
   - **Handover** (you're done and the next move is Karl's): a PR ready for his review (right
     after the ready marker and `mark_pr_ready`), a merge waiting on him, a run or campaign
     finished. `severity: info`, the `url`, and one line on what he needs to do next. It is a
@@ -279,6 +283,26 @@ comment) so it describes the design as it now stands, then marks it.
   - **If Myrstack isn't running**, `notify` errors: fall back to the old channels. Blocking
     asks: `osascript -e 'display dialog "Agent <track> needs you: <what>" with title "orca
 fleet" buttons {"OK"} giving up after 300'`. Handovers: the chat and the ticket.
+- **A question you wait on goes through `ask_karl`** (`question`, `context`, `severity:
+  warn|urgent`, `url`). Myrstack sees prompts and menus on your screen, not a question typed
+  in the chat, so whenever you end a turn waiting for Karl's answer (which way to go, may I
+  merge, a missing fact), call `ask_karl` first, then end the turn and don't act on what the
+  answer decides. Karl gets the question as a notification and your node shows needs input
+  until he answers in your terminal (the whip leaves you alone meanwhile). Put the options and
+  your recommendation in `context`. Myrstack also flags a Claude turn that ends on a `?` as a
+  backstop; don't rely on it. Not for permission prompts or menus (already detected), status or
+  handovers. Same senders as `notify`: workers ask their coordinator on the bus.
+- **Leave with `finish_session`, don't idle forever.** When you're truly done (your work merged
+  or handed over, review addressed, nothing left), call `finish_session` with a one-line
+  `summary`, `outcome` (`done`, `handed_over`, `abandoned`) and any `pr_url`, as your last call
+  (after the handover `notify`). Myrstack records the outcome in Karl's inbox, shows your node
+  done and closes your terminal ~2 s later. It refuses while your worktree has uncommitted
+  changes or commits neither merged nor pushed, while a PR of yours waits in Karl's review
+  queue (stay to address his comments; finish once it merges or Karl says you're not needed),
+  and while your Run has open tasks; `force: true` only when Karl said to stop anyway (the
+  overridden problems are recorded). The worktree and branch are kept: removing them stays
+  _Clean up after merge_ or Karl's call. Workers never finish themselves: the coordinator
+  reuses or releases them. A coordinator finishes only after its Run is done and cleaned up.
 - Secrets go only into password fields: never logs, PRs, tickets or summaries. Worker
   `.dev.vars` come from `.envrc.local` via `just`; don't hand-edit or echo them.
 - Say what you could and couldn't reach behind sign-in walls; a login page is not a verified
@@ -338,14 +362,27 @@ evidence is dropping. Never double-execute writes: dry-run diff the intended mut
 | Heartbeats rejected (`dispatch capability is revoked`)                 | Stop heartbeating at `worker_done`                                                                     |
 | `worker-release` said `ok` and released nothing                        | Read `state`; `retained` / `user_takeover` is Karl's to close                                          |
 | Worker waited forever on a finished background subagent                | Never end a turn waiting on a background agent (`_AGENT_PROTOCOL.md`)                                  |
-| Workers dead for hours, attendant reports "all quiet"                  | Silence is an event; check every tail after a laptop sleep                                             |
-| Attendant forwards executed as shell commands                          | Coordinator never exits with a live Run; attendant checks for a live prompt                            |
-| Attendant refused Karl's instruction                                   | Karl outranks the brief                                                                                |
+| Workers dead for hours, nobody noticed                                 | The whip nudges after 15 min; check every tail after a laptop sleep                                    |
+| Task "failed" at launch but the worker is still working                | Codex launch race; don't relaunch. Read its terminal; Myrstack sends a `Fleet event` for it            |
+| Worker waited hours for a plan approval                                | `Risk: standard` proceeds on its reviewers' APPROVED; answer a gated `ask` within the hour             |
+| Rework round after the work, for a product decision                    | Dispatch only with `Open decisions: none`                                                              |
+| Parallel PRs conflicting and rebased round after round                 | Kickoff names files owned and merge order; overlapping tracks run in sequence                         |
 | Merged worktrees and branches pile up                                  | Clean up in the same step as closing the bead                                                          |
 | Stacked child PR closed or conflicted on parent merge                  | Merge bottom-up; retarget the child to main, merge origin/main into it                                 |
 | Lite surfaces failed ~15 min after a merge                             | Land `deploy-lite` merges outside the :45 \*/6 window                                                  |
 | Repurposed worker dragged old context in                               | `/clear` first, or a fresh dispatch                                                                    |
-| Token bill exploded on a quiet fleet                                   | _Token economy_: attendant binds the Run, coordinator arms no wakes                                    |
+| Token bill exploded on a quiet fleet                                   | _Token economy_: Myrstack forwards events, the coordinator arms no wakes                               |
+| Agent asked Karl in the chat and waited hours unseen                   | `ask_karl` before ending any turn that waits on Karl's answer                                          |
+| Finished sessions sat idle until Karl closed them by hand              | `finish_session` once merged or handed over; its guards say what's still open                          |
+
+## Fallback: Myrstack not running
+
+Without Myrstack nothing forwards events or nudges stalls. For a run that must go on
+unattended then, start an attendant: `claude --model sonnet` in its own terminal with
+`ATTENDANT-BRIEF-TEMPLATE.md` filled in (`myrstack playbook attendant-brief <run_id>`), created
+before `run-create` so the Run binds to it. It waits on the bus, forwards real events into your
+live prompt, checks silent workers after 20 min and summons Karl if you are gone. Myrstack
+leaves runs with an attendant alone.
 
 ## Human setup left (Karl only)
 

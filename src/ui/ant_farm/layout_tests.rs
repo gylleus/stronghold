@@ -8,6 +8,7 @@ use super::motion::{along, route};
 use crate::model::{
     Edge, EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
 };
+use crate::orca::{DispatchStatus, WorkerState, WorkerTerminalState};
 
 const RECT: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1280.0, 800.0));
 
@@ -85,6 +86,7 @@ fn scene_with(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>, pr: &[&str]) 
         snapshot,
         hidden,
         pr_ready: &pr_ready,
+        building: &HashSet::new(),
         now_ms: 0,
     };
     layout(&input, RECT)
@@ -313,6 +315,103 @@ fn one_tunnel_per_run_then_per_repo() {
     );
     let xs: Vec<f32> = scene.tunnels.iter().map(|t| t.shaft.center().x).collect();
     assert!(xs.windows(2).all(|w| w[0] < w[1]), "left to right: {xs:?}");
+}
+
+#[test]
+fn past_dispatches_without_a_terminal_are_not_drawn() {
+    let mut s = FleetSnapshot::default();
+    s.runs = vec![run("r1", 1, 4)];
+    s.nodes.push(node(
+        "r1-coord",
+        NodeKind::Coordinator,
+        Some("r1"),
+        NodeState::Idle,
+    ));
+    let past = |name: &str, state, worker_state, dispatch_status| Node {
+        live: false,
+        worker_state: Some(worker_state),
+        dispatch_status: Some(dispatch_status),
+        worker_terminal_state: Some(WorkerTerminalState::Reclaimable),
+        ..node(name, NodeKind::Worker, Some("r1"), state)
+    };
+    s.nodes.push(past(
+        "old-done",
+        NodeState::Done,
+        WorkerState::Succeeded,
+        DispatchStatus::Completed,
+    ));
+    s.nodes.push(past(
+        "superseded",
+        NodeState::Failed,
+        WorkerState::Failed,
+        DispatchStatus::Failed,
+    ));
+    s.nodes.push(Node {
+        live: false,
+        dispatch_status: Some(DispatchStatus::Dispatched),
+        ..node("lost", NodeKind::Worker, Some("r1"), NodeState::Failed)
+    });
+    s.nodes.push(Node {
+        live: false,
+        worker_terminal_state: Some(WorkerTerminalState::Released),
+        released_at_ms: Some(0),
+        ..node("released", NodeKind::Worker, Some("r1"), NodeState::Done)
+    });
+    let scene = scene(&s);
+    assert!(
+        scene.ant(&id("old-done")).is_none(),
+        "no done without a terminal"
+    );
+    assert!(scene.ant(&id("superseded")).is_none());
+    assert_eq!(
+        ant(&scene, "lost").pose,
+        Pose::Failed,
+        "an open dispatch that lost its terminal stays, failed"
+    );
+    assert!(
+        scene.ant(&id("released")).is_some(),
+        "released ones fade out"
+    );
+}
+
+#[test]
+fn a_finished_run_without_workers_has_no_tunnel() {
+    let mut s = FleetSnapshot::default();
+    s.runs = vec![run("over", 1, 1), run("ongoing", 2, 2)];
+    let mut coord = node(
+        "over-coord",
+        NodeKind::Coordinator,
+        Some("over"),
+        NodeState::Idle,
+    );
+    coord.label = "Other work".into();
+    coord.worktree_path = Some("/x/orca/workspaces/alpha/one".into());
+    s.nodes.push(coord);
+    s.nodes.push(node(
+        "ongoing-coord",
+        NodeKind::Coordinator,
+        Some("ongoing"),
+        NodeState::Idle,
+    ));
+    s.nodes.push(node(
+        "w",
+        NodeKind::Worker,
+        Some("ongoing"),
+        NodeState::Idle,
+    ));
+    let scene = scene(&s);
+    let keys: Vec<TunnelKey> = scene.tunnels.iter().map(|t| t.key.clone()).collect();
+    assert_eq!(
+        keys,
+        [
+            TunnelKey::Run("ongoing".into()),
+            TunnelKey::Repo("alpha".into()),
+        ],
+        "a finished run's coordinator digs in its repo's tunnel; one with a worker keeps its own"
+    );
+    let c = ant(&scene, "over-coord");
+    assert!(matches!(c.spot, Spot::Chamber(1, _)));
+    assert_eq!(c.tag.as_deref(), Some("Other work"));
 }
 
 #[test]
@@ -545,6 +644,7 @@ fn a_resize_moves_ants_without_walking() {
         snapshot: &s,
         hidden: &hidden,
         pr_ready: &pr_ready,
+        building: &HashSet::new(),
         now_ms: 0,
     };
     let smaller = layout(&input, Rect::from_min_size(Pos2::ZERO, vec2(900.0, 600.0)));
@@ -589,6 +689,7 @@ fn clicking_an_ant_reports_it() {
         snapshot: &s,
         hidden: &hidden,
         pr_ready: &pr_ready,
+        building: &HashSet::new(),
         now_ms: 0,
     };
     let scene = layout(&input, rect);
@@ -645,6 +746,7 @@ fn dragging_a_box_selects_the_ants_in_it() {
         snapshot: &s,
         hidden: &hidden,
         pr_ready: &pr_ready,
+        building: &HashSet::new(),
         now_ms: 0,
     };
     let scene = layout(&input, rect);
@@ -789,8 +891,239 @@ fn scenery_stays_on_the_surface_and_in_the_sky() {
                 }
             }
         }
-        for (star, _) in scenery::stars(&scene, now) {
+        for (star, _) in scenery::stars(&scene) {
             assert!(scene.rect.contains(star) && star.y < scene.surface_y);
         }
+    }
+}
+
+#[test]
+fn building_diggers_build() {
+    let s = snapshot();
+    let building: HashSet<NodeId> = ["working", "idle", "r1-coord"].map(id).into();
+    let input = FarmInput {
+        snapshot: &s,
+        hidden: &BTreeSet::new(),
+        pr_ready: &HashSet::new(),
+        building: &building,
+        now_ms: 0,
+    };
+    let scene = layout(&input, RECT);
+    let pose_of = |name: &str| scene.ant(&id(name)).unwrap().pose;
+    assert_eq!(pose_of("working"), Pose::Build);
+    assert!(scene.ant(&id("working")).unwrap().facing_right);
+    assert_eq!(pose_of("idle"), Pose::Sleep, "only working ants build");
+    assert_eq!(
+        pose_of("r1-coord"),
+        Pose::Stand,
+        "coordinators keep standing"
+    );
+}
+
+/// An ant removed from the fleet falls; one filtered out or changing state does not.
+#[test]
+fn only_removed_ants_fall() {
+    let mut farm = AntFarmView::new();
+    let mut s = snapshot();
+    let first = scene(&s);
+    farm.bury(&first, &s, 0.0, || false);
+    farm.advance(&first, 0.0);
+
+    s.nodes
+        .iter_mut()
+        .find(|n| n.id == id("working"))
+        .unwrap()
+        .state = NodeState::Done;
+    let hidden: BTreeSet<NodeId> = [id("idle")].into();
+    let filtered = scene_with(&s, &hidden, &[]);
+    farm.bury(&filtered, &s, 1.0, || false);
+    let drawn = farm.advance(&filtered, 1.0);
+    let waiting = filtered
+        .ants
+        .iter()
+        .position(|a| a.id == id("waiting"))
+        .unwrap();
+    assert!(farm.falls.is_empty(), "done and filtered ants stay alive");
+
+    s.nodes
+        .retain(|n| n.id != id("waiting") && n.id != id("idle"));
+    let after = scene_with(&s, &hidden, &[]);
+    farm.bury(&after, &s, 2.0, || false);
+    farm.advance(&after, 2.0);
+    assert_eq!(
+        farm.falls.len(),
+        1,
+        "only the removed ant, not the filtered one"
+    );
+    let fall = farm.falls[0];
+    assert_eq!(
+        fall.body.at,
+        super::motion::to_unit(drawn[waiting].pos, RECT),
+        "from where it was last drawn"
+    );
+    assert!(!fall.still);
+    farm.bury(&after, &s, 2.1, || false);
+    assert_eq!(farm.falls.len(), 1, "falls once");
+}
+
+/// A falling ant hops, flips legs up, lands on the farm's bottom after FALL_S, bounces and
+/// fades; with reduced motion it fades where it stood.
+#[test]
+fn a_dead_ant_falls_to_the_bottom() {
+    use super::death::*;
+    let body = Body {
+        at: pos2(0.5, 0.2),
+        size: 32.0,
+        facing_right: true,
+        red: false,
+        alpha: 1.0,
+    };
+    let fall = Fall {
+        body,
+        start_s: 10.0,
+        still: false,
+    };
+    let at = |t: f64| fall.frame(RECT, 10.0 + t).unwrap();
+    let start = at(0.0);
+    assert_eq!(start.pos, pos2(640.0, 160.0));
+    assert!(!start.upside_down);
+    assert!(at(0.05).pos.y < 160.0, "hops first");
+    assert!(at(0.5).upside_down, "legs up");
+    let floor = RECT.bottom() - 16.0;
+    assert!(
+        at(0.9).pos.y < floor && at(0.9).pos.y > at(0.5).pos.y,
+        "falling"
+    );
+    assert!(
+        (at(FALL_S).pos.y - floor).abs() < 0.5,
+        "lands at the bottom"
+    );
+    assert!(at(FALL_S + REST_S / 2.0).pos.y < floor, "bounces");
+    assert_eq!(at(FALL_S + REST_S).alpha, 1.0);
+    assert!(at(FALL_S + REST_S + FADE_S / 2.0).alpha < 1.0, "fades");
+    assert_eq!(fall.frame(RECT, 10.0 + fall.duration()), None, "gone");
+
+    let still = Fall {
+        still: true,
+        ..fall
+    };
+    let mid = still.frame(RECT, 10.0 + STILL_FADE_S / 2.0).unwrap();
+    assert_eq!(mid.pos, start.pos);
+    assert!(!mid.upside_down);
+    assert!((mid.alpha - 0.5).abs() < 0.01);
+    assert_eq!(still.frame(RECT, 10.0 + STILL_FADE_S), None);
+}
+
+/// A crowded chamber in a narrow tunnel packs its ants side by side, spread across the
+/// chamber, rather than one per row down a tall farm.
+#[test]
+fn a_crowded_chamber_packs_side_by_side() {
+    let mut s = FleetSnapshot::default();
+    s.nodes
+        .push(node("queen", NodeKind::Queen, None, NodeState::Working));
+    for r in 0..6 {
+        let name = format!("r{r}");
+        s.runs.push(run(&name, 1, 4));
+        let workers = if r == 0 { 9 } else { 1 };
+        for w in 0..workers {
+            s.nodes.push(node(
+                &format!("{name}-w{w}"),
+                NodeKind::Worker,
+                Some(&name),
+                NodeState::Failed,
+            ));
+        }
+    }
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 1400.0));
+    let pr_ready = HashSet::new();
+    let hidden = BTreeSet::new();
+    let input = FarmInput {
+        snapshot: &s,
+        hidden: &hidden,
+        pr_ready: &pr_ready,
+        building: &HashSet::new(),
+        now_ms: 0,
+    };
+    let scene = layout(&input, rect);
+    let chamber = scene.tunnels[tunnel_of(&scene, "r0-w0")].chamber;
+    let ants: Vec<&Ant> = scene
+        .ants
+        .iter()
+        .filter(|a| a.id.as_str().starts_with("r0-"))
+        .collect();
+    let mut rows: Vec<f32> = ants.iter().map(|a| a.pos.y).collect();
+    rows.sort_by(f32::total_cmp);
+    rows.dedup();
+    let widest = rows
+        .iter()
+        .map(|y| ants.iter().filter(|a| a.pos.y == *y).count())
+        .max()
+        .unwrap();
+    assert!(
+        rows.len() <= widest,
+        "{} rows of up to {widest}",
+        rows.len()
+    );
+    for ant in ants {
+        // The name tag is two cells wide.
+        let tag = Rect::from_center_size(ant.pos, vec2(2.0 * ant.size, ant.size));
+        assert!(
+            tag.left() >= chamber.left() - 0.5 && tag.right() <= chamber.right() + 0.5,
+            "{} stays in its chamber",
+            ant.id.as_str()
+        );
+    }
+}
+
+/// A chamber ant's subagents, nested ones too, line up behind it in room it reserves:
+/// they never cover another ant or each other.
+#[test]
+fn subagent_trails_take_room_in_the_chamber() {
+    let mut s = FleetSnapshot::default();
+    s.runs = vec![run("r1", 1, 4)];
+    for name in ["a", "b", "c", "d"] {
+        s.nodes
+            .push(node(name, NodeKind::Worker, Some("r1"), NodeState::Working));
+    }
+    for (sub, parent) in [
+        ("s1", "a"),
+        ("s2", "a"),
+        ("s3", "a"),
+        ("s4", "s1"),
+        ("s5", "b"),
+    ] {
+        s.nodes
+            .push(node(sub, NodeKind::Subagent, None, NodeState::Working));
+        s.edges.push(Edge {
+            from: id(parent),
+            to: id(sub),
+            kind: EdgeKind::Subagent,
+        });
+    }
+    let scene = scene(&s);
+    let nested = ant(&scene, "s4");
+    assert!(matches!(&nested.spot, Spot::Trail(root, _) if *root == id("a")));
+    let boxes: Vec<(&str, Rect)> = scene
+        .ants
+        .iter()
+        .map(|a| {
+            (
+                a.id.0.as_str(),
+                Rect::from_center_size(a.pos, Vec2::splat(a.size)),
+            )
+        })
+        .collect();
+    for (i, (x, rx)) in boxes.iter().enumerate() {
+        for (y, ry) in &boxes[i + 1..] {
+            let overlap = rx.intersect(*ry);
+            assert!(
+                overlap.width() <= 0.5 || overlap.height() <= 0.5,
+                "{x} overlaps {y}"
+            );
+        }
+    }
+    let chamber = scene.tunnels[0].chamber;
+    for a in &scene.ants {
+        assert!(chamber.expand(1.0).contains(a.pos), "{} outside", a.id.0);
     }
 }

@@ -542,6 +542,29 @@ review announcement after an agent's handover about the same PR is dropped likew
 `retry_after_ms`). An `agent` that matches no node is reported as `unknown_agent` and the
 notification is filed under the caller's terminal.
 
+### `ask`
+
+`{"question", "context"?, "severity"?: "warn"|"urgent", "url"?: http(s), "origin"?}`. An
+agent's question to Karl (the `ask_karl` MCP tool). Notifies him like `notify` and marks the
+caller's terminal waiting (needs input) until he answers. The reply is `notify`'s plus
+`"waiting": true|false` (false when the origin matches no terminal).
+
+### `finish`
+
+`{"summary", "outcome"?: "done"|"handed_over"|"abandoned", "pr_url"?, "force"?, "forced"?:
+[…], "dry_run"?, "origin"?}`. An agent ending its own session (the `finish_session` MCP tool).
+With `dry_run` it returns the caller's node (`agent`: id, label, kind, worktree, branch) with
+`refused` (a worker) and `problems` (open tasks, PRs in the review queue). Otherwise a refusal,
+or problems without `force`, fail with `refused`; past them the app records the outcome
+(`finished`, with `forced` = the caller's problems plus the app's), notifies Karl and closes
+the terminal after `closing_in_ms` with the `plan` returned.
+
+```json
+{"v":1,"method":"finish","params":{"summary":"Merged into main","origin":{"terminal_handle":"term_…"}}}
+→ {"ok":true,"result":{"dry_run":false,"agent":{"id":"term:term_…",…},"finished":{…},
+   "closing_in_ms":2000,"plan":{…},"notification":"delivered"}}
+```
+
 ## Notifications
 
 Every notification goes through one dispatcher in the app: agents' `notify`, nodes entering

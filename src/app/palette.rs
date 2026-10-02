@@ -65,6 +65,7 @@ impl MyrstackApp {
                 self.graph.reset_layout();
             }
             Dispatch::ResetPanes => self.reset_panes(),
+            Dispatch::ToggleNotifications => self.toggle_notifications(),
             Dispatch::SetView(view) => self.view = view,
             Dispatch::ClearFilters => self.clear_filters(),
             Dispatch::ShowOnly(state) => {

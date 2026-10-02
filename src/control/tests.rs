@@ -431,6 +431,33 @@ fn notify_parses_into_a_command() {
     assert!(crate::control::server::ACTION_METHODS.contains(&"notify"));
 }
 
+#[test]
+fn ask_and_finish_parse_into_commands() {
+    let params = json!({
+        "question": "Merge now?",
+        "context": "CI is green.",
+        "origin": {"terminal_handle": "term_a"},
+    });
+    let Some(Ok(ControlCommand::Ask(ask))) = ControlCommand::parse("ask", &params) else {
+        panic!("ask parses");
+    };
+    assert_eq!(ask.question, "Merge now?");
+    assert_eq!(ask.severity, crate::notify::Severity::Warn);
+    assert_eq!(ask.origin.terminal_handle.as_deref(), Some("term_a"));
+    assert!(ControlCommand::parse("ask", &json!({})).unwrap().is_err());
+
+    let params = json!({"summary": "Merged", "outcome": "done", "origin": {"pane_key": "a:b"}});
+    let Some(Ok(ControlCommand::Finish(finish))) = ControlCommand::parse("finish", &params) else {
+        panic!("finish parses");
+    };
+    assert_eq!(finish.summary, "Merged");
+    assert!(!finish.dry_run && !finish.force);
+    assert_eq!(finish.origin.pane_key.as_deref(), Some("a:b"));
+    for method in ["ask", "finish"] {
+        assert!(crate::control::server::ACTION_METHODS.contains(&method));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Actions over the socket
 

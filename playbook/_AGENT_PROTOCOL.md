@@ -12,15 +12,18 @@ this file and name the conflict in your report.
 Coordinator: Karl's coordinator Claude Code session. Human: Karl. You are a worker under an
 Orca dispatch — you have a `taskId` and a `dispatchId` in your preamble. If you do not have
 both, you are NOT under a dispatch: do the work as an ordinary handoff and send no lifecycle
-messages.
+messages. Such a standalone session reaches Karl itself, by the playbook's _Human in the loop_:
+`ask_karl` before ending any turn that waits on his answer, and `finish_session` once your work
+is merged or handed over and nothing is left, instead of idling.
 
 ## Lifecycle
 
 1. **Kickoff.** Read the ticket and every comment. Post a DETAILED implementation plan as a
-   ticket comment. Set your card, then **stop and wait for review**:
+   ticket comment and set your card:
    ```bash
-   orca worktree set --worktree active --workspace-status in-progress --comment "plan posted, awaiting review" --json
+   orca worktree set --worktree active --workspace-status in-progress --comment "plan posted, in review" --json
    ```
+   If your spec lists open decisions, `ask` about them before planning around a guess.
 2. **Review.** Spawn fresh-context review subagents over your own plan and diff:
    `claudemd-style-reviewer`, `comment-style-auditor`, and `/code-review high`. Run them on
    Claude Opus 5.5 (Agent tool `model: "opus"`), never Fable unless Karl asked. Require them
@@ -28,7 +31,10 @@ messages.
    the single biggest killer. Post their findings on the ticket.
 3. **Iterate** until `APPROVED — <one line>`. Rebuttal is first-class: a convincingly
    rebutted finding is resolved, not implemented. You are not required to implement
-   everything a reviewer suggests.
+   everything a reviewer suggests. Then the gate depends on your spec's `Risk`:
+   - `standard` (or none given): carry straight on to implementing. Nobody else approves.
+   - `gated`: `ask` the coordinator to approve the plan (link the APPROVED comment) and
+     implement only after its reply.
 4. **Implement** in your worktree. Then the repo's gate — `just check` in `recommendations`
    (plus `just test-integration`, which needs `just dev-up`, if you touched the binding or
    the wire types). Other repos: read their CLAUDE.md and CI before assuming a gate exists.
@@ -77,12 +83,13 @@ orca orchestration send --type worker_done --subject "<short status>" \
   `ask --resume <message_id>`. Never re-ask — you'll create a second thread nobody can match
   to the first.
 - Something is on fire and the coordinator must intervene → `--type escalation`.
-- Don't call Myrstack's `notify` tool: your coordinator reaches Karl. Exceptions: the
-  credential step under _Hard rules_, and a standalone session with no coordinator, which
-  notifies Karl itself by the playbook's _Human in the loop_ rules.
+- Don't call Myrstack's `notify` or `ask_karl` tools: your coordinator reaches Karl, and your
+  questions go to it with `ask`. Exceptions: the credential step under _Hard rules_, and a
+  standalone session with no coordinator, which reaches Karl itself by the playbook's _Human in
+  the loop_ rules.
 - After `worker_done`, end your turn and idle. Do not start more work, do not poll, do not
-  close your own terminal. If the coordinator reuses you, a fresh preamble arrives as new
-  input.
+  close your own terminal (`finish_session` refuses workers: the coordinator reuses or releases
+  you). If the coordinator reuses you, a fresh preamble arrives as new input.
 
 ## Heartbeats
 
@@ -91,15 +98,21 @@ Myrstack, the fleet's desktop watcher, nudges any dispatched task with no progre
 a fallback, terminal output. Heartbeats are how you stay off its list.
 
 - Use the heartbeat command **from your preamble, verbatim**: it carries your `--from`
-  and dispatch capability. Send one at every phase change and at least every 5 min during
-  a long step (build, CI or Ankra wait, review subagent). Never let 7 min pass without one.
-  Send it in-turn while you wait.
+  and dispatch capability. Send one at every phase change, and before a step that may print
+  nothing for over 10 min (CI or Ankra wait, a long build, a review subagent), then every
+  10 min while it lasts, in-turn. Terminal output counts as progress, so a step that prints
+  needs no extra heartbeats. This replaces the preamble's every-5-min rule.
 - `--phase` is one word: `planning`, `investigating`, `implementing`, `reviewing`,
   `verifying`, `waiting`. Put detail in `--body` as one line (`--body "PR #208 open,
   waiting on Ankra"`), not in the phase.
 - A heartbeat is not a report. Done → `worker_done`; gate-ready → `merge_ready`; blocked
   → `ask`; on fire → `escalation`. No heartbeats after `worker_done`: the dispatch is
   settled and Orca rejects them.
+- **Orca rejects your heartbeats with `dispatch capability is revoked` before you sent
+  `worker_done`?** Your launch was marked failed while you started anyway (a known Codex
+  race). Keep working; Myrstack has told your coordinator. Stop sending heartbeats and reports
+  to that dispatch, and end with your full report (what you did, PR link, what remains) as
+  your final message in your terminal.
 - **A `Myrstack:` nudge** (bus message or typed text) is a liveness ping. Reply with ONE
   heartbeat giving your current phase and a one-line `--body` status, then carry on in the
   same turn. If you are actually done or stuck, send `worker_done` / `ask` / `escalation`

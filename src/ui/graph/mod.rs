@@ -115,6 +115,8 @@ pub struct GraphView {
     repos: HashMap<NodeId, String>,
     /// Claude token usage per node, for tooltips.
     usage: HashMap<NodeId, Usage>,
+    /// Nodes whose agent is editing or building; the ant farm gives them a hard hat.
+    building: HashSet<NodeId>,
     /// Nodes whose agent has a PR in the review queue; drawn with a "PR" badge.
     pr_ready: HashSet<NodeId>,
     /// Unread notifications per node; drawn as a count badge.
@@ -180,6 +182,7 @@ impl GraphView {
             objectives: HashMap::new(),
             repos: HashMap::new(),
             usage: HashMap::new(),
+            building: HashSet::new(),
             pr_ready: HashSet::new(),
             unread: HashMap::new(),
             id: id.into(),
@@ -208,6 +211,15 @@ impl GraphView {
     /// Claude token usage per node, shown in tooltips.
     pub fn set_usage(&mut self, usage: HashMap<NodeId, Usage>) {
         self.usage = usage;
+    }
+
+    /// Nodes whose agent is editing or building right now.
+    pub fn set_building(&mut self, nodes: HashSet<NodeId>) {
+        self.building = nodes;
+    }
+
+    pub fn building(&self) -> &HashSet<NodeId> {
+        &self.building
     }
 
     /// Marks the nodes with a PR ready for review (a "PR" badge), updating drawn nodes in place.

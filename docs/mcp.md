@@ -69,6 +69,8 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `mark_pr_ready` | `pr_url`, `title`, `summary` | `pr_ready` (queued in `pr-ready.jsonl` when the app is down) | not destructive, idempotent |
 | `review_queue` | – | `review_queue` (the saved queue when the app is down) | read-only |
 | `notify` | `title`, `message`, `severity` (`info` \| `warn` \| `urgent`), `url`, `agent` | `notify` | not destructive |
+| `ask_karl` | `question`, `context`, `severity` (`warn` \| `urgent`), `url` | `ask` | not destructive |
+| `finish_session` | `summary`, `outcome` (`done` \| `handed_over` \| `abandoned`), `pr_url`, `force` | `finish` (a `dry_run` check, then the real one) | destructive |
 | `clean_worktrees` | `dry_run` (**default true**), `ids` (needed with `dry_run: false`) | – (runs `orca`, `git`, `gh` itself) | destructive |
 
 `mark_pr_ready` is for fleet agents: the server is registered at user scope, so every Claude
@@ -88,6 +90,32 @@ workers go through their coordinator. Identical
 repeats collapse, each agent gets at most 5 per 10 minutes, and quiet mode lets only `urgent`
 through. It needs the app running. See the control API's
 [Notifications](control-api.md#notifications).
+
+`ask_karl` is for a question an agent waits on Karl to answer, which Myrstack can't see on
+the screen (it only detects permission prompts and menus). It notifies Karl with the question
+(source `agent`, so it isn't swallowed by the needs-input cooldown, which it then holds so
+the node's needs-input notification doesn't repeat it) and marks the caller's terminal
+waiting: the node shows needs input, with `Asks: <question>` as its preview, until the Claude
+transcript shows a prompt after the ask (for agents without a transcript, until the terminal
+has produced output 2 minutes after it), or the terminal goes. As a backstop, a Claude
+session whose last turn ended (`stop_reason: end_turn`) on a line ending in `?` within its
+last four lines also shows needs input, until the next prompt (`src/claude/turns.rs`,
+`src/ask.rs`). Waiting nodes are not nudged by the whip.
+
+`finish_session` lets an agent that is truly done close its own terminal. The server first
+asks the app (`finish` with `dry_run`) who the caller is and what the fleet says: workers are
+refused (their coordinator reuses or releases them), and a coordinator with open tasks or an
+agent with a PR still in the review queue gets a problem. It then checks the caller's git
+worktree (the node's, else its own working directory): uncommitted changes (the `.beads/`
+export aside) and commits neither merged into the default branch (`origin/HEAD`, `main`,
+`master`) nor pushed to their upstream are problems. Problems refuse unless `force` is set;
+forced problems are recorded. Past the guards the app records the outcome in
+`finished.jsonl` in the data dir, notifies Karl (info, or warn when forced; the PR url folds
+into its review notification), shows the node done and closes the terminal 2 s after replying
+with the same plan as `close_agents` (pane only). The worktree and branch are always kept.
+A closed finished terminal stays in the graph as a fading done node for 10 minutes. When to
+call both is in the tool descriptions and the server instructions (`src/mcp/lifecycle.rs`,
+`rules_text!`), and in the playbook's _Human in the loop_.
 
 `clean_worktrees` is the top bar's worktree cleanup (`src/worktrees.rs`) as a tool, so the
 Queen can run it on request. A worktree is removable only when no Orca terminal, process or

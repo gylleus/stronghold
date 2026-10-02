@@ -273,3 +273,82 @@ fn classify(rows: &[&str]) -> Option<PromptKind> {
 
 #[cfg(test)]
 mod tests;
+
+/// Lower-cased fragments only Claude Code's live screen shows: the composer and its footer
+/// hints, the transcript bullet, the "thinking" spinner and its finished-turn line.
+const CLAUDE_SCREEN_MARKERS: &[&str] = &[
+    "❯\u{a0}",
+    "⏺",
+    "esc to interrupt",
+    "? for shortcuts",
+    "/clear to save",
+    "bypass permissions",
+    "accept edits",
+    "plan mode",
+];
+
+/// Spinner glyphs Claude Code draws in front of its status word while it works.
+const CLAUDE_SPINNERS: &[char] = &['✻', '✢', '✳', '✶', '✽', '·', '*'];
+
+/// Is a live Claude Code session in front of this terminal, so text typed into it lands in the
+/// agent's composer? `false` for anything else, notably a bare shell left behind when the
+/// session exited, where typed text would run as a command. Errs towards `false`.
+pub fn claude_session_live(terminal: &crate::orca::Terminal) -> bool {
+    if terminal.orphaned || terminal.agent_identity != Some(AgentIdentity::Claude) {
+        return false;
+    }
+    let Some(preview) = terminal.preview.as_deref() else {
+        return false;
+    };
+    let rows: Vec<&str> = preview
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !is_blank(l))
+        .collect();
+    let Some(last) = rows.last() else {
+        return false;
+    };
+    if looks_like_shell_prompt(last) {
+        return false;
+    }
+    let tail = &rows[rows.len().saturating_sub(TAIL_ROWS)..];
+    tail.iter().any(|row| {
+        let lower = row.to_lowercase();
+        is_spinner_row(row) || CLAUDE_SCREEN_MARKERS.iter().any(|m| lower.contains(m))
+    })
+}
+
+/// Claude's working line: an optional spinner glyph, then one capitalised verb ending in `…`
+/// (`✢ Brewing…`, `Flummoxing…  6`). The glyph is often lost in a preview.
+fn is_spinner_row(row: &str) -> bool {
+    let rest = row
+        .trim_start()
+        .trim_start_matches(CLAUDE_SPINNERS)
+        .trim_start();
+    let Some(word) = rest.split_whitespace().next() else {
+        return false;
+    };
+    let Some(verb) = word.strip_suffix('…') else {
+        return false;
+    };
+    verb.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+        && verb.chars().all(|c| c.is_ascii_alphabetic())
+}
+
+/// A shell prompt line: ends in a prompt character (`$`, `%`, `#`, `➜`, a bare `❯`), or in a
+/// right-hand git status and duration as powerlevel-style prompts draw (`… main ✔   9m`).
+fn looks_like_shell_prompt(line: &str) -> bool {
+    let line = line.trim_end();
+    if line.ends_with(['$', '%', '#', '➜']) || line.trim() == "❯" {
+        return true;
+    }
+    let mut words = line.split_whitespace().rev();
+    let duration = words.next().is_some_and(|w| {
+        let digits = w.trim_end_matches(['s', 'm', 'h']);
+        digits.len() < w.len() && !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+    });
+    duration
+        && words
+            .next()
+            .is_some_and(|w| w == "✔" || w == "✘" || w.ends_with('✔'))
+}
