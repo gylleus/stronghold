@@ -417,6 +417,23 @@ fn seed_envoy_panel_fixture() {
     queue
         .finish(&failed.id, Err("Fixture: Queen was busy".into()), now_ms())
         .unwrap();
+    let mut notices =
+        crate::notify::NotificationCenter::new(crate::notify::history::History::default());
+    notices.dispatch(
+        Incoming::new(
+            Source::Envoy,
+            Severity::Info,
+            "Envoy draft ready",
+            "A fixture draft is waiting for approval.",
+        )
+        .with_target(DRAFTS_TARGET),
+        &crate::notify::NotifySettings::default(),
+        now_ms(),
+    );
+    notices
+        .history
+        .save(&dir.join(crate::notify::history::HISTORY_FILE))
+        .unwrap();
     let mut layout = crate::ui::dock::PaneLayout::default();
     layout.open_envoy();
     let state = crate::persist::PersistedState {

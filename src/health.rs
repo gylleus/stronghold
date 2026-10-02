@@ -148,7 +148,7 @@ pub struct HookProbe {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum BridgeProbe {
-    /// No `~/.claude/slack-subscriptions/`: the bridge isn't set up here.
+    /// No bridge directory: the bridge is not set up here.
     #[default]
     NotConfigured,
     /// The heartbeat's time, `None` when the file is missing or unreadable.
