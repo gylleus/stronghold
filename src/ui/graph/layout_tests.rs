@@ -675,3 +675,15 @@ fn envoy_sits_beside_queen_outside_repo_regions() {
     );
     assert_eq!(displacement[1], egui::Vec2::ZERO);
 }
+
+#[test]
+fn envoy_does_not_expand_its_repository_backdrop_to_the_queen() {
+    let mut snapshot = FleetSnapshot::default();
+    snapshot
+        .nodes
+        .push(in_repo(node("envoy", NodeKind::Envoy, None), "myrstack"));
+    snapshot.add_queen();
+    let mut view = GraphView::new();
+    view.sync(&snapshot);
+    assert!(view.repo_regions().is_empty());
+}

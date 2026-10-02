@@ -88,6 +88,7 @@ pub fn state_with(members: Vec<Option<Membership>>, repos: Vec<Option<u32>>) -> 
 /// Which cluster a node belongs to and its role there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Membership {
+    /// The listener beside the Queen, outside repo groups.
     Envoy,
     /// The center of run cluster `.0`.
     Coordinator(u32),

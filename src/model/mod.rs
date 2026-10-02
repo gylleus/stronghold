@@ -74,8 +74,6 @@ impl fmt::Display for NodeId {
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
 pub enum NodeKind {
-    /// The persistent listener session, identified by terminal handle.
-    Envoy,
     /// A run's coordinator terminal.
     Coordinator,
     /// The terminal that created a run and forwards its bus events to the coordinator (Orca
@@ -85,6 +83,8 @@ pub enum NodeKind {
     Worker,
     /// A live terminal outside any run.
     Terminal,
+    /// The persistent listener session, identified by terminal handle.
+    Envoy,
     /// A Claude subagent under a terminal (M3).
     Subagent,
     /// The fleet's hub, linked to every coordinator and loose terminal; broadcasts start here.

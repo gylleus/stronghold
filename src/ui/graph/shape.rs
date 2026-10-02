@@ -852,7 +852,11 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
             ));
         }
         if radius >= DETAIL_MIN_PX {
-            let opaque = state_color(self.state, visuals.dark_mode);
+            let opaque = if self.kind == NodeKind::Envoy {
+                envoy_color(visuals.dark_mode)
+            } else {
+                state_color(self.state, visuals.dark_mode)
+            };
             shapes.push(glyph_shape(
                 ctx.ctx,
                 state_glyph(self.state),

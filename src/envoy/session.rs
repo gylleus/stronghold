@@ -81,10 +81,8 @@ fn command(agent: Agent, model: Option<&str>) -> String {
         args.extend(["--model".into(), shell_quote(model)]);
     }
     match agent {
-        Agent::Claude => args.extend([
-            "--disallowedTools".into(),
-            shell_quote("Bash(slackmsg send) Bash(slackmsg send *)"),
-        ]),
+        // Denying the whole shell also blocks wrappers and alternate Slack CLIs.
+        Agent::Claude => args.extend(["--disallowedTools".into(), "Bash".into()]),
         Agent::Codex => args.extend([
             "--sandbox".into(),
             "read-only".into(),
@@ -128,11 +126,17 @@ impl Session {
                     settings = saved.settings;
                     (Some(saved.handle), None)
                 }
-                Ok(_) => (None, Some("Empty Envoy identity".into())),
-                Err(e) => (None, Some(format!("Cannot recover Envoy identity: {e}"))),
+                Ok(_) => (
+                    None,
+                    Some(format!("Empty Envoy identity in {}", path.display())),
+                ),
+                Err(e) => (
+                    None,
+                    Some(format!("Cannot recover {}: {e}", path.display())),
+                ),
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (None, None),
-            Err(e) => (None, Some(format!("Cannot read Envoy identity: {e}"))),
+            Err(e) => (None, Some(format!("Cannot read {}: {e}", path.display()))),
         };
         Self {
             load_failed: error.is_some(),
@@ -148,6 +152,10 @@ impl Session {
 
     pub fn handle(&self) -> Option<&str> {
         self.handle.as_deref()
+    }
+
+    pub fn settings(&self) -> &EnvoySettings {
+        &self.settings
     }
 
     pub fn state(&self) -> SessionState {
@@ -178,12 +186,14 @@ impl Session {
             return Err("The Envoy is already starting or running".into());
         }
         if self.load_failed {
-            return Err("Resolve the Envoy identity file error before starting".into());
+            return Err(self
+                .error
+                .clone()
+                .unwrap_or_else(|| format!("Resolve {} before starting", self.path.display())));
         }
         let settings = settings.clone();
         let path = self.path.clone();
         let (tx, rx) = mpsc::channel();
-        self.created_at_ms = now_ms();
         self.settings = settings.clone();
         std::thread::Builder::new()
             .name("envoy-start".into())
@@ -232,6 +242,7 @@ impl Session {
             let event = self.receiver.as_ref().map(|rx| rx.try_recv());
             match event {
                 Some(Ok(Event::Created(handle))) => {
+                    self.created_at_ms = now_ms();
                     self.handle = Some(handle);
                     changed = true;
                 }
@@ -391,9 +402,7 @@ mod tests {
                 let command = launches[0];
                 assert!(command.ends_with(&format!(" -- {}", shell_quote(PROMPT))));
                 if agent == "claude" {
-                    assert!(command.contains(
-                        "--disallowedTools 'Bash(slackmsg send) Bash(slackmsg send *)' -- "
-                    ));
+                    assert!(command.contains("--disallowedTools Bash -- "));
                 } else {
                     assert!(command.contains("--sandbox read-only --ask-for-approval never -- "));
                 }
@@ -497,6 +506,13 @@ mod tests {
         tx.send(Event::Done(Err("verification failed".into())))
             .unwrap();
         assert!(session.poll());
+        assert_eq!(session.handle(), Some("partial"));
+        assert!(session.created_at_ms > 0);
+        let stale = FleetData {
+            terminals_polled_at_ms: Some(session.created_at_ms - 1),
+            ..Default::default()
+        };
+        assert!(!session.reconcile(&stale));
         assert_eq!(session.handle(), Some("partial"));
         assert_eq!(session.state(), SessionState::Running);
         assert!(session.error.is_some());

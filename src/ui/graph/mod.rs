@@ -461,7 +461,7 @@ impl GraphView {
     pub fn repo_regions(&self) -> Vec<Region> {
         regions(self.index.iter().filter_map(|(id, &idx)| {
             let node = self.graph.node(idx)?;
-            if node.payload().kind == NodeKind::Queen {
+            if matches!(node.payload().kind, NodeKind::Queen | NodeKind::Envoy) {
                 return None;
             }
             Some((self.repos.get(id)?.as_str(), node.location()))

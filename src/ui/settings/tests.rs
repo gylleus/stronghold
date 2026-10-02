@@ -71,7 +71,7 @@ fn each_section_renders_headless() {
         running_model: Some("claude-fable-5"),
         env_model: None,
     };
-    let cases: [(Section, &[&str]); 5] = [
+    let cases: [(Section, &[&str]); 6] = [
         (
             Section::Queen,
             &[
@@ -81,6 +81,17 @@ fn each_section_renders_headless() {
                 "claude-fable-5",
                 "Save and restart the Queen",
                 "Speak replies",
+            ],
+        ),
+        (
+            Section::Envoy,
+            &[
+                "Agent",
+                "Model",
+                "Poll interval (seconds)",
+                "Channels (IDs, one per line)",
+                "Save Envoy settings",
+                "Changes apply on the next Start.",
             ],
         ),
         (
