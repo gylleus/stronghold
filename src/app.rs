@@ -175,12 +175,13 @@ impl MyrstackApp {
         let whip_window = ui::settings::SettingsPane::load(whip::Settings::path());
         let notifier = Arc::new(Notifier::spawn(Some(repaint_once(ctx))));
         let whip_notifier = notifier.clone();
-        let whip = WhipRunner::spawn(
+        let whip = WhipRunner::spawn_with_store(
             whip_window.whip().clone(),
             Box::new(move || {
                 Box::new(whip::OrcaExecutor::default().with_notifier(whip_notifier.clone()))
             }),
             Some(repaint_once(ctx)),
+            whip::Settings::path().map(|p| p.with_file_name(whip::forward::FORWARDED_FILE)),
         );
         let quota = QuotaPoller::spawn(
             OrcaClient::new(),

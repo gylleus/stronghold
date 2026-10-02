@@ -2,7 +2,8 @@
 //!
 //! [`WhipEngine::tick`] is a pure state machine over one poll's [`FleetData`]; it decides and
 //! sends nothing. [`WhipEngine::execute`] carries the decisions out through a
-//! [`WhipExecutor`] (or only logs them in dry-run) and records each one in the action log.
+//! [`WhipExecutor`] (or only logs them in dry-run, except event forwarding, which is always live;
+//! see [`WhipAction::live_in_dry_run`]) and records each one in the action log.
 //!
 //! Per stall target the ladder is: nudge → (cooldown, still stalled) nudge → … → after
 //! `max_nudges` nudges and one more cooldown, escalate once, then stay quiet until the target
@@ -22,8 +23,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::fleet::FleetData;
 use crate::whip::actions::{
     NUDGE_PREFIX, NudgeVia, TaskRef, WhipAction, WhipExecutor, WhipLogEntry, coordinator_idle_text,
-    nudge_message, quiet_run_text, reason_label, revoked_worker_nudge_text, target_label,
-    unanswered_ask_text, worker_nudge_text,
+    missing_report_nudge_text, nudge_message, quiet_run_text, reason_label,
+    revoked_worker_nudge_text, target_label, unanswered_ask_text, worker_nudge_text,
 };
 use crate::whip::forward::Forwarder;
 use crate::whip::manual::ManualNudge;
@@ -216,14 +217,16 @@ impl WhipEngine {
 
         actions.extend(self.track_needs_input(data, needs_input, settings, now_ms));
         if settings.forward_events {
-            actions.extend(self.forwarder.tick(data, &report, now_ms));
+            actions.extend(self.forwarder.tick(data, &report, &findings, now_ms));
         }
         self.findings = findings;
         actions
     }
 
     /// Carries out `actions`, or in dry-run only logs them, and appends each to the action log.
-    /// In dry-run `executor` is never called.
+    /// In dry-run `executor` is called only for actions that are
+    /// [`WhipAction::live_in_dry_run`]. Forward outcomes go back to the forwarder, so a failed
+    /// send is retried.
     pub fn execute(
         &mut self,
         actions: &[WhipAction],
@@ -232,11 +235,26 @@ impl WhipEngine {
         now_ms: i64,
     ) {
         for action in actions {
-            let outcome = if settings.dry_run {
+            let dry_run = settings.dry_run && !action.live_in_dry_run();
+            let outcome = if dry_run {
                 "dry-run".to_string()
             } else {
                 perform(action, executor, settings)
             };
+            if let WhipAction::Forward {
+                handle,
+                run_ids,
+                keys,
+                ..
+            } = action
+            {
+                let result = if outcome == SENT {
+                    Ok(())
+                } else {
+                    Err(outcome.as_str())
+                };
+                self.forwarder.record(handle, keys, run_ids, result, now_ms);
+            }
             if let WhipAction::Nudge { handle, .. } = action
                 && outcome == SENT
             {
@@ -247,7 +265,7 @@ impl WhipEngine {
                 action: action.summary(),
                 target: action.target_label(),
                 reason: action_reason(action),
-                dry_run: settings.dry_run,
+                dry_run,
                 outcome,
                 manual: false,
             };
@@ -321,6 +339,17 @@ impl WhipEngine {
                 },
             );
         }
+    }
+
+    /// Starts forwarding from a saved forwarded set instead of the startup replay window; see
+    /// [`crate::whip::forward::load_forwarded`].
+    pub fn restore_forwarded(&mut self, sent: BTreeMap<String, i64>) {
+        self.forwarder = Forwarder::restored(sent);
+    }
+
+    /// The forwarded set when it changed since the last call, to be saved.
+    pub fn take_forwarded_changes(&mut self) -> Option<BTreeMap<String, i64>> {
+        self.forwarder.take_changed()
     }
 
     fn push_log(&mut self, entry: WhipLogEntry) {
@@ -459,6 +488,8 @@ fn nudge_text(role: Role, group: &[&StallFinding], data: &FleetData, revoked: bo
                 .collect();
             if revoked {
                 revoked_worker_nudge_text(&tasks, idle)
+            } else if group.iter().all(|f| f.reason == StallReason::MissingReport) {
+                missing_report_nudge_text(&tasks, idle)
             } else {
                 worker_nudge_text(&tasks, idle)
             }
@@ -485,7 +516,7 @@ fn coordinator_text(f: &StallFinding) -> String {
         StallReason::UnansweredAsk { message_id } => {
             unanswered_ask_text(run_id, message_id, f.idle_for_ms)
         }
-        StallReason::QuietNoTasks | StallReason::WorkerNoProgress => {
+        StallReason::QuietNoTasks | StallReason::WorkerNoProgress | StallReason::MissingReport => {
             quiet_run_text(run_id, f.idle_for_ms)
         }
     }
@@ -542,6 +573,16 @@ fn perform(action: &WhipAction, executor: &dyn WhipExecutor, settings: &WhipSett
             );
             Ok(())
         }
+        WhipAction::ForwardFailing { run_id, .. } => {
+            if !settings.notify {
+                return "notifications off".into();
+            }
+            executor.notify(
+                &format!("Myrstack: cannot forward run {run_id}'s events"),
+                &action_reason(action),
+            );
+            Ok(())
+        }
     };
     match result {
         Ok(()) => SENT.into(),
@@ -580,6 +621,15 @@ fn action_reason(action: &WhipAction) -> String {
             "{waiting} event(s) waiting and no live Claude session to forward them to, \
              first: {first}"
         ),
+        WhipAction::ForwardFailing {
+            handle,
+            failures,
+            error,
+            ..
+        } => format!(
+            "{failures} sends in a row to coordinator {handle} failed, still retrying; \
+             last: {error}"
+        ),
     }
 }
 
@@ -603,6 +653,8 @@ mod tests {
     struct FakeExecutor {
         calls: Mutex<Vec<String>>,
         fail_bus: bool,
+        /// Terminal sends fail while this is set.
+        fail_terminal: std::sync::atomic::AtomicBool,
     }
 
     impl FakeExecutor {
@@ -627,6 +679,12 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(format!("terminal {handle}"));
+            if self
+                .fail_terminal
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                anyhow::bail!("pane gone");
+            }
             Ok(())
         }
         fn notify(&self, title: &str, _body: &str) {
@@ -1136,6 +1194,132 @@ mod tests {
         engine.execute(&[action], &exec, &quiet, T0);
         assert!(exec.calls().is_empty());
         assert_eq!(engine.log().back().unwrap().outcome, "notifications off");
+    }
+
+    /// A live Claude coordinator, no stalls, and a fresh `worker_done` on the bus.
+    fn fleet_with_report() -> FleetData {
+        let mut data = fleet();
+        data.terminals[0].agent_identity = Some(crate::orca::AgentIdentity::Claude);
+        data.terminals[0].preview = Some("⏺ Dispatched.\nnew task? /clear to save 120k".into());
+        data.inbox.push(
+            serde_json::from_value(json!({
+                "id": "done1", "run_id": RUN, "from_handle": WORKER,
+                "to_handle": format!("run:{RUN}"), "type": "worker_done", "subject": "PR open",
+                "created_at": T0,
+                "payload": json!({"taskId": "t1", "dispatchId": "ctx_t1"}).to_string(),
+            }))
+            .unwrap(),
+        );
+        data
+    }
+
+    #[test]
+    fn missing_report_nudges_the_worker_and_tells_the_coordinator_once() {
+        let mut engine = WhipEngine::new();
+        let mut data = fleet();
+        for t in &mut data.terminals {
+            t.agent_identity = Some(crate::orca::AgentIdentity::Claude);
+            t.preview = Some("⏺ Done.\nnew task? /clear to save 80k tokens".into());
+        }
+        let exec = FakeExecutor::default();
+        let s = settings();
+        let mut out = Vec::new();
+        for m in 0..=40 {
+            let now = T0 + m * MIN;
+            let actions = engine.tick(&data, &BTreeSet::new(), &s, now);
+            engine.execute(&actions, &exec, &s, now);
+            out.extend(actions.into_iter().map(|a| (m, a)));
+        }
+        assert_eq!(
+            kinds(&out),
+            vec![
+                (16, "nudge #1 via bus to dispatch:ctx_t1".to_string()),
+                (16, "forward 1 event(s)".to_string()),
+                (26, "nudge #2 via terminal input".to_string()),
+                (36, "escalate".to_string()),
+            ]
+        );
+        let texts: Vec<&str> = out
+            .iter()
+            .filter_map(|(_, a)| match a {
+                WhipAction::Nudge { text, .. } | WhipAction::Forward { text, .. } => {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            texts[0].contains("your report to the coordinator never arrived on the bus"),
+            "{}",
+            texts[0]
+        );
+        assert!(
+            texts[1]
+                .contains("worker term_worker looks finished on task Fix login but never reported"),
+            "{}",
+            texts[1]
+        );
+        assert!(matches!(&out[1].1, WhipAction::Forward { handle, .. } if handle == COORD));
+    }
+
+    #[test]
+    fn dry_run_still_forwards_events() {
+        let mut engine = WhipEngine::new();
+        let data = fleet_with_report();
+        let exec = FakeExecutor::default();
+        let s = WhipSettings::default();
+        assert!(s.dry_run);
+        for m in 0..3 {
+            let now = T0 + m * MIN;
+            let actions = engine.tick(&data, &BTreeSet::new(), &s, now);
+            engine.execute(&actions, &exec, &s, now);
+        }
+        assert_eq!(exec.calls(), vec![format!("terminal {COORD}")]);
+        let entry = engine.log().back().unwrap();
+        assert_eq!(entry.action, "forward 1 event(s)");
+        assert!(!entry.dry_run && entry.outcome == SENT, "{entry:?}");
+        assert!(
+            engine
+                .take_forwarded_changes()
+                .is_some_and(|s| s.contains_key("done1"))
+        );
+    }
+
+    #[test]
+    fn failed_forward_is_retried_until_it_lands() {
+        use std::sync::atomic::Ordering;
+        let mut engine = WhipEngine::new();
+        let data = fleet_with_report();
+        let exec = FakeExecutor::default();
+        exec.fail_terminal.store(true, Ordering::Relaxed);
+        let s = settings();
+        let mut run = |m: i64| {
+            let now = T0 + m * MIN;
+            let actions = engine.tick(&data, &BTreeSet::new(), &s, now);
+            engine.execute(&actions, &exec, &s, now);
+        };
+        run(0);
+        run(1);
+        exec.fail_terminal.store(false, Ordering::Relaxed);
+        run(2);
+        run(3);
+        run(4);
+        let forwards = exec
+            .calls()
+            .iter()
+            .filter(|c| *c == &format!("terminal {COORD}"))
+            .count();
+        assert_eq!(forwards, 3, "{:?}", exec.calls());
+        let outcomes: Vec<String> = engine
+            .log()
+            .iter()
+            .filter(|e| e.action.starts_with("forward"))
+            .map(|e| e.outcome.clone())
+            .collect();
+        assert_eq!(
+            outcomes,
+            vec!["failed: pane gone", "failed: pane gone", SENT]
+        );
     }
 
     #[test]

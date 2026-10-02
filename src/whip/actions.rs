@@ -55,11 +55,13 @@ pub enum WhipAction {
     },
     /// A terminal has waited on Karl longer than the threshold. Sent once per wait.
     NotifyNeedsInput { handle: String, since_ms: i64 },
-    /// Real bus events typed into the Runs' coordinator; see [`crate::whip::forward`].
+    /// Real bus events typed into the Runs' coordinator; see [`crate::whip::forward`]. Live
+    /// even in dry run.
     Forward {
         handle: String,
         run_ids: Vec<String>,
-        events: usize,
+        /// The forwarder's keys of the events in `text`, one per event.
+        keys: Vec<String>,
         text: String,
     },
     /// A Run's events have waited on an unreachable coordinator: notify Karl. Once per outage.
@@ -67,6 +69,14 @@ pub enum WhipAction {
         run_id: String,
         waiting: usize,
         first: String,
+    },
+    /// Forwarding a Run's events has failed [`crate::whip::forward::ALERT_AFTER_FAILURES`]
+    /// times in a row: notify Karl. Once per failure streak.
+    ForwardFailing {
+        run_id: String,
+        handle: String,
+        failures: u32,
+        error: String,
     },
 }
 
@@ -79,8 +89,9 @@ impl WhipAction {
             }
             Self::Escalate { .. } => "escalate".into(),
             Self::NotifyNeedsInput { .. } => "notify needs-input".into(),
-            Self::Forward { events, .. } => format!("forward {events} event(s)"),
+            Self::Forward { keys, .. } => format!("forward {} event(s)", keys.len()),
             Self::CoordinatorUnreachable { .. } => "notify coordinator unreachable".into(),
+            Self::ForwardFailing { .. } => "notify forward failing".into(),
         }
     }
 
@@ -97,8 +108,21 @@ impl WhipAction {
             Self::Forward {
                 handle, run_ids, ..
             } => format!("coordinator {handle} run {}", run_ids.join(", ")),
-            Self::CoordinatorUnreachable { run_id, .. } => format!("run {run_id}"),
+            Self::CoordinatorUnreachable { run_id, .. } | Self::ForwardFailing { run_id, .. } => {
+                format!("run {run_id}")
+            }
         }
+    }
+
+    /// Carried out even when the whip is in dry run: event forwarding and its alerts only
+    /// deliver facts, they nudge nobody.
+    pub fn live_in_dry_run(&self) -> bool {
+        matches!(
+            self,
+            Self::Forward { .. }
+                | Self::CoordinatorUnreachable { .. }
+                | Self::ForwardFailing { .. }
+        )
     }
 }
 
@@ -118,6 +142,7 @@ pub fn target_label(target: &StallTarget) -> String {
 pub fn reason_label(reason: &StallReason) -> String {
     match reason {
         StallReason::WorkerNoProgress => "worker no progress".into(),
+        StallReason::MissingReport => "worker never reported".into(),
         StallReason::CoordinatorIdle { .. } => "coordinator idle".into(),
         StallReason::UnansweredAsk { message_id } => format!("unanswered ask {message_id}"),
         StallReason::QuietNoTasks => "quiet run without tasks".into(),
@@ -162,6 +187,23 @@ pub fn worker_nudge_text(tasks: &[TaskRef], idle_ms: i64) -> String {
         "{NUDGE_PREFIX} no progress on {noun} {list} for {}. Send a heartbeat{each} with your \
          current phase and a one-line status, then continue — or worker_done / ask / escalation \
          if that's the truth.",
+        fmt_duration(idle_ms)
+    )
+}
+
+/// Worker nudge for tasks whose worker sits idle without ever reporting on the bus: its
+/// `worker_done` / `merge_ready` most likely failed to send.
+pub fn missing_report_nudge_text(tasks: &[TaskRef], idle_ms: i64) -> String {
+    let list = tasks
+        .iter()
+        .map(TaskRef::label)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{NUDGE_PREFIX} you have been idle on {list} for {} and your report to the coordinator \
+         never arrived on the bus. Resend worker_done/merge_ready (orca orchestration send ...); \
+         if the send errors, retry, then call Myrstack's notify with the error and your report. Not finished? Send a \
+         heartbeat with your phase and continue.",
         fmt_duration(idle_ms)
     )
 }
