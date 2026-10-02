@@ -30,6 +30,7 @@ use crate::fleet::FleetData;
 use crate::orca::{InboxMessage, MessageType, Timestamp};
 use crate::whip::actions::WhipAction;
 use crate::whip::progress::ProgressReport;
+use crate::whip::rules::{StallFinding, StallReason, StallTarget};
 
 /// Events older than this are history, never forwarded.
 pub const MAX_EVENT_AGE_MS: i64 = 6 * 60 * 60_000;
@@ -59,7 +60,7 @@ const FORWARDED: &[MessageType] = &[
 /// One thing a coordinator must hear about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
-    /// Dedupe key: the message id, or `revived:<task id>`.
+    /// Dedupe key: the message id, `revived:<task id>` or `unreported:<task id>:<dispatch id>`.
     pub key: String,
     pub run_id: String,
     pub at_ms: i64,
@@ -138,9 +139,10 @@ impl Forwarder {
         &mut self,
         data: &FleetData,
         report: &ProgressReport,
+        findings: &[StallFinding],
         now_ms: i64,
     ) -> Vec<WhipAction> {
-        let events = collect_events(data, report, now_ms);
+        let events = collect_events(data, report, findings, now_ms);
         let visible: BTreeSet<&str> = events.iter().map(|e| e.key.as_str()).collect();
         let before = self.sent.len();
         self.sent
@@ -330,8 +332,14 @@ pub fn forward_text(batch: &[&Event], run_ids: &BTreeSet<String>) -> String {
 }
 
 /// The Runs' real events still in the polled inbox, plus one per task that Orca failed while
-/// its worker kept working.
-pub fn collect_events(data: &FleetData, report: &ProgressReport, now_ms: i64) -> Vec<Event> {
+/// its worker kept working, and one per worker that looks finished but never reported (a
+/// [`StallReason::MissingReport`] finding).
+pub fn collect_events(
+    data: &FleetData,
+    report: &ProgressReport,
+    findings: &[StallFinding],
+    now_ms: i64,
+) -> Vec<Event> {
     let mut events: Vec<Event> = data
         .inbox
         .iter()
@@ -347,6 +355,35 @@ pub fn collect_events(data: &FleetData, report: &ProgressReport, now_ms: i64) ->
                 "task {} is marked failed in Orca but {worker} is still working on it; Orca \
                  rejects its heartbeats and worker_done, so read its terminal for the result",
                 task_label(data, &task.run_id, &task.task_id)
+            ),
+        });
+    }
+    for f in findings
+        .iter()
+        .filter(|f| f.reason == StallReason::MissingReport)
+    {
+        let StallTarget::Worker {
+            handle,
+            task_id,
+            run_id,
+        } = &f.target
+        else {
+            continue;
+        };
+        let dispatch = report
+            .tasks
+            .iter()
+            .find(|t| &t.task_id == task_id)
+            .and_then(|t| t.dispatch_id.as_deref())
+            .unwrap_or("");
+        events.push(Event {
+            key: format!("unreported:{task_id}:{dispatch}"),
+            run_id: run_id.clone(),
+            at_ms: now_ms,
+            line: format!(
+                "worker {handle} looks finished on task {} but never reported: idle at its \
+                 prompt and no worker_done/merge_ready on the bus; read its terminal",
+                task_label(data, run_id, task_id)
             ),
         });
     }
@@ -472,7 +509,7 @@ mod tests {
 
     fn tick(f: &mut Forwarder, data: &FleetData, now: i64) -> Vec<WhipAction> {
         let report = ProgressTracker::new().update(data, now);
-        f.tick(data, &report, now)
+        f.tick(data, &report, &[], now)
     }
 
     fn forwards(actions: &[WhipAction]) -> Vec<String> {

@@ -84,10 +84,13 @@ orca orchestration send --type worker_done --subject "<short status>" \
   `ask --resume <message_id>`. Never re-ask — you'll create a second thread nobody can match
   to the first.
 - Something is on fire and the coordinator must intervene → `--type escalation`.
+- `orca orchestration send` errors → retry twice. Still failing → call Myrstack's `notify`
+  (for a `merge_ready`, `mark_pr_ready`) with the error, so the coordinator or Karl can act.
+  An unsent report leaves the coordinator waiting forever.
 - Don't call Myrstack's `notify` or `ask_karl` tools: your coordinator reaches Karl, and your
-  questions go to it with `ask`. Exceptions: the credential step under _Hard rules_, and a
-  standalone session with no coordinator, which reaches Karl itself by the playbook's _Human in
-  the loop_ rules.
+  questions go to it with `ask`. Exceptions: a report the bus refused (above), the credential
+  step under _Hard rules_, and a standalone session with no coordinator, which reaches Karl
+  itself by the playbook's _Human in the loop_ rules.
 - After `worker_done`, end your turn and idle. Do not start more work, do not poll, do not
   close your own terminal (`finish_session` refuses workers: the coordinator reuses or releases
   you). If the coordinator reuses you, a fresh preamble arrives as new input.

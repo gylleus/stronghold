@@ -56,6 +56,9 @@ pub struct TaskProgress {
     /// Orca marked the task failed but its worker kept working; see
     /// [`FleetData::alive_after_failure`]. Its rejected messages and output count as progress.
     pub failed_but_alive: bool,
+    /// The owner sent an accepted `worker_done` or `merge_ready` for this task on its current
+    /// dispatch (or one naming no dispatch).
+    pub reported: bool,
 }
 
 /// Activity facts for one Run's coordinator.
@@ -541,10 +544,12 @@ fn task_progress(
         phase: None,
         waiting_on_ask: false,
         failed_but_alive: false,
+        reported: false,
     };
 
     let mut latest = Latest::default();
     let mut newest_heartbeat: Option<(i64, Option<String>)> = None;
+    let mut reported = false;
     for (msg, payload) in bus.owner_messages(task, &progress) {
         let Some(ms) = msg_ms(msg) else { continue };
         if msg.message_type == Some(MessageType::Heartbeat) {
@@ -565,6 +570,15 @@ fn task_progress(
                 },
             );
         } else {
+            let report = matches!(
+                msg.message_type,
+                Some(MessageType::WorkerDone | MessageType::MergeReady)
+            );
+            if report
+                && (payload.dispatch_id.is_none() || payload.dispatch_id == progress.dispatch_id)
+            {
+                reported = true;
+            }
             latest.offer(Some(ms), message_source(msg));
         }
     }
@@ -586,6 +600,7 @@ fn task_progress(
         latest.offer(Some(alive_ms), ProgressSource::TerminalOutput);
     }
 
+    progress.reported = reported;
     progress.last_progress_ms = latest.ms;
     progress.source = latest.source;
     progress.phase = newest_heartbeat.and_then(|(_, phase)| phase);
@@ -796,6 +811,38 @@ mod tests {
         );
         assert_eq!(t.phase.as_deref(), Some("implementing"));
         assert!(!t.waiting_on_ask);
+        assert!(!t.reported);
+    }
+
+    #[test]
+    fn reported_counts_reports_on_the_current_dispatch_only() {
+        let report_msg = |id: &str, kind: &str, dispatch: Option<&str>| {
+            let payload = match dispatch {
+                Some(d) => json!({"taskId": "t1", "dispatchId": d}),
+                None => json!({"taskId": "t1"}),
+            };
+            msg(id, WORKER, kind, T0 + MIN, payload)
+        };
+        let reported = |inbox: Vec<InboxMessage>| {
+            let data = fleet(vec![task("t1", "dispatched")], inbox);
+            only_task(&ProgressTracker::new().update(&data, T0 + 20 * MIN)).reported
+        };
+        assert!(reported(vec![report_msg(
+            "m1",
+            "merge_ready",
+            Some("ctx_1")
+        )]));
+        assert!(reported(vec![report_msg("m1", "worker_done", None)]));
+        assert!(!reported(vec![report_msg(
+            "m1",
+            "merge_ready",
+            Some("ctx_old")
+        )]));
+        assert!(!reported(vec![report_msg("m1", "status", Some("ctx_1"))]));
+        let mut rejected = report_msg("m1", "worker_done", Some("ctx_1"));
+        rejected.payload =
+            Some(json!({"taskId": "t1", "dispatchId": "ctx_1", REJECTION_KEY: "x"}).to_string());
+        assert!(!reported(vec![rejected]));
     }
 
     #[test]

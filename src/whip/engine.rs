@@ -23,8 +23,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::fleet::FleetData;
 use crate::whip::actions::{
     NUDGE_PREFIX, NudgeVia, TaskRef, WhipAction, WhipExecutor, WhipLogEntry, coordinator_idle_text,
-    nudge_message, quiet_run_text, reason_label, revoked_worker_nudge_text, target_label,
-    unanswered_ask_text, worker_nudge_text,
+    missing_report_nudge_text, nudge_message, quiet_run_text, reason_label,
+    revoked_worker_nudge_text, target_label, unanswered_ask_text, worker_nudge_text,
 };
 use crate::whip::forward::Forwarder;
 use crate::whip::manual::ManualNudge;
@@ -217,7 +217,7 @@ impl WhipEngine {
 
         actions.extend(self.track_needs_input(data, needs_input, settings, now_ms));
         if settings.forward_events {
-            actions.extend(self.forwarder.tick(data, &report, now_ms));
+            actions.extend(self.forwarder.tick(data, &report, &findings, now_ms));
         }
         self.findings = findings;
         actions
@@ -488,6 +488,8 @@ fn nudge_text(role: Role, group: &[&StallFinding], data: &FleetData, revoked: bo
                 .collect();
             if revoked {
                 revoked_worker_nudge_text(&tasks, idle)
+            } else if group.iter().all(|f| f.reason == StallReason::MissingReport) {
+                missing_report_nudge_text(&tasks, idle)
             } else {
                 worker_nudge_text(&tasks, idle)
             }
@@ -514,7 +516,7 @@ fn coordinator_text(f: &StallFinding) -> String {
         StallReason::UnansweredAsk { message_id } => {
             unanswered_ask_text(run_id, message_id, f.idle_for_ms)
         }
-        StallReason::QuietNoTasks | StallReason::WorkerNoProgress => {
+        StallReason::QuietNoTasks | StallReason::WorkerNoProgress | StallReason::MissingReport => {
             quiet_run_text(run_id, f.idle_for_ms)
         }
     }
@@ -1209,6 +1211,55 @@ mod tests {
             .unwrap(),
         );
         data
+    }
+
+    #[test]
+    fn missing_report_nudges_the_worker_and_tells_the_coordinator_once() {
+        let mut engine = WhipEngine::new();
+        let mut data = fleet();
+        for t in &mut data.terminals {
+            t.agent_identity = Some(crate::orca::AgentIdentity::Claude);
+            t.preview = Some("⏺ Done.\nnew task? /clear to save 80k tokens".into());
+        }
+        let exec = FakeExecutor::default();
+        let s = settings();
+        let mut out = Vec::new();
+        for m in 0..=40 {
+            let now = T0 + m * MIN;
+            let actions = engine.tick(&data, &BTreeSet::new(), &s, now);
+            engine.execute(&actions, &exec, &s, now);
+            out.extend(actions.into_iter().map(|a| (m, a)));
+        }
+        assert_eq!(
+            kinds(&out),
+            vec![
+                (16, "nudge #1 via bus to dispatch:ctx_t1".to_string()),
+                (16, "forward 1 event(s)".to_string()),
+                (26, "nudge #2 via terminal input".to_string()),
+                (36, "escalate".to_string()),
+            ]
+        );
+        let texts: Vec<&str> = out
+            .iter()
+            .filter_map(|(_, a)| match a {
+                WhipAction::Nudge { text, .. } | WhipAction::Forward { text, .. } => {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            texts[0].contains("your report to the coordinator never arrived on the bus"),
+            "{}",
+            texts[0]
+        );
+        assert!(
+            texts[1]
+                .contains("worker term_worker looks finished on task Fix login but never reported"),
+            "{}",
+            texts[1]
+        );
+        assert!(matches!(&out[1].1, WhipAction::Forward { handle, .. } if handle == COORD));
     }
 
     #[test]

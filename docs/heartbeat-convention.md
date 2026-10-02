@@ -83,7 +83,11 @@ with `Myrstack:` and asks for your current phase.
 1. **Worker:** send one heartbeat with your current `--phase` and a one-line
    `--body` status, then carry on with the task in the same turn. If you are
    actually done, send `worker_done` instead. If you are stuck, use `ask` or
-   `escalation`. Don't send a heartbeat that says "stuck".
+   `escalation`. Don't send a heartbeat that says "stuck". A worker idle at
+   its prompt with no `worker_done`/`merge_ready` on the bus gets a nudge
+   saying its report never arrived: resend it (retry; if the send still
+   errors, use `notify` or `mark_pr_ready`). Its coordinator gets a
+   forwarded line that the worker looks finished but never reported.
 2. **Coordinator:** act on whatever is stalled (dispatch, `task-update`,
    reply), or send the `holding: <reason>` status above.
 3. Reply once. A nudge is a liveness ping, not an instruction: it never

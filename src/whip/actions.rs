@@ -142,6 +142,7 @@ pub fn target_label(target: &StallTarget) -> String {
 pub fn reason_label(reason: &StallReason) -> String {
     match reason {
         StallReason::WorkerNoProgress => "worker no progress".into(),
+        StallReason::MissingReport => "worker never reported".into(),
         StallReason::CoordinatorIdle { .. } => "coordinator idle".into(),
         StallReason::UnansweredAsk { message_id } => format!("unanswered ask {message_id}"),
         StallReason::QuietNoTasks => "quiet run without tasks".into(),
@@ -186,6 +187,23 @@ pub fn worker_nudge_text(tasks: &[TaskRef], idle_ms: i64) -> String {
         "{NUDGE_PREFIX} no progress on {noun} {list} for {}. Send a heartbeat{each} with your \
          current phase and a one-line status, then continue — or worker_done / ask / escalation \
          if that's the truth.",
+        fmt_duration(idle_ms)
+    )
+}
+
+/// Worker nudge for tasks whose worker sits idle without ever reporting on the bus: its
+/// `worker_done` / `merge_ready` most likely failed to send.
+pub fn missing_report_nudge_text(tasks: &[TaskRef], idle_ms: i64) -> String {
+    let list = tasks
+        .iter()
+        .map(TaskRef::label)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{NUDGE_PREFIX} you have been idle on {list} for {} and your report to the coordinator \
+         never arrived on the bus. Resend worker_done/merge_ready (orca orchestration send ...); \
+         if the send errors, retry, then use mark_pr_ready/notify. Not finished? Send a \
+         heartbeat with your phase and continue.",
         fmt_duration(idle_ms)
     )
 }
