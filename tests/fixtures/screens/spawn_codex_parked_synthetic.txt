@@ -3,6 +3,7 @@
 │                                              │
 │ model:     gpt-6-astra high   /model to change │
 │ directory: ~/orca/workspaces/depict/spawn-old │
+│ permissions: YOLO mode                         │
 ╰──────────────────────────────────────────────╯
 
   Tip: Use /status to see the model and token usage.

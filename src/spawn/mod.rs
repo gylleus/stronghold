@@ -25,7 +25,7 @@ use crate::orca::spawn::{
 pub use catalog::Catalog;
 pub use exec::{SpawnEvent, SpawnOutcome, SpawnRunner, StepStatus};
 pub use resolve::{LiveAgent, ModeName, NameConflict, SpawnArgs, name_conflict, new_worktree_of};
-pub use verify::{Expect, ScreenVerdict, classify_screen};
+pub use verify::{Expect, ScreenVerdict, classify_screen, codex_approvals_on};
 
 /// How long `terminal wait --for tui-idle` waits after launch. An agent that took its prompt
 /// is busy, not idle, so this is short and running out is not an error.
@@ -398,7 +398,8 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
                 .filter(|b| !b.is_empty())
                 .map(str::to_owned);
             // `worktree create` has no --model; with a model the agent gets its own terminal.
-            let orca_agent = model.is_none();
+            // So does Codex, to launch with the never-ask flag rather than Orca's default args.
+            let orca_agent = model.is_none() && agent != Agent::Codex;
             let create = Step::CreateWorktree(WorktreeCreate {
                 repo_id: repo_id.clone(),
                 name,
@@ -551,10 +552,18 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
     })
 }
 
-/// The command `terminal create` runs: `claude [--model m] '<prompt>'`, quoted for the
-/// login shell. A prompt starting with `-` goes after `--` so it isn't read as a flag.
+/// Codex's never-ask flag. Orca adds its configured default args only to a bare `codex`, so
+/// every Codex command Myrstack builds carries it itself.
+pub const CODEX_NEVER_ASK: &str = "--dangerously-bypass-approvals-and-sandbox";
+
+/// The command `terminal create` runs: `claude [--model m] '<prompt>'` (Codex also gets
+/// [`CODEX_NEVER_ASK`]), quoted for the login shell. A prompt starting with `-` goes after `--`
+/// so it isn't read as a flag.
 pub fn launch_command(agent: Agent, model: Option<&str>, prompt: &str) -> String {
     let mut parts = vec![agent.as_str().to_string()];
+    if agent == Agent::Codex {
+        parts.push(CODEX_NEVER_ASK.into());
+    }
     if let Some(model) = model {
         parts.push("--model".into());
         parts.push(shell_quote(model));
