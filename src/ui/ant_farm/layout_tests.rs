@@ -892,3 +892,97 @@ fn scenery_stays_on_the_surface_and_in_the_sky() {
         }
     }
 }
+
+/// An ant removed from the fleet falls; one filtered out or changing state does not.
+#[test]
+fn only_removed_ants_fall() {
+    let mut farm = AntFarmView::new();
+    let mut s = snapshot();
+    let first = scene(&s);
+    farm.bury(&first, &s, 0.0, || false);
+    farm.advance(&first, 0.0);
+
+    s.nodes
+        .iter_mut()
+        .find(|n| n.id == id("working"))
+        .unwrap()
+        .state = NodeState::Done;
+    let hidden: BTreeSet<NodeId> = [id("idle")].into();
+    let filtered = scene_with(&s, &hidden, &[]);
+    farm.bury(&filtered, &s, 1.0, || false);
+    let drawn = farm.advance(&filtered, 1.0);
+    let waiting = filtered
+        .ants
+        .iter()
+        .position(|a| a.id == id("waiting"))
+        .unwrap();
+    assert!(farm.falls.is_empty(), "done and filtered ants stay alive");
+
+    s.nodes
+        .retain(|n| n.id != id("waiting") && n.id != id("idle"));
+    let after = scene_with(&s, &hidden, &[]);
+    farm.bury(&after, &s, 2.0, || false);
+    farm.advance(&after, 2.0);
+    assert_eq!(
+        farm.falls.len(),
+        1,
+        "only the removed ant, not the filtered one"
+    );
+    let fall = farm.falls[0];
+    assert_eq!(
+        fall.body.at,
+        super::motion::to_unit(drawn[waiting].pos, RECT),
+        "from where it was last drawn"
+    );
+    assert!(!fall.still);
+    farm.bury(&after, &s, 2.1, || false);
+    assert_eq!(farm.falls.len(), 1, "falls once");
+}
+
+/// A falling ant hops, flips legs up, lands on the farm's bottom after FALL_S, bounces and
+/// fades; with reduced motion it fades where it stood.
+#[test]
+fn a_dead_ant_falls_to_the_bottom() {
+    use super::death::*;
+    let body = Body {
+        at: pos2(0.5, 0.2),
+        size: 32.0,
+        facing_right: true,
+        red: false,
+        alpha: 1.0,
+    };
+    let fall = Fall {
+        body,
+        start_s: 10.0,
+        still: false,
+    };
+    let at = |t: f64| fall.frame(RECT, 10.0 + t).unwrap();
+    let start = at(0.0);
+    assert_eq!(start.pos, pos2(640.0, 160.0));
+    assert!(!start.upside_down);
+    assert!(at(0.05).pos.y < 160.0, "hops first");
+    assert!(at(0.5).upside_down, "legs up");
+    let floor = RECT.bottom() - 16.0;
+    assert!(
+        at(0.9).pos.y < floor && at(0.9).pos.y > at(0.5).pos.y,
+        "falling"
+    );
+    assert!(
+        (at(FALL_S).pos.y - floor).abs() < 0.5,
+        "lands at the bottom"
+    );
+    assert!(at(FALL_S + REST_S / 2.0).pos.y < floor, "bounces");
+    assert_eq!(at(FALL_S + REST_S).alpha, 1.0);
+    assert!(at(FALL_S + REST_S + FADE_S / 2.0).alpha < 1.0, "fades");
+    assert_eq!(fall.frame(RECT, 10.0 + fall.duration()), None, "gone");
+
+    let still = Fall {
+        still: true,
+        ..fall
+    };
+    let mid = still.frame(RECT, 10.0 + STILL_FADE_S / 2.0).unwrap();
+    assert_eq!(mid.pos, start.pos);
+    assert!(!mid.upside_down);
+    assert!((mid.alpha - 0.5).abs() < 0.01);
+    assert_eq!(still.frame(RECT, 10.0 + STILL_FADE_S), None);
+}
