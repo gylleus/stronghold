@@ -18,6 +18,7 @@ use std::time::Duration;
 use eframe::egui::{self, Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, vec2};
 
 use crate::model::{FleetSnapshot, NodeId};
+use crate::ui::daylight;
 use crate::ui::graph::GraphView;
 use layout::{FarmInput, Pose, Scene, Spot, layout};
 use motion::{Walk, route};
@@ -230,17 +231,11 @@ impl AntFarmView {
         };
         let sprites = self.sprites.get_or_insert_with(|| Sprites::load(ui.ctx()));
         let painter = ui.painter_at(rect);
-        let palette = Palette::new(ui.visuals().dark_mode);
+        let daylight = daylight::daylight();
+        let palette = Palette::new(daylight);
         let selection = graph.selection();
 
-        paint_ground(
-            &painter,
-            sprites,
-            &scene,
-            palette,
-            now_s,
-            ui.visuals().dark_mode,
-        );
+        paint_ground(&painter, sprites, &scene, palette, now_s, daylight);
         paint_calls(&painter, sprites, &scene, &effects, now_s, true);
         let pointer = response.hover_pos();
         let hovered = pointer.and_then(|p| hit(&scene, &placed, p));
@@ -272,6 +267,7 @@ impl AntFarmView {
         } else if stepping {
             ui.ctx().request_repaint_after(STEP_FRAME);
         }
+        daylight::schedule_repaint(ui.ctx());
 
         if let Some(id) = &hovered {
             response
@@ -439,22 +435,24 @@ fn paint_ground(
     scene: &Scene,
     palette: Palette,
     now_s: f64,
-    dark: bool,
+    daylight: f32,
 ) {
     let px = scene.px;
     let a = scene.cell();
     sprites.ground(painter, scene.rect, scene.surface_y, px, palette);
-    // The sky, then roots under the plants (passages are dug through them).
-    if dark {
+    // The sky, then roots under the plants (passages are dug through them). Through dawn and
+    // dusk the stars fade, and one orb sets before the other rises.
+    if daylight < 1.0 {
         for (at, bright) in scenery::stars(scene, now_s) {
-            sprites.star(painter, at, px, bright);
+            sprites.star(painter, at, px, bright, 1.0 - daylight);
         }
     }
-    for piece in scenery::sky(scene, now_s, dark) {
-        let alpha = if piece.deco == nature::Deco::Cloud && dark {
-            0.35
+    let night = daylight < 0.5;
+    for piece in scenery::sky(scene, now_s, night) {
+        let alpha = if piece.deco == nature::Deco::Cloud {
+            0.35 + 0.65 * daylight
         } else {
-            1.0
+            (2.0 * daylight - 1.0).abs()
         };
         sprites.deco(painter, piece.deco, piece.foot, px, alpha);
     }
@@ -584,7 +582,7 @@ fn paint_ants(
     let walk_frame = (now_s * WALK_FPS) as usize;
     let step = (now_s * STEP_FPS) as usize;
     let accent = ui.visuals().selection.bg_fill;
-    let palette = Palette::new(ui.visuals().dark_mode);
+    let palette = Palette::new(daylight::daylight());
     let hover = ui.visuals().widgets.hovered.fg_stroke.color;
     for (ant, at) in scene.ants.iter().zip(placed) {
         let walking = at.heading.is_some();

@@ -7,6 +7,7 @@ pub mod chat;
 pub mod close;
 pub mod columns;
 pub mod commands;
+pub mod daylight;
 pub mod dictation;
 pub mod dock;
 pub mod frame_stats;
