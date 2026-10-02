@@ -369,6 +369,6 @@ fn subscription_command_retry_recovers_even_in_a_quiet_channel() {
         dir.path().into(),
         c.settings.clone(),
     );
-    restarted.poll(NOW).unwrap();
+    restarted.poll(NOW + 120_000).unwrap();
     assert_eq!(restarted.health(), BridgeStatus::Ok);
 }
