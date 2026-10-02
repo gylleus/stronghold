@@ -597,15 +597,17 @@ fn review_view(
         .filter_map(|e| e.bytes)
         .sum();
     ui.label(format!(
-        "{} linked worktrees: {} can go, {} are kept.",
+        "{} linked worktrees: {} can go, {} are kept (holding {}).",
         plan.entries.len(),
         removable.len(),
-        kept.len()
+        kept.len(),
+        format_bytes(plan.kept_bytes())
     ));
     ui.weak(
-        "A worktree goes only if nothing runs in it, it has no uncommitted changes or open PR, \
-         and its work is merged (or its PR merged/closed with every commit pushed). Each is \
-         checked again right before removal.",
+        "A worktree goes only if nothing runs in it, it has no uncommitted changes, untracked \
+         files (other than notes and logs) or open PR, and its work is in the base or on \
+         GitHub (merged, rebase- or squash-merged, or in a merged PR's head). Notes are saved \
+         and logs deleted first. Each is checked again right before removal.",
     );
     ui.add_space(4.0);
     egui::ScrollArea::vertical()
@@ -631,7 +633,16 @@ fn review_view(
                             ui.label(format!("{}/{}", e.repo, e.name))
                                 .on_hover_text(&e.path);
                             ui.weak(e.bytes.map(format_bytes).unwrap_or_default());
-                            ui.weak(e.verdict.reasons.join("; "));
+                            let reasons = ui.weak(e.verdict.reasons.join("; "));
+                            if !e.verdict.notes.is_empty()
+                                && let Some(root) = worktrees::notes_root()
+                            {
+                                reasons.on_hover_text(format!(
+                                    "Notes go to {}:\n{}",
+                                    e.notes_dir(&root).display(),
+                                    e.verdict.notes.join("\n")
+                                ));
+                            }
                         });
                     }
                 });
@@ -642,6 +653,7 @@ fn review_view(
                         ui.horizontal_wrapped(|ui| {
                             ui.label(format!("{}/{}", e.repo, e.name))
                                 .on_hover_text(&e.path);
+                            ui.weak(e.size_text());
                             ui.weak(e.verdict.reasons.join("; "));
                         });
                     }
