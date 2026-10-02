@@ -62,6 +62,7 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `open_whip_settings` | – | `open_whip_settings` | idempotent |
 | `alerts` | `limit` (default 20), `unread_only` | `alerts` | read-only |
 | `quotas` | – | `quotas` | read-only |
+| `health` | – | `health` | read-only |
 | `get_playbook` | `role` (default `coordinator`) or `file`, `section` | – (reads the playbook) | read-only |
 | `list_playbook` | – | – (reads the playbook) | read-only |
 | `attendant_brief` | `run_id` | `fleet_data` (headless fallback) | read-only |

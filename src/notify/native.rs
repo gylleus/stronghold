@@ -115,8 +115,10 @@ fn clicked(what: Clicked) {
     }
 }
 
-/// The notification permission macOS has on record for Myrstack, for error messages.
-fn authorization_status() -> &'static str {
+/// The notification permission macOS has on record for Myrstack, for error messages and the
+/// health check. Only for `Myrstack.app` ([`is_bundled`]): an unbundled process has no
+/// notification center.
+pub fn authorization_status() -> &'static str {
     let (tx, rx) = crossbeam_channel::bounded(1);
     let done = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
         // SAFETY: the settings object is valid for the duration of the callback.

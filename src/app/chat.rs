@@ -73,6 +73,11 @@ impl AppChat {
 
 impl AppChat {
     /// Read-only: the control API and MCP report it, nothing outside the header sets it.
+    /// The Queen's chat process state.
+    pub(super) fn state(&self) -> &crate::chat::SessionState {
+        &self.session.state
+    }
+
     pub(super) fn auto_mode(&self) -> bool {
         self.session.auto_mode()
     }

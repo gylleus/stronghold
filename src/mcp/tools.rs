@@ -10,6 +10,7 @@ use crate::control::view::{
     AgentView, AlertView, FleetSummary, PromptView, QuotasView, RunView, WhipLogView, WhipView,
 };
 use crate::control::{ControlError, ErrorCode};
+use crate::health::HealthReport;
 use crate::mcp::backend::{CallError, Control, NOT_RUNNING};
 use crate::quota::format_duration;
 use crate::review::mark::Origin;
@@ -443,6 +444,16 @@ pub fn definitions() -> Vec<Value> {
             object(json!({}), &[]),
             READ,
         ),
+        tool(
+            "health",
+            "Health",
+            "Myrstack's health doctor: whether the whip is live or in dry run, `orca` and `gh` \
+             are found (with versions) and Orca's runtime is reachable, the Queen is running, \
+             the Claude session hook is installed, notifications are allowed and the Slack \
+             reply bridge's heartbeat is fresh. Each problem comes with a one-line fix.",
+            object(json!({}), &[]),
+            READ,
+        ),
     ]
 }
 
@@ -480,6 +491,7 @@ pub fn call(
         ),
         "alerts" => alerts(control, &p),
         "quotas" => quotas(control),
+        "health" => health(control),
         _ => return None,
     };
     Some(result.unwrap_or_else(|e| ToolOutput::error(error_text(e))))
@@ -1602,6 +1614,38 @@ fn quotas(control: &mut dyn Control) -> ToolResult {
                 w.label, w.used_percent
             ));
         }
+    }
+    Ok(ToolOutput::ok(out.join("\n"), result))
+}
+
+fn health(control: &mut dyn Control) -> ToolResult {
+    let result = control.call("health", Value::Null)?;
+    let report: HealthReport = parse(&result)?;
+    let problems = report.problems().count();
+    let checked = report.checked_at_ms.map_or_else(
+        || "checks still running".to_owned(),
+        |at| format!("checked {}", since(now_ms(), at)),
+    );
+    let mut out = vec![format!(
+        "Health: {} — {} ({checked}).",
+        report.level.name().to_uppercase(),
+        match problems {
+            0 => "all checks pass".to_owned(),
+            1 => "1 problem".to_owned(),
+            n => format!("{n} problems"),
+        }
+    )];
+    for check in &report.checks {
+        let mut line = format!(
+            "- [{}] {}: {}",
+            check.level.name(),
+            check.name,
+            check.detail
+        );
+        if let Some(fix) = &check.fix {
+            line.push_str(&format!(" — fix: {fix}"));
+        }
+        out.push(line);
     }
     Ok(ToolOutput::ok(out.join("\n"), result))
 }

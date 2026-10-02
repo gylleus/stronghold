@@ -1,4 +1,4 @@
-//! Myrstack binary: sets up logging and launches the eframe window.
+//! Myrstack binary: sets up logging (stderr and the log file) and launches the eframe window.
 
 use myrstack::{APP_NAME, MyrstackApp};
 
@@ -19,7 +19,7 @@ fn main() -> eframe::Result {
         return Ok(());
     }
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    myrstack::logfile::init();
     myrstack::notify::init();
 
     let options = eframe::NativeOptions {

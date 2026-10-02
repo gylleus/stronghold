@@ -43,6 +43,7 @@ pub const READ_METHODS: &[&str] = &[
     "agent",
     "whip",
     "quotas",
+    "health",
     "alerts",
     "fleet_data",
     "review_queue",
@@ -139,6 +140,7 @@ fn dispatch(backend: &Backend, method: &str, params: &Value) -> Result<Value, Co
         "agent" => agent(backend, &view, params, now),
         "whip" => whip(&view, params),
         "quotas" => to_value(&view.quotas),
+        "health" => to_value(&view.health),
         "alerts" => Ok(json!({ "alerts": view.alerts })),
         "fleet_data" => fleet_data(&view),
         other => Err(ControlError::new(

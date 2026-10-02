@@ -567,6 +567,12 @@ impl PollState {
             self.apply(CallKey::Terminals, "terminal list", result, |d, v| {
                 d.terminals = v
             });
+            if self.errors.contains_key(&CallKey::Terminals) {
+                self.data.failed_polls += 1;
+            } else {
+                self.data.failed_polls = 0;
+                self.data.fresh_at_ms = Some(wall_ms);
+            }
         }
         if due.runs_workers {
             let result = source.runs();
@@ -1311,11 +1317,21 @@ mod tests {
             s.fail_runs = true;
             s.terminals.clear();
         });
+        assert_eq!(first.fresh_at_ms, Some(NOW_MS));
+        assert_eq!(first.failed_polls, 0);
         let snap = state.tick(&fake, secs(2), NOW_MS + 2000).unwrap();
         assert_eq!(snap.terminals.len(), 1, "previous terminals retained");
         assert_eq!(snap.errors.len(), 1);
         assert!(snap.errors[0].contains("Orca runtime not reachable"));
         assert_eq!(snap.polled_at_ms, NOW_MS + 2000);
+        assert_eq!(
+            snap.fresh_at_ms,
+            Some(NOW_MS),
+            "fresh as of the last success"
+        );
+        assert_eq!(snap.failed_polls, 1);
+        let snap = state.tick(&fake, secs(4), NOW_MS + 4000).unwrap();
+        assert_eq!(snap.failed_polls, 2);
 
         // Runs fail on their tick; the terminal error is still outstanding.
         let snap = state.tick(&fake, secs(10), NOW_MS).unwrap();
@@ -1329,8 +1345,10 @@ mod tests {
 
         // Terminals recover; the run error stays until runs are next polled.
         fake.with(|s| s.fail_terminals = false);
-        let snap = state.tick(&fake, secs(12), NOW_MS).unwrap();
+        let snap = state.tick(&fake, secs(12), NOW_MS + 12_000).unwrap();
         assert!(snap.terminals.is_empty());
+        assert_eq!(snap.fresh_at_ms, Some(NOW_MS + 12_000));
+        assert_eq!(snap.failed_polls, 0);
         assert_eq!(snap.errors.len(), 1);
         assert!(snap.errors[0].starts_with("run list"));
 
