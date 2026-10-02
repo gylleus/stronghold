@@ -37,3 +37,4 @@ pub mod theme;
 pub mod whip_log;
 pub mod whip_now;
 pub mod widgets;
+pub mod worktrees;
