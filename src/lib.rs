@@ -5,6 +5,7 @@
 
 pub mod actions;
 pub mod app;
+pub mod ask;
 pub mod broadcast;
 pub mod chat;
 pub mod claude;
@@ -12,6 +13,7 @@ pub mod close;
 pub mod codex;
 pub mod control;
 pub mod detect;
+pub mod finish;
 pub mod fleet;
 pub mod hotkey;
 pub mod mcp;

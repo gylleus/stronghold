@@ -12,7 +12,9 @@ this file and name the conflict in your report.
 Coordinator: Karl's coordinator Claude Code session. Human: Karl. You are a worker under an
 Orca dispatch — you have a `taskId` and a `dispatchId` in your preamble. If you do not have
 both, you are NOT under a dispatch: do the work as an ordinary handoff and send no lifecycle
-messages.
+messages. Such a standalone session reaches Karl itself, by the playbook's _Human in the loop_:
+`ask_karl` before ending any turn that waits on his answer, and `finish_session` once your work
+is merged or handed over and nothing is left, instead of idling.
 
 ## Lifecycle
 
@@ -81,12 +83,13 @@ orca orchestration send --type worker_done --subject "<short status>" \
   `ask --resume <message_id>`. Never re-ask — you'll create a second thread nobody can match
   to the first.
 - Something is on fire and the coordinator must intervene → `--type escalation`.
-- Don't call Myrstack's `notify` tool: your coordinator reaches Karl. Exceptions: the
-  credential step under _Hard rules_, and a standalone session with no coordinator, which
-  notifies Karl itself by the playbook's _Human in the loop_ rules.
+- Don't call Myrstack's `notify` or `ask_karl` tools: your coordinator reaches Karl, and your
+  questions go to it with `ask`. Exceptions: the credential step under _Hard rules_, and a
+  standalone session with no coordinator, which reaches Karl itself by the playbook's _Human in
+  the loop_ rules.
 - After `worker_done`, end your turn and idle. Do not start more work, do not poll, do not
-  close your own terminal. If the coordinator reuses you, a fresh preamble arrives as new
-  input.
+  close your own terminal (`finish_session` refuses workers: the coordinator reuses or releases
+  you). If the coordinator reuses you, a fresh preamble arrives as new input.
 
 ## Heartbeats
 

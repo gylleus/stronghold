@@ -4,7 +4,8 @@
 long-lived worker worktrees, adversarial review inside each, everything as Orca terminals Karl
 can watch and join. Workers follow `_AGENT_PROTOCOL.md`; this file is for coordinators. v7 drops
 the attendant (Myrstack forwards events now) and tiers the plan gate by risk; see
-`~/Documents/agents/tracks/playbook-evaluation-REPORT.md`.
+`~/Documents/agents/tracks/playbook-evaluation-REPORT.md`. v7.1 adds `ask_karl` for questions
+you wait on and `finish_session` for leaving (_Human in the loop_).
 
 ## Topology
 
@@ -270,10 +271,10 @@ comment) so it describes the design as it now stands, then marks it.
   notification per event; never for progress or routine status. The coordinator sends them,
   and so does a standalone session with no coordinator. Workers go through their coordinator
   (`ask`, `escalation`, `merge_ready`), except for the credential step in `_AGENT_PROTOCOL.md`.
-  - **Blocked on Karl** (a permission, credential, passkey or 2FA, prod approval, or a decision
-    only he can make): `severity: warn`, or `urgent` if work is stalled and can't wait. Say
-    what you need and what it unblocks, then wait ≥10 min, polling. A terminal sitting at a
-    prompt already shows as needs input and Myrstack notifies about it; don't add another.
+  - **Blocked on Karl** for something he must do (a permission, credential, passkey or 2FA,
+    prod approval): `severity: warn`, or `urgent` if work is stalled and can't wait. Say what
+    you need and what it unblocks, then wait ≥10 min, polling. A terminal sitting at a prompt
+    already shows as needs input and Myrstack notifies about it; don't add another.
   - **Handover** (you're done and the next move is Karl's): a PR ready for his review (right
     after the ready marker and `mark_pr_ready`), a merge waiting on him, a run or campaign
     finished. `severity: info`, the `url`, and one line on what he needs to do next. It is a
@@ -282,6 +283,26 @@ comment) so it describes the design as it now stands, then marks it.
   - **If Myrstack isn't running**, `notify` errors: fall back to the old channels. Blocking
     asks: `osascript -e 'display dialog "Agent <track> needs you: <what>" with title "orca
 fleet" buttons {"OK"} giving up after 300'`. Handovers: the chat and the ticket.
+- **A question you wait on goes through `ask_karl`** (`question`, `context`, `severity:
+  warn|urgent`, `url`). Myrstack sees prompts and menus on your screen, not a question typed
+  in the chat, so whenever you end a turn waiting for Karl's answer (which way to go, may I
+  merge, a missing fact), call `ask_karl` first, then end the turn and don't act on what the
+  answer decides. Karl gets the question as a notification and your node shows needs input
+  until he answers in your terminal (the whip leaves you alone meanwhile). Put the options and
+  your recommendation in `context`. Myrstack also flags a Claude turn that ends on a `?` as a
+  backstop; don't rely on it. Not for permission prompts or menus (already detected), status or
+  handovers. Same senders as `notify`: workers ask their coordinator on the bus.
+- **Leave with `finish_session`, don't idle forever.** When you're truly done (your work merged
+  or handed over, review addressed, nothing left), call `finish_session` with a one-line
+  `summary`, `outcome` (`done`, `handed_over`, `abandoned`) and any `pr_url`, as your last call
+  (after the handover `notify`). Myrstack records the outcome in Karl's inbox, shows your node
+  done and closes your terminal ~2 s later. It refuses while your worktree has uncommitted
+  changes or commits neither merged nor pushed, while a PR of yours waits in Karl's review
+  queue (stay to address his comments; finish once it merges or Karl says you're not needed),
+  and while your Run has open tasks; `force: true` only when Karl said to stop anyway (the
+  overridden problems are recorded). The worktree and branch are kept: removing them stays
+  _Clean up after merge_ or Karl's call. Workers never finish themselves: the coordinator
+  reuses or releases them. A coordinator finishes only after its Run is done and cleaned up.
 - Secrets go only into password fields: never logs, PRs, tickets or summaries. Worker
   `.dev.vars` come from `.envrc.local` via `just`; don't hand-edit or echo them.
 - Say what you could and couldn't reach behind sign-in walls; a login page is not a verified
@@ -351,6 +372,8 @@ evidence is dropping. Never double-execute writes: dry-run diff the intended mut
 | Lite surfaces failed ~15 min after a merge                             | Land `deploy-lite` merges outside the :45 \*/6 window                                                  |
 | Repurposed worker dragged old context in                               | `/clear` first, or a fresh dispatch                                                                    |
 | Token bill exploded on a quiet fleet                                   | _Token economy_: Myrstack forwards events, the coordinator arms no wakes                               |
+| Agent asked Karl in the chat and waited hours unseen                   | `ask_karl` before ending any turn that waits on Karl's answer                                          |
+| Finished sessions sat idle until Karl closed them by hand              | `finish_session` once merged or handed over; its guards say what's still open                          |
 
 ## Fallback: Myrstack not running
 

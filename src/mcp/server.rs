@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use serde_json::{Value, json};
 
 use crate::mcp::backend::Control;
-use crate::mcp::{notify, playbook, review, tools};
+use crate::mcp::{lifecycle, notify, playbook, review, tools};
 use crate::playbook::Playbook;
 
 /// Protocol versions this server speaks, newest first. `initialize` echoes the client's version
@@ -66,7 +66,11 @@ review_queue lists what is waiting, with CI, Ankra and ready-marker state.
 Reaching Karl: notify {title, message, severity: info|warn|urgent, url} sends Karl a pop-up \
 and sound through Myrstack, kept in his inbox and attributed to your terminal (clicking it \
 selects your node and opens url). alerts lists his inbox; fleet_status reports unread ones. ",
-    notify::rules_text!()
+    notify::rules_text!(),
+    "
+
+",
+    lifecycle::rules_text!()
 );
 
 /// The MCP session state over one [`Control`].
@@ -243,6 +247,7 @@ impl<C: Control> McpServer<C> {
                 all.extend(playbook::tool_definitions());
                 all.extend(review::definitions());
                 all.extend(notify::definitions());
+                all.extend(lifecycle::definitions());
                 Ok(json!({ "tools": all }))
             }
             "tools/call" => self.call_tool(params),
@@ -304,6 +309,10 @@ impl<C: Control> McpServer<C> {
             })
             .or_else(|| review::call(&mut self.control, &self.review, name, &args))
             .or_else(|| notify::call(&mut self.control, &self.review.origin, name, &args))
+            .or_else(|| {
+                let cwd = std::env::current_dir().ok();
+                lifecycle::call(&mut self.control, &self.review.origin, cwd, name, &args)
+            })
             .or_else(|| tools::call(&mut self.control, name, &args))
             .ok_or_else(|| (INVALID_PARAMS, format!("unknown tool: {name}")))?;
         let mut output = output;

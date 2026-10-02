@@ -67,6 +67,12 @@ impl AppNotifications {
     }
 
     /// Changes whenever the inbox does.
+    /// Holds back Myrstack's own needs-input notification for `target` (see
+    /// [`NotificationCenter::hold_cooldown`]).
+    pub(super) fn hold_cooldown(&mut self, target: &str, now_ms: i64) {
+        self.center.hold_cooldown(target, now_ms);
+    }
+
     pub(super) fn generation(&self) -> u64 {
         self.center.history.generation()
     }
