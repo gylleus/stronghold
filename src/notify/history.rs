@@ -193,6 +193,17 @@ impl History {
         self.mark_read_where(|_| true)
     }
 
+    /// Deletes entry `id`; returns whether it was there.
+    pub fn remove(&mut self, id: u64) -> bool {
+        let before = self.entries.len();
+        self.entries.retain(|e| e.id != id);
+        let removed = self.entries.len() < before;
+        if removed {
+            self.generation += 1;
+        }
+        removed
+    }
+
     pub fn clear(&mut self) {
         if !self.entries.is_empty() {
             self.entries.clear();
@@ -252,6 +263,29 @@ mod tests {
         assert_eq!(h.unread(), 0);
         h.clear();
         assert!(h.entries().is_empty());
+    }
+
+    #[test]
+    fn a_removed_entry_leaves_the_unread_count_and_stays_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(HISTORY_FILE);
+        let mut h = History::default();
+        let a = h.push(entry("a", 1));
+        let b = h.push(entry("b", 2));
+        let generation = h.generation();
+        assert!(h.remove(a));
+        assert!(h.generation() > generation);
+        assert!(!h.remove(a), "already gone");
+        assert_eq!(h.unread(), 1);
+        assert!(h.get(a).is_none());
+        h.save(&path).unwrap();
+        let mut loaded = History::load(&path);
+        assert_eq!(
+            loaded.entries().iter().map(|e| e.id).collect::<Vec<_>>(),
+            [b]
+        );
+        assert_eq!(loaded.unread(), 1);
+        assert_eq!(loaded.push(entry("c", 3)), 3, "a removed id is not reused");
     }
 
     #[test]

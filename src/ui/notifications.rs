@@ -59,6 +59,8 @@ pub enum NoticeAction {
     /// Open an entry's link (and mark it read).
     OpenUrl(u64),
     MarkAllRead,
+    /// Delete one entry from the history.
+    Remove(u64),
     Clear,
     /// Quiet mode switched in the inbox.
     SetQuiet(bool),
@@ -493,11 +495,13 @@ fn entry_row(ui: &mut Ui, entry: &Entry, expanded: bool, now_ms: i64, dark: bool
     };
     let shown = egui::Frame::new().inner_margin(margin).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        let header = ui
-            .scope_builder(egui::UiBuilder::new().sense(egui::Sense::click()), |ui| {
-                entry_header(ui, entry, expanded, now_ms, color);
-            })
-            .response;
+        let header = ui.scope_builder(egui::UiBuilder::new().sense(egui::Sense::click()), |ui| {
+            entry_header(ui, entry, expanded, now_ms, color)
+        });
+        if header.inner {
+            action = Some(NoticeAction::Remove(entry.id));
+        }
+        let header = header.response;
         if expanded {
             ui.add_space(2.0);
             ui.separator();
@@ -555,8 +559,10 @@ fn entry_row(ui: &mut Ui, entry: &Entry, expanded: bool, now_ms: i64, dark: bool
     RowResponse { toggled, action }
 }
 
-fn entry_header(ui: &mut Ui, entry: &Entry, expanded: bool, now_ms: i64, color: Color32) {
+/// Returns whether its X (remove) was clicked.
+fn entry_header(ui: &mut Ui, entry: &Entry, expanded: bool, now_ms: i64, color: Color32) -> bool {
     let visuals = ui.visuals().clone();
+    let mut removed = false;
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 12.0), egui::Sense::hover());
         let c = rect.center();
@@ -601,6 +607,13 @@ fn entry_header(ui: &mut Ui, entry: &Entry, expanded: bool, now_ms: i64, color: 
             text.format.color = visuals.strong_text_color();
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let x = icon_text(ui, icons::X)
+                .small()
+                .color(visuals.weak_text_color());
+            removed = ui
+                .add(egui::Button::new(x).frame(false).small())
+                .on_hover_text("Remove this notification")
+                .clicked();
             ui.label(
                 RichText::new(format_age(now_ms - entry.at_ms))
                     .small()
@@ -640,6 +653,7 @@ fn entry_header(ui: &mut Ui, entry: &Entry, expanded: bool, now_ms: i64, color: 
                 .selectable(false),
         );
     }
+    removed
 }
 
 fn entry_details(ui: &mut Ui, entry: &Entry, now_ms: i64) -> Option<NoticeAction> {
@@ -874,6 +888,18 @@ mod tests {
             panel_click("Mark all read", &mut panel, entry(1, Severity::Info)),
             Some(PanelAction::Notice(NoticeAction::MarkAllRead))
         );
+    }
+
+    #[test]
+    fn a_rows_x_removes_it_without_toggling_it() {
+        for expanded in [false, true] {
+            let e = entry(4, Severity::Warn);
+            let row = click_label(&icons::X.to_string(), |ui| {
+                entry_row(ui, &e, expanded, 0, true)
+            });
+            assert_eq!(row.action, Some(NoticeAction::Remove(4)));
+            assert!(!row.toggled, "the X does not expand or collapse the row");
+        }
     }
 
     #[test]
