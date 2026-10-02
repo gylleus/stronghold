@@ -202,7 +202,7 @@ pub fn missing_report_nudge_text(tasks: &[TaskRef], idle_ms: i64) -> String {
     format!(
         "{NUDGE_PREFIX} you have been idle on {list} for {} and your report to the coordinator \
          never arrived on the bus. Resend worker_done/merge_ready (orca orchestration send ...); \
-         if the send errors, retry, then use mark_pr_ready/notify. Not finished? Send a \
+         if the send errors, retry, then call Myrstack's notify with the error and your report. Not finished? Send a \
          heartbeat with your phase and continue.",
         fmt_duration(idle_ms)
     )

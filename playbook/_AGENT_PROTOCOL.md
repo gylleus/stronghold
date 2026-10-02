@@ -85,7 +85,7 @@ orca orchestration send --type worker_done --subject "<short status>" \
   to the first.
 - Something is on fire and the coordinator must intervene → `--type escalation`.
 - `orca orchestration send` errors → retry twice. Still failing → call Myrstack's `notify`
-  (for a `merge_ready`, `mark_pr_ready`) with the error, so the coordinator or Karl can act.
+  with the error and the report (PR URL for a `merge_ready`), so the coordinator or Karl can act.
   An unsent report leaves the coordinator waiting forever.
 - Don't call Myrstack's `notify` or `ask_karl` tools: your coordinator reaches Karl, and your
   questions go to it with `ask`. Exceptions: a report the bus refused (above), the credential
