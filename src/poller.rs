@@ -578,7 +578,8 @@ impl PollState {
             });
             let result = source.worktrees();
             self.apply(CallKey::Worktrees, "worktree list", result, |d, v| {
-                d.worktree_names = crate::fleet::chosen_worktree_names(&v)
+                d.worktree_names = crate::fleet::chosen_worktree_names(&v);
+                d.worktrees = v;
             });
         }
         if due.tasks {
