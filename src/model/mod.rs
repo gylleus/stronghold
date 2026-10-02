@@ -21,7 +21,7 @@ use crate::orca::{
 pub use label::{MAX_LABEL_CHARS, strip_spinner, truncate_label};
 pub use queen::{QUEEN_ID, QUEEN_LABEL, fleet_state};
 pub use repo::{NO_REPO, RepoIndex, node_repo, repo_of, run_repo};
-pub use state::{StateInputs, WORKING_WINDOW_MS, derive_state};
+pub use state::{StateInputs, WORKING_WINDOW_MS, derive_state, dispatch_ended};
 
 /// How long a released worker stays in the snapshot after its release, so the UI can fade it.
 pub const RELEASED_FADE_MS: i64 = 10 * 60 * 1_000;
@@ -689,6 +689,12 @@ fn worker_node(
     node.state = derive_state(&StateInputs {
         needs_input: terminal.and_then(|t| data.screen_needs_input(&t.handle)),
         stalled: terminal.is_some_and(|t| stalled.contains(&t.handle)),
+        alive_after_failure: task.is_some_and(|t| {
+            t.dispatch_id
+                .as_deref()
+                .is_none_or(|d| d == worker.dispatch_id)
+                && data.alive_after_failure(t, None).is_some()
+        }),
         ..StateInputs::new(terminal, Some(worker), now_ms)
     });
     node

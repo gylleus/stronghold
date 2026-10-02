@@ -94,11 +94,10 @@ pub fn sky(scene: &Scene, now_s: f64, dark: bool) -> Vec<Placement> {
     out
 }
 
-/// Stars in the upper sky at `now_s`, and whether each is twinkling bright.
-pub fn stars(scene: &Scene, now_s: f64) -> Vec<(Pos2, bool)> {
+/// Stars in the upper sky, and whether each is a bright one. They hold still.
+pub fn stars(scene: &Scene) -> Vec<(Pos2, bool)> {
     let rect = scene.rect;
     let height = (scene.surface_y - rect.top()) * 0.7;
-    let tick = (now_s * 1.5) as u32;
     (0..STARS)
         .map(|i| {
             let h = hash(i, 31);
@@ -108,7 +107,7 @@ pub fn stars(scene: &Scene, now_s: f64) -> Vec<(Pos2, bool)> {
                 (x / scene.px).round() * scene.px,
                 (y / scene.px).round() * scene.px,
             );
-            (p, (h.wrapping_add(tick)).is_multiple_of(5))
+            (p, h.is_multiple_of(5))
         })
         .collect()
 }

@@ -4,6 +4,7 @@
 //! [`layout`] decides where everything goes, [`motion`] walks ants to new places and
 //! [`sprites`] draws them; this module ties them to egui and handles input.
 
+pub mod death;
 pub mod layout;
 #[cfg(test)]
 mod layout_tests;
@@ -19,6 +20,7 @@ use eframe::egui::{self, Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, 
 
 use crate::model::{FleetSnapshot, NodeId};
 use crate::ui::graph::GraphView;
+use death::{Body, Fall};
 use layout::{FarmInput, Pose, Scene, Spot, layout};
 use motion::{Walk, route};
 use sprites::{AntLook, Item, Palette, Sprites};
@@ -133,6 +135,9 @@ struct Track {
     /// Where the spot was last frame, relative to the farm's rect (see [`motion::to_unit`]).
     at: Pos2,
     walk: Option<Walk>,
+    /// How the ant was last drawn, for its fall should it leave the fleet; `None` for the
+    /// Queen and subagents, which never fall.
+    body: Option<Body>,
 }
 
 /// Where an ant is drawn this frame.
@@ -162,6 +167,8 @@ pub struct AntFarmView {
     /// Calls asked for since the last frame; see [`AntFarmView::pulse`].
     pending: Vec<Pulse>,
     ripples: Vec<Ripple>,
+    /// Ants that left the fleet, falling to the bottom.
+    falls: Vec<Fall>,
     /// The Queen is working on something (her chat turn runs): she hops about.
     queen_busy: bool,
     /// Her chat is the conversation shown: she gets the selection ring.
@@ -221,6 +228,8 @@ impl AntFarmView {
         self.ripples
             .retain(|r| now_s - r.start_s < RIPPLE_S + ECHO_S + ARRIVAL_S);
         self.births.retain(|t| now_s - t < BIRTH_GLOW_S);
+        self.falls.retain(|f| now_s - f.start_s < f.duration());
+        self.bury(&scene, snapshot, now_s, death::reduce_motion);
         let placed = self.advance(&scene, now_s);
         let effects = Effects {
             ripples: &self.ripples,
@@ -255,13 +264,15 @@ impl AntFarmView {
             &effects,
             ui,
         );
+        paint_falls(&painter, sprites, &scene, &self.falls, now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
 
         // Smooth while ants walk or a call ripples; stepped while anyone digs, waves, sleeps
         // or is whipped (the Queen always breathes).
         let walking = placed.iter().any(|p| p.heading.is_some())
             || !self.ripples.is_empty()
-            || !self.births.is_empty();
+            || !self.births.is_empty()
+            || !self.falls.is_empty();
         let stepping = scene.ants.iter().any(|a| {
             matches!(a.pose, Pose::Dig | Pose::Wait | Pose::Sleep)
                 || (a.pose == Pose::Queen && self.queen_busy)
@@ -328,6 +339,35 @@ impl AntFarmView {
         None
     }
 
+    /// Starts a fall for every ant drawn last frame that has left the fleet: gone from
+    /// `snapshot` too, not just filtered out, however it was removed. `reduce_motion` is asked
+    /// only when one falls.
+    pub fn bury(
+        &mut self,
+        scene: &Scene,
+        snapshot: &FleetSnapshot,
+        now_s: f64,
+        reduce_motion: impl Fn() -> bool,
+    ) {
+        if self.away {
+            return;
+        }
+        let mut still = None;
+        for (id, track) in &self.tracks {
+            if let Some(body) = track.body
+                && scene.ant(id).is_none()
+                && !snapshot.nodes.iter().any(|n| &n.id == id)
+            {
+                let still = *still.get_or_insert_with(&reduce_motion);
+                self.falls.push(Fall {
+                    body,
+                    start_s: now_s,
+                    still,
+                });
+            }
+        }
+    }
+
     /// Starts a walk for every ant whose spot changed, drops finished walks and gone ants,
     /// and returns where each of `scene.ants` is at `now_s`.
     ///
@@ -354,6 +394,7 @@ impl AntFarmView {
                         spot: ant.spot.clone(),
                         at: motion::to_unit(ant.pos, scene.rect),
                         walk: None,
+                        body: None,
                     },
                 );
                 self.seen.insert(ant.id.clone());
@@ -367,6 +408,7 @@ impl AntFarmView {
                 spot: ant.spot.clone(),
                 at: motion::to_unit(ant.pos, scene.rect),
                 walk: None,
+                body: None,
             });
             if born {
                 let from = scene.queen_chamber.center() + vec2(0.0, 0.3 * scene.cell());
@@ -404,6 +446,17 @@ impl AntFarmView {
                     heading: None,
                 },
             };
+            let falls = ant.pose != Pose::Queen && ant.kind != crate::model::NodeKind::Subagent;
+            track.body = falls.then(|| Body {
+                at: motion::to_unit(at.pos, scene.rect),
+                size: ant.size,
+                facing_right: match at.heading {
+                    Some(h) if h.x.abs() > 0.1 => h.x > 0.0,
+                    _ => ant.facing_right,
+                },
+                red: ant.pose == Pose::Failed,
+                alpha: ant.alpha,
+            });
             current.insert(&ant.id, at);
             placed.push(at);
         }
@@ -446,7 +499,7 @@ fn paint_ground(
     sprites.ground(painter, scene.rect, scene.surface_y, px, palette);
     // The sky, then roots under the plants (passages are dug through them).
     if dark {
-        for (at, bright) in scenery::stars(scene, now_s) {
+        for (at, bright) in scenery::stars(scene) {
             sprites.star(painter, at, px, bright);
         }
     }
@@ -717,6 +770,33 @@ fn paint_ants(
         } else if hovered == Some(&ant.id) {
             painter.rect_stroke(ring, 0.0, Stroke::new(1.0, hover), StrokeKind::Outside);
         }
+    }
+}
+
+/// Ants that left the fleet, falling legs up.
+fn paint_falls(
+    painter: &egui::Painter,
+    sprites: &Sprites,
+    scene: &Scene,
+    falls: &[Fall],
+    now_s: f64,
+) {
+    for fall in falls {
+        let Some(frame) = fall.frame(scene.rect, now_s) else {
+            continue;
+        };
+        let look = AntLook {
+            red: fall.body.red,
+            frame: 0,
+            facing_right: fall.body.facing_right,
+            upside_down: frame.upside_down,
+            alpha: frame.alpha,
+        };
+        sprites.ant(
+            painter,
+            Rect::from_center_size(frame.pos, Vec2::splat(fall.body.size)),
+            look,
+        );
     }
 }
 

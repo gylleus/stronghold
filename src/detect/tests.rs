@@ -293,3 +293,52 @@ fn preview_detection() {
         None
     );
 }
+
+mod claude_session_live {
+    use crate::detect::claude_session_live;
+    use crate::orca::{AgentIdentity, Terminal};
+
+    fn term(agent: Option<AgentIdentity>, preview: &str) -> Terminal {
+        Terminal {
+            handle: "term_c".into(),
+            connected: true,
+            agent_identity: agent,
+            preview: Some(preview.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn idle_and_working_claude_screens_are_live() {
+        for preview in [
+            "some transcript\nnew task? /clear to save 319.5k tokens",
+            "done.\n❯\u{a0}add the error type name",
+            "reading files\n✢ Brewing… (esc to interrupt)",
+            "Flummoxing…                6",
+            "⏺ Done. Merged nothing.\n",
+        ] {
+            assert!(
+                claude_session_live(&term(Some(AgentIdentity::Claude), preview)),
+                "{preview:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn shells_and_other_agents_are_not() {
+        let shell = "⏺ old transcript line\n~/orca/workspaces/x  gylleus/redis-writes ✔        9m";
+        for (agent, preview) in [
+            (Some(AgentIdentity::Claude), shell),
+            (
+                Some(AgentIdentity::Claude),
+                "new task? /clear to save\n~/repo %",
+            ),
+            (Some(AgentIdentity::Claude), "⏺ hi\nkarl@mac repo $"),
+            (Some(AgentIdentity::Claude), "nothing recognisable"),
+            (Some(AgentIdentity::Codex), "⏺ hi\n› type here"),
+            (None, "new task? /clear to save"),
+        ] {
+            assert!(!claude_session_live(&term(agent, preview)), "{preview:?}");
+        }
+    }
+}

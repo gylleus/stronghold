@@ -821,19 +821,23 @@ pub(crate) mod tests {
                 "VROOM-###",
                 "one-line title",
                 "track-number",
+                "standard | gated",
                 "What this track owns, in two or three sentences. The decision to be made, not \
                  the keystrokes.",
                 "the adjacent thing another track owns, or the follow-up that is deliberately \
                  not this PR.",
+                "none",
                 "task/PR, or \"none\"",
                 "task, or \"none\"",
                 "migrations, tables, stacked PRs — name the other track and the coordination \
                  rule, or \"nothing\"",
+                "globs this track may edit",
+                "globs other live tracks own, or \"nothing\"",
+                "independent | after #N, rebase on it once it merges",
                 "The facts the plan will rest on. The reviewer's first job is to check these \
                  against the code, not to accept them. If one is wrong, say so before \
                  implementing anything.",
                 "fact",
-                "one line",
                 "`just check`, or this repo's actual gate",
                 "what a working end-to-end path looks like here — the real request, the real \
                  data, the real page. Name it concretely.",
@@ -989,8 +993,8 @@ pub(crate) mod tests {
         assert!(body.contains("- Blocked by: none\n"));
         assert!(body.contains("- Blocks: t_b \"track B\" (pending)\n"));
         assert!(body.contains("deliberately not this PR.: FILL IN>"));
-        assert!(body.contains("`APPROVED — <one line>`"), "runtime kept");
-        assert_eq!(f.result.runtime, ["one line"]);
+        assert!(body.contains("- **Risk:** <standard | gated: FILL IN>"));
+        assert!(body.contains("**Open decisions:** <none: FILL IN>"));
         assert!(f.result.missing.contains(&"fact".to_owned()));
         let header = f.header();
         assert!(header.contains("Task: t_a \"VROOM-1522 track A\" · dispatched · run run_1"));
