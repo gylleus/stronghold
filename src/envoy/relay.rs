@@ -17,9 +17,12 @@ pub struct RelayRequest {
 impl RelayRequest {
     pub fn text(&self) -> String {
         format!(
-            "{RELAY_PREFIX} {}\n{}\nWhy: {}",
+            "{RELAY_PREFIX} {} | {} | Why: {}",
             self.summary, self.slack_link, self.why
         )
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
     }
 }
 

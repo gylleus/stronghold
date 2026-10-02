@@ -27,6 +27,7 @@ pub enum Pane {
     Conversation,
     /// The notification history, newest first.
     Notifications,
+    Envoy,
 }
 
 /// Panes that are always in the layout; the conversation and notifications can be taken out.
@@ -197,6 +198,15 @@ impl PaneLayout {
         }
     }
 
+    pub fn open_envoy(&mut self) {
+        if !self.contains(Pane::Envoy) {
+            self.dock
+                .main_surface_mut()
+                .split_right(NodeIndex::root(), 0.65, vec![Pane::Envoy]);
+        }
+        self.activate(Pane::Envoy);
+    }
+
     /// The conversation's tab was closed in the dock; `before` is the layout that had it.
     pub fn closed_conversation(&mut self, before: PaneLayout) {
         self.stashed = Some(before.dock);
@@ -308,6 +318,7 @@ fn valid(dock: &DockState<Pane>) -> bool {
         && FIXED.iter().all(|pane| count(*pane) == 1)
         && count(Pane::Conversation) <= 1
         && count(Pane::Notifications) <= 1
+        && count(Pane::Envoy) <= 1
 }
 
 /// Where the top bar's Queen quick actions line up: the conversation pane's left edge when it

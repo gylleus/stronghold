@@ -154,6 +154,7 @@ pub struct MyrstackApp {
     /// PRs agents marked ready for review, their GitHub state and the poller reading it.
     review: review::AppReview,
     pub envoy_core: envoy::AppEnvoy,
+    envoy_panel: ui::envoy::DraftsPanel,
 }
 
 impl MyrstackApp {
@@ -243,6 +244,7 @@ impl MyrstackApp {
             talk,
             review: review::AppReview::start(ctx),
             envoy_core: envoy::AppEnvoy::start(ctx),
+            envoy_panel: ui::envoy::DraftsPanel::default(),
         };
         app.talk_startup();
         app.restore_state(cc.storage);
@@ -495,6 +497,14 @@ impl MyrstackApp {
 
     /// The Queen's details: the review queue, her header and fleet summary, and broadcast.
     fn queen_details(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+        let pending = self
+            .envoy_drafts()
+            .iter()
+            .filter(|d| d.status == crate::envoy::drafts::DraftStatus::Pending)
+            .count();
+        if ui.button(format!("Envoy drafts ({pending})")).clicked() {
+            self.envoy_core.open_request = true;
+        }
         let (review_rows, review_note, review_state) = self.review_view(now_ms);
         let playbook = self.playbook_status();
         let review_action = ui::review::review_section(

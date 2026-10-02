@@ -336,7 +336,11 @@ impl<I: SlackIo> SlackChannel<I> {
     }
 
     fn ingest(&mut self, e: InboundEvent, batch: &mut PollBatch) {
-        if e.user != self.settings.karl_user_id && self.inbox.insert(e.clone()) {
+        let fresh = self
+            .inbox
+            .first_enabled_ms
+            .is_none_or(|start| timestamp_us(&e.ts).is_some_and(|ts| ts / 1000 >= start));
+        if fresh && e.user != self.settings.karl_user_id && self.inbox.insert(e.clone()) {
             batch.events.push(e);
         }
     }
@@ -373,9 +377,12 @@ impl<I: SlackIo> SlackChannel<I> {
             .split(|b| *b == b'\n')
             .filter(|s| !s.is_empty())
         {
-            match parse_bridge_line(line) {
+            let parsed = parse_bridge_line(line);
+            if matches!(&parsed, Ok(line) if !matches!(line, BridgeLine::Error(_))) {
+                self.errors.remove(channel);
+            }
+            match parsed {
                 Ok(BridgeLine::Event(e)) => {
-                    self.errors.remove(channel);
                     self.ingest(e, batch);
                 }
                 Ok(BridgeLine::Error(_)) => {
@@ -411,13 +418,15 @@ impl<I: SlackIo> SlackChannel<I> {
         batch: &mut PollBatch,
     ) -> Result<(), String> {
         let key = format!("{}:{}", kind.name(), self.settings.karl_user_id);
+        let start = self.inbox.first_enabled_ms.unwrap_or(now_ms);
         let since = self
             .inbox
             .poll_watermarks
             .get(&key)
             .copied()
-            .unwrap_or(now_ms - 86_400_000)
-            - 600_000;
+            .unwrap_or(start)
+            .saturating_sub(600_000)
+            .max(start);
         let date = jiff::Timestamp::from_millisecond(since - 86_400_000)
             .map_err(|e| e.to_string())?
             .to_zoned(jiff::tz::TimeZone::UTC)
@@ -426,7 +435,7 @@ impl<I: SlackIo> SlackChannel<I> {
             EventKind::Mention => format!("<@{}> after:{date}", self.settings.karl_user_id),
             _ => format!("to:{} is:dm after:{date}", self.settings.karl_user_id),
         };
-        for page in 1..=100 {
+        for page in 1..=5 {
             let value = self.io.api(
                 "search.messages",
                 &[
@@ -460,20 +469,22 @@ impl<I: SlackIo> SlackChannel<I> {
                 return Ok(());
             }
         }
-        Err("Slack search exceeded 100 pages; watermark retained".into())
+        Err("Slack search exceeded 5 pages; watermark retained".into())
     }
 
     fn history(&mut self, channel: &str, now_ms: i64, batch: &mut PollBatch) -> Result<(), String> {
         let key = format!("history:{channel}");
+        let start = self.inbox.first_enabled_ms.unwrap_or(now_ms);
         let since = self
             .inbox
             .poll_watermarks
             .get(&key)
             .copied()
-            .unwrap_or(now_ms - 86_400_000)
-            - 600_000;
+            .unwrap_or(start)
+            .saturating_sub(600_000)
+            .max(start);
         let mut cursor = String::new();
-        for _ in 0..100 {
+        for _ in 0..5 {
             let v = self.io.api(
                 "conversations.history",
                 &[
@@ -501,7 +512,7 @@ impl<I: SlackIo> SlackChannel<I> {
                 return Ok(());
             }
         }
-        Err("Slack history exceeded 100 pages; watermark retained".into())
+        Err("Slack history exceeded 5 pages; watermark retained".into())
     }
 
     pub fn mark_forwarded(&mut self, ids: &[String]) -> Result<(), String> {
@@ -553,6 +564,7 @@ impl<I: SlackIo> SlackChannel<I> {
 impl<I: SlackIo> Channel for SlackChannel<I> {
     fn poll(&mut self, now_ms: i64) -> Result<PollBatch, String> {
         let old = self.inbox.clone();
+        self.inbox.first_enabled_ms.get_or_insert(now_ms);
         let mut batch = PollBatch::default();
 
         self.status = heartbeat(&self.bridge, now_ms);
@@ -564,7 +576,6 @@ impl<I: SlackIo> Channel for SlackChannel<I> {
                     match self.io.subscribe(&self.bridge, channel) {
                         Ok(()) => {
                             self.subscribed.push(channel.clone());
-                            self.errors.remove(channel);
                         }
                         Err(e) => {
                             self.errors.insert(channel.clone(), e);

@@ -30,7 +30,11 @@ impl SlackIo for Fake {
 fn channel(dir: &Path) -> SlackChannel<Fake> {
     SlackChannel::new(
         Fake::default(),
-        Inbox::default(),
+        {
+            let mut inbox = Inbox::default();
+            inbox.first_enabled_ms = Some(NOW - 86_400_000);
+            inbox
+        },
         dir.join("inbox.json"),
         dir.into(),
         EnvoySettings {
@@ -215,7 +219,7 @@ fn failed_search_keeps_watermark_and_thread_context_is_paginated() {
 }
 
 #[test]
-fn quiet_ticks_do_not_rewrite_inbox_and_subscription_retry_clears_error() {
+fn quiet_ticks_do_not_rewrite_inbox() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(
         dir.path().join("heartbeat"),
@@ -223,8 +227,6 @@ fn quiet_ticks_do_not_rewrite_inbox_and_subscription_retry_clears_error() {
     )
     .unwrap();
     let mut c = channel(dir.path());
-    c.errors
-        .insert("C123".into(), "Subscription command failed".into());
     c.poll(NOW).unwrap();
     assert_eq!(c.health(), BridgeStatus::Ok);
     assert!(c.errors.is_empty());
@@ -247,4 +249,83 @@ fn reenable_reasserts_channel_subscriptions() {
             .iter()
             .all(|(path, channel)| path == dir.path() && channel == "C123")
     );
+}
+
+#[test]
+fn first_enable_ignores_backlog_and_persists_cutoff() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("channels")).unwrap();
+    let feed = dir.path().join("channels/C123.jsonl");
+    fs::write(
+        &feed,
+        include_bytes!("../../../tests/fixtures/envoy/channel.jsonl"),
+    )
+    .unwrap();
+    let mut c = channel(dir.path());
+    c.inbox = Inbox::default();
+    assert!(c.poll(NOW + 10).unwrap().events.is_empty());
+    assert_eq!(c.inbox.first_enabled_ms, Some(NOW + 10));
+    let mut out = fs::OpenOptions::new().append(true).open(&feed).unwrap();
+    writeln!(out, "{}", json!({"type":"message","channel":"C123","ts":"1790000001.000001","user":"U123","text":"New"})).unwrap();
+    let mut restarted = channel(dir.path());
+    restarted.inbox = Inbox::load(&c.path).unwrap();
+    assert_eq!(restarted.poll(NOW + 2000).unwrap().events.len(), 1);
+    assert_eq!(restarted.inbox.first_enabled_ms, Some(NOW + 10));
+}
+
+#[test]
+fn bridge_error_survives_successful_subscribe_until_new_feed_line() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("channels")).unwrap();
+    let feed = dir.path().join("channels/C123.jsonl");
+    fs::write(
+        &feed,
+        "{\"type\":\"error\",\"reason\":\"not_in_channel\"}\n",
+    )
+    .unwrap();
+    let mut c = channel(dir.path());
+    let first = c.poll(NOW).unwrap();
+    c.poll(NOW + 120_000).unwrap();
+    assert!(c.errors.contains_key("C123"));
+    assert_eq!(c.io.subscriptions.len(), 2);
+    assert!(
+        c.io.methods
+            .iter()
+            .filter(|m| *m == "conversations.history")
+            .count()
+            >= 2
+    );
+    let next = c.poll(NOW + 120_001).unwrap();
+    assert_eq!(first.notices, next.notices);
+    fs::write(&feed, "{\"type\":\"reaction\",\"reaction\":\"eyes\"}\n").unwrap();
+    c.poll(NOW + 120_002).unwrap();
+    assert!(c.errors.is_empty());
+}
+
+#[test]
+fn search_and_history_stop_at_five_pages_without_advancing_watermarks() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.io.replies =
+        std::iter::repeat_n(json!({"messages":{"matches":[],"paging":{"pages":100}}}), 5).collect();
+    assert!(
+        c.search(EventKind::Mention, NOW, &mut PollBatch::default())
+            .unwrap_err()
+            .contains("5 pages")
+    );
+    assert_eq!(c.io.methods.len(), 5);
+    assert!(c.inbox.poll_watermarks.is_empty());
+    c.io.methods.clear();
+    c.io.replies = std::iter::repeat_n(
+        json!({"messages":[],"response_metadata":{"next_cursor":"next"}}),
+        5,
+    )
+    .collect();
+    assert!(
+        c.history("C123", NOW, &mut PollBatch::default())
+            .unwrap_err()
+            .contains("5 pages")
+    );
+    assert_eq!(c.io.methods.len(), 5);
+    assert!(c.inbox.poll_watermarks.is_empty());
 }
