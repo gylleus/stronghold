@@ -99,6 +99,12 @@ impl AppControl {
 }
 
 impl AppControl {
+    pub(super) fn typing_pending(&self, handle: &str) -> bool {
+        self.groups
+            .values()
+            .any(|g| g.context["handle"] == handle && g.context["sent"] == "send")
+    }
+
     /// Whether the control API is serving its socket.
     pub(super) fn listening(&self) -> bool {
         self._server.is_some()
@@ -191,7 +197,7 @@ impl MyrstackApp {
     }
 
     /// Submits `actions` for one command; its reply goes out when they all finish.
-    fn submit_control_actions(
+    pub(super) fn submit_control_actions(
         &mut self,
         actions: Vec<Action>,
         reply: Reply,
@@ -220,7 +226,7 @@ impl MyrstackApp {
 
     /// Carries out one command. Replies immediately, or later for terminal sends and broadcasts.
     /// The returned error is only for logging; it has been sent as the reply.
-    fn run_control_command(
+    pub(super) fn run_control_command(
         &mut self,
         ctx: &egui::Context,
         command: ControlCommand,
@@ -326,6 +332,7 @@ impl MyrstackApp {
             ControlCommand::Whip { agents, stalled } => {
                 return self.control_whip(&agents, stalled, reply);
             }
+            ControlCommand::Envoy(command) => return self.control_envoy(ctx, command, reply),
             ControlCommand::Review(command) => self.control_review(command),
             ControlCommand::Spawn(args) => return self.control_spawn(args, reply),
             ControlCommand::Notify(notice) => {

@@ -205,6 +205,13 @@ impl MyrstackApp {
             match select {
                 Some(id) => self.select_and_focus(id),
                 None if self.is_review_alert(&clicked.targets) => self.open_review_queue(),
+                None if clicked
+                    .targets
+                    .iter()
+                    .any(|t| t == super::envoy::DRAFTS_TARGET) =>
+                {
+                    self.envoy_core.open_request = true;
+                }
                 None => {}
             }
         }
@@ -225,6 +232,9 @@ impl MyrstackApp {
         let target = entry.target.as_deref();
         let node = target.and_then(|t| notify::resolve_target(self.snapshot.as_ref()?, t));
         match node {
+            None if target == Some(super::envoy::DRAFTS_TARGET) => {
+                self.envoy_core.open_request = true;
+            }
             Some(node) => self.select_and_focus(node),
             None if target.is_some_and(|t| self.is_review_alert(&[t.to_owned()])) => {
                 self.open_review_queue();

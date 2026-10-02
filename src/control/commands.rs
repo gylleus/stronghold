@@ -80,8 +80,8 @@ impl FilterChange {
 /// labels, resolved by the app against its current snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlCommand {
-    /// Type `text` into the agent's terminal, then Enter when `enter`. `from` is the sender's
-    /// terminal handle (`from`, or the caller's `origin`), `None` for the Queen or Karl.
+    Envoy(crate::envoy::control::EnvoyCommand),
+    /// Type text into an agent; from identifies the sender for traffic.
     Send {
         agent: String,
         text: String,
@@ -151,6 +151,9 @@ impl ControlCommand {
     /// The command for an action method; `None` when `method` is not an action.
     pub fn parse(method: &str, params: &Value) -> Option<Result<Self, ControlError>> {
         let now = crate::control::server::now_ms();
+        if let Some(envoy) = crate::envoy::control::EnvoyCommand::parse(method, params) {
+            return Some(envoy.map(Self::Envoy));
+        }
         if let Some(review) = crate::review::ReviewCommand::parse(method, params, now) {
             return Some(review.map(Self::Review));
         }
@@ -298,6 +301,7 @@ impl ControlCommand {
             Self::Close { dry_run: false, .. } => CLOSE_REPLY_TIMEOUT,
             Self::Whip { .. } => WHIP_REPLY_TIMEOUT,
             Self::Spawn(_) => SPAWN_REPLY_TIMEOUT,
+            Self::Envoy(_) => ACTION_REPLY_TIMEOUT,
             _ => UI_REPLY_TIMEOUT,
         }
     }
