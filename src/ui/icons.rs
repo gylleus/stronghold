@@ -22,6 +22,16 @@ pub const EXCLAMATION_MARK: char = '\u{ee44}';
 pub const HOURGLASS_HIGH: char = '\u{e2b4}';
 pub const CHECK: char = '\u{e182}';
 pub const X: char = '\u{e4f6}';
+pub const ARROW_LEFT: char = '\u{e058}';
+pub const ARROW_RIGHT: char = '\u{e06c}';
+pub const BELL: char = '\u{e0ce}';
+pub const BELL_RINGING: char = '\u{e5e8}';
+pub const BELL_SLASH: char = '\u{e0d4}';
+pub const INFO: char = '\u{e2ce}';
+pub const WARNING: char = '\u{e4e0}';
+pub const SIREN: char = '\u{e9b8}';
+pub const ARROW_SQUARE_OUT: char = '\u{e5de}';
+pub const SPEAKER_HIGH: char = '\u{e44a}';
 
 fn icon_family() -> FontFamily {
     FontFamily::Name(FAMILY_NAME.into())
@@ -131,7 +141,8 @@ mod tests {
         let icons = ALL_KINDS
             .map(kind_icon)
             .into_iter()
-            .chain(ALL_STATES.map(state_icon));
+            .chain(ALL_STATES.map(state_icon))
+            .chain([ARROW_LEFT, ARROW_RIGHT]);
         ctx.fonts_mut(|f| {
             for icon in icons {
                 assert!(

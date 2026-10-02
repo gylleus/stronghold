@@ -8,6 +8,7 @@ mod roles_tests;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::detect::PromptKind;
+use crate::orca::spawn::Worktree;
 use crate::orca::{
     DispatchStatus, InboxMessage, Run, Task, TaskStatus, Terminal, Timestamp, Worker,
 };
@@ -41,9 +42,36 @@ pub struct FleetData {
     /// its transcript by the Claude worker, by sender handle. Only declared coordinators are
     /// scanned; see [`FleetData::run_roles`].
     pub forwards: BTreeMap<String, Vec<Forward>>,
+    /// Names chosen for worktrees in Orca (by the Queen at spawn, or renamed in Orca), by
+    /// worktree path; see [`chosen_worktree_names`]. Agents in a named worktree go by it.
+    pub worktree_names: BTreeMap<String, String>,
+}
+
+/// The worktrees whose Orca display name was chosen rather than defaulted, by path. Orca
+/// names a worktree after its folder or branch, and keeps a main checkout's old branch name,
+/// so a name counts only on a linked worktree and when it is neither its folder's nor its
+/// branch's name.
+pub fn chosen_worktree_names(worktrees: &[Worktree]) -> BTreeMap<String, String> {
+    worktrees
+        .iter()
+        .filter(|w| !w.is_main_worktree && !w.is_archived)
+        .filter_map(|w| {
+            let name = w.display_name.as_deref()?.trim();
+            let path = w.path.trim_end_matches('/');
+            let folder = path.rsplit('/').next().unwrap_or(path);
+            let defaulted = name.is_empty() || name == folder || Some(name) == w.branch_name();
+            (!defaulted).then(|| (path.to_string(), name.to_string()))
+        })
+        .collect()
 }
 
 impl FleetData {
+    /// The name chosen for the worktree at `path`, if any.
+    pub fn worktree_name(&self, path: Option<&str>) -> Option<&str> {
+        let path = path?.trim_end_matches('/');
+        self.worktree_names.get(path).map(String::as_str)
+    }
+
     pub fn terminal(&self, handle: &str) -> Option<&Terminal> {
         self.terminals.iter().find(|t| t.handle == handle)
     }
@@ -258,5 +286,44 @@ mod revival_tests {
         let mut d = data(None, FAILED_AT + 10 * MIN, vec![]);
         d.workers.push(worker("ctx_2", "dispatched"));
         assert_eq!(d.alive_after_failure(task(&d), None), None);
+    }
+}
+
+#[cfg(test)]
+mod names_tests {
+    use super::*;
+
+    fn worktree(path: &str, branch: &str, name: &str, main: bool) -> Worktree {
+        Worktree {
+            path: path.into(),
+            branch: Some(format!("refs/heads/{branch}")),
+            display_name: Some(name.into()),
+            is_main_worktree: main,
+            ..Worktree::default()
+        }
+    }
+
+    /// Only names that differ from the folder and branch, on linked worktrees, count.
+    #[test]
+    fn chosen_names_skip_orca_defaults() {
+        let names = chosen_worktree_names(&[
+            worktree("/w/shop/fix-cart", "gylleus/fix-cart", "fix-cart", false),
+            worktree("/w/shop/retry/", "gylleus/retry", "Checkout retries", false),
+            worktree("/w/shop/x", "gylleus/x-branch", "gylleus/x-branch", false),
+            worktree("/r/shop", "main", "old-branch-name", true),
+            worktree("/w/shop/blank", "b", "  ", false),
+        ]);
+        let expected: BTreeMap<String, String> =
+            [("/w/shop/retry".to_string(), "Checkout retries".to_string())].into();
+        assert_eq!(names, expected);
+        let data = FleetData {
+            worktree_names: names,
+            ..FleetData::default()
+        };
+        assert_eq!(
+            data.worktree_name(Some("/w/shop/retry/")),
+            Some("Checkout retries")
+        );
+        assert_eq!(data.worktree_name(Some("/w/shop/fix-cart")), None);
     }
 }

@@ -9,14 +9,16 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender};
 use serde_json::Value;
 
+use super::resolve::{LiveAgent, name_conflict, new_worktree_of};
 use super::verify::{Expect, ScreenVerdict, classify_screen};
 use super::{Agent, SpawnArgs, SpawnContext, SpawnPlan, Step, build_plan, catalog::Catalog};
 use crate::actions::{GONE_TERMINAL_CODES, Key, Wake};
 use crate::model::NodeId;
+use crate::orca::commands::{terminal_close_args, terminal_list_args};
 use crate::orca::spawn::{
     TerminalCreated, TerminalWait, WorkerStarted, WorktreeCreated, from_result, from_result_field,
 };
-use crate::orca::{OrcaClient, OrcaError, Run, Task, Terminal, TerminalInput};
+use crate::orca::{OrcaClient, OrcaError, Run, Task, Terminal, TerminalInput, TerminalList};
 
 /// Per-call timeouts. Creating a worktree runs `git worktree add` (and maybe fetches).
 const WORKTREE_CREATE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -131,6 +133,8 @@ pub trait SpawnBackend: Send + 'static {
     fn direnv_allow(&mut self, path: &str) -> Result<Option<String>, String>;
     /// Orca's repos and worktrees.
     fn catalog(&mut self) -> Result<Catalog, String>;
+    /// The local branches of the repo checked out at `repo_path`.
+    fn branches(&mut self, repo_path: &str) -> Result<Vec<String>, String>;
     fn sleep(&mut self, duration: Duration);
     /// Monotonic time.
     fn elapsed(&self) -> Duration;
@@ -210,6 +214,21 @@ impl SpawnBackend for OrcaBackend {
 
     fn catalog(&mut self) -> Result<Catalog, String> {
         Catalog::fetch(&self.client)
+    }
+
+    fn branches(&mut self, repo_path: &str) -> Result<Vec<String>, String> {
+        let out = Command::new("git")
+            .args(["-C", repo_path, "for-each-ref", "--format=%(refname:short)"])
+            .arg("refs/heads")
+            .output()
+            .map_err(|e| format!("running git: {e}"))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_owned());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect())
     }
 
     fn sleep(&mut self, duration: Duration) {
@@ -376,6 +395,13 @@ impl PlanRun<'_> {
                 self.ctx.task_id = Some(task.id.clone());
                 Ok(StepStatus::Done(Some(task.id)))
             }
+            // A name is a nicety: failing to set it only warns.
+            Step::NameWorktree { name, .. } => {
+                Ok(match self.call(step, backend, TASK_CREATE_TIMEOUT) {
+                    Ok(_) => StepStatus::Done(Some(name.clone())),
+                    Err(e) => StepStatus::Warned(format!("could not name the worktree: {e}")),
+                })
+            }
             Step::StartWorker(req) => {
                 let timeout = Duration::from_millis(req.timeout_ms.unwrap_or(0))
                     + WORKER_START_GRACE
@@ -448,6 +474,63 @@ impl PlanRun<'_> {
                 }
             }
             Step::Verify { expect, retype } => self.verify(expect, *retype, backend),
+            Step::CloseStartupShell => Ok(self.close_startup_shell(backend)),
+        }
+    }
+
+    /// Closes the terminals of the new worktree that are neither the agent's nor running an
+    /// agent or setup. Never fails the spawn: the agent is already running.
+    fn close_startup_shell(&mut self, backend: &mut dyn SpawnBackend) -> StepStatus {
+        let (Some(worktree), Some(agent)) = (self.ctx.worktree_id.clone(), self.ctx.handle.clone())
+        else {
+            return StepStatus::Skipped("no new worktree or agent terminal".into());
+        };
+        let mut args = terminal_list_args();
+        args.push(format!("--worktree=id:{worktree}"));
+        let list: TerminalList = match backend
+            .orca(&args, TERMINAL_CREATE_TIMEOUT)
+            .and_then(from_result)
+        {
+            Ok(list) => list,
+            Err(e) => {
+                return StepStatus::Warned(format!(
+                    "could not list the worktree's terminals: {}",
+                    orca_error(e)
+                ));
+            }
+        };
+        let agent_tab = list
+            .terminals
+            .iter()
+            .find(|t| t.handle == agent)
+            .and_then(|t| t.tab_id.clone());
+        let shells: Vec<&Terminal> = list
+            .terminals
+            .iter()
+            .filter(|t| is_startup_shell(t, &worktree, &agent))
+            .collect();
+        if shells.is_empty() {
+            return StepStatus::Skipped("no startup shell".into());
+        }
+        let (mut closed, mut failed) = (Vec::new(), Vec::new());
+        for shell in shells {
+            // A shell in its own tab goes with its tab; one split beside the agent only as a pane.
+            let tab = shell.tab_id.is_some() && shell.tab_id != agent_tab;
+            match backend.orca(
+                &terminal_close_args(&shell.handle, tab),
+                TERMINAL_CREATE_TIMEOUT,
+            ) {
+                Ok(_) => closed.push(shell.handle.clone()),
+                Err(e) => failed.push(format!("{}: {}", shell.handle, orca_error(e))),
+            }
+        }
+        if failed.is_empty() {
+            StepStatus::Done(Some(format!("closed {}", closed.join(", "))))
+        } else {
+            StepStatus::Warned(format!(
+                "could not close the startup shell ({})",
+                failed.join("; ")
+            ))
         }
     }
 
@@ -503,6 +586,16 @@ impl PlanRun<'_> {
             backend.sleep(VERIFY_POLL);
         }
     }
+}
+
+/// A plain shell in `worktree` other than the agent's terminal: no agent runs in it and it is
+/// not a setup terminal.
+fn is_startup_shell(t: &Terminal, worktree: &str, agent: &str) -> bool {
+    let title = t.title.as_deref().unwrap_or_default().to_ascii_lowercase();
+    t.worktree_id.as_deref() == Some(worktree)
+        && t.handle != agent
+        && t.agent_identity.is_none()
+        && !title.contains("setup")
 }
 
 /// What the screen check does next.
@@ -634,6 +727,8 @@ pub enum Job {
         args: SpawnArgs,
         runs: Vec<Run>,
         terminals: Vec<Terminal>,
+        /// Live agents, named when a new worktree's name is taken.
+        agents: Vec<LiveAgent>,
     },
 }
 
@@ -676,10 +771,15 @@ pub fn run_job(
             args,
             runs,
             terminals,
+            agents,
         } => {
             let plan = backend.catalog().and_then(|catalog| {
                 let request = args.resolve(&catalog, &runs, &terminals)?;
-                build_plan(&request).map_err(|e| e.0)
+                let plan = build_plan(&request).map_err(|e| e.0)?;
+                if !args.allow_suffix {
+                    check_new_name(&plan, &catalog, &agents, backend)?;
+                }
+                Ok(plan)
             });
             match plan {
                 Ok(plan) => plan,
@@ -716,6 +816,30 @@ pub fn run_job(
         job: job_id,
         result,
     });
+}
+
+/// Fails when the plan's new worktree would get a suffixed name because its name or branch is
+/// taken; the message names the existing worktree and the live agents in it.
+pub fn check_new_name(
+    plan: &SpawnPlan,
+    catalog: &Catalog,
+    agents: &[LiveAgent],
+    backend: &mut dyn SpawnBackend,
+) -> Result<(), String> {
+    let Some((repo_id, name)) = new_worktree_of(&plan.request) else {
+        return Ok(());
+    };
+    let branches = match catalog.repo(repo_id) {
+        Some(repo) => backend.branches(&repo.path).unwrap_or_else(|e| {
+            log::warn!("spawn: listing branches of {}: {e}", repo.path);
+            Vec::new()
+        }),
+        None => Vec::new(),
+    };
+    match name_conflict(catalog, repo_id, name, &branches) {
+        Some(conflict) => Err(conflict.message(agents)),
+        None => Ok(()),
+    }
 }
 
 /// Runs spawn jobs one at a time on a background thread.

@@ -1,21 +1,32 @@
-//! macOS notifications for escalations and terminals waiting on input.
+//! Notifications to Karl: from agents (the `notify` MCP tool), escalations, terminals waiting
+//! on input and PRs ready for review.
 //!
-//! A [`Notifier`] owns a thread that rate limits requests ([`RateLimiter`]), collapses bursts
-//! into one summary and posts through a [`Poster`]. Every posted notification is also reported
-//! back to the app as a [`Delivered`] event, which the app lists as in-app alerts that select
-//! the node when clicked ([`click_target`]).
+//! Every notification goes through one path. Sources build an [`Incoming`] (the whip does so
+//! on its own thread through [`Notifier::notify`]); the app runs it through the
+//! [`NotificationCenter`] ([`dispatch`]), which drops repeats, collapses duplicates, rate
+//! limits each agent, records it in the inbox ([`history`], saved across restarts) and decides
+//! from the [`NotifySettings`] ([`settings`]) whether it pops up (natively, in the app) and
+//! which sound it plays. What pops up natively or plays goes to the [`Notifier`] thread as a
+//! [`Post`]; it collapses bursts into one summary, caps posts per minute ([`PostLimiter`]),
+//! posts through a [`Poster`] and plays the sound with `afplay`.
 //!
 //! Running from `Myrstack.app`, notifications go through `UNUserNotificationCenter`
-//! ([`native`]) under Myrstack's name, carrying their targets as a [`payload`](encode_payload);
-//! clicking one activates Myrstack and [`Notifier::clicked`] hands the targets to the app,
-//! which selects the node like an alerts-menu entry. Unbundled (`cargo run`) there is no bundle
-//! identity to post under, so [`OsascriptPoster`] posts via `display notification`: those show
-//! under Script Editor and clicking them cannot reach Myrstack, leaving the alerts menu.
+//! ([`native`]) under Myrstack's name, carrying their targets and inbox ids as a
+//! [`payload`](encode_payload); clicking one activates Myrstack and [`Notifier::clicked`] hands
+//! them to the app, which selects the node and opens the link like an inbox entry. Unbundled
+//! (`cargo run`) there is no bundle identity to post under, so [`OsascriptPoster`] posts via
+//! `display notification`: those show under Script Editor and clicking them cannot reach
+//! Myrstack, leaving the inbox.
 
+pub mod agent;
+pub mod dispatch;
+pub mod history;
 #[cfg(target_os = "macos")]
 pub mod native;
+pub mod settings;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -25,89 +36,121 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
 use crate::model::{FleetSnapshot, NodeId, NodeKind, NodeState};
 
-/// At most one notification per target in this window.
-pub const PER_TARGET_COOLDOWN_MS: i64 = 10 * 60_000;
-/// Window of the global limit.
+pub use dispatch::{Incoming, NotificationCenter, Outcome, Source};
+pub use settings::{Delivery, NotifySettings, Severity, Sound};
+
+/// Window of the global limit on posts.
 pub const GLOBAL_WINDOW_MS: i64 = 60_000;
-/// At most this many notifications per [`GLOBAL_WINDOW_MS`].
+/// At most this many posts per [`GLOBAL_WINDOW_MS`].
 pub const GLOBAL_MAX: usize = 5;
-/// Requests arriving this close together are collapsed into one notification.
+/// Posts arriving this close together are collapsed into one notification.
 const BURST: Duration = Duration::from_millis(1500);
-/// How often queued requests are retried while the global limit holds them back.
+/// How often queued posts are retried while the global limit holds them back.
 const RETRY: Duration = Duration::from_secs(5);
 
-/// Why a notification is sent; decides the summary wording.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NotifyKind {
-    NeedsInput,
-    Escalation,
-}
-
-/// One notification someone asked for.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NotifyRequest {
-    /// What the notification is about: a terminal handle, or a node id for nodes without one.
-    /// The per-target limit and click routing key on it.
-    pub target: String,
-    pub kind: NotifyKind,
+/// A notification to pop up natively and/or sound, from the dispatcher's [`Delivery`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Post {
+    pub source: Source,
+    pub severity: Severity,
     pub title: String,
     pub body: String,
+    /// What a click selects (node id, terminal handle or PR URL).
+    pub target: Option<String>,
+    /// Its inbox entry.
+    pub id: Option<u64>,
+    /// Show a macOS notification.
+    pub native: bool,
+    /// Play this file at `volume` (0–1).
+    pub sound: Option<PathBuf>,
+    pub volume: f32,
 }
 
-/// A notification to post, possibly a summary of several requests.
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl Post {
+    /// The post for inbox entry `id` of `n`, delivered as `delivery`; `None` when nothing
+    /// pops up natively or plays.
+    pub fn new(
+        n: &Incoming,
+        id: u64,
+        delivery: &Delivery,
+        settings: &NotifySettings,
+    ) -> Option<Self> {
+        let sound = delivery.sound.as_ref().and_then(Sound::path);
+        if !delivery.native && sound.is_none() {
+            return None;
+        }
+        let mut title = n.title.clone();
+        if n.source == Source::Agent
+            && let Some(agent) = &n.agent_label
+        {
+            title = format!("{agent}: {title}");
+        }
+        Some(Self {
+            source: n.source,
+            severity: n.severity,
+            title,
+            body: n.message.clone(),
+            target: n.target.clone(),
+            id: Some(id),
+            native: delivery.native,
+            sound,
+            volume: settings.volume(),
+        })
+    }
+}
+
+/// A notification to show, possibly a summary of several posts.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Outgoing {
     pub title: String,
     pub body: String,
-    /// Targets it covers, in request order.
+    /// Targets it covers, in post order.
     pub targets: Vec<String>,
+    /// Inbox entries it covers.
+    pub ids: Vec<u64>,
+    /// Show it (some posts only play a sound).
+    pub native: bool,
+    /// The sound of the most severe post that has one.
+    pub sound: Option<(PathBuf, f32)>,
 }
 
-/// A notification that was sent to the poster (even if posting failed), reported back to the
-/// app for its alerts menu.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Delivered {
-    pub at_ms: i64,
-    pub title: String,
-    pub targets: Vec<String>,
+impl Outgoing {
+    /// A plain notification, as `myrstack notify` posts.
+    pub fn simple(title: &str, body: &str, targets: Vec<String>) -> Self {
+        Self {
+            title: title.to_owned(),
+            body: body.to_owned(),
+            targets,
+            ids: Vec::new(),
+            native: true,
+            sound: None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Rate limiting
+// Global limit
 
-/// Pure rate limiter: per-target cooldown, global cap, and burst collapsing.
-///
-/// [`offer`](Self::offer) accepts or drops a request; accepted ones wait until
-/// [`flush`](Self::flush), which turns everything waiting into one [`Outgoing`] when the global
-/// cap allows.
+/// Pure global limit on posts, with burst collapsing: [`offer`](Self::offer) queues a post and
+/// [`flush`](Self::flush) turns everything waiting into one [`Outgoing`] when the cap allows.
+/// Duplicates, cooldowns and per-agent limits are the dispatcher's.
 #[derive(Debug, Default)]
-pub struct RateLimiter {
-    /// When each target was last accepted.
-    last_by_target: HashMap<String, i64>,
+pub struct PostLimiter {
     /// Post times inside the global window.
     sent: VecDeque<i64>,
-    pending: Vec<NotifyRequest>,
+    pending: Vec<Post>,
 }
 
-impl RateLimiter {
+impl PostLimiter {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Queues `request` unless its target was notified within the cooldown or is already queued.
-    /// Returns whether it was accepted.
-    pub fn offer(&mut self, request: NotifyRequest, now_ms: i64) -> bool {
-        if let Some(&last) = self.last_by_target.get(&request.target)
-            && now_ms - last < PER_TARGET_COOLDOWN_MS
-        {
-            return false;
-        }
-        self.last_by_target.insert(request.target.clone(), now_ms);
-        self.pending.push(request);
-        true
+    pub fn offer(&mut self, post: Post) {
+        self.pending.push(post);
     }
 
-    /// Whether requests are waiting for the global cap.
+    /// Whether posts are waiting for the global cap.
     pub fn has_pending(&self) -> bool {
         !self.pending.is_empty()
     }
@@ -129,48 +172,68 @@ impl RateLimiter {
     }
 }
 
-/// One request as itself; several as a summary such as `3 agents need input`.
-pub fn collapse(requests: Vec<NotifyRequest>) -> Outgoing {
-    let targets = requests.iter().map(|r| r.target.clone()).collect();
-    if let [one] = &requests[..] {
+/// One post as itself; several as a summary such as `3 agents need input`.
+pub fn collapse(posts: Vec<Post>) -> Outgoing {
+    let mut targets: Vec<String> = Vec::new();
+    for t in posts.iter().filter_map(|p| p.target.as_ref()) {
+        if !targets.contains(t) {
+            targets.push(t.clone());
+        }
+    }
+    let ids = posts.iter().filter_map(|p| p.id).collect();
+    let native = posts.iter().any(|p| p.native);
+    let sound = posts
+        .iter()
+        .filter_map(|p| Some((p.severity, p.sound.clone()?, p.volume)))
+        .max_by_key(|(severity, ..)| *severity)
+        .map(|(_, path, volume)| (path, volume));
+    let shown: Vec<&Post> = posts.iter().filter(|p| p.native).collect();
+    if let [one] = &shown[..] {
         return Outgoing {
             title: one.title.clone(),
             body: one.body.clone(),
             targets,
+            ids,
+            native,
+            sound,
         };
     }
-    let all_input = requests.iter().all(|r| r.kind == NotifyKind::NeedsInput);
-    let what = if all_input {
-        "need input"
+    let what = if shown.iter().all(|p| p.source == Source::NeedsInput) {
+        "agents need input"
+    } else if shown.iter().all(|p| p.source == Source::Agent) {
+        "notifications from agents"
     } else {
-        "need attention"
+        "agents need attention"
     };
-    let body = requests
+    let body = shown
         .iter()
-        .map(|r| r.title.strip_prefix(TITLE_PREFIX).unwrap_or(&r.title))
+        .map(|p| p.title.strip_prefix(TITLE_PREFIX).unwrap_or(&p.title))
         .collect::<Vec<_>>()
         .join("\n");
     Outgoing {
-        title: format!("{TITLE_PREFIX}{} agents {what}", requests.len()),
+        title: format!("{TITLE_PREFIX}{} {what}", shown.len()),
         body,
         targets,
+        ids,
+        native,
+        sound,
     }
 }
 
 const TITLE_PREFIX: &str = "Myrstack: ";
 
 // ---------------------------------------------------------------------------
-// Request sources
+// Sources
 
-/// A request for a whip notification, from the engine's title and body.
+/// A whip notification, from the engine's title and body.
 ///
 /// The engine titles are `Myrstack: <handle> is waiting on you` and
 /// `Myrstack: worker <handle> task <id> is stalled` / `Myrstack: coordinator <handle> run <id>
 /// is stalled`; the target is the handle. Unknown titles use the whole title as the target.
-pub fn whip_request(title: &str, body: &str) -> NotifyRequest {
+pub fn whip_request(title: &str, body: &str) -> Incoming {
     let subject = title.strip_prefix(TITLE_PREFIX).unwrap_or(title);
-    let (kind, target) = if let Some(handle) = subject.strip_suffix(" is waiting on you") {
-        (NotifyKind::NeedsInput, handle.to_string())
+    let (source, target) = if let Some(handle) = subject.strip_suffix(" is waiting on you") {
+        (Source::NeedsInput, handle.to_string())
     } else if let Some(label) = subject.strip_suffix(" is stalled") {
         let mut words = label.split_whitespace();
         let handle = match words.next() {
@@ -178,18 +241,13 @@ pub fn whip_request(title: &str, body: &str) -> NotifyRequest {
             _ => None,
         };
         (
-            NotifyKind::Escalation,
+            Source::Escalation,
             handle.map_or_else(|| title.to_string(), str::to_string),
         )
     } else {
-        (NotifyKind::Escalation, title.to_string())
+        (Source::Escalation, title.to_string())
     };
-    NotifyRequest {
-        target,
-        kind,
-        title: title.to_string(),
-        body: body.to_string(),
-    }
+    Incoming::new(source, Severity::Warn, title, body).with_target(target)
 }
 
 /// The key a node is notified under: its terminal handle, else its node id.
@@ -210,8 +268,8 @@ impl NeedsInputDetector {
         Self::default()
     }
 
-    /// Requests for the nodes of `snapshot` that are NeedsInput now but were not before.
-    pub fn update(&mut self, snapshot: &FleetSnapshot) -> Vec<NotifyRequest> {
+    /// Notifications for the nodes of `snapshot` that are NeedsInput now but were not before.
+    pub fn update(&mut self, snapshot: &FleetSnapshot) -> Vec<Incoming> {
         let waiting: HashSet<NodeId> = snapshot
             .nodes
             .iter()
@@ -224,11 +282,16 @@ impl NeedsInputDetector {
                 .nodes
                 .iter()
                 .filter(|n| waiting.contains(&n.id) && !previous.contains(&n.id))
-                .map(|n| NotifyRequest {
-                    target: target_key(&n.id, n.terminal_handle.as_deref()),
-                    kind: NotifyKind::NeedsInput,
-                    title: format!("{TITLE_PREFIX}{} needs input", n.label),
-                    body: n.preview.clone().unwrap_or_else(|| "Waiting on you".into()),
+                .map(|n| {
+                    let mut incoming = Incoming::new(
+                        Source::NeedsInput,
+                        Severity::Warn,
+                        &format!("{TITLE_PREFIX}{} needs input", n.label),
+                        n.preview.as_deref().unwrap_or("Waiting on you"),
+                    )
+                    .with_target(target_key(&n.id, n.terminal_handle.as_deref()));
+                    incoming.agent_label = Some(n.label.clone());
+                    incoming
                 })
                 .collect(),
         };
@@ -243,20 +306,37 @@ impl NeedsInputDetector {
 /// `userInfo` key of a native notification's payload.
 pub const PAYLOAD_KEY: &str = "myrstack";
 
-/// The payload a native notification carries: the targets it covers, as JSON.
-pub fn encode_payload(targets: &[String]) -> String {
-    serde_json::json!({ "targets": targets }).to_string()
+/// What a clicked notification covered.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Clicked {
+    pub targets: Vec<String>,
+    /// Inbox entries (none for notifications posted before inbox ids existed).
+    pub ids: Vec<u64>,
 }
 
-/// Targets from an [`encode_payload`] string; `None` if it is not one.
-pub fn decode_payload(payload: &str) -> Option<Vec<String>> {
+/// The payload a native notification carries: its targets and inbox ids, as JSON.
+pub fn encode_payload(targets: &[String], ids: &[u64]) -> String {
+    serde_json::json!({ "targets": targets, "ids": ids }).to_string()
+}
+
+/// What an [`encode_payload`] string covers; `None` if it is not one.
+pub fn decode_payload(payload: &str) -> Option<Clicked> {
     let value: serde_json::Value = serde_json::from_str(payload).ok()?;
-    value
+    let targets = value
         .get("targets")?
         .as_array()?
         .iter()
         .map(|t| t.as_str().map(str::to_string))
-        .collect()
+        .collect::<Option<Vec<_>>>()?;
+    let ids = match value.get("ids") {
+        None => Vec::new(),
+        Some(ids) => ids
+            .as_array()?
+            .iter()
+            .map(serde_json::Value::as_u64)
+            .collect::<Option<Vec<_>>>()?,
+    };
+    Some(Clicked { targets, ids })
 }
 
 /// The node to select for a notification covering `targets`: the first one that resolves.
@@ -328,11 +408,7 @@ fn notify_cli(args: &[String]) -> anyhow::Result<()> {
             "usage: myrstack notify <title> [body] [--target <node id or handle>]... [--quiet]"
         );
     };
-    let notification = Outgoing {
-        title: title.clone(),
-        body: rest.join(" "),
-        targets,
-    };
+    let notification = Outgoing::simple(title, &rest.join(" "), targets);
     #[cfg(target_os = "macos")]
     if native::is_bundled() {
         native::install_with(if quiet {
@@ -350,11 +426,16 @@ fn notify_cli(args: &[String]) -> anyhow::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Posting
+// Posting and sounds
 
 /// Shows a notification on screen.
 pub trait Poster: Send {
     fn post(&self, notification: &Outgoing) -> anyhow::Result<()>;
+}
+
+/// Plays a sound file.
+pub trait Player: Send {
+    fn play(&self, path: &Path, volume: f32) -> anyhow::Result<()>;
 }
 
 /// The poster for this process: native when running from `Myrstack.app`, else `osascript`.
@@ -396,70 +477,144 @@ impl Poster for OsascriptPoster {
     }
 }
 
-/// Called after a notification is posted, to wake the UI.
+/// Plays through `afplay` without waiting for it to finish.
+#[derive(Debug, Default)]
+pub struct AfplayPlayer;
+
+impl Player for AfplayPlayer {
+    fn play(&self, path: &Path, volume: f32) -> anyhow::Result<()> {
+        play_sound(path, volume)
+    }
+}
+
+/// Starts `afplay -v <volume> <path>` and reaps it in the background. Fails when the file is
+/// missing or `afplay` can't start.
+pub fn play_sound(path: &Path, volume: f32) -> anyhow::Result<()> {
+    anyhow::ensure!(path.is_file(), "no sound file at {}", path.display());
+    let mut child = Command::new("afplay")
+        .arg("-v")
+        .arg(format!("{:.2}", volume.clamp(0.0, 1.0)))
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("afplay: {e}"))?;
+    thread::Builder::new()
+        .name("afplay".into())
+        .spawn(move || {
+            let _ = child.wait();
+        })?;
+    Ok(())
+}
+
+/// Called to wake the UI.
 pub type Repaint = Box<dyn Fn() + Send>;
 
-/// Rate-limited notifications on a background thread. Share it with `Arc`.
-#[derive(Debug)]
+/// The notification thread, plus the channel background threads raise notifications on.
+/// Share it with `Arc`.
 pub struct Notifier {
-    requests: Sender<NotifyRequest>,
-    delivered: Receiver<Delivered>,
-    /// Targets of clicked notifications.
-    clicks: Receiver<Vec<String>>,
+    /// Notifications raised off the UI thread (the whip), for the app to dispatch.
+    incoming: (Sender<Incoming>, Receiver<Incoming>),
+    posts: Sender<Post>,
+    /// Posting errors, for the Settings window.
+    failures: Receiver<String>,
+    /// What clicked notifications covered.
+    clicks: Receiver<Clicked>,
+    wake: Arc<Mutex<Option<Repaint>>>,
+}
+
+impl std::fmt::Debug for Notifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Notifier").finish_non_exhaustive()
+    }
 }
 
 impl Notifier {
-    /// Starts the notifier thread with the [`default_poster`]; clicks on native notifications
-    /// call `repaint` so the app picks them up.
+    /// Starts the notifier thread with the [`default_poster`] and `afplay`; clicks on native
+    /// notifications and raised notifications call `repaint` so the app picks them up.
     pub fn spawn(repaint: Option<Repaint>) -> Self {
-        let shared = repaint.map(|r| Arc::new(Mutex::new(r)));
-        let wake = || -> Option<Repaint> {
-            let shared = shared.clone()?;
-            Some(Box::new(move || {
-                if let Ok(repaint) = shared.lock() {
-                    repaint();
-                }
-            }))
-        };
-        Self::spawn_with(default_poster(), click_receiver(wake()), wake())
+        let shared = Arc::new(Mutex::new(repaint));
+        let wake = shared.clone();
+        let click_wake: Repaint = Box::new(move || {
+            if let Ok(repaint) = wake.lock()
+                && let Some(repaint) = repaint.as_ref()
+            {
+                repaint();
+            }
+        });
+        Self::spawn_with(
+            default_poster(),
+            Box::new(AfplayPlayer),
+            click_receiver(Some(click_wake)),
+            shared,
+        )
     }
 
     pub fn spawn_with(
         poster: Box<dyn Poster>,
-        clicks: Receiver<Vec<String>>,
-        repaint: Option<Repaint>,
+        player: Box<dyn Player>,
+        clicks: Receiver<Clicked>,
+        wake: Arc<Mutex<Option<Repaint>>>,
     ) -> Self {
-        let (requests, request_rx) = crossbeam_channel::unbounded();
-        let (delivered_tx, delivered) = crossbeam_channel::unbounded();
+        let (posts, post_rx) = crossbeam_channel::unbounded();
+        let (failure_tx, failures) = crossbeam_channel::unbounded();
+        let thread_wake = wake.clone();
         thread::Builder::new()
             .name("notifier".into())
-            .spawn(move || run(&request_rx, &delivered_tx, poster.as_ref(), repaint))
+            .spawn(move || {
+                run(
+                    &post_rx,
+                    &failure_tx,
+                    poster.as_ref(),
+                    player.as_ref(),
+                    &thread_wake,
+                );
+            })
             .expect("spawning notifier thread");
         Self {
-            requests,
-            delivered,
+            incoming: crossbeam_channel::unbounded(),
+            posts,
+            failures,
             clicks,
+            wake,
         }
     }
 
-    /// Asks for a notification; it may be delayed, merged into a summary or dropped.
-    pub fn notify(&self, request: NotifyRequest) {
-        let _ = self.requests.send(request);
+    /// Raises a notification from any thread; the app dispatches it on its next frame.
+    pub fn notify(&self, incoming: Incoming) {
+        let _ = self.incoming.0.send(incoming);
+        if let Ok(wake) = self.wake.lock()
+            && let Some(wake) = wake.as_ref()
+        {
+            wake();
+        }
     }
 
-    /// Notifications posted since the last call.
-    pub fn delivered(&self) -> Vec<Delivered> {
-        self.delivered.try_iter().collect()
+    /// Notifications raised since the last call, oldest first.
+    pub fn incoming(&self) -> Vec<Incoming> {
+        self.incoming.1.try_iter().collect()
     }
 
-    /// Targets of the notifications clicked since the last call, oldest first.
-    pub fn clicked(&self) -> Vec<Vec<String>> {
+    /// Pops up and/or plays a dispatched notification; it may be delayed or merged into a
+    /// summary.
+    pub fn post(&self, post: Post) {
+        let _ = self.posts.send(post);
+    }
+
+    /// Posting errors since the last call.
+    pub fn failures(&self) -> Vec<String> {
+        self.failures.try_iter().collect()
+    }
+
+    /// What the notifications clicked since the last call covered, oldest first.
+    pub fn clicked(&self) -> Vec<Clicked> {
         self.clicks.try_iter().collect()
     }
 }
 
 /// Where clicks on native notifications arrive; never receives anything unbundled.
-fn click_receiver(repaint: Option<Repaint>) -> Receiver<Vec<String>> {
+fn click_receiver(repaint: Option<Repaint>) -> Receiver<Clicked> {
     #[cfg(target_os = "macos")]
     if native::is_bundled() {
         return native::clicks(repaint);
@@ -469,46 +624,57 @@ fn click_receiver(repaint: Option<Repaint>) -> Receiver<Vec<String>> {
 }
 
 fn run(
-    requests: &Receiver<NotifyRequest>,
-    delivered: &Sender<Delivered>,
+    posts: &Receiver<Post>,
+    failures: &Sender<String>,
     poster: &dyn Poster,
-    repaint: Option<Repaint>,
+    player: &dyn Player,
+    wake: &Mutex<Option<Repaint>>,
 ) {
-    let mut limiter = RateLimiter::new();
+    let mut limiter = PostLimiter::new();
     loop {
         let wait = if limiter.has_pending() {
             RETRY
         } else {
             Duration::from_secs(3600)
         };
-        match requests.recv_timeout(wait) {
+        match posts.recv_timeout(wait) {
             Ok(first) => {
-                limiter.offer(first, now_ms());
+                limiter.offer(first);
                 // Gather the rest of the burst.
-                while let Ok(next) = requests.recv_timeout(BURST) {
-                    limiter.offer(next, now_ms());
+                while let Ok(next) = posts.recv_timeout(BURST) {
+                    limiter.offer(next);
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
-        let now = now_ms();
-        let Some(out) = limiter.flush(now) else {
+        let Some(out) = limiter.flush(now_ms()) else {
             continue;
         };
-        // A failed post (e.g. notifications turned off for Myrstack) still reaches the in-app
-        // alerts, so nothing is lost.
-        match poster.post(&out) {
-            Ok(()) => log::info!("notified: {}", out.title),
-            Err(err) => log::warn!("notification failed: {err:#}"),
+        let mut failed = Vec::new();
+        if let Some((path, volume)) = &out.sound
+            && let Err(err) = player.play(path, *volume)
+        {
+            failed.push(format!("sound: {err:#}"));
         }
-        let _ = delivered.send(Delivered {
-            at_ms: now,
-            title: out.title,
-            targets: out.targets,
-        });
-        if let Some(repaint) = &repaint {
-            repaint();
+        // A failed post (e.g. notifications turned off for Myrstack) is still in the inbox.
+        if out.native {
+            match poster.post(&out) {
+                Ok(()) => log::info!("notified: {}", out.title),
+                Err(err) => failed.push(format!("{err:#}")),
+            }
+        }
+        if failed.is_empty() {
+            continue;
+        }
+        for failure in failed {
+            log::warn!("notification failed: {failure}");
+            let _ = failures.send(failure);
+        }
+        if let Ok(wake) = wake.lock()
+            && let Some(wake) = wake.as_ref()
+        {
+            wake();
         }
     }
 }
@@ -520,345 +686,4 @@ fn now_ms() -> i64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::model::{Node, NodeKind};
-
-    const MIN: i64 = 60_000;
-
-    fn req(target: &str, kind: NotifyKind) -> NotifyRequest {
-        NotifyRequest {
-            target: target.into(),
-            kind,
-            title: format!("Myrstack: {target} needs input"),
-            body: "body".into(),
-        }
-    }
-
-    fn input(target: &str) -> NotifyRequest {
-        req(target, NotifyKind::NeedsInput)
-    }
-
-    #[test]
-    fn single_request_passes_through() {
-        let mut rl = RateLimiter::new();
-        assert!(rl.offer(input("t1"), 0));
-        let out = rl.flush(0).unwrap();
-        assert_eq!(out.title, "Myrstack: t1 needs input");
-        assert_eq!(out.body, "body");
-        assert_eq!(out.targets, vec!["t1"]);
-        assert_eq!(rl.flush(0), None);
-    }
-
-    #[test]
-    fn one_per_target_per_ten_minutes() {
-        let mut rl = RateLimiter::new();
-        assert!(rl.offer(input("t1"), 0));
-        rl.flush(0).unwrap();
-        assert!(!rl.offer(input("t1"), 9 * MIN));
-        assert_eq!(rl.flush(9 * MIN), None);
-        assert!(rl.offer(input("t2"), 9 * MIN));
-        assert!(rl.offer(input("t1"), 10 * MIN));
-    }
-
-    #[test]
-    fn duplicate_while_pending_is_dropped() {
-        let mut rl = RateLimiter::new();
-        assert!(rl.offer(input("t1"), 0));
-        assert!(!rl.offer(input("t1"), 1000));
-        assert_eq!(rl.flush(1000).unwrap().targets, vec!["t1"]);
-    }
-
-    #[test]
-    fn burst_collapses_into_summary() {
-        let mut rl = RateLimiter::new();
-        for t in ["a", "b", "c"] {
-            rl.offer(input(t), 0);
-        }
-        let out = rl.flush(0).unwrap();
-        assert_eq!(out.title, "Myrstack: 3 agents need input");
-        assert_eq!(out.body, "a needs input\nb needs input\nc needs input");
-        assert_eq!(out.targets, vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn mixed_burst_needs_attention() {
-        let out = collapse(vec![input("a"), req("b", NotifyKind::Escalation)]);
-        assert_eq!(out.title, "Myrstack: 2 agents need attention");
-    }
-
-    #[test]
-    fn at_most_five_per_minute_then_summary() {
-        let mut rl = RateLimiter::new();
-        for i in 0..5 {
-            rl.offer(input(&format!("t{i}")), i * 1000);
-            assert!(rl.flush(i * 1000).is_some());
-        }
-        rl.offer(input("x"), 10_000);
-        rl.offer(input("y"), 20_000);
-        assert_eq!(rl.flush(20_000), None);
-        assert!(rl.has_pending());
-        // The first post leaves the window at 60 s.
-        assert_eq!(rl.flush(59_999), None);
-        let out = rl.flush(60_000).unwrap();
-        assert_eq!(out.title, "Myrstack: 2 agents need input");
-        assert!(!rl.has_pending());
-        assert_eq!(rl.flush(60_000), None);
-    }
-
-    #[test]
-    fn whip_titles_parse_to_handles() {
-        let r = whip_request("Myrstack: term_7 is waiting on you", "waiting 12m");
-        assert_eq!(r.target, "term_7");
-        assert_eq!(r.kind, NotifyKind::NeedsInput);
-        assert_eq!(r.body, "waiting 12m");
-        let r = whip_request("Myrstack: worker term_w task t1 is stalled", "e");
-        assert_eq!(
-            (r.target.as_str(), r.kind),
-            ("term_w", NotifyKind::Escalation)
-        );
-        let r = whip_request("Myrstack: coordinator term_c run run_1 is stalled", "e");
-        assert_eq!(r.target, "term_c");
-        let r = whip_request("Something else", "e");
-        assert_eq!(r.target, "Something else");
-    }
-
-    fn node(id: &str, handle: Option<&str>, live: bool, state: NodeState) -> Node {
-        Node {
-            id: NodeId(id.into()),
-            kind: NodeKind::Terminal,
-            label: format!("label {id}"),
-            terminal_handle: handle.map(str::to_string),
-            live,
-            run_id: None,
-            task_id: None,
-            dispatch_id: None,
-            agent: None,
-            worktree_path: None,
-            branch: None,
-            last_output_ms: None,
-            preview: None,
-            state,
-            worker_state: None,
-            dispatch_status: None,
-            worker_terminal_state: None,
-            released_at_ms: None,
-        }
-    }
-
-    fn snapshot(nodes: Vec<Node>) -> FleetSnapshot {
-        let mut snapshot = FleetSnapshot::default();
-        snapshot.nodes = nodes;
-        snapshot
-    }
-
-    #[test]
-    fn detector_ignores_the_queen() {
-        let mut d = NeedsInputDetector::new();
-        let mut calm = snapshot(vec![node("a", Some("h"), true, NodeState::Working)]);
-        calm.add_queen();
-        assert!(d.update(&calm).is_empty());
-        let mut waiting = snapshot(vec![node("a", Some("h"), true, NodeState::NeedsInput)]);
-        waiting.add_queen();
-        assert_eq!(waiting.queen().unwrap().state, NodeState::NeedsInput);
-        let requests = d.update(&waiting);
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].target, "h");
-    }
-
-    #[test]
-    fn detector_reports_only_transitions() {
-        let mut d = NeedsInputDetector::new();
-        let waiting = |id: &str, h| node(id, Some(h), true, NodeState::NeedsInput);
-        let working = |id: &str, h| node(id, Some(h), true, NodeState::Working);
-        // Already waiting at startup: no notification.
-        assert!(
-            d.update(&snapshot(vec![
-                waiting("term:a", "a"),
-                working("term:b", "b")
-            ]))
-            .is_empty()
-        );
-        let reqs = d.update(&snapshot(vec![
-            waiting("term:a", "a"),
-            waiting("term:b", "b"),
-        ]));
-        assert_eq!(reqs.len(), 1);
-        assert_eq!(reqs[0].target, "b");
-        assert_eq!(reqs[0].title, "Myrstack: label term:b needs input");
-        assert_eq!(reqs[0].kind, NotifyKind::NeedsInput);
-        // Staying in NeedsInput does not repeat; leaving and re-entering does.
-        assert!(
-            d.update(&snapshot(vec![
-                working("term:a", "a"),
-                waiting("term:b", "b")
-            ]))
-            .is_empty()
-        );
-        let reqs = d.update(&snapshot(vec![
-            waiting("term:a", "a"),
-            waiting("term:b", "b"),
-        ]));
-        assert_eq!(reqs.iter().map(|r| &r.target).collect::<Vec<_>>(), ["a"]);
-    }
-
-    #[test]
-    fn detector_keys_handleless_nodes_by_id() {
-        let mut d = NeedsInputDetector::new();
-        d.update(&snapshot(vec![]));
-        let reqs = d.update(&snapshot(vec![node(
-            "sub:s:a",
-            None,
-            true,
-            NodeState::NeedsInput,
-        )]));
-        assert_eq!(reqs[0].target, "sub:s:a");
-    }
-
-    #[test]
-    fn click_routing() {
-        let snap = snapshot(vec![
-            node("dispatch:r:old", Some("term_w"), false, NodeState::Done),
-            node("dispatch:r:new", Some("term_w"), true, NodeState::Working),
-            node("dispatch:r:gone", Some("term_x"), false, NodeState::Done),
-            node("sub:s:a", None, true, NodeState::NeedsInput),
-        ]);
-        let resolve = |t| resolve_target(&snap, t).map(|id| id.0);
-        assert_eq!(resolve("term_w").as_deref(), Some("dispatch:r:new"));
-        assert_eq!(resolve("term_x").as_deref(), Some("dispatch:r:gone"));
-        assert_eq!(resolve("sub:s:a").as_deref(), Some("sub:s:a"));
-        assert_eq!(resolve("nope"), None);
-    }
-
-    #[test]
-    fn payload_round_trips() {
-        let targets = vec!["term_7".to_string(), "sub:s:\"odd\" id".to_string()];
-        let payload = encode_payload(&targets);
-        assert_eq!(decode_payload(&payload), Some(targets));
-        assert_eq!(decode_payload(&encode_payload(&[])), Some(vec![]));
-    }
-
-    #[test]
-    fn foreign_payloads_are_rejected() {
-        assert_eq!(decode_payload("not json"), None);
-        assert_eq!(decode_payload("{}"), None);
-        assert_eq!(decode_payload(r#"{"targets":"term_7"}"#), None);
-        assert_eq!(decode_payload(r#"{"targets":[1]}"#), None);
-    }
-
-    #[test]
-    fn click_target_takes_first_resolvable() {
-        let snap = snapshot(vec![
-            node("term:a", Some("a"), true, NodeState::NeedsInput),
-            node("term:b", Some("b"), true, NodeState::NeedsInput),
-        ]);
-        let targets = |t: &[&str]| t.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let pick = |t: &[&str]| click_target(&snap, &targets(t)).map(|id| id.0);
-        assert_eq!(pick(&["gone", "b", "a"]).as_deref(), Some("term:b"));
-        assert_eq!(pick(&["gone"]), None);
-        assert_eq!(pick(&[]), None);
-    }
-
-    /// A posted notification's payload, clicked, comes back from `clicked` and selects the
-    /// node it was about.
-    #[test]
-    fn clicked_payload_routes_to_its_node() {
-        let posted = Arc::new(Mutex::new(Vec::new()));
-        let (click_tx, clicks) = crossbeam_channel::unbounded();
-        let notifier = Notifier::spawn_with(Box::new(Recorder(posted.clone())), clicks, None);
-        notifier.notify(input("term_w"));
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while posted.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(50));
-        }
-        // What the notification center hands back on a click: the payload the poster attached.
-        let payload = posted.lock().unwrap()[0].1.clone();
-        click_tx.send(decode_payload(&payload).unwrap()).unwrap();
-        let clicked = notifier.clicked();
-        assert_eq!(clicked, vec![vec!["term_w".to_string()]]);
-        let snap = snapshot(vec![
-            node("dispatch:r:old", Some("term_w"), false, NodeState::Done),
-            node(
-                "dispatch:r:new",
-                Some("term_w"),
-                true,
-                NodeState::NeedsInput,
-            ),
-        ]);
-        assert_eq!(
-            click_target(&snap, &clicked[0]).map(|id| id.0).as_deref(),
-            Some("dispatch:r:new")
-        );
-        assert!(notifier.clicked().is_empty());
-    }
-
-    #[test]
-    fn notify_cli_parses_only_its_command() {
-        assert!(run_cli(&["mcp".to_string()]).is_none());
-        assert!(run_cli(&[]).is_none());
-        let err = run_cli(&["notify".to_string()]).unwrap().unwrap_err();
-        assert!(err.to_string().contains("usage"));
-        let err = run_cli(&["notify".into(), "t".into(), "--target".into()])
-            .unwrap()
-            .unwrap_err();
-        assert!(err.to_string().contains("--target"));
-    }
-
-    struct Failing;
-
-    impl Poster for Failing {
-        fn post(&self, _: &Outgoing) -> anyhow::Result<()> {
-            anyhow::bail!("notifications are turned off")
-        }
-    }
-
-    #[test]
-    fn failed_posts_still_reach_the_alerts() {
-        let notifier = Notifier::spawn_with(Box::new(Failing), crossbeam_channel::never(), None);
-        notifier.notify(input("a"));
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        let mut delivered = Vec::new();
-        while delivered.is_empty() && std::time::Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(50));
-            delivered = notifier.delivered();
-        }
-        assert_eq!(delivered.len(), 1);
-        assert_eq!(delivered[0].targets, vec!["a"]);
-    }
-
-    /// Records each post's title and payload.
-    struct Recorder(Arc<Mutex<Vec<(String, String)>>>);
-
-    impl Poster for Recorder {
-        fn post(&self, notification: &Outgoing) -> anyhow::Result<()> {
-            self.0.lock().unwrap().push((
-                notification.title.clone(),
-                encode_payload(&notification.targets),
-            ));
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn notifier_thread_collapses_and_reports() {
-        let posted = Arc::new(Mutex::new(Vec::new()));
-        let notifier = Notifier::spawn_with(
-            Box::new(Recorder(posted.clone())),
-            crossbeam_channel::never(),
-            None,
-        );
-        notifier.notify(input("a"));
-        notifier.notify(input("b"));
-        notifier.notify(input("a"));
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        let mut delivered = Vec::new();
-        while delivered.is_empty() && std::time::Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(50));
-            delivered = notifier.delivered();
-        }
-        assert_eq!(delivered.len(), 1);
-        assert_eq!(delivered[0].targets, vec!["a", "b"]);
-        let titles: Vec<_> = posted.lock().unwrap().iter().map(|p| p.0.clone()).collect();
-        assert_eq!(titles, vec!["Myrstack: 2 agents need input"]);
-    }
-}
+mod tests;

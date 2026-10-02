@@ -4,7 +4,7 @@
 use crate::detect::detect_in_preview;
 use crate::orca::{DispatchStatus, Terminal, Worker, WorkerState, WorkerTerminalState};
 
-use super::NodeState;
+use super::{Node, NodeState};
 
 /// Output newer than this counts as Working.
 pub const WORKING_WINDOW_MS: i64 = 30_000;
@@ -100,6 +100,21 @@ fn worker_verdict(worker: &Worker) -> Verdict {
     } else {
         Verdict::Open
     }
+}
+
+/// Whether a worker node's dispatch has ended (succeeded, failed or handed its terminal back)
+/// per its Orca fields, the same signals [`derive_state`] reads; `false` for other nodes.
+pub fn dispatch_ended(node: &Node) -> bool {
+    let verdicts = [
+        node.worker_state.as_ref().map(worker_state_verdict),
+        node.dispatch_status.as_ref().map(dispatch_status_verdict),
+        node.worker_terminal_state
+            .as_ref()
+            .map(terminal_state_verdict),
+    ];
+    verdicts
+        .iter()
+        .any(|v| matches!(v, Some(Verdict::Done | Verdict::Failed)))
 }
 
 /// A terminal that is listed, connected and not orphaned.

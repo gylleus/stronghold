@@ -3,9 +3,10 @@
 
 use serde_json::{Value, json};
 
-use super::{Agent, SpawnRequest, SpawnTarget, catalog::Catalog};
+use super::{Agent, SpawnRequest, SpawnTarget, catalog::Catalog, validate_name};
 use crate::control::protocol::{ControlError, Params};
-use crate::orca::spawn::WorkerPlacement;
+use crate::model::{FleetSnapshot, NodeKind};
+use crate::orca::spawn::{WorkerPlacement, Worktree};
 use crate::orca::{Run, Terminal};
 
 /// The three ways to start a session.
@@ -65,9 +66,14 @@ pub struct SpawnArgs {
     pub terminal: Option<String>,
     /// Worker task title.
     pub title: Option<String>,
+    /// Short name Myrstack shows for the agent; see [`SpawnRequest::label`].
+    pub label: Option<String>,
     pub prompt: String,
     pub agent: Agent,
     pub model: Option<String>,
+    /// Let Orca add a suffix (`name-2`) when the new worktree's name or branch is taken, instead
+    /// of failing.
+    pub allow_suffix: bool,
 }
 
 impl SpawnArgs {
@@ -102,9 +108,11 @@ impl SpawnArgs {
             run_id: opt("run_id")?,
             terminal: opt("terminal")?,
             title: opt("title")?,
+            label: opt("label")?,
             prompt: p.str("prompt")?.unwrap_or_default().trim().to_string(),
             agent,
             model: opt("model")?,
+            allow_suffix: p.bool("allow_suffix")?.unwrap_or(false),
         };
         args.check().map_err(invalid)?;
         Ok(args)
@@ -125,12 +133,16 @@ impl SpawnArgs {
             ("run_id", &self.run_id),
             ("terminal", &self.terminal),
             ("title", &self.title),
+            ("label", &self.label),
             ("model", &self.model),
         ];
         for (key, value) in fields {
             if let Some(value) = value {
                 params[key] = json!(value);
             }
+        }
+        if self.allow_suffix {
+            params["allow_suffix"] = json!(true);
         }
         params
     }
@@ -249,8 +261,125 @@ impl SpawnArgs {
             agent: self.agent,
             model: self.model.clone(),
             prompt: self.prompt.clone(),
+            label: self.label.clone(),
         })
     }
+}
+
+/// A live agent, for naming who already works in a worktree.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LiveAgent {
+    /// Node id (`term:…`, `dispatch:…`).
+    pub node: String,
+    /// `working`, `idle`, `needs_input`, …
+    pub state: String,
+    pub worktree_path: Option<String>,
+}
+
+impl LiveAgent {
+    /// The snapshot's live agents (no subagents, no Queen).
+    pub fn from_snapshot(snapshot: &FleetSnapshot) -> Vec<Self> {
+        snapshot
+            .agent_nodes()
+            .filter(|n| n.live && n.kind != NodeKind::Subagent)
+            .map(|n| Self {
+                node: n.id.to_string(),
+                state: crate::control::view::state_name(n.state).to_owned(),
+                worktree_path: n.worktree_path.clone(),
+            })
+            .collect()
+    }
+}
+
+/// A new worktree's name that Orca would suffix (`name-2`) because it is taken.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NameConflict {
+    pub name: String,
+    /// The worktree with that name, path or branch.
+    pub worktree: Option<Worktree>,
+    /// A local branch named `name` or `<prefix>/name`.
+    pub branch: Option<String>,
+}
+
+impl NameConflict {
+    /// The error for the caller: what exists, who works there, and what to do instead.
+    pub fn message(&self, agents: &[LiveAgent]) -> String {
+        let mut text = format!("a worktree named {:?} already exists", self.name);
+        if let Some(wt) = &self.worktree {
+            text = format!(
+                "worktree {:?} already exists at {}{}{}",
+                self.name,
+                wt.path,
+                wt.branch_name()
+                    .map(|b| format!(" (branch {b})"))
+                    .unwrap_or_default(),
+                if wt.is_archived { ", archived" } else { "" }
+            );
+            let there: Vec<String> = agents
+                .iter()
+                .filter(|a| a.worktree_path.as_deref() == Some(wt.path.as_str()))
+                .map(|a| format!("{} ({})", a.node, a.state.replace('_', " ")))
+                .collect();
+            if there.is_empty() {
+                text.push_str("; no live agent in it");
+            } else {
+                text.push_str(&format!(
+                    "; live agent{} in it: {}. Send it the changes with send_to_agent instead of \
+                     spawning again",
+                    if there.len() == 1 { "" } else { "s" },
+                    there.join(", ")
+                ));
+            }
+        } else if let Some(branch) = &self.branch {
+            text = format!("branch {branch} already exists (no worktree has it)");
+        }
+        text.push_str(
+            ". Pick another name, use mode \"worktree\" to start an agent in the existing \
+             worktree, or pass allow_suffix=true if a second copy is really wanted.",
+        );
+        text
+    }
+}
+
+/// The repo and name of the worktree `request` creates, if it creates one.
+pub fn new_worktree_of(request: &SpawnRequest) -> Option<(&str, &str)> {
+    match &request.target {
+        SpawnTarget::NewWorktree { repo_id, name, .. }
+        | SpawnTarget::Worker {
+            placement: WorkerPlacement::NewWorktree { repo_id, name },
+            ..
+        } => Some((repo_id, name)),
+        _ => None,
+    }
+}
+
+/// Whether a new worktree `name` in `repo_id` is taken by one of the catalog's worktrees (by
+/// name, directory or branch) or by one of `branches` (the repo's local branches; Orca may
+/// prefix them, as in `karl/name`).
+pub fn name_conflict(
+    catalog: &Catalog,
+    repo_id: &str,
+    name: &str,
+    branches: &[String],
+) -> Option<NameConflict> {
+    let name = validate_name(name).ok()?;
+    let branch_matches = |b: &str| b == name || b.ends_with(&format!("/{name}"));
+    let worktree = catalog
+        .worktrees
+        .iter()
+        .filter(|w| w.repo() == Some(repo_id) && !w.is_main_worktree)
+        .find(|w| {
+            w.name() == name
+                || w.path.trim_end_matches('/').rsplit('/').next() == Some(name.as_str())
+                || w.branch_name().is_some_and(branch_matches)
+        })
+        .cloned();
+    let branch = branches.iter().find(|b| branch_matches(b)).cloned();
+    (worktree.is_some() || branch.is_some()).then_some(NameConflict {
+        name,
+        worktree,
+        branch,
+    })
 }
 
 /// The API's answer for a finished spawn.

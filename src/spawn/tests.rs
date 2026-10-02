@@ -8,6 +8,7 @@ use super::exec::{
     run_plan,
 };
 use super::pending::{PENDING_SELECT_MS, PendingSelect, node_for_handle, take_ready};
+use super::resolve::LiveAgent;
 use super::*;
 use crate::actions::Key;
 use crate::fleet::FleetData;
@@ -83,6 +84,7 @@ fn request(target: SpawnTarget) -> SpawnRequest {
         agent: Agent::Claude,
         model: None,
         prompt: PROMPT.into(),
+        label: None,
     }
 }
 
@@ -197,7 +199,8 @@ fn new_worktree_without_model_lets_orca_launch_the_agent() {
     assert_eq!(plan.steps[1], Step::DirenvAllow);
     assert!(matches!(plan.steps[2], Step::WaitIdle { .. }));
     assert!(matches!(plan.steps[3], Step::Verify { retype: true, .. }));
-    assert_eq!(plan.steps.len(), 4);
+    assert_eq!(plan.steps[4], Step::CloseStartupShell);
+    assert_eq!(plan.steps.len(), 5);
 }
 
 #[test]
@@ -248,7 +251,8 @@ fn worker_plan_creates_the_task_as_the_coordinator_then_starts_it() {
         name: "flaky-checkout".into(),
     })))
     .unwrap();
-    assert_eq!(plan.steps.len(), 4);
+    assert_eq!(plan.steps.len(), 5);
+    assert_eq!(plan.steps[4], Step::CloseStartupShell);
     assert_eq!(
         plan.steps[0].orca_args(&plan.initial).unwrap().unwrap(),
         args(&[
@@ -286,6 +290,63 @@ fn worker_plan_creates_the_task_as_the_coordinator_then_starts_it() {
             expect: Expect::AnyInput,
             retype: false
         }
+    );
+}
+
+/// A label names the worktree right after it exists, or becomes a worker's task display name.
+#[test]
+fn a_label_names_the_agent() {
+    let named = |target| SpawnRequest {
+        label: Some("  Checkout retries ".into()),
+        ..request(target)
+    };
+    let name_args = |worktree: &str| {
+        args(&[
+            "worktree",
+            "set",
+            &format!("--worktree=id:{worktree}"),
+            "--display-name=Checkout retries",
+        ])
+    };
+
+    let plan = build_plan(&named(existing())).unwrap();
+    assert_eq!(plan.request.label.as_deref(), Some("Checkout retries"));
+    assert_eq!(
+        plan.steps[0].orca_args(&plan.initial).unwrap().unwrap(),
+        name_args(WT_ID)
+    );
+
+    let plan = build_plan(&named(new_worktree())).unwrap();
+    assert!(matches!(plan.steps[0], Step::CreateWorktree(_)));
+    let ctx = SpawnContext {
+        worktree_id: Some("new-wt".into()),
+        ..SpawnContext::default()
+    };
+    assert_eq!(
+        plan.steps[1].orca_args(&ctx).unwrap().unwrap(),
+        name_args("new-wt")
+    );
+
+    let plan = build_plan(&named(worker(WorkerPlacement::Worktree {
+        worktree_id: WT_ID.into(),
+    })))
+    .unwrap();
+    assert!(
+        !plan
+            .steps
+            .iter()
+            .any(|s| matches!(s, Step::NameWorktree { .. })),
+        "a worker's worktree may be shared; its task carries the name"
+    );
+    let task = plan.steps[0].orca_args(&plan.initial).unwrap().unwrap();
+    assert_eq!(task.last().unwrap(), "--display-name=Checkout retries");
+
+    let plan = build_plan(&request(existing())).unwrap();
+    assert!(
+        !plan
+            .steps
+            .iter()
+            .any(|s| matches!(s, Step::NameWorktree { .. }))
     );
 }
 
@@ -690,6 +751,7 @@ struct Fake {
     direnv: Option<Result<Option<String>, String>>,
     direnv_calls: Vec<String>,
     catalog: Catalog,
+    branches: Vec<String>,
     clock: Duration,
 }
 
@@ -739,6 +801,10 @@ impl SpawnBackend for Fake {
 
     fn catalog(&mut self) -> Result<Catalog, String> {
         Ok(self.catalog.clone())
+    }
+
+    fn branches(&mut self, _repo_path: &str) -> Result<Vec<String>, String> {
+        Ok(self.branches.clone())
     }
 
     fn sleep(&mut self, duration: Duration) {
@@ -830,6 +896,7 @@ fn new_worktree_run_records_the_worktree_and_allows_direnv() {
         "terminal wait",
         Ok(result(orca_fixture!("terminal_wait_idle.json"))),
     )
+    .reply("terminal list", Ok(json!({ "terminals": [] })))
     .screens(vec![screen!("spawn_claude_started_synthetic.txt")]);
     let (result, _) = run(&plan, &mut fake);
     let outcome = result.unwrap();
@@ -865,6 +932,7 @@ fn worker_run_creates_task_starts_worker_and_checks_the_preamble() {
             "orchestration worker-start",
             Ok(result(orca_fixture!("worker_start_ready.json"))),
         )
+        .reply("terminal list", Ok(json!({ "terminals": [] })))
         .screens(vec![screen!("claude_working_synthetic.txt")]);
     let (result, _) = run(&plan, &mut fake);
     let outcome = result.unwrap();
@@ -1030,6 +1098,7 @@ fn api_jobs_resolve_against_orca_lists_then_run() {
         },
         runs: vec![],
         terminals: vec![],
+        agents: vec![],
     };
     let mut events = Vec::new();
     run_job(7, job, &mut fake, &mut |e| events.push(e));
@@ -1049,6 +1118,7 @@ fn api_jobs_resolve_against_orca_lists_then_run() {
         },
         runs: vec![],
         terminals: vec![],
+        agents: vec![],
     };
     let mut events = Vec::new();
     run_job(8, bad, &mut fake, &mut |e| events.push(e));
@@ -1239,4 +1309,289 @@ fn pending_select_waits_for_the_node_then_expires() {
         None
     );
     assert!(pending.is_none(), "gave up");
+}
+
+// ---------------------------------------------------------------------------
+// Taken names, startup shells
+
+const NEW_WT_ID: &str = "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/orca/workspaces/commerce-platform/spawn-test";
+const NEW_AGENT: &str = "term_7d1e4c2a-9b3f-4e8d-a6c5-0f1e2d3c4b5a";
+
+fn working_agent() -> LiveAgent {
+    LiveAgent {
+        node: "term:term_busy".into(),
+        state: "working".into(),
+        worktree_path: Some(WT_PATH.into()),
+    }
+}
+
+#[test]
+fn a_taken_worktree_name_or_branch_is_a_conflict() {
+    let catalog = catalog();
+    // By display name, by `<repo>` directory and by branch; only in the same repo.
+    let taken = name_conflict(&catalog, REPO_ID, "hack-77-admin-speed", &[]).unwrap();
+    assert_eq!(taken.worktree.as_ref().unwrap().path, WT_PATH);
+    assert!(name_conflict(&catalog, "other-repo", "hack-77-admin-speed", &[]).is_none());
+    assert!(name_conflict(&catalog, REPO_ID, "fresh-name", &[]).is_none());
+    // Orca prefixes branches (`karl/name`); a bare or prefixed branch both count.
+    let branches = vec!["main".to_string(), "karl/fresh-name".to_string()];
+    let branch = name_conflict(&catalog, REPO_ID, " fresh name ", &branches).unwrap();
+    assert!(branch.worktree.is_none());
+    assert_eq!(branch.branch.as_deref(), Some("karl/fresh-name"));
+    assert!(name_conflict(&catalog, REPO_ID, "name", &branches).is_none());
+
+    let text = taken.message(&[working_agent()]);
+    assert!(text.contains(WT_PATH), "{text}");
+    assert!(text.contains("term:term_busy (working)"), "{text}");
+    assert!(text.contains("send_to_agent"), "{text}");
+    assert!(text.contains("allow_suffix=true"), "{text}");
+    assert!(taken.message(&[]).contains("no live agent in it"));
+    let text = branch.message(&[]);
+    assert!(
+        text.starts_with("branch karl/fresh-name already exists"),
+        "{text}"
+    );
+}
+
+fn taken_name_job(allow_suffix: bool) -> Job {
+    Job::Args {
+        args: SpawnArgs {
+            mode: ModeName::NewWorktree,
+            repo: Some("commerce-platform".into()),
+            name: Some("hack-77-admin-speed".into()),
+            prompt: PROMPT.into(),
+            allow_suffix,
+            ..SpawnArgs::default()
+        },
+        runs: vec![],
+        terminals: vec![],
+        agents: vec![working_agent()],
+    }
+}
+
+#[test]
+fn api_spawn_into_a_taken_name_fails_before_creating_anything() {
+    let mut fake = Fake {
+        catalog: catalog(),
+        ..Fake::default()
+    };
+    let mut events = Vec::new();
+    run_job(1, taken_name_job(false), &mut fake, &mut |e| events.push(e));
+    let [SpawnEvent::Done { result: Err(f), .. }] = &events[..] else {
+        panic!("{events:?}");
+    };
+    assert_eq!(f.step, None);
+    assert!(
+        f.message.contains("term:term_busy (working)"),
+        "{}",
+        f.message
+    );
+    assert!(fake.calls.is_empty(), "{:?}", fake.calls);
+
+    // A worker's new worktree is checked too; a branch alone is enough.
+    let mut fake = Fake {
+        catalog: catalog(),
+        branches: vec!["gylleus/flaky-checkout".into()],
+        ..Fake::default()
+    };
+    let job = Job::Args {
+        args: SpawnArgs {
+            mode: ModeName::Worker,
+            run_id: Some("run_7c25cdcf46e0".into()),
+            repo: Some("commerce-platform".into()),
+            name: Some("flaky-checkout".into()),
+            prompt: PROMPT.into(),
+            ..SpawnArgs::default()
+        },
+        runs: runs(),
+        terminals: vec![],
+        agents: vec![],
+    };
+    let mut events = Vec::new();
+    run_job(2, job, &mut fake, &mut |e| events.push(e));
+    assert!(
+        matches!(&events[..], [SpawnEvent::Done { result: Err(f), .. }] if f.message.contains("branch gylleus/flaky-checkout")),
+        "{events:?}"
+    );
+
+    // allow_suffix leaves the name to Orca.
+    let mut fake = Fake {
+        catalog: catalog(),
+        ..Fake::default()
+    }
+    .reply(
+        "worktree create",
+        Err(api_error(orca_fixture!("error_consumer_fenced.json"))),
+    );
+    let mut events = Vec::new();
+    run_job(3, taken_name_job(true), &mut fake, &mut |e| events.push(e));
+    assert!(matches!(&events[0], SpawnEvent::Planned { .. }));
+    assert_eq!(fake.calls.len(), 1);
+}
+
+#[test]
+fn allow_suffix_parses_and_round_trips() {
+    let params = json!({
+        "mode": "new_worktree", "repo": "r", "name": "n", "prompt": "go", "allow_suffix": true,
+    });
+    let args = SpawnArgs::parse(&params).unwrap();
+    assert!(args.allow_suffix);
+    assert_eq!(SpawnArgs::parse(&args.to_params()).unwrap(), args);
+    let plain =
+        SpawnArgs::parse(&json!({"mode": "new_worktree", "repo": "r", "name": "n"})).unwrap();
+    assert!(!plain.allow_suffix);
+    assert!(plain.to_params().get("allow_suffix").is_none());
+    assert!(
+        SpawnArgs::parse(&json!({"mode": "new", "repo": "r", "name": "n", "allow_suffix": "yes"}))
+            .is_err()
+    );
+}
+
+fn terminal_row(handle: &str, tab: &str, title: &str, agent: bool) -> Value {
+    let mut row = json!({
+        "handle": handle, "worktreeId": NEW_WT_ID, "tabId": tab, "title": title,
+        "connected": true, "writable": true,
+    });
+    if agent {
+        row["agentIdentity"] = json!("claude");
+    }
+    row
+}
+
+#[test]
+fn new_worktree_run_closes_the_startup_shell_but_not_agents_or_setup() {
+    let plan = build_plan(&request(new_worktree())).unwrap();
+    let list = json!({ "terminals": [
+        terminal_row(NEW_AGENT, "tab-3c9e", "claude", false),
+        terminal_row("term_shell", "tab-1", "../spawn-test", false),
+        terminal_row("term_split", "tab-3c9e", "zsh", false),
+        terminal_row("term_setup", "tab-2", "Setup", false),
+        terminal_row("term_other_agent", "tab-4", "codex", true),
+    ]});
+    let mut fake = Fake::default()
+        .reply(
+            "worktree create",
+            Ok(result(orca_fixture!("worktree_create_agent.json"))),
+        )
+        .reply(
+            "terminal wait",
+            Ok(result(orca_fixture!("terminal_wait_idle.json"))),
+        )
+        .reply("terminal list", Ok(list))
+        .reply("terminal close", Ok(json!({ "close": {} })))
+        .reply("terminal close", Ok(json!({ "close": {} })))
+        .screens(vec![screen!("spawn_claude_started_synthetic.txt")]);
+    let (result, progress) = run(&plan, &mut fake);
+    assert!(result.unwrap().verified);
+    assert_eq!(
+        fake.calls[2],
+        args(&["terminal", "list", &format!("--worktree=id:{NEW_WT_ID}")])
+    );
+    // Its own tab goes whole; a pane split beside the agent only as a pane.
+    assert_eq!(
+        fake.calls[3..],
+        [
+            args(&["terminal", "close", "--terminal=term_shell", "--tab"]),
+            args(&["terminal", "close", "--terminal=term_split"]),
+        ]
+    );
+    assert!(matches!(
+        progress.last(),
+        Some(Progress::Step { index: 4, status: StepStatus::Done(Some(n)) }) if n == "closed term_shell, term_split"
+    ));
+}
+
+#[test]
+fn a_failed_shell_close_only_warns() {
+    let plan = build_plan(&request(new_worktree())).unwrap();
+    let list = json!({ "terminals": [
+        terminal_row(NEW_AGENT, "tab-3c9e", "claude", false),
+        terminal_row("term_shell", "tab-1", "../spawn-test", false),
+    ]});
+    let mut fake = Fake::default()
+        .reply(
+            "worktree create",
+            Ok(result(orca_fixture!("worktree_create_agent.json"))),
+        )
+        .reply(
+            "terminal wait",
+            Ok(result(orca_fixture!("terminal_wait_idle.json"))),
+        )
+        .reply("terminal list", Ok(list))
+        .reply(
+            "terminal close",
+            Err(api_error(orca_fixture!("error_terminal_handle_stale.json"))),
+        )
+        .screens(vec![screen!("spawn_claude_started_synthetic.txt")]);
+    let outcome = run(&plan, &mut fake).0.unwrap();
+    assert!(
+        outcome
+            .notes
+            .iter()
+            .any(|n| n.starts_with("could not close the startup shell (term_shell:")),
+        "{:?}",
+        outcome.notes
+    );
+}
+
+#[test]
+fn existing_worktree_plans_leave_other_terminals_alone() {
+    let plan = build_plan(&request(existing())).unwrap();
+    assert!(!plan.steps.contains(&Step::CloseStartupShell));
+    let plan = build_plan(&request(worker(WorkerPlacement::Worktree {
+        worktree_id: WT_ID.into(),
+    })))
+    .unwrap();
+    assert!(!plan.steps.contains(&Step::CloseStartupShell));
+}
+
+#[test]
+fn interrupted_spawns_are_recorded_shown_and_pruned() {
+    use super::interrupted::{
+        GONE_GRACE_MS, InterruptedSpawn, MAX_AGE_MS, current, load, record, section,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("interrupted.json");
+    let args = json!({"mode": "new_worktree", "repo": "myrstack", "name": "agent-notify-tool", "prompt": "Add a notify tool\nmore"});
+    let result = json!({"node": "term:term_a", "handle": "term_a", "worktree_path": "/wt/agent-notify-tool"});
+    let now = 10 * MAX_AGE_MS;
+    let entry = InterruptedSpawn::new("cancelled", now, &args, &result);
+    assert_eq!(entry.prompt, "Add a notify tool");
+    record(&path, entry.clone()).unwrap();
+    let gone = InterruptedSpawn {
+        node: Some("term:term_gone".into()),
+        handle: Some("term_gone".into()),
+        at_ms: now - GONE_GRACE_MS - 1,
+        ..entry.clone()
+    };
+    record(&path, gone).unwrap();
+    let old = InterruptedSpawn {
+        at_ms: now - MAX_AGE_MS,
+        ..entry.clone()
+    };
+    record(&path, old).unwrap();
+    assert_eq!(
+        load(&path, now).len(),
+        2,
+        "the expired record is not loaded"
+    );
+
+    // Matched by terminal handle as well as node id; the gone agent's record is dropped.
+    let agents = vec![(
+        "dispatch:r:d".to_string(),
+        Some("term_a".to_string()),
+        "working".to_string(),
+    )];
+    let shown = current(&path, &agents, now + 60_000);
+    assert_eq!(shown, vec![(entry, Some("working".into()))]);
+    assert_eq!(load(&path, now).len(), 1);
+    let text = section(&shown, now + 60_000);
+    assert!(text.starts_with("Interrupted spawns (1)"), "{text}");
+    assert!(text.contains("send_to_agent"), "{text}");
+    assert!(
+        text.contains("- `term:term_a` in /wt/agent-notify-tool (cancelled 1 min ago, now working): \"Add a notify tool\""),
+        "{text}"
+    );
+    assert_eq!(section(&[], now), "");
+    assert!(load(&dir.path().join("missing.json"), now).is_empty());
 }

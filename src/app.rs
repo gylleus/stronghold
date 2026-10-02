@@ -8,6 +8,7 @@ use eframe::egui;
 mod chat;
 mod control;
 mod dictation;
+mod notifications;
 mod palette;
 mod panes;
 mod playbook;
@@ -17,12 +18,12 @@ mod spawn;
 mod talk;
 mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
-use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo, TranscriptTail};
+use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo};
 use crate::detect::detect_prompt;
 use crate::fleet::FleetData;
 use crate::hotkey::Hotkey;
 use crate::model::{FleetSnapshot, Node, NodeId, NodeKind, NodeState};
-use crate::notify::{self, Delivered, NeedsInputDetector, Notifier};
+use crate::notify::{NeedsInputDetector, Notifier};
 use crate::orca::OrcaClient;
 use crate::persist::PersistedState;
 use crate::poller::{Poller, PollerCommand, PollerConfig, ScreenUpdate};
@@ -45,6 +46,8 @@ pub enum View {
     #[default]
     Graph,
     Table,
+    /// The fleet as an ant farm; see [`ui::ant_farm`].
+    AntFarm,
 }
 
 /// Top-level application state.
@@ -57,8 +60,11 @@ pub struct MyrstackApp {
     /// Graph model built from `data`.
     snapshot: Option<FleetSnapshot>,
     graph: GraphView,
+    ant_farm: ui::ant_farm::AntFarmView,
     /// Node selected in the graph, shared by all views and side panels.
     selected: Option<NodeId>,
+    /// The nodes selected so far, for back/forward.
+    history: ui::history::SelectionHistory,
     view: View,
     /// The dock's pane arrangement: sidebar, graph or table, details and conversation.
     panes: ui::dock::PaneLayout,
@@ -82,8 +88,8 @@ pub struct MyrstackApp {
     /// Maps terminals to Claude sessions and scans subagents off the UI thread.
     claude: ClaudeWorker,
     claude_data: Option<ClaudeData>,
-    /// Tail of the selected subagent's transcript.
-    transcript: Option<TranscriptTail>,
+    /// The selected agent's or subagent's conversation, read from its session transcript.
+    transcript: Option<ui::chat::TranscriptView>,
     /// The Queen's details: fleet summary and the broadcast composer.
     queen: ui::queen::QueenPanel,
     /// Runs terminal sends and tab switches off the UI thread.
@@ -103,11 +109,12 @@ pub struct MyrstackApp {
     sidebar_cache: ui::sidebar::SidebarCache,
     /// The Settings window (Queen, Whip, Voice, General); owns `settings.json`.
     whip_window: ui::settings::SettingsPane,
-    /// Rate-limited macOS notifications, shared with the whip's executors.
+    /// Pops up and sounds notifications; shared with the whip's executors, which raise theirs
+    /// through it.
     notifier: Arc<Notifier>,
     needs_input_detector: NeedsInputDetector,
-    /// Posted notifications, newest last; the top bar lists them so they can select their node.
-    alerts: Vec<Delivered>,
+    /// Every notification's dispatcher, the saved inbox, toasts and node badges.
+    notifications: notifications::AppNotifications,
     /// Debug-logged frames per second and repaint causes.
     frame_stats: ui::frame_stats::FrameStats,
     /// Polls `orca account list` for plan quotas every few minutes.
@@ -123,7 +130,7 @@ pub struct MyrstackApp {
     chat: chat::AppChat,
     /// Manual whips in flight, their confirmation popover and result toast.
     whip_now: whip_now::WhipNowState,
-    /// "New session…" dialog, spawns in flight and the new node to select.
+    /// "New ant…" dialog, spawns in flight and the new node to select.
     spawn: spawn::AppSpawn,
     /// ⌘E push-to-talk dictation.
     dictation: dictation::AppDictation,
@@ -132,9 +139,6 @@ pub struct MyrstackApp {
     /// PRs agents marked ready for review, their GitHub state and the poller reading it.
     review: review::AppReview,
 }
-
-/// How many posted notifications the alerts menu keeps.
-const MAX_ALERTS: usize = 10;
 
 impl MyrstackApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -176,7 +180,9 @@ impl MyrstackApp {
             data: None,
             snapshot: None,
             graph: GraphView::new(),
+            ant_farm: ui::ant_farm::AntFarmView::new(),
             selected: None,
+            history: ui::history::SelectionHistory::default(),
             view: View::default(),
             panes: ui::dock::PaneLayout::default(),
             bring_forward: None,
@@ -199,7 +205,7 @@ impl MyrstackApp {
             whip_window,
             notifier,
             needs_input_detector: NeedsInputDetector::new(),
-            alerts: Vec::new(),
+            notifications: notifications::AppNotifications::load(),
             search: ui::search::SearchPalette::default(),
             help_open: false,
             frame_stats: ui::frame_stats::FrameStats::default(),
@@ -279,19 +285,27 @@ impl MyrstackApp {
         Some((node, info))
     }
 
-    /// Points the worker's transcript tail at the selected subagent and takes new tails.
-    fn sync_transcript(&mut self) {
-        let path = self
-            .selected_subagent()
-            .map(|(_, info)| info.transcript_path.clone());
-        if self.transcript.as_ref().map(|t| &t.path) != path.as_ref() {
-            self.transcript = None;
-            self.claude.watch_transcript(path.clone());
+    /// The session transcript of the selected subagent, or of the selected Claude agent.
+    fn conversation_path(&self) -> Option<std::path::PathBuf> {
+        if let Some((_, info)) = self.selected_subagent() {
+            return Some(info.transcript_path.clone());
         }
-        if let Some(tail) = self.claude.latest_transcript()
-            && Some(&tail.path) == path.as_ref()
-        {
-            self.transcript = Some(tail);
+        let handle = self.selected_node()?.terminal_handle.as_deref()?;
+        let session = self.claude_data.as_ref()?.session_by_handle.get(handle)?;
+        Some(session.session()?.transcript_path.clone())
+    }
+
+    /// Points the worker at the selected conversation's transcript and applies what it read.
+    fn sync_transcript(&mut self) {
+        let path = self.conversation_path();
+        if self.transcript.as_ref().map(|t| &t.path) != path.as_ref() {
+            self.transcript = path.clone().map(ui::chat::TranscriptView::new);
+            self.claude.watch_transcript(path);
+        }
+        for chunk in self.claude.history_chunks() {
+            if let Some(view) = &mut self.transcript {
+                view.apply(&chunk);
+            }
         }
     }
 
@@ -342,8 +356,19 @@ impl MyrstackApp {
                 self.select_and_focus(id);
             }
         } else if let Some((node, info)) = self.selected_subagent() {
-            let tail = self.transcript.as_ref().map_or(&[][..], |t| &t.lines[..]);
-            ui::subagent::subagent_transcript(ui, node, info, tail);
+            let (node, info) = (node.clone(), info.clone());
+            let snapshot = self.snapshot.as_ref();
+            let is_node = |id: &NodeId| snapshot.is_some_and(|s| s.node(id).is_some());
+            let clicked = ui::subagent::subagent_transcript(
+                ui,
+                &node,
+                &info,
+                self.transcript.as_mut(),
+                &is_node,
+            );
+            if let Some(id) = clicked {
+                self.select_and_focus(id);
+            }
         } else {
             self.terminal_contents(ui, now_ms);
         }
@@ -362,9 +387,15 @@ impl MyrstackApp {
             .terminal_handle
             .as_deref()
             .and_then(|h| self.data.as_ref()?.terminals.iter().find(|t| t.handle == h));
+        let review_rows = self.review_rows(now_ms);
+        let snapshot = self.snapshot.as_ref();
+        let is_node = |id: &NodeId| snapshot.is_some_and(|s| s.node(id).is_some());
         let input = ui::terminal::PanelInput {
+            review_rows: &review_rows,
             state: &mut self.input,
             terminal,
+            conversation: self.transcript.as_mut(),
+            is_node: &is_node,
         };
         let response = ui::terminal::terminal_panel(ui, node, self.screen.as_ref(), input, now_ms);
         let id = node.id.clone();
@@ -402,6 +433,9 @@ impl MyrstackApp {
         id: NodeId,
         response: ui::terminal::TerminalPanelResponse,
     ) {
+        if let Some(action) = response.review {
+            self.apply_review_action(action);
+        }
         for request in &response.requests {
             let action = self.actions.submit(request.action.clone());
             self.input.submitted(action, request);
@@ -415,6 +449,9 @@ impl MyrstackApp {
         if response.close {
             self.selected = None;
             self.graph.set_selected(None);
+        }
+        if let Some(id) = response.select {
+            self.select_and_focus(id);
         }
     }
 
@@ -438,6 +475,9 @@ impl MyrstackApp {
         };
         let response =
             ui::queen::queen_details(ui, &mut self.queen, inputs, || Box::new(OrcaClient::new()));
+        if self.queen.broadcast.take_sent() {
+            self.ant_farm.pulse(ui::ant_farm::Pulse::Broadcast);
+        }
         if response.whip_stalled {
             self.request_whip_stalled(None);
         }
@@ -467,9 +507,12 @@ impl MyrstackApp {
         self.selected = Some(id);
     }
 
-    /// Switches to the graph and selects and focuses `id` there, as `focus_agent` does.
+    /// Switches to the graph (unless the ant farm is shown) and selects and focuses `id`
+    /// there, as `focus_agent` does.
     fn focus_in_graph(&mut self, id: NodeId) {
-        self.view = View::Graph;
+        if self.view == View::Table {
+            self.view = View::Graph;
+        }
         self.select_and_focus(id);
     }
 
@@ -524,6 +567,14 @@ impl MyrstackApp {
         }
         if command == KeyCommand::OpenSettings {
             self.open_settings();
+            return;
+        }
+        if command == KeyCommand::HistoryBack {
+            self.history_step(ui::history::HistoryStep::Back);
+            return;
+        }
+        if command == KeyCommand::HistoryForward {
+            self.history_step(ui::history::HistoryStep::Forward);
             return;
         }
         let Some(snapshot) = &self.snapshot else {
@@ -612,7 +663,10 @@ impl MyrstackApp {
                 self.help_open = !self.help_open;
                 None
             }
-            KeyCommand::ToggleChat | KeyCommand::OpenSettings => None,
+            KeyCommand::ToggleChat
+            | KeyCommand::OpenSettings
+            | KeyCommand::HistoryBack
+            | KeyCommand::HistoryForward => None,
             KeyCommand::CloseSession => {
                 let ids = ui::selection::close_targets(current, &self.graph.selection());
                 if !ids.is_empty() {
@@ -640,7 +694,7 @@ impl MyrstackApp {
         let Some(id) = self.selected.clone() else {
             return;
         };
-        if self.view != View::Graph || !self.graph.hidden().contains(&id) {
+        if self.view == View::Table || !self.graph.hidden().contains(&id) {
             return;
         }
         let clear = egui::Panel::top("hidden_selection")
@@ -701,8 +755,14 @@ impl MyrstackApp {
     fn top_bar_controls(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         ui::widgets::app_title(ui);
         ui.separator();
+        let can_back = self.history.can_back(self.selected.as_ref());
+        if let Some(step) = ui::history::history_buttons(ui, can_back, self.history.can_forward()) {
+            self.history_step(step);
+        }
         ui.selectable_value(&mut self.view, View::Graph, "Graph");
         ui.selectable_value(&mut self.view, View::Table, "Table");
+        ui.selectable_value(&mut self.view, View::AntFarm, "Ant farm")
+            .on_hover_text("The fleet as an ant farm: an ant's place shows its state");
         if self.view == View::Graph && ui.button("Fit").clicked() {
             self.graph.fit_to_screen();
         }
@@ -736,7 +796,7 @@ impl MyrstackApp {
         }
         self.whip_window.gear_button(ui);
         self.whip_window.button(ui);
-        self.alerts_menu(ui);
+        self.inbox_menu(ui, now_ms);
         self.review_badge(ui);
         self.close.log_menu(ui, now_ms);
         if let Some(data) = &self.data
@@ -754,6 +814,34 @@ impl MyrstackApp {
             )
             .on_hover_text(data.errors.join("\n"));
         }
+    }
+}
+
+/// Selection history: back and forward over the nodes selected so far.
+///
+/// Every change of the selected node is recorded once per frame, whoever made it (a click,
+/// the keyboard, the palette, a notification, the Queen's `focus_agent`, a spawned session
+/// being selected), so back always returns to what was on screen before the jump.
+impl MyrstackApp {
+    /// Records the selected node if it changed since the last frame.
+    fn record_selection(&mut self) {
+        self.history.record(self.selected.as_ref());
+    }
+
+    /// Selects the previous or next node in the history and centers the graph on it.
+    fn history_step(&mut self, step: ui::history::HistoryStep) {
+        let target = match step {
+            ui::history::HistoryStep::Back => self.history.back(self.selected.as_ref()),
+            ui::history::HistoryStep::Forward => self.history.forward(),
+        };
+        let Some(id) = target else {
+            return;
+        };
+        self.graph.set_selected(Some(&id));
+        if self.graph.is_visible(&id) {
+            self.graph.center_on(&id);
+        }
+        self.selected = Some(id);
     }
 }
 
@@ -784,94 +872,6 @@ impl MyrstackApp {
             Some(ui::selection::SelectionAction::Clear) => {
                 self.graph.set_selected(None);
                 self.selected = None;
-            }
-            None => {}
-        }
-    }
-}
-
-/// Notifications: nodes entering NeedsInput, and the in-app list of posted notifications.
-///
-/// Clicking a native notification (running from `Myrstack.app`) selects its node; clicking an
-/// `osascript` one cannot reach Myrstack, so the alerts menu is how it selects its node.
-impl MyrstackApp {
-    /// Selects the node of each clicked notification, as picking its alert would, and brings
-    /// the window forward. Clicks wait for the first snapshot (a click can launch the app).
-    fn open_clicked_notifications(&mut self, ctx: &egui::Context) {
-        let Some(snapshot) = &self.snapshot else {
-            return;
-        };
-        let mut select = None;
-        let mut review = false;
-        for targets in self.notifier.clicked() {
-            self.alerts.retain(|a| a.targets != targets);
-            select = notify::click_target(snapshot, &targets).or(select);
-            review |= self.is_review_alert(&targets);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        }
-        if review && select.is_none() {
-            self.open_review_queue();
-        }
-        if let Some(id) = select {
-            self.select_and_focus(id);
-        }
-    }
-
-    /// Asks for a notification for each node that just entered NeedsInput, unless the whip's
-    /// notifications are off.
-    fn notify_needs_input(&mut self) {
-        let Some(snapshot) = &self.snapshot else {
-            return;
-        };
-        let requests = self.needs_input_detector.update(snapshot);
-        if !self.whip_window.whip().notify {
-            return;
-        }
-        for request in requests {
-            self.notifier.notify(request);
-        }
-    }
-
-    fn take_alerts(&mut self) {
-        self.alerts.extend(self.notifier.delivered());
-        let excess = self.alerts.len().saturating_sub(MAX_ALERTS);
-        self.alerts.drain(..excess);
-    }
-
-    /// `Alerts (n)` menu in the top bar; picking an entry selects its node and forgets it.
-    fn alerts_menu(&mut self, ui: &mut egui::Ui) {
-        if self.alerts.is_empty() {
-            return;
-        }
-        let mut picked = None;
-        ui.menu_button(format!("Alerts ({})", self.alerts.len()), |ui| {
-            for (i, alert) in self.alerts.iter().enumerate().rev() {
-                let title = alert
-                    .title
-                    .strip_prefix("Myrstack: ")
-                    .unwrap_or(&alert.title);
-                if ui.button(title).clicked() {
-                    picked = Some(i);
-                }
-            }
-            ui.separator();
-            if ui.button("Clear").clicked() {
-                picked = Some(usize::MAX);
-            }
-        });
-        match picked {
-            Some(usize::MAX) => self.alerts.clear(),
-            Some(i) => {
-                let alert = self.alerts.remove(i);
-                let target = self
-                    .snapshot
-                    .as_ref()
-                    .and_then(|snapshot| notify::click_target(snapshot, &alert.targets));
-                if let Some(id) = target {
-                    self.select_and_focus(id);
-                } else if self.is_review_alert(&alert.targets) {
-                    self.open_review_queue();
-                }
             }
             None => {}
         }
@@ -1038,6 +1038,7 @@ impl eframe::App for MyrstackApp {
             {
                 self.selected = None;
             }
+            self.history.prune(|id| snapshot.node(id).is_some());
             self.snapshot = Some(snapshot);
             self.sidebar_cache.snapshot_changed();
             self.search.snapshot_changed();
@@ -1046,8 +1047,7 @@ impl eframe::App for MyrstackApp {
             self.notify_needs_input();
             self.spawn_select_pending();
         }
-        self.take_alerts();
-        self.open_clicked_notifications(ctx);
+        self.poll_notifications(ctx);
         self.poll_chat();
         self.talk_logic(ctx);
         self.poll_control(ctx);
@@ -1075,13 +1075,14 @@ impl eframe::App for MyrstackApp {
         self.dictation_frame(ui.ctx());
         self.search_palette(ui.ctx());
         self.keyboard(ui.ctx());
-        egui::Panel::top("top_bar")
+        let top_bar = egui::Panel::top("top_bar")
             .frame(
                 egui::Frame::side_top_panel(ui.style())
                     .inner_margin(egui::Margin::symmetric(10, 6)),
             )
             .show(ui, |ui| self.top_bar(ui, now_ms));
         self.panes(ui, now_ms);
+        self.notification_toasts(ui.ctx(), top_bar.response.rect.bottom());
         self.close_dialog(ui.ctx());
         self.settings_window(ui.ctx(), now_ms);
         if self.whip_window.take_whip_stalled() {
@@ -1089,6 +1090,7 @@ impl eframe::App for MyrstackApp {
         }
         self.whip_now_dialogs(ui.ctx(), now_ms);
         self.spawn_dialog(ui.ctx());
+        self.record_selection();
         self.sync_screen_watch();
     }
 }

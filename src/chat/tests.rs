@@ -329,6 +329,7 @@ impl Fake {
                 .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
                 .collect(),
             extra_args: Vec::new(),
+            projects_root: self.root.join("projects"),
         }
     }
 
@@ -846,4 +847,45 @@ fn notes_ask_for_one_plain_say_line() {
         assert!(note.contains("this turn is spoken"), "{note}");
     }
     assert!(config::SYSTEM_PROMPT.contains("<say>…</say>"));
+}
+
+/// Opening a resumed session shows its whole earlier conversation, then new turns after it.
+#[test]
+fn fake_claude_resumed_session_shows_its_history() {
+    let fake = Fake::new();
+    let dir = fake.root.join("chat");
+    let mut store = session::SessionStore::open(&dir);
+    store.mark_started();
+    let id = store.record.session_id.clone();
+    let project = fake
+        .root
+        .join("projects")
+        .join(crate::claude::encode_project_dir(&dir));
+    std::fs::create_dir_all(&project).unwrap();
+    let turns = 2_000;
+    let mut text = String::new();
+    for i in 0..turns {
+        let prompt =
+            serde_json::json!({"type": "user", "message": {"content": format!("question {i}")}});
+        let reply = serde_json::json!({"type": "assistant", "message": {"id": format!("m{i}"),
+            "content": [{"type": "text", "text": format!("answer {i}")}]}});
+        text.push_str(&format!("{prompt}\n{reply}\n"));
+    }
+    std::fs::write(project.join(format!("{id}.jsonl")), text).unwrap();
+
+    let mut chat = ChatSession::spawn(fake.config(&[]), None);
+    wait_until(&mut chat, "history", |c| {
+        c.transcript.items.len() >= turns * 2
+    });
+    assert_eq!(
+        chat.transcript.items[0],
+        ChatItem::User("question 0".into())
+    );
+    wait_until(&mut chat, "ready", |c| c.state == SessionState::Ready);
+    assert!(chat.send("ping"));
+    wait_until(&mut chat, "reply", |c| !c.transcript.running);
+    let items = &chat.transcript.items;
+    assert_eq!(items[turns * 2], ChatItem::User("ping".into()));
+    assert_eq!(chat.transcript.assistant_text().last(), Some(&"pong"));
+    assert!(fake.args_log()[0].contains(&format!("--resume {id}")));
 }

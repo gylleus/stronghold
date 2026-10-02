@@ -31,6 +31,7 @@ fn cx<'a>(
         queen,
         general,
         voice: VoiceStatus::default(),
+        notify: NotifyStatus::default(),
     }
 }
 
@@ -70,7 +71,7 @@ fn each_section_renders_headless() {
         running_model: Some("claude-fable-5"),
         env_model: None,
     };
-    let cases: [(Section, &[&str]); 4] = [
+    let cases: [(Section, &[&str]); 5] = [
         (
             Section::Queen,
             &[
@@ -88,6 +89,19 @@ fn each_section_renders_headless() {
                 "Dry run (log only, send nothing)",
                 "Stall threshold",
                 "Whip all stalled now",
+            ],
+        ),
+        (
+            Section::Notifications,
+            &[
+                "Quiet mode (do not disturb)",
+                "macOS notifications",
+                "Pop-ups in the Myrstack window",
+                "Play sounds from",
+                "Tink",
+                "Glass",
+                "Sosumi",
+                "Volume",
             ],
         ),
         (
@@ -435,4 +449,52 @@ fn queen_speak_replies_applies_and_saves_at_once() {
     assert!(SettingsPane::load(Some(path)).voice().speak_replies);
     // The palette's toggle goes through the same call.
     assert!(!pane.set_speak_replies(false).speak_replies);
+}
+
+#[test]
+fn notification_test_buttons_report_the_draft() {
+    let status = WhipStatus::default();
+    let info = general();
+    let mut pane = SettingsPane::load(None);
+    pane.open_section(Section::Notifications);
+    pane.notify_draft.volume_percent = 40;
+    let out = click_label("Test urgent", |ui| {
+        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+    });
+    let (severity, settings) = out.test_notification.expect("test notification");
+    assert_eq!(severity, crate::notify::Severity::Urgent);
+    assert_eq!(settings.volume_percent, 40, "the unsaved draft");
+    assert_eq!(pane.notifications().volume_percent, 70, "nothing saved");
+
+    let out = click_label("▶ Test", |ui| {
+        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+    });
+    assert_eq!(
+        out.test_sound,
+        Some((crate::notify::Sound::System("Tink".into()), 40))
+    );
+}
+
+#[test]
+fn notification_settings_save_and_quiet_toggles_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    let mut pane = SettingsPane::load(Some(path.clone()));
+    pane.notify_draft.popup_min = crate::notify::Severity::Warn;
+    pane.notify_draft.sounds.info = crate::notify::Sound::File(PathBuf::new());
+    assert_eq!(
+        pane.save_notifications(),
+        None,
+        "an empty custom file is refused"
+    );
+    pane.notify_draft.sounds.info = crate::notify::Sound::None;
+    let saved = pane.save_notifications().unwrap();
+    assert_eq!(saved.popup_min, crate::notify::Severity::Warn);
+    let quiet = pane.set_quiet(true);
+    assert!(quiet.quiet);
+    assert_eq!(quiet.popup_min, crate::notify::Severity::Warn);
+    let loaded = crate::whip::Settings::load_from(&path)
+        .settings
+        .notifications;
+    assert_eq!(loaded, quiet);
 }

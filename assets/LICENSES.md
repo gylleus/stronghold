@@ -8,9 +8,14 @@ Everything here is compiled into the binary (`include_bytes!`); nothing is fetch
 | `art/queen.svg` | Ant and Crown from [Microsoft Fluent Emoji](https://github.com/microsoft/fluentui-emoji) (Flat), composed on a honey hexagon drawn for Myrstack | MIT (Fluent parts); hexagon: Myrstack |
 | `art/ant_cell.svg` | Ant from Fluent Emoji (Flat) on a comb cell drawn for Myrstack | MIT (Fluent parts); cell: Myrstack |
 | `art/anthill.svg` | Ants from Fluent Emoji (Flat) on an anthill drawn for Myrstack | MIT (Fluent parts); mound: Myrstack |
+| `art/farm/ant_grey.png`, `art/farm/ant_red.png` | ["16x16 Ant Enemies"](https://opengameart.org/content/16x16-ant-enemies) by ARoachIFoundOnMyPillow, grey and red sprite sheets, unmodified | CC0 |
+| `art/farm/emote_*.png` | [Emotes Pack](https://opengameart.org/content/emotes-pack) by Kenney (kenney.nl), pixel style 1, unmodified | CC0 |
+| `art/farm/crown.png`, `art/farm/coin.png`, `art/farm/coin_pile.png` | [Gold treasure icons 16x16](https://opengameart.org/node/60941) by Bonsaiheldin (bonsaiheld.org), icons 9, 2 and 3, unmodified | CC0 |
 
 Both licenses are permissive and allow commercial use and modification; they ask that the
-copyright notice and license text travel with copies, which this file does.
+copyright notice and license text travel with copies, which this file does. The ant farm's
+pixel art (`art/farm`) is CC0 (public domain): no notice is required, the credits above are
+a courtesy. Its soil, grass and tunnel tiles are generated in `src/ui/ant_farm/sprites.rs`.
 
 To add an icon, pick it at phosphoricons.com and add its codepoint (from the package's
 `src/bold/style.css`) to `src/ui/icons.rs`: the whole bold font is bundled.

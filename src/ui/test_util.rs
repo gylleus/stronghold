@@ -4,12 +4,14 @@ use eframe::egui::{self, Event, PointerButton, Pos2, Rect, Ui};
 
 const SCREEN: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1200.0, 900.0));
 
-/// Screen centre of the text `label` in a frame's shapes.
+/// Screen centre of the text `label` (its first row, so labels placed mid-line by a
+/// wrapping layout land right) in a frame's shapes.
 pub fn text_center(output: &egui::FullOutput, label: &str) -> Option<Pos2> {
     fn walk(shape: &egui::Shape, label: &str) -> Option<Pos2> {
         match shape {
             egui::Shape::Text(t) if t.galley.text() == label => {
-                Some(t.pos + t.galley.rect.center().to_vec2())
+                let row = t.galley.rows.first()?.rect_without_leading_space();
+                Some(t.pos + row.center().to_vec2())
             }
             egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| walk(s, label)),
             _ => None,

@@ -348,6 +348,7 @@ pub fn task_create_args(
     coordinator: &str,
     spec: &str,
     title: Option<&str>,
+    display_name: Option<&str>,
 ) -> Vec<String> {
     let mut args = base(&["orchestration", "task-create"]);
     args.push(flag("run", run_id));
@@ -356,6 +357,17 @@ pub fn task_create_args(
     if let Some(title) = title {
         args.push(flag("task-title", title));
     }
+    if let Some(name) = display_name {
+        args.push(flag("display-name", name));
+    }
+    args
+}
+
+/// `orca worktree set --display-name`: the name Orca (and Myrstack) shows for a worktree.
+pub fn worktree_name_args(worktree_id: &str, name: &str) -> Vec<String> {
+    let mut args = base(&["worktree", "set"]);
+    args.push(flag("worktree", format!("id:{worktree_id}")));
+    args.push(flag("display-name", name));
     args
 }
 

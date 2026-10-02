@@ -2,9 +2,10 @@
 //! top bar, sidebar, graph, legend, the Queen's details and her chat. For checking the look
 //! (icons, artwork, both themes) without Orca or a Queen session.
 //!
-//! `cargo run --example visual_tour [--light] [--empty] [--graph] [--shot out.png]`: `--empty`
-//! shows a fleet with no agents, `--graph` the graph and legend alone; with `--shot`, it saves a
-//! screenshot once the layout has settled and exits.
+//! `cargo run --example visual_tour [--light] [--empty] [--graph] [--agent] [--shot out.png]`:
+//! `--empty` shows a fleet with no agents, `--graph` the graph and legend alone, `--agent` a
+//! worker selected instead of the Queen (its details and conversation); with `--shot`, it saves
+//! a screenshot once the layout has settled and exits.
 
 use std::time::{Duration, Instant};
 
@@ -37,6 +38,8 @@ fn main() -> eframe::Result {
     let light = args.iter().any(|a| a == "--light");
     let empty = args.iter().any(|a| a == "--empty");
     let graph_only = args.iter().any(|a| a == "--graph");
+    let agent =
+        (args.iter().any(|a| a == "--agent") && !empty).then(|| NodeId::dispatch("run_a", "d1"));
     eframe::run_native(
         "visual tour",
         eframe::NativeOptions {
@@ -53,7 +56,7 @@ fn main() -> eframe::Result {
             let snapshot = if empty { empty_fleet() } else { fleet() };
             let mut graph = GraphView::new();
             graph.sync(&snapshot);
-            graph.set_selected(Some(&NodeId::queen()));
+            graph.set_selected(Some(agent.as_ref().unwrap_or(&NodeId::queen())));
             if !empty {
                 graph.set_pr_ready([NodeId::dispatch("run_a", "d2")].into());
             }
@@ -66,6 +69,8 @@ fn main() -> eframe::Result {
                 chat: Default::default(),
                 transcript: Transcript::default(),
                 graph_only,
+                agent,
+                input: Default::default(),
                 shot,
                 since: Instant::now(),
                 fitted: false,
@@ -84,6 +89,9 @@ struct Tour {
     chat: ui::chat::ChatPanelState,
     transcript: Transcript,
     graph_only: bool,
+    /// The selected agent, when not the Queen.
+    agent: Option<NodeId>,
+    input: ui::terminal::InputPanelState,
     shot: Option<String>,
     since: Instant,
     fitted: bool,
@@ -95,6 +103,30 @@ impl Tour {
     /// selected.
     fn panels(&mut self, ui: &mut egui::Ui) {
         let window = ui.ctx().content_rect().width();
+        if let Some(node) = self.agent.as_ref().and_then(|id| self.snapshot.node(id)) {
+            egui::Panel::right("terminal")
+                .resizable(true)
+                .default_size(window * CONVERSATION_SHARE)
+                .show(ui, |ui| {
+                    let input = ui::terminal::PanelInput {
+                        review_rows: &[],
+                        state: &mut self.input,
+                        terminal: None,
+                        conversation: None,
+                        is_node: &|_| false,
+                    };
+                    ui::terminal::terminal_panel(ui, node, None, input, 0);
+                });
+            egui::Panel::right("details")
+                .resizable(true)
+                .default_size(DETAILS_WIDTH)
+                .show(ui, |ui| {
+                    ui::widgets::section_label(ui, "Details");
+                    ui::terminal::details_panel(ui, node, None, None, 0);
+                });
+            self.sidebar(ui);
+            return;
+        }
         egui::Panel::right("terminal")
             .resizable(true)
             .default_size(window * CONVERSATION_SHARE)
@@ -121,6 +153,10 @@ impl Tour {
                 };
                 ui::queen::queen_details(ui, &mut self.queen, inputs, || unreachable!());
             });
+        self.sidebar(ui);
+    }
+
+    fn sidebar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("sidebar")
             .resizable(true)
             .default_size(260.0)

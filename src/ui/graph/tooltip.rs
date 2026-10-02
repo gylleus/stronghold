@@ -19,6 +19,16 @@ pub fn kind_label(kind: NodeKind) -> &'static str {
     }
 }
 
+/// The kind as the tooltip names it: agent sessions of a task are ants.
+fn ant_kind_label(kind: NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Coordinator => "coordinator ant",
+        NodeKind::Worker => "worker ant",
+        NodeKind::Terminal => "ant (loose terminal)",
+        other => kind_label(other),
+    }
+}
+
 pub fn state_label(state: NodeState) -> &'static str {
     match state {
         NodeState::Working => "working",
@@ -74,7 +84,11 @@ pub fn node_tooltip(
     ui.label(crate::ui::icons::with_icon(
         ui,
         crate::ui::icons::kind_icon(node.kind),
-        &format!("{} · {}", kind_label(node.kind), state_label(node.state)),
+        &format!(
+            "{} · {}",
+            ant_kind_label(node.kind),
+            state_label(node.state)
+        ),
         TextStyle::Body,
         None,
     ));

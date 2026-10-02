@@ -30,6 +30,7 @@ pub enum ActionId {
     ResetPanes,
     GraphView,
     TableView,
+    AntFarmView,
     ClearFilters,
     ShowNeedsInput,
     ShowStalled,
@@ -42,6 +43,8 @@ pub enum ActionId {
     PrevRun,
     NextNode,
     PrevNode,
+    HistoryBack,
+    HistoryForward,
     OpenInOrca,
     TypeIntoTerminal,
     KeyboardHelp,
@@ -109,8 +112,8 @@ pub const ACTIONS: &[Action] = &[
     action(
         ActionId::NewSession,
         "new_session",
-        "New session…",
-        "spawn start launch agent claude codex worktree worker prompt",
+        "New ant…",
+        "ant session spawn start launch agent claude codex worktree worker prompt",
         None,
     ),
     action(
@@ -219,6 +222,13 @@ pub const ACTIONS: &[Action] = &[
         None,
     ),
     action(
+        ActionId::AntFarmView,
+        "ant_farm_view",
+        "Ant farm view",
+        "switch view ants colony tunnels farm",
+        None,
+    ),
+    action(
         ActionId::ClearFilters,
         "clear_filters",
         "Clear filters",
@@ -303,6 +313,20 @@ pub const ACTIONS: &[Action] = &[
         Some("k"),
     ),
     action(
+        ActionId::HistoryBack,
+        "history_back",
+        "Back",
+        "history previous last return selection navigate go",
+        Some("⌘["),
+    ),
+    action(
+        ActionId::HistoryForward,
+        "history_forward",
+        "Forward",
+        "history next selection navigate go",
+        Some("⌘]"),
+    ),
+    action(
         ActionId::OpenInOrca,
         "open_in_orca",
         "Open in Orca",
@@ -363,6 +387,9 @@ pub struct ActionContext {
     pub speaking: bool,
     /// Every reply is spoken.
     pub speak_replies: bool,
+    /// The selection history has an entry to go back or forward to.
+    pub can_back: bool,
+    pub can_forward: bool,
 }
 
 impl Default for ActionContext {
@@ -381,6 +408,8 @@ impl Default for ActionContext {
             talk_hotkey: "⌘⇧E".into(),
             speaking: false,
             speak_replies: false,
+            can_back: false,
+            can_forward: false,
         }
     }
 }
@@ -419,7 +448,10 @@ pub fn disabled_reason(id: ActionId, cx: &ActionContext) -> Option<&'static str>
         StopSpeaking if !cx.speaking => "The Queen is not speaking",
         GraphView if cx.view == View::Graph => "Already in graph view",
         TableView if cx.view == View::Table => "Already in table view",
+        AntFarmView if cx.view == View::AntFarm => "Already in ant farm view",
         ClearFilters if !cx.filters_active => "No filters are set",
+        HistoryBack if !cx.can_back => "No earlier selection",
+        HistoryForward if !cx.can_forward => "No later selection",
         WhipSelected | CloseSelected | WhipStalled | NextRepo | PrevRepo | NextRun | PrevRun
         | NextNode | PrevNode | FitGraph | ResetLayout | KeyboardHelp
             if !cx.has_data =>
@@ -464,7 +496,7 @@ pub enum Dispatch {
     ShowOnly(NodeState),
     ToggleLoose,
     ToggleReleased,
-    /// Open the "New session…" dialog.
+    /// Open the "New ant…" dialog.
     NewSession,
 }
 
@@ -491,6 +523,7 @@ pub fn dispatch(id: ActionId) -> Dispatch {
         A::ResetPanes => Dispatch::ResetPanes,
         A::GraphView => Dispatch::SetView(View::Graph),
         A::TableView => Dispatch::SetView(View::Table),
+        A::AntFarmView => Dispatch::SetView(View::AntFarm),
         A::ClearFilters => Dispatch::ClearFilters,
         A::ShowNeedsInput => Dispatch::ShowOnly(NodeState::NeedsInput),
         A::ShowStalled => Dispatch::ShowOnly(NodeState::Stalled),
@@ -503,6 +536,8 @@ pub fn dispatch(id: ActionId) -> Dispatch {
         A::PrevRun => Dispatch::Key(KeyCommand::PrevRun),
         A::NextNode => Dispatch::Key(KeyCommand::NextNode),
         A::PrevNode => Dispatch::Key(KeyCommand::PrevNode),
+        A::HistoryBack => Dispatch::Key(KeyCommand::HistoryBack),
+        A::HistoryForward => Dispatch::Key(KeyCommand::HistoryForward),
         A::OpenInOrca => Dispatch::Key(KeyCommand::OpenInOrca),
         A::TypeIntoTerminal => Dispatch::Key(KeyCommand::FocusInput),
         A::KeyboardHelp => Dispatch::Key(KeyCommand::ToggleHelp),
@@ -593,12 +628,22 @@ mod tests {
     #[test]
     fn shortcut_labels_match_the_key_bindings() {
         use crate::ui::keys::command_for_event;
+        use eframe::egui::{Event, Key, Modifiers};
         for a in ACTIONS {
             let (Some(label), Dispatch::Key(command)) = (a.shortcut, dispatch(a.id)) else {
                 continue;
             };
             let key = label.split_whitespace().next().unwrap();
-            let event = eframe::egui::Event::Text(key.to_string());
+            let event = match key.strip_prefix('⌘') {
+                Some(name) => Event::Key {
+                    key: Key::from_name(name).unwrap_or_else(|| panic!("{label}")),
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::COMMAND,
+                },
+                None => Event::Text(key.to_string()),
+            };
             assert_eq!(command_for_event(&event, false), Some(command), "{label}");
         }
     }
@@ -627,6 +672,7 @@ mod tests {
             (A::ResetPanes, Dispatch::ResetPanes),
             (A::GraphView, Dispatch::SetView(View::Graph)),
             (A::TableView, Dispatch::SetView(View::Table)),
+            (A::AntFarmView, Dispatch::SetView(View::AntFarm)),
             (A::ClearFilters, Dispatch::ClearFilters),
             (A::ShowNeedsInput, Dispatch::ShowOnly(NodeState::NeedsInput)),
             (A::ShowStalled, Dispatch::ShowOnly(NodeState::Stalled)),
@@ -639,6 +685,8 @@ mod tests {
             (A::PrevRun, Dispatch::Key(KeyCommand::PrevRun)),
             (A::NextNode, Dispatch::Key(KeyCommand::NextNode)),
             (A::PrevNode, Dispatch::Key(KeyCommand::PrevNode)),
+            (A::HistoryBack, Dispatch::Key(KeyCommand::HistoryBack)),
+            (A::HistoryForward, Dispatch::Key(KeyCommand::HistoryForward)),
             (A::OpenInOrca, Dispatch::Key(KeyCommand::OpenInOrca)),
             (A::TypeIntoTerminal, Dispatch::Key(KeyCommand::FocusInput)),
             (A::KeyboardHelp, Dispatch::Key(KeyCommand::ToggleHelp)),
@@ -686,7 +734,15 @@ mod tests {
         cx.selected_terminal = true;
         cx.chat_ready = true;
         cx.filters_active = true;
+        assert_eq!(
+            disabled_reason(ActionId::HistoryBack, &cx),
+            Some("No earlier selection")
+        );
+        cx.can_back = true;
+        cx.can_forward = true;
         for id in [
+            ActionId::HistoryBack,
+            ActionId::HistoryForward,
             ActionId::WhipSelected,
             ActionId::CloseSelected,
             ActionId::OpenInOrca,

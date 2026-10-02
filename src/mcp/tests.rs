@@ -205,6 +205,7 @@ fn initialize_echoes_a_supported_version() {
         "subagent",
         "needs_input",
         "list_agents",
+        "An ant is one dedicated agent session",
     ] {
         assert!(instructions.contains(word), "instructions mention {word}");
     }
@@ -447,6 +448,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "kickoff",
         "mark_pr_ready",
         "review_queue",
+        "notify",
     ];
     assert_eq!(names, expected);
     let reads = [
@@ -490,6 +492,14 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
             );
         }
     }
+    let spawn = tools.iter().find(|t| t["name"] == "spawn_session").unwrap();
+    assert_eq!(spawn["annotations"]["title"], "Start a new ant");
+    assert!(
+        spawn["description"]
+            .as_str()
+            .unwrap()
+            .contains("make a new ant for X")
+    );
     let close = tools.iter().find(|t| t["name"] == "close_agents").unwrap();
     assert_eq!(
         close["inputSchema"]["properties"]["dry_run"]["default"],
@@ -1432,4 +1442,490 @@ fn spawn_session_reports_the_new_session() {
     );
     assert!(is_error(&r));
     assert!(text(&r).contains("agent_readiness"), "{}", text(&r));
+}
+
+// ---------------------------------------------------------------------------
+// notify: agents reaching Karl
+
+fn agent_origin() -> crate::review::mark::Origin {
+    crate::review::mark::Origin {
+        terminal_handle: Some("term_442fcb9f".into()),
+        pane_key: Some("16b3a609:e499ad8b".into()),
+        tab_id: None,
+    }
+}
+
+fn agent_server<C: Control>(control: C) -> McpServer<C> {
+    McpServer::new(control).with_review_env(review::ReviewEnv {
+        origin: agent_origin(),
+        pending: None,
+        queue_file: None,
+    })
+}
+
+#[test]
+fn notify_is_listed_with_when_to_call_it() {
+    let mut server = McpServer::new(FakeControl::default());
+    let r = rpc(&mut server, "tools/list", json!({}));
+    let tools = r["result"]["tools"].as_array().unwrap();
+    let tool = tools.iter().find(|t| t["name"] == "notify").unwrap();
+    assert_eq!(tool["inputSchema"]["required"], json!(["title"]));
+    assert_eq!(
+        tool["inputSchema"]["properties"]["severity"]["enum"],
+        json!(["info", "warn", "urgent"])
+    );
+    assert_eq!(tool["annotations"]["destructiveHint"], false);
+    assert_eq!(tool["annotations"]["readOnlyHint"], false);
+    let description = tool["description"].as_str().unwrap();
+    for phrase in [
+        "Blocked on Karl",
+        "Handover",
+        "one notification per event",
+        "standalone session with no coordinator",
+        "fall back to the existing channels",
+        "quiet mode",
+    ] {
+        assert!(
+            description.contains(phrase),
+            "description mentions {phrase:?}"
+        );
+    }
+    let init = rpc(&mut server, "initialize", json!({}));
+    let instructions = init["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.contains("notify {title, message, severity"));
+    // The tool and the server instructions give the same rules.
+    assert!(description.contains(notify::RULES));
+    assert!(instructions.ends_with(notify::RULES));
+}
+
+#[test]
+fn notify_sends_the_notice_with_the_callers_identity() {
+    let reply = json!({
+        "outcome": "delivered", "id": 4, "severity": "warn", "quiet": false,
+        "agent": {"id": "term:term_442fcb9f", "label": "realtime-255"},
+        "delivery": {"native": true, "in_app": true, "sound": true},
+    });
+    let mut server = agent_server(FakeControl::default().reply("notify", Ok(reply)));
+    let r = call(
+        &mut server,
+        "notify",
+        json!({
+            "title": "Blocked: need prod DB access",
+            "message": "cp-12 needs a read replica",
+            "severity": "warn",
+            "url": "https://github.com/o/r/issues/12",
+        }),
+    );
+    assert!(!is_error(&r), "{}", text(&r));
+    assert_eq!(
+        text(&r),
+        "Sent to Karl (macOS pop-up, Myrstack pop-up, sound). Shown under realtime-255 \
+         (`term:term_442fcb9f`)."
+    );
+    assert_eq!(
+        server.control().calls,
+        vec![(
+            "notify".to_owned(),
+            json!({
+                "title": "Blocked: need prod DB access",
+                "message": "cp-12 needs a read replica",
+                "severity": "warn",
+                "url": "https://github.com/o/r/issues/12",
+                "origin": {"terminal_handle": "term_442fcb9f", "pane_key": "16b3a609:e499ad8b"},
+            })
+        )]
+    );
+    assert_eq!(r["structuredContent"]["id"], 4);
+    assert_eq!(
+        r["structuredContent"]["origin"]["terminal_handle"],
+        "term_442fcb9f"
+    );
+}
+
+#[test]
+fn notify_explains_each_outcome() {
+    let cases = [
+        (
+            json!({"outcome": "delivered", "id": 1, "quiet": true,
+                   "delivery": {"native": false, "in_app": false, "sound": false}}),
+            false,
+            "Recorded in Karl's inbox without a pop-up (Karl is in quiet mode).",
+        ),
+        (
+            json!({"outcome": "delivered", "id": 1, "quiet": false,
+                   "delivery": {"native": false, "in_app": false, "sound": false}}),
+            false,
+            "below the severity Karl has pop-ups and sounds for",
+        ),
+        (
+            json!({"outcome": "collapsed", "id": 1, "count": 3}),
+            false,
+            "collapsed into it (×3)",
+        ),
+        (
+            json!({"outcome": "rate_limited", "retry_after_ms": 150_000}),
+            true,
+            "try again in 3 min",
+        ),
+        (
+            json!({"outcome": "delivered", "id": 1, "unknown_agent": "ghost",
+                   "delivery": {"native": true}}),
+            false,
+            "no node matches agent \"ghost\"",
+        ),
+    ];
+    for (reply, error, phrase) in cases {
+        let mut server = agent_server(FakeControl::default().reply("notify", Ok(reply)));
+        let r = call(&mut server, "notify", json!({"title": "t"}));
+        assert_eq!(is_error(&r), error, "{}", text(&r));
+        assert!(text(&r).contains(phrase), "{phrase:?} in {}", text(&r));
+    }
+}
+
+#[test]
+fn notify_refuses_bad_arguments_before_calling_the_app() {
+    let mut server = agent_server(FakeControl::default());
+    for (args, phrase) in [
+        (json!({}), "missing \"title\""),
+        (json!({"title": "  "}), "\"title\""),
+        (
+            json!({"title": "t", "severity": "loud"}),
+            "unknown severity",
+        ),
+        (
+            json!({"title": "t", "url": "file:///etc/hosts"}),
+            "http(s) link",
+        ),
+    ] {
+        let r = call(&mut server, "notify", args.clone());
+        assert!(is_error(&r), "{args}");
+        assert!(text(&r).contains(phrase), "{args}: {}", text(&r));
+    }
+    assert!(server.control().calls.is_empty());
+}
+
+#[test]
+fn notify_says_when_myrstack_is_down() {
+    let mut server =
+        agent_server(FakeControl::default().reply("notify", Err(CallError::NotRunning)));
+    let r = call(&mut server, "notify", json!({"title": "t"}));
+    assert!(is_error(&r));
+    assert!(text(&r).starts_with("Myrstack isn't running, so Karl can't be notified"));
+}
+
+/// Answers `notify` like the app: through a real dispatcher.
+struct CenterApp(
+    std::sync::Mutex<(
+        crate::notify::NotificationCenter,
+        crate::notify::NotifySettings,
+    )>,
+);
+
+impl CommandHandler for CenterApp {
+    fn execute(&self, command: ControlCommand) -> Result<Value, ControlError> {
+        let ControlCommand::Notify(notice) = command else {
+            return Err(ControlError::failed("only notify"));
+        };
+        let mut guard = self.0.lock().unwrap();
+        let (center, settings) = &mut *guard;
+        let outcome = center.dispatch(notice.incoming(None), settings, NOW);
+        let quiet = settings.quiets(notice.severity);
+        Ok(crate::notify::agent::reply(
+            &outcome, &notice, None, None, quiet,
+        ))
+    }
+}
+
+/// The tool, the control socket and the dispatcher, end to end: delivery, collapsing
+/// duplicates, the per-agent limit and quiet mode.
+#[test]
+fn notify_reaches_the_dispatcher_over_the_socket() {
+    use crate::notify::dispatch::AGENT_MAX;
+    use crate::notify::{NotificationCenter, NotifySettings, Severity, Source};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("c.sock");
+    let app = Arc::new(CenterApp(std::sync::Mutex::new((
+        NotificationCenter::default(),
+        NotifySettings::default(),
+    ))));
+    let server = ControlServer::start(
+        &path,
+        Backend {
+            status: SharedStatus::new(),
+            screens: Arc::new(Screens),
+            commands: app.clone(),
+        },
+    )
+    .unwrap();
+    let mut mcp = agent_server(SocketControl::new(path.clone()));
+    let notify = |mcp: &mut McpServer<SocketControl>, title: &str, severity: &str| {
+        call(
+            mcp,
+            "notify",
+            json!({"title": title, "severity": severity, "message": "m"}),
+        )
+    };
+
+    let r = notify(&mut mcp, "Need a decision", "warn");
+    assert_eq!(
+        text(&r),
+        "Sent to Karl (macOS pop-up, Myrstack pop-up, sound)."
+    );
+    let r = notify(&mut mcp, "Need a decision", "warn");
+    assert!(text(&r).contains("collapsed into it (×2)"), "{}", text(&r));
+    for i in 1..AGENT_MAX {
+        let r = notify(&mut mcp, &format!("n{i}"), "info");
+        assert!(!is_error(&r), "{i}: {}", text(&r));
+    }
+    let r = notify(&mut mcp, "one too many", "urgent");
+    assert!(is_error(&r));
+    assert!(text(&r).starts_with("Not sent:"), "{}", text(&r));
+    {
+        let guard = app.0.lock().unwrap();
+        let entries = guard.0.history.entries();
+        assert_eq!(entries.len(), AGENT_MAX);
+        let first = &entries[0];
+        assert_eq!(
+            (first.source, first.severity, first.count),
+            (Source::Agent, Severity::Warn, 2)
+        );
+        assert_eq!(first.sender.as_deref(), Some("term_442fcb9f"));
+        assert_eq!(first.target.as_deref(), Some("term_442fcb9f"));
+    }
+
+    // Quiet mode: another agent's warning is recorded silently; urgent gets through.
+    app.0.lock().unwrap().1.quiet = true;
+    let mut other = McpServer::new(SocketControl::new(path.clone()));
+    let r = call(
+        &mut other,
+        "notify",
+        json!({"title": "fyi", "severity": "warn"}),
+    );
+    assert!(text(&r).contains("quiet mode"), "{}", text(&r));
+    let r = call(
+        &mut other,
+        "notify",
+        json!({"title": "prod down", "severity": "urgent"}),
+    );
+    assert!(text(&r).starts_with("Sent to Karl"), "{}", text(&r));
+    drop(server);
+}
+
+fn alert(id: u64, read: bool) -> view::AlertView {
+    view::AlertView {
+        id,
+        at_ms: NOW - 120_000,
+        severity: "warn".into(),
+        source: "agent".into(),
+        title: format!("Blocked {id}"),
+        message: "needs prod access".into(),
+        url: Some("https://github.com/o/r/issues/1".into()),
+        agent: Some("realtime-255".into()),
+        node: Some("term:term_442fcb9f".into()),
+        count: 2,
+        read,
+    }
+}
+
+use crate::control::view;
+
+#[test]
+fn alerts_lists_the_inbox_with_read_state() {
+    let alerts = json!({"alerts": [alert(2, false), alert(1, true)]});
+    let mut server = McpServer::new(FakeControl::default().reply("alerts", Ok(alerts)));
+    let r = call(&mut server, "alerts", json!({}));
+    let t = text(&r);
+    assert!(
+        t.starts_with("2 alerts, 1 unread (newest first, showing 2):"),
+        "{t}"
+    );
+    let line = t.lines().nth(1).unwrap();
+    assert!(line.starts_with("- [unread] warn · "), "{line}");
+    assert!(
+        line.ends_with(
+            "realtime-255: Blocked 2 ×2 `term:term_442fcb9f` — needs prod access \
+             <https://github.com/o/r/issues/1>"
+        ),
+        "{line}"
+    );
+    assert_eq!(r["structuredContent"]["unread"], 1);
+    let r = call(&mut server, "alerts", json!({"unread_only": true}));
+    assert_eq!(text(&r).lines().count(), 2, "{}", text(&r));
+}
+
+#[test]
+fn fleet_status_reports_unread_notifications() {
+    let mut view = status_view();
+    view.alerts = vec![alert(3, false), alert(2, true)];
+    let mut server = McpServer::new(HeadlessControl::from_view(view, Arc::new(Screens)));
+    let r = call(&mut server, "fleet_status", json!({}));
+    let t = text(&r);
+    assert!(
+        t.contains("Notifications: 1 unread (alerts lists them):\n- [unread] warn · "),
+        "{t}"
+    );
+    assert_eq!(r["structuredContent"]["notifications"]["unread"], 1);
+
+    let mut server = McpServer::new(app());
+    let t = text(&call(&mut server, "fleet_status", json!({}))).to_owned();
+    assert!(t.contains("Notifications: none unread"), "{t}");
+}
+
+// ---------------------------------------------------------------------------
+// Interrupted spawns
+
+/// Answers `spawn` slowly, like a real spawn, so a cancel can arrive while it runs.
+struct SlowSpawn(FakeControl);
+
+impl Control for SlowSpawn {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, CallError> {
+        if method == "spawn" {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+        self.0.call(method, params)
+    }
+}
+
+fn wall_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+fn spawn_request(id: u64) -> String {
+    json!({
+        "jsonrpc": "2.0", "id": id, "method": "tools/call",
+        "params": {"name": "spawn_session", "arguments": {
+            "mode": "new_worktree", "repo": "myrstack", "name": "agent-notify-tool",
+            "prompt": "Add a notify tool",
+        }},
+    })
+    .to_string()
+}
+
+fn slow_spawn_server(log: &std::path::Path) -> McpServer<SlowSpawn> {
+    let reply = json!({
+        "handle": "term_new", "node": "term:term_new", "worktree_path": "/wt/agent-notify-tool",
+        "verified": true, "notes": [],
+    });
+    McpServer::new(SlowSpawn(FakeControl::default().reply("spawn", Ok(reply))))
+        .with_interrupted_log(log)
+}
+
+#[test]
+fn a_spawn_cancelled_while_it_ran_is_recorded() {
+    use std::io::{BufRead, BufReader, Write};
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("interrupted.json");
+    let mut server = slow_spawn_server(&log);
+    let (input, mut to_server) = std::io::pipe().unwrap();
+    let (from_server, output) = std::io::pipe().unwrap();
+    let serving = std::thread::spawn(move || server.serve(BufReader::new(input), output));
+    let mut replies = BufReader::new(from_server);
+    let mut line = String::new();
+
+    let cancel = json!({
+        "jsonrpc": "2.0", "method": "notifications/cancelled",
+        "params": {"requestId": 7, "reason": "user interrupted"},
+    });
+    writeln!(to_server, "{}\n{cancel}", spawn_request(7)).unwrap();
+    replies.read_line(&mut line).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["id"], 7);
+    let records = crate::spawn::interrupted::load(&log, wall_ms());
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert_eq!(records[0].reason, "cancelled");
+    assert_eq!(records[0].node.as_deref(), Some("term:term_new"));
+    assert_eq!(records[0].name.as_deref(), Some("agent-notify-tool"));
+
+    // A spawn whose result reaches the client records nothing.
+    writeln!(to_server, "{}", spawn_request(8)).unwrap();
+    line.clear();
+    replies.read_line(&mut line).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["id"], 8);
+    assert_eq!(crate::spawn::interrupted::load(&log, wall_ms()).len(), 1);
+    drop(to_server);
+    serving.join().unwrap().unwrap();
+}
+
+#[test]
+fn a_spawn_whose_client_went_away_is_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("interrupted.json");
+    let mut server = slow_spawn_server(&log);
+    let mut out = Vec::new();
+    server
+        .serve(Cursor::new(format!("{}\n", spawn_request(3))), &mut out)
+        .unwrap();
+    let records = crate::spawn::interrupted::load(&log, wall_ms());
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].reason, "disconnected");
+}
+
+#[test]
+fn fleet_status_and_list_agents_show_interrupted_spawns() {
+    use crate::spawn::interrupted::{InterruptedSpawn, record};
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("interrupted.json");
+    let mut server = McpServer::new(app()).with_interrupted_log(&log);
+    let r = call(&mut server, "fleet_status", json!({}));
+    assert!(!text(&r).contains("Interrupted spawns"));
+    assert!(r["structuredContent"].get("interrupted_spawns").is_none());
+
+    record(
+        &log,
+        InterruptedSpawn {
+            at_ms: wall_ms(),
+            reason: "cancelled".into(),
+            mode: "new_worktree".into(),
+            handle: Some(CODEX.into()),
+            prompt: "Add a notify tool".into(),
+            ..InterruptedSpawn::default()
+        },
+    )
+    .unwrap();
+    for tool in ["fleet_status", "list_agents"] {
+        let r = call(&mut server, tool, json!({}));
+        let t = text(&r);
+        assert!(t.starts_with("Interrupted spawns (1)"), "{tool}: {t}");
+        assert!(t.contains(&format!("`{CODEX}`")), "{t}");
+        assert!(t.contains("don't spawn again"), "{t}");
+        assert_eq!(
+            r["structuredContent"]["interrupted_spawns"][0]["reason"],
+            "cancelled"
+        );
+    }
+}
+
+#[test]
+fn spawn_session_offers_allow_suffix_and_passes_it_on() {
+    let r = rpc(
+        &mut McpServer::new(FakeControl::default()),
+        "tools/list",
+        json!({}),
+    );
+    let spawn = r["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "spawn_session")
+        .unwrap();
+    assert_eq!(
+        spawn["inputSchema"]["properties"]["allow_suffix"]["type"],
+        "boolean"
+    );
+    assert!(
+        spawn["description"]
+            .as_str()
+            .unwrap()
+            .contains("run list_agents")
+    );
+    let mut server = McpServer::new(FakeControl::default());
+    call(
+        &mut server,
+        "spawn_session",
+        json!({"mode": "new_worktree", "repo": "r", "name": "x", "prompt": "go", "allow_suffix": true}),
+    );
+    assert_eq!(server.control().calls[0].1["allow_suffix"], true);
 }

@@ -1,4 +1,4 @@
-//! "New session…" dialog: pick where (a worktree, a new worktree, or a run as its worker), the
+//! "New ant…" dialog: pick where (a worktree, a new worktree, or a run as its worker), the
 //! agent and an initial prompt; see the planned `orca` commands; launch and watch each step.
 
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -9,8 +9,8 @@ use crate::fleet::FleetData;
 use crate::orca::spawn::WorkerPlacement;
 use crate::spawn::exec::JobId;
 use crate::spawn::{
-    Agent, Catalog, ModeName, SpawnEvent, SpawnOutcome, SpawnPlan, SpawnRequest, SpawnTarget,
-    StepStatus, build_plan, exec::SpawnFailure,
+    Agent, Catalog, LiveAgent, ModeName, SpawnEvent, SpawnOutcome, SpawnPlan, SpawnRequest,
+    SpawnTarget, StepStatus, build_plan, exec::SpawnFailure, name_conflict, new_worktree_of,
 };
 
 /// Longest run objective or terminal label shown in a picker.
@@ -63,6 +63,8 @@ pub struct TerminalChoice {
 pub struct SpawnFleet {
     pub runs: Vec<RunChoice>,
     pub terminals: Vec<TerminalChoice>,
+    /// Live agents, named when a new worktree's name is taken.
+    pub agents: Vec<LiveAgent>,
 }
 
 impl SpawnFleet {
@@ -99,7 +101,17 @@ impl SpawnFleet {
                 worktree_path: t.worktree_path.clone(),
             })
             .collect();
-        Self { runs, terminals }
+        Self {
+            runs,
+            terminals,
+            agents: Vec::new(),
+        }
+    }
+
+    /// Adds the snapshot's live agents.
+    pub fn with_agents(mut self, snapshot: Option<&crate::model::FleetSnapshot>) -> Self {
+        self.agents = snapshot.map(LiveAgent::from_snapshot).unwrap_or_default();
+        self
     }
 }
 
@@ -126,6 +138,8 @@ pub struct SpawnForm {
     pub agent: Agent,
     pub model: String,
     pub prompt: String,
+    /// Let Orca suffix a taken new worktree name instead of refusing it.
+    pub allow_suffix: bool,
 }
 
 impl SpawnForm {
@@ -211,13 +225,21 @@ impl SpawnForm {
             agent: self.agent,
             model: Some(self.model.clone()).filter(|m| !m.trim().is_empty()),
             prompt: self.prompt.clone(),
+            label: None,
         })
     }
 
     /// The plan the form describes, or what is missing.
     pub fn plan(&self, catalog: &Catalog, fleet: &SpawnFleet) -> Result<SpawnPlan, String> {
         let request = self.request(catalog, fleet)?;
-        build_plan(&request).map_err(|e| e.0)
+        let plan = build_plan(&request).map_err(|e| e.0)?;
+        if !self.allow_suffix
+            && let Some((repo_id, name)) = new_worktree_of(&plan.request)
+            && let Some(conflict) = name_conflict(catalog, repo_id, name, &[])
+        {
+            return Err(conflict.message(&fleet.agents));
+        }
+        Ok(plan)
     }
 }
 
@@ -373,7 +395,7 @@ impl SpawnDialog {
         let mut open = true;
         let mut launch = None;
         let form_height = (ctx.content_rect().height() * 0.55).max(240.0);
-        egui::Window::new("New session")
+        egui::Window::new("New ant")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -491,6 +513,9 @@ impl SpawnDialog {
                                         .hint_text("new worktree name"),
                                 );
                                 ui.end_row();
+                                ui.label("");
+                                suffix_checkbox(ui, form);
+                                ui.end_row();
                             }
                             WorkerPlace::Worktree => {
                                 ui.label("Worktree");
@@ -557,6 +582,9 @@ fn new_worktree_fields(ui: &mut egui::Ui, catalog: &Catalog, form: &mut SpawnFor
     ui.label("Name");
     ui.add(egui::TextEdit::singleline(&mut form.name).hint_text("e.g. fix-checkout-flake"));
     ui.end_row();
+    ui.label("");
+    suffix_checkbox(ui, form);
+    ui.end_row();
     let base = form
         .repo_id
         .as_deref()
@@ -566,6 +594,17 @@ fn new_worktree_fields(ui: &mut egui::Ui, catalog: &Catalog, form: &mut SpawnFor
     ui.label("Base ref");
     ui.add(egui::TextEdit::singleline(&mut form.base_branch).hint_text(base));
     ui.end_row();
+}
+
+fn suffix_checkbox(ui: &mut egui::Ui, form: &mut SpawnForm) {
+    ui.checkbox(
+        &mut form.allow_suffix,
+        "Allow a suffixed name (name-2) if taken",
+    )
+    .on_hover_text(
+        "Off: a name whose worktree or branch exists is refused, so the same work isn't \
+             started twice. On: Orca picks the next free name.",
+    );
 }
 
 fn repo_picker(ui: &mut egui::Ui, catalog: &Catalog, form: &mut SpawnForm) {
@@ -696,7 +735,7 @@ fn prompt_field(ui: &mut egui::Ui, prompt: &mut String) -> bool {
             .id(id)
             .desired_rows(6)
             .desired_width(f32::INFINITY)
-            .hint_text("What should the agent do? (⌘↩ to launch)"),
+            .hint_text("What should the ant do? (⌘↩ to launch)"),
     );
     crate::ui::widgets::focus_ring(ui, &response);
     submit
@@ -800,6 +839,13 @@ mod tests {
                 worktree_id: Some(WT_ID.into()),
                 worktree_path: Some("/wt".into()),
             }],
+            agents: vec![LiveAgent {
+                node: "term:term_w".into(),
+                state: "working".into(),
+                worktree_path: Some(
+                    "/Users/gylleus/orca/workspaces/commerce-platform/hack-77-admin-speed".into(),
+                ),
+            }],
         }
     }
 
@@ -854,6 +900,38 @@ mod tests {
                 .unwrap_err()
                 .contains("existing terminal")
         );
+    }
+
+    #[test]
+    fn form_refuses_a_taken_name_unless_a_suffix_is_allowed() {
+        let (catalog, fleet) = (catalog(), fleet());
+        let mut f = form(ModeName::NewWorktree);
+        f.repo_id = Some(REPO_ID.into());
+        f.name = "hack-77-admin-speed".into();
+        let e = f.plan(&catalog, &fleet).unwrap_err();
+        assert!(e.contains("term:term_w (working)"), "{e}");
+        f.allow_suffix = true;
+        assert!(f.plan(&catalog, &fleet).is_ok());
+
+        let mut f = form(ModeName::Worker);
+        f.run_id = Some("run_1".into());
+        f.repo_id = Some(REPO_ID.into());
+        f.name = "hack-77-admin-speed".into();
+        assert!(
+            f.plan(&catalog, &fleet)
+                .unwrap_err()
+                .contains("already exists")
+        );
+    }
+
+    #[test]
+    fn new_worktree_plans_show_the_startup_shell_close() {
+        let mut f = form(ModeName::NewWorktree);
+        f.repo_id = Some(REPO_ID.into());
+        f.name = "fresh".into();
+        let plan = f.plan(&catalog(), &fleet()).unwrap();
+        assert_eq!(plan.steps.last(), Some(&Step::CloseStartupShell));
+        assert!(plan.display_lines().last().unwrap().contains("--tab"));
     }
 
     #[test]
@@ -916,7 +994,7 @@ mod tests {
         dialog.form.prompt = "Fix the flaky test".into();
         let (launched, texts) = draw(&mut dialog, 3);
         assert!(launched.is_none());
-        assert!(texts.iter().any(|t| t == "New session"), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "New ant"), "{texts:?}");
         assert!(texts.iter().any(|t| t == "Planned commands"));
         assert!(
             texts.iter().any(|t| t.contains("orca terminal create")

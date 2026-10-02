@@ -35,11 +35,15 @@ pub enum KeyCommand {
     Whip,
     /// Open the Settings window (⌘,).
     OpenSettings,
+    /// Select the previous node in the selection history (⌘[, mouse back).
+    HistoryBack,
+    /// Select the next node in the selection history (⌘], mouse forward).
+    HistoryForward,
 }
 
 impl KeyCommand {
     /// Every command, for checks that each one is reachable from the command palette.
-    pub const ALL: [KeyCommand; 16] = [
+    pub const ALL: [KeyCommand; 18] = [
         KeyCommand::NextNode,
         KeyCommand::PrevNode,
         KeyCommand::NextRun,
@@ -56,6 +60,8 @@ impl KeyCommand {
         KeyCommand::ToggleChat,
         KeyCommand::Whip,
         KeyCommand::OpenSettings,
+        KeyCommand::HistoryBack,
+        KeyCommand::HistoryForward,
     ];
 }
 
@@ -75,6 +81,10 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
         "hold ⌘⇧E",
         "Talk to the Queen from any app; she answers aloud (default key, see Settings › Voice)",
     ),
+    (
+        "⌘[  ⌘]",
+        "Back / forward through the selected nodes (also the mouse's side buttons)",
+    ),
     ("j  k", "Next / previous node"),
     ("J  K", "Next / previous run"),
     ("]  [", "Next / previous repo"),
@@ -91,12 +101,21 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("drag", "Select the nodes in a box (⇧/⌘ adds)"),
     ("⇧/⌘ click", "Add or remove a node from the selection"),
     ("right-drag", "Pan the graph"),
+    ("two-finger swipe", "Pan the graph (trackpad)"),
+    (
+        "pinch  ⌘ scroll",
+        "Zoom the graph (a mouse wheel zooms too)",
+    ),
+    ("← ↑ ↓ →", "Pan the graph"),
     ("?", "Toggle this help"),
 ];
 
-/// The command `event` triggers. Only Esc, ⌘J and ⌘, work while a text field has focus; the letter
-/// commands come from text events so they follow the keyboard layout.
+/// The command `event` triggers. Only Esc, ⌘J, ⌘, and back/forward work while a text field
+/// has focus; the letter commands come from text events so they follow the keyboard layout.
 pub fn command_for_event(event: &Event, text_focused: bool) -> Option<KeyCommand> {
+    if let Some(command) = history_command(event) {
+        return Some(command);
+    }
     match event {
         Event::Key {
             key: Key::Escape,
@@ -130,6 +149,39 @@ pub fn command_for_event(event: &Event, text_focused: bool) -> Option<KeyCommand
             ..
         } if modifiers.is_none() || modifiers.command_only() => Some(KeyCommand::CloseSession),
         Event::Text(text) => command_for_text(text),
+        _ => None,
+    }
+}
+
+/// Back/forward: ⌘[ and ⌘] (by key or by position, so layouts where [ needs ⌥ work too) and
+/// the mouse's back and forward buttons.
+fn history_command(event: &Event) -> Option<KeyCommand> {
+    match event {
+        Event::Key {
+            key,
+            physical_key,
+            pressed: true,
+            modifiers,
+            ..
+        } if modifiers.command && !modifiers.shift && !modifiers.ctrl => {
+            let is = |k: Key| *key == k || *physical_key == Some(k);
+            if is(Key::OpenBracket) {
+                Some(KeyCommand::HistoryBack)
+            } else if is(Key::CloseBracket) {
+                Some(KeyCommand::HistoryForward)
+            } else {
+                None
+            }
+        }
+        Event::PointerButton {
+            button,
+            pressed: true,
+            ..
+        } => match button {
+            egui::PointerButton::Extra1 => Some(KeyCommand::HistoryBack),
+            egui::PointerButton::Extra2 => Some(KeyCommand::HistoryForward),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -481,6 +533,62 @@ mod tests {
         // Letter keys act through their text events, not the key events.
         assert_eq!(
             command_for_event(&key(Key::J, Modifiers::NONE), false),
+            None
+        );
+        for focused in [false, true] {
+            assert_eq!(
+                command_for_event(&key(Key::OpenBracket, Modifiers::COMMAND), focused),
+                Some(HistoryBack),
+                "Cmd+[ works in text fields too"
+            );
+            assert_eq!(
+                command_for_event(&key(Key::CloseBracket, Modifiers::COMMAND), focused),
+                Some(HistoryForward)
+            );
+        }
+        // Where [ is typed with Option (e.g. Swedish), Cmd+Option+[ and the key in ['s place.
+        let alt_cmd = Modifiers::COMMAND | Modifiers::ALT;
+        assert_eq!(
+            command_for_event(&key(Key::OpenBracket, alt_cmd), false),
+            Some(HistoryBack)
+        );
+        let by_position = Event::Key {
+            key: Key::A,
+            physical_key: Some(Key::CloseBracket),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        };
+        assert_eq!(command_for_event(&by_position, false), Some(HistoryForward));
+        let shifted = Modifiers::COMMAND | Modifiers::SHIFT;
+        assert_eq!(
+            command_for_event(&key(Key::OpenBracket, shifted), false),
+            None
+        );
+        assert_eq!(
+            command_for_event(&key(Key::OpenBracket, Modifiers::NONE), false),
+            None
+        );
+        let mouse = |button, pressed| Event::PointerButton {
+            pos: egui::Pos2::ZERO,
+            button,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        assert_eq!(
+            command_for_event(&mouse(egui::PointerButton::Extra1, true), true),
+            Some(HistoryBack)
+        );
+        assert_eq!(
+            command_for_event(&mouse(egui::PointerButton::Extra2, true), false),
+            Some(HistoryForward)
+        );
+        assert_eq!(
+            command_for_event(&mouse(egui::PointerButton::Extra1, false), false),
+            None
+        );
+        assert_eq!(
+            command_for_event(&mouse(egui::PointerButton::Primary, true), false),
             None
         );
         let release = Event::Key {

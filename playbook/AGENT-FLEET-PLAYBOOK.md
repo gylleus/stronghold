@@ -1,6 +1,6 @@
 # Agent Fleet Playbook: parallel Claude Code agents under Orca
 
-**v6, 2026-09-25.** How Karl runs a multi-agent engineering effort: one coordinator session,
+**v6, 2026-10-01.** How Karl runs a multi-agent engineering effort: one coordinator session,
 long-lived worker worktrees, adversarial review inside each, everything as Orca terminals Karl
 can watch and join. Workers follow `_AGENT_PROTOCOL.md`; this file is for coordinators and
 attendants.
@@ -9,13 +9,13 @@ attendants.
 
 ```
 Karl: talks only to the coordinator. Does not read tickets.
- ├─ Coordinator: interactive Claude Code session. Dispatches tracks, relays decisions, runs
- │  the merge gate, owns every merge. Does NOT watch the bus.
+ ├─ Coordinator: interactive Claude Code session (`claude --model claude-opus-5-5`). Dispatches
+ │  tracks, relays decisions, runs the merge gate, owns every merge. Does NOT watch the bus.
  │   ├─ Attendant: cheap watcher (`claude --model sonnet`, ATTENDANT-BRIEF-TEMPLATE.md).
  │   │  Binds the Run, absorbs heartbeats and acks, forwards real events as one line.
  │   └─ Orca Run (per campaign)
- │       ├─ Task → Dispatch → worker terminal in its own worktree (one track)
- │       │    └─ review subagents inside the worker: fresh context, read-only
+ │       ├─ Task → Dispatch → Codex worker terminal in its own worktree (one track)
+ │       │    └─ review subagents inside the worker: fresh context, read-only, Opus 5.5
  │       └─ Task → Dispatch → soak/verification track (telemetry only, ships no code)
  └─ Myrstack: Karl's desktop view of the whole fleet (graph, terminals, alerts). Its whip
     nudges stalled tasks (`Myrstack:` messages from `myrstack-whip`).
@@ -36,7 +36,7 @@ Check live rather than trusting a table: `orca status --json` (runtime must be r
   it is a retired workflow; ignore it.
 - Tickets: Linear (VROOM) through the coordinator's Linear MCP. Orca's Linear integration is
   not connected, so workers get ticket text only through their dispatch spec.
-- No secrets tooling: agents never self-serve credentials; they summon Karl.
+- No secrets tooling: agents never self-serve credentials; they summon Karl (_Human in the loop_).
 
 ## Core principles
 
@@ -49,9 +49,9 @@ Check live rather than trusting a table: `orca status --json` (runtime must be r
    agents editing one checkout; a second reader is fine. Branch from `origin/main`
    (`--no-parent` for independent tracks; child lineage only for genuinely stacked work).
 3. **Fresh context is the review.** Reviewers are subagents inside the worker
-   (`claudemd-style-reviewer`, `comment-style-auditor`, `/code-review high`) plus Ankra. A
-   reviewer must independently verify the plan's load-bearing facts against the code; wrong
-   facts are the top killer.
+   (`claudemd-style-reviewer`, `comment-style-auditor`, `/code-review high`, all on Opus 5.5,
+   never Fable) plus Ankra. A reviewer must independently verify the plan's load-bearing
+   facts against the code; wrong facts are the top killer.
    - On expensive-if-wrong tracks, add a `codex` review lane: `codex exec --sandbox read-only
 < /dev/null` (never `--full-auto`; without `< /dev/null` it blocks forever on stdin). It
      reviews the uncommitted working tree, which the PR bot cannot see. Claim complementary
@@ -90,9 +90,9 @@ orca terminal create --command "claude --model sonnet" --json
 orca orchestration run-create --objective "<campaign>" --json         # from the attendant
 orca orchestration task-create --spec "<track spec>" --json
 
-# Start every independent worker before waiting on any.
+# Start every independent worker before waiting on any. Coding workers are Codex.
 orca orchestration worker-start --task <task> \
-  --worktree new-top-level --name <track> --repo id:<repoId> --agent claude --setup run --json
+  --worktree new-top-level --name <track> --repo id:<repoId> --agent codex --setup run --json
 ```
 
 - **Read the receipt**, then **read the terminal tail.** `worker-start` can report `ready` /
@@ -104,10 +104,16 @@ orca orchestration worker-start --task <task> \
   missing.
 - Failed start: inspect `stage`, `effects`, `residualResources`; don't blind-retry.
 - `--repo id:<repoId>` comes from `orca repo list`; a worktree id is `<repoId>::<path>`.
-- Same-checkout work: `orca terminal create --worktree active --command "claude"`.
-- **Model tiering:** `--model <id> [--effort high]` on `worker-start` (fresh terminals only).
-  Strongest tier for design, root cause and soak verdicts; cheaper for mechanical ports,
-  config PRs and review passes.
+- Same-checkout work: `orca terminal create --worktree active --command "claude --model claude-opus-5-5"`.
+- **Model tiering** (Karl's rule since 2026-10-01; `--model <id> [--effort high]` on
+  `worker-start`, fresh terminals only):
+  - **Coding workers: Codex** (`--agent codex`).
+  - **Coordinators, planners, initial drafters and reviewers: Claude Opus 5.5.** Launch them
+    as `claude --model claude-opus-5-5`; Claude reviewer subagents run on Opus too (Agent
+    tool `model: "opus"`, which is Opus 5.5).
+  - **Attendant: sonnet**, unchanged.
+  - **Fable (`claude-fable-5-1`) is never a default.** Use it only when Karl explicitly asks
+    for it, and say so in the brief.
 - **Delivery is not execution.** `--inject` delivers the spec plus Orca's lifecycle preamble;
   follow-ups go by `orca orchestration send --to dispatch:<id>`. A send receipt is not
   delivery either: check `inbox` for `delivered_at`/`read_at` before blaming a worker, and
@@ -234,6 +240,8 @@ comment) so it describes the design as it now stands, then marks it.
   (deploy, cron window, dependencies).
 - Read the current body first and edit with `gh pr edit <n> --body-file -`. Say it comes from
   Karl's AI agent. `fleet-sweep.sh` reads each PR's first line.
+- After a `✅` marker, hand over: `mark_pr_ready {pr_url}` (Myrstack's review queue), then one
+  `notify` (info, the PR url, what Karl does next), per _Human in the loop_.
 
 ## Trust boundaries
 
@@ -254,9 +262,23 @@ comment) so it describes the design as it now stands, then marks it.
 
 - Karl can open and take over any terminal. Never submit his typed-but-unsent input. Ctrl+D at
   a claude prompt kills the session: leave done-looking terminals alone.
-- **Summon Karl** for passkeys, 2FA, secrets or judgment:
-  `osascript -e 'display dialog "Agent <track> needs you: <what>" with title "orca fleet"
-buttons {"OK"} giving up after 300'`, then wait ≥10 min, polling.
+- **Reaching Karl: Myrstack's `notify` tool** (`title`, `message`, `severity`, `url`). It pops
+  up on his screen with a sound and lands in his inbox, attributed to your terminal. One
+  notification per event; never for progress or routine status. The coordinator sends them,
+  and so does a standalone session with no coordinator. Workers go through their coordinator
+  (`ask`, `escalation`, `merge_ready`), except for the credential step in `_AGENT_PROTOCOL.md`.
+  - **Blocked on Karl** (a permission, credential, passkey or 2FA, prod approval, or a decision
+    only he can make): `severity: warn`, or `urgent` if work is stalled and can't wait. Say
+    what you need and what it unblocks, then wait ≥10 min, polling. A terminal sitting at a
+    prompt already shows as needs input and Myrstack notifies about it; don't add another.
+  - **Handover** (you're done and the next move is Karl's): a PR ready for his review (right
+    after the ready marker and `mark_pr_ready`), a merge waiting on him, a run or campaign
+    finished. `severity: info`, the `url`, and one line on what he needs to do next. It is a
+    status, not a merge question (principle 4). Myrstack folds it into its own "PR ready for
+    review" notification for the same PR, so Karl gets one.
+  - **If Myrstack isn't running**, `notify` errors: fall back to the old channels. Blocking
+    asks: `osascript -e 'display dialog "Agent <track> needs you: <what>" with title "orca
+fleet" buttons {"OK"} giving up after 300'`. Handovers: the chat and the ticket.
 - Secrets go only into password fields: never logs, PRs, tickets or summaries. Worker
   `.dev.vars` come from `.envrc.local` via `just`; don't hand-edit or echo them.
 - Say what you could and couldn't reach behind sign-in walls; a login page is not a verified

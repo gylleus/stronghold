@@ -189,6 +189,22 @@ fn loose_terminal_is_labelled_by_title() {
     assert_eq!(loose[0].state, NodeState::Idle);
 }
 
+/// A name chosen for the worktree (by the Queen at spawn, or in Orca) beats the title.
+#[test]
+fn loose_terminal_goes_by_its_worktree_name() {
+    let mut data = scenario();
+    let path = data
+        .terminal(LOOSE)
+        .and_then(|t| t.worktree_path.clone())
+        .expect("the loose terminal has a worktree");
+    data.worktree_names.insert(
+        path.trim_end_matches('/').to_string(),
+        "Replay sessions".into(),
+    );
+    let snap = FleetSnapshot::build(&data, NOW);
+    assert_eq!(snap.node(&term(LOOSE)).unwrap().label, "Replay sessions");
+}
+
 #[test]
 fn released_workers_fade_within_window_only() {
     let snap = FleetSnapshot::build(&scenario(), NOW);
@@ -319,7 +335,7 @@ fn empty_data_gives_only_the_queen() {
     assert_eq!(ids, ["queen"]);
     let queen = snap.queen().unwrap();
     assert_eq!(queen.state, NodeState::Idle);
-    assert_eq!(queen.preview.as_deref(), Some("0 coordinators · 0 agents"));
+    assert_eq!(queen.preview.as_deref(), Some("0 coordinators · 0 ants"));
 }
 
 /// Edges other than the queen's.
@@ -368,7 +384,7 @@ fn queen_links_every_coordinator_and_loose_terminal() {
     assert_eq!(agents, snap.nodes.len() - 1);
     assert_eq!(
         queen.preview.as_deref(),
-        Some(format!("1 coordinator · {agents} agents").as_str())
+        Some(format!("1 coordinator · {agents} ants").as_str())
     );
 }
 

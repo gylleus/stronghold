@@ -4,6 +4,7 @@
 
 pub mod auto_mode;
 pub mod config;
+pub mod history;
 pub mod permissions;
 pub mod process;
 pub mod protocol;
@@ -42,6 +43,8 @@ pub struct ChatSession {
     speech: Vec<SpeechEvent>,
     /// "Speak replies" is on: typed turns are spoken too and carry [`voice::SPEAK_NOTE`].
     speak_replies: bool,
+    /// The resumed conversation's earlier messages, being read from its transcript.
+    history: Option<std::sync::mpsc::Receiver<Transcript>>,
 }
 
 /// Environment variable with a message the chat sends as soon as it is ready; with it the
@@ -58,7 +61,17 @@ impl ChatSession {
         let dir = config.dir.clone();
         let auto_mode = auto_mode::load(&dir);
         let (model, effort) = (config.model.clone(), config.effort.clone());
-        let handle = ChatHandle::spawn(config, repaint);
+        let repaint: Option<std::sync::Arc<dyn Fn() + Send + Sync>> = repaint.map(Into::into);
+        let history = session::SessionStore::saved(&dir)
+            .filter(|r| r.started)
+            .map(|r| {
+                let locator = crate::claude::SessionLocator::new(&config.projects_root);
+                load_history(locator, dir.clone(), r.session_id, repaint.clone())
+            });
+        let handle = ChatHandle::spawn(
+            config,
+            repaint.map(|r| Box::new(move || r()) as Box<dyn Fn() + Send + Sync>),
+        );
         handle.send(ChatCommand::SetAuto(auto_mode));
         Self {
             handle,
@@ -72,6 +85,7 @@ impl ChatSession {
             effort,
             speech: Vec::new(),
             speak_replies: false,
+            history,
         }
     }
 
@@ -150,7 +164,19 @@ impl ChatSession {
     /// Applies the supervisor's events; returns whether anything changed.
     pub fn poll(&mut self) -> bool {
         let events = self.handle.poll();
-        let changed = !events.is_empty();
+        let mut changed = !events.is_empty();
+        if let Some(rx) = &self.history {
+            match rx.try_recv() {
+                Ok(earlier) => {
+                    log::info!("chat: loaded {} earlier messages", earlier.items.len());
+                    self.transcript.prepend(earlier);
+                    self.history = None;
+                    changed = true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.history = None,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
         for event in events {
             self.apply(event);
         }
@@ -198,6 +224,7 @@ impl ChatSession {
             ChatEvent::AutoApproved(request) => self.transcript.mark_auto(&request),
             ChatEvent::NewSession(id) => {
                 log::info!("chat: new session {id}");
+                self.history = None;
                 self.transcript = Transcript::default();
                 self.told_auto = None;
             }
@@ -224,6 +251,11 @@ impl ChatSession {
         for say in self.transcript.say_lines() {
             log::info!("chat: say: {say}");
         }
+    }
+
+    /// Whether the Queen is working on a turn.
+    pub fn is_thinking(&self) -> bool {
+        self.transcript.running
     }
 
     pub fn can_send(&self) -> bool {
@@ -305,6 +337,7 @@ impl ChatSession {
 
     pub fn new_chat(&mut self) {
         self.end_speech_turn();
+        self.history = None;
         self.transcript = Transcript::default();
         self.told_auto = None;
         self.handle.send(ChatCommand::NewChat);
@@ -313,6 +346,38 @@ impl ChatSession {
     pub fn retry(&self) {
         self.handle.send(ChatCommand::Retry);
     }
+}
+
+/// Reads the earlier messages of the Queen's session `session_id` (run in `dir`) on a thread.
+fn load_history(
+    locator: crate::claude::SessionLocator,
+    dir: std::path::PathBuf,
+    session_id: String,
+    repaint: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
+) -> std::sync::mpsc::Receiver<Transcript> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("chat-history".into())
+        .spawn(move || {
+            let Some(info) = locator.find_session(&session_id, Some(&dir)) else {
+                log::info!("chat: no transcript for session {session_id}");
+                return;
+            };
+            match history::load(&info.transcript_path) {
+                Ok(earlier) => {
+                    if tx.send(earlier).is_ok()
+                        && let Some(repaint) = repaint
+                    {
+                        repaint();
+                    }
+                }
+                Err(e) => log::warn!("chat: cannot read {}: {e}", info.transcript_path.display()),
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("chat: cannot start the history thread: {e}");
+    }
+    rx
 }
 
 #[cfg(test)]

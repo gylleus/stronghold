@@ -85,7 +85,7 @@ impl GraphView {
 
     /// A click on node `id`: alone it selects just that node (or deselects it if it was the
     /// only one selected); with Shift/Cmd it toggles the node in the selection.
-    pub(super) fn click_node(&mut self, id: &NodeId, additive: bool) {
+    pub fn click_node(&mut self, id: &NodeId, additive: bool) {
         let mut selection = self.selection();
         if additive {
             if selection.remove(id) {

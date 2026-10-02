@@ -43,8 +43,10 @@ struct Demo {
 
 impl Default for Demo {
     fn default() -> Self {
-        let mut state = ChatPanelState::default();
-        state.focus_input = true;
+        let state = ChatPanelState {
+            focus_input: true,
+            ..Default::default()
+        };
         Self {
             transcript: scripted_transcript(),
             state,

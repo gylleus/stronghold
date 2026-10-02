@@ -1,5 +1,6 @@
 //! UI panels drawn by the app.
 
+pub mod ant_farm;
 pub mod art;
 pub mod broadcast;
 pub mod chat;
@@ -10,8 +11,11 @@ pub mod dictation;
 pub mod dock;
 pub mod frame_stats;
 pub mod graph;
+pub mod history;
 pub mod icons;
 pub mod keys;
+pub mod message_list;
+pub mod notifications;
 pub mod playbook;
 pub mod queen;
 pub mod quota;

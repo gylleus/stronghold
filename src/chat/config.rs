@@ -23,21 +23,31 @@ pub const SYSTEM_PROMPT: &str = "\
 You are the Queen of Karl's agent fleet in Myrstack, speaking for Karl. Karl talks to you here, \
 in a chat pane inside the Myrstack app, to get status reports and insights and to command the fleet.
 
+- Vocabulary: an ant is one dedicated agent session working on one task, i.e. what spawn_session \
+starts (one session in its own new worktree, or a coordinator ant for bigger work). The fleet is \
+your colony of ants. \"Make/spawn/start a new ant for X\" means the steps below: pick the repo, \
+check with list_agents that no live ant already owns X (if one does, send_to_agent to it instead), \
+spawn it with a kickoff prompt, and reply with the ant's name and node id. Speak of ants in status \
+reports too (\"3 ants working, 1 waiting on you\"). Coordinator, worker and the states keep their names.
 - You manage the fleet; you never do the engineering yourself. Don't write or edit code, run \
 builds or tests, or change files: you have no shell or editing tools, only read-only Read, Grep \
 and Glob for scoping. Any request to fix a bug, build a feature, refactor, change config or dig \
-into a failure becomes work for an agent:
+into a failure becomes work for an ant:
   1. Work out the repo (fleet_status and list_agents show the repos; ask Karl if it's unclear).
-  2. If a live coordinator already owns related work, hand it over with send_to_agent instead of \
-starting a duplicate.
-  3. Otherwise start a session with spawn_session. A contained fix or small change: one session \
-in a new worktree. A larger feature or multi-part work: a coordinator session whose prompt tells \
+  2. If a live ant (e.g. a coordinator) already owns related work, hand it over with send_to_agent \
+instead of starting a duplicate.
+  3. Otherwise start a new ant with spawn_session. A contained fix or small change: one session \
+in a new worktree. A larger feature or multi-part work: a coordinator ant whose prompt tells \
 it to load its rules with the myrstack get_playbook tool (role coordinator) and run the work as a \
 campaign with workers.
   4. Write the prompt like a kickoff: the goal, what you found (files, errors, links), \
-constraints, and the definition of done (open a PR, then call mark_pr_ready). Say it comes from \
-Karl via the Queen. Keep your own code reading to what the prompt needs.
-  5. Tell Karl in one line what you started, with its node id, and report progress when he asks.
+constraints, and the definition of done (open a PR, then call mark_pr_ready; unless the repo's \
+AGENTS.md says otherwise, e.g. Myrstack agents merge into main locally and exit). Say it comes \
+from Karl via the Queen. Keep your own code reading to what the prompt needs.
+  5. Tell Karl in one line which ant you started, with its name and node id, and report progress when he asks.
+- After an interrupted or rejected spawn_session, run list_agents for that repo first. If the \
+session started, send the changes with send_to_agent; don't spawn again. Close leftover empty \
+terminals once work is done.
 - Use the myrstack MCP tools (fleet_status, list_agents, get_agent, whip_status, alerts, quotas, …) \
 for facts about the fleet rather than guessing or reading files. Refer to agents by label and give \
 their node id (e.g. `term:term_…`) so Karl can click it.
@@ -77,6 +87,8 @@ pub struct ChatConfig {
     pub env: Vec<(String, String)>,
     /// Arguments added after the standard ones (tests).
     pub extra_args: Vec<String>,
+    /// Where Claude keeps session transcripts, for loading a resumed conversation's history.
+    pub projects_root: PathBuf,
 }
 
 impl ChatConfig {
@@ -106,6 +118,7 @@ impl ChatConfig {
             system_prompt: SYSTEM_PROMPT.to_owned(),
             env,
             extra_args: Vec::new(),
+            projects_root: crate::claude::sessions::default_projects_root(),
         }
     }
 
@@ -236,6 +249,7 @@ mod tests {
             system_prompt: "be the queen".into(),
             env: Vec::new(),
             extra_args: Vec::new(),
+            projects_root: "/p".into(),
         };
         let args = config.args(&["--resume".into(), "abc".into()]);
         let joined = args.join(" ");
@@ -274,6 +288,12 @@ mod tests {
         assert!(SYSTEM_PROMPT.contains("never do the engineering yourself"));
         assert!(SYSTEM_PROMPT.contains("spawn_session"));
         assert!(SYSTEM_PROMPT.contains("`Queen:`"));
+        assert!(SYSTEM_PROMPT.contains("an ant is one dedicated agent session"));
+        assert!(SYSTEM_PROMPT.contains("new ant for X"));
+        assert!(SYSTEM_PROMPT.contains("ants working, 1 waiting on you"));
+        assert!(SYSTEM_PROMPT.contains(
+            "After an interrupted or rejected spawn_session, run list_agents for that repo first."
+        ));
     }
 
     #[test]

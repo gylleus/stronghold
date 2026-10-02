@@ -319,8 +319,9 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "spawn_session",
-            "Start a new agent session",
-            "Starts a new Claude or Codex session in Orca with an initial prompt, and waits \
+            "Start a new ant",
+            "Starts a new ant: a dedicated Claude or Codex agent session in Orca working on one \
+             task, with an initial prompt (\"make a new ant for X\" means this). Waits \
              until the prompt visibly started (answering the Bypass Permissions / folder trust \
              modals and submitting a parked prompt). Modes: \"worktree\" runs a fresh agent in \
              an existing worktree (give worktree: id, path, <repo>/<name> or name); \
@@ -330,7 +331,18 @@ pub fn definitions() -> Vec<Value> {
              terminal to reuse an agent already running there); the prompt is the task spec. \
              Use it when Karl asks for a new session, and as a coordinator to start each \
              worker of its own run (worker mode; the playbook's default way to start one). \
-             Returns the new terminal and node id; the dashboard selects it once it appears.",
+             Returns the new terminal and node id; the \
+             dashboard selects it once it appears. A new worktree whose name or branch already \
+             exists is refused with the existing worktree and its live agents (send_to_agent \
+             them instead); allow_suffix=true lets Orca pick name-2 for a deliberate second \
+             copy. The plain shell Orca opens in a new worktree is closed once the agent runs. \
+             After an interrupted or rejected spawn_session, run list_agents for that repo \
+             before trying again: if the session started, use send_to_agent. Give every \
+             session a label: a short human name (2-4 words, e.g. \"Checkout retries\") that \
+             Myrstack shows on its node and ant. It becomes the worktree's Orca name (all \
+             agents in that worktree go by it) or, for a worker, its task's display name. To \
+             rename an agent later, run `orca worktree set --worktree path:<path> \
+             --display-name <name>`.",
             object(
                 json!({
                     "mode": { "type": "string", "enum": ["worktree", "new_worktree", "worker"] },
@@ -342,8 +354,10 @@ pub fn definitions() -> Vec<Value> {
                     "run_id": { "type": "string", "description": "Run to add a worker to (worker mode)." },
                     "terminal": { "type": "string", "description": "Worker mode: agent id, handle or label of a live agent terminal to run the task in." },
                     "title": { "type": "string", "description": "Worker task title (default: the prompt's first line)." },
+                    "label": { "type": "string", "description": "Short human name for the agent (2-4 words), shown in Myrstack's graph and ant farm. Sets the worktree's Orca display name, or a worker's task display name." },
                     "agent": { "type": "string", "enum": ["claude", "codex"], "default": "claude" },
                     "model": { "type": "string", "description": "Model alias or id, e.g. opus, sonnet, gpt-6-astra (default: the agent's)." },
+                    "allow_suffix": { "type": "boolean", "default": false, "description": "New worktree: when the name or branch is taken, let Orca add a suffix (name-2) instead of failing. Only for a deliberate second copy." },
                 }),
                 &["mode", "prompt"],
             ),
@@ -385,9 +399,9 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "set_view",
             "Set dashboard view",
-            "Switches the dashboard between the graph and the table.",
+            "Switches the dashboard between the graph, the table and the ant farm.",
             object(
-                json!({ "view": { "type": "string", "enum": ["graph", "table"] } }),
+                json!({ "view": { "type": "string", "enum": ["graph", "table", "ant_farm"] } }),
                 &["view"],
             ),
             DASHBOARD,
@@ -409,9 +423,14 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "alerts",
             "Alerts",
-            "Notifications Myrstack posted (needs input, stalls, …), newest first.",
+            "Karl's notification inbox, newest first: what agents sent him with notify and what \
+             Myrstack raised itself (needs input, stalls, PRs ready), with severity, agent, \
+             link, read state and how many repeats were collapsed.",
             object(
-                json!({ "limit": { "type": "integer", "minimum": 1, "default": DEFAULT_ALERTS } }),
+                json!({
+                    "limit": { "type": "integer", "minimum": 1, "default": DEFAULT_ALERTS },
+                    "unread_only": { "type": "boolean", "default": false },
+                }),
                 &[],
             ),
             READ,
@@ -556,6 +575,7 @@ fn fleet_status(control: &mut dyn Control) -> ToolResult {
         "stalled": s.stalled.iter().map(compact).collect::<Vec<_>>(),
         "whip": if fallback { Value::Null } else { s.status.get("whip").cloned().unwrap_or_default() },
         "queen_auto": if fallback { Value::Null } else { s.status.get("queen_auto").cloned().unwrap_or(Value::Bool(false)) },
+        "notifications": if fallback { Value::Null } else { s.status.get("notifications").cloned().unwrap_or_default() },
         "quotas": s.quotas,
     });
     Ok(ToolOutput::ok(text, structured))
@@ -641,6 +661,9 @@ fn fleet_text(s: &Status, fallback: bool, now: i64) -> String {
             }
         ));
     }
+    if !fallback && let Some(n) = s.status.get("notifications") {
+        out.extend(notifications_text(n, now));
+    }
     if let Some(q) = &s.quotas {
         out.push(format!("Quotas: {}", quota_line(q, now)));
     }
@@ -649,6 +672,29 @@ fn fleet_text(s: &Status, fallback: bool, now: i64) -> String {
         out.push(format!("Orca errors: {}", errors.join("; ")));
     }
     out.join("\n")
+}
+
+/// Karl's unread notifications, newest first, from `status`'s `notifications`.
+fn notifications_text(n: &Value, now: i64) -> Vec<String> {
+    let unread = n["unread"].as_u64().unwrap_or(0);
+    if unread == 0 {
+        return vec!["Notifications: none unread".into()];
+    }
+    let latest: Vec<AlertView> = n
+        .get("latest_unread")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let mut out = vec![format!(
+        "Notifications: {unread} unread{} (alerts lists them):",
+        if latest.len() < unread as usize {
+            format!(", newest {}", latest.len())
+        } else {
+            String::new()
+        }
+    )];
+    out.extend(latest.iter().map(|a| alert_line(a, now)));
+    out
 }
 
 fn waiting_line(a: &AgentView) -> String {
@@ -1450,29 +1496,63 @@ fn simple(control: &mut dyn Control, method: &str, text: &str) -> ToolResult {
 
 fn alerts(control: &mut dyn Control, p: &Params) -> ToolResult {
     let limit = p.usize("limit")?.unwrap_or(DEFAULT_ALERTS).max(1);
+    let unread_only = p.bool("unread_only")?.unwrap_or(false);
     let result = control.call("alerts", Value::Null)?;
     let all: Vec<AlertView> = parse(result.get("alerts").unwrap_or(&Value::Null))?;
-    let shown = &all[..all.len().min(limit)];
+    let unread = all.iter().filter(|a| !a.read).count();
+    let listed: Vec<&AlertView> = all.iter().filter(|a| !unread_only || !a.read).collect();
+    let shown = &listed[..listed.len().min(limit)];
     let now = now_ms();
-    let mut out = vec![if all.is_empty() {
-        "No alerts.".to_owned()
+    let mut out = vec![if listed.is_empty() {
+        if unread_only {
+            "No unread alerts."
+        } else {
+            "No alerts."
+        }
+        .to_owned()
     } else {
         format!(
-            "{} alerts (newest first, showing {}):",
+            "{} alerts, {unread} unread (newest first, showing {}):",
             all.len(),
             shown.len()
         )
     }];
-    for a in shown {
-        let node = a
-            .node
-            .as_deref()
-            .map(|n| format!(" `{n}`"))
-            .unwrap_or_default();
-        out.push(format!("- {}: {}{node}", since(now, a.at_ms), a.title));
-    }
-    let structured = json!({ "count": all.len(), "alerts": shown });
+    out.extend(shown.iter().map(|a| alert_line(a, now)));
+    let structured = json!({ "count": all.len(), "unread": unread, "alerts": shown });
     Ok(ToolOutput::ok(out.join("\n"), structured))
+}
+
+/// `- [unread] warn · 3m ago: fix-login: Blocked on schema ×2 `term:…` — message <url>`
+fn alert_line(a: &AlertView, now: i64) -> String {
+    let mut line = format!(
+        "- {}{}{}: ",
+        if a.read { "" } else { "[unread] " },
+        if a.severity.is_empty() {
+            String::new()
+        } else {
+            format!("{} · ", a.severity)
+        },
+        since(now, a.at_ms),
+    );
+    if let Some(agent) = &a.agent
+        && a.source == "agent"
+    {
+        line.push_str(&format!("{agent}: "));
+    }
+    line.push_str(&a.title);
+    if a.count > 1 {
+        line.push_str(&format!(" ×{}", a.count));
+    }
+    if let Some(node) = &a.node {
+        line.push_str(&format!(" `{node}`"));
+    }
+    if !a.message.is_empty() {
+        line.push_str(&format!(" — {}", truncate(&a.message, 200)));
+    }
+    if let Some(url) = &a.url {
+        line.push_str(&format!(" <{url}>"));
+    }
+    line
 }
 
 fn quotas(control: &mut dyn Control) -> ToolResult {

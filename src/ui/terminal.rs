@@ -6,9 +6,10 @@ use eframe::egui;
 
 use crate::actions::{Action, ActionId, ActionResult, Key};
 use crate::claude::Usage;
-use crate::model::{Node, NodeKind, NodeState};
+use crate::model::{Node, NodeId, NodeKind, NodeState};
 use crate::orca::{Terminal, TerminalInput, TerminalStatus};
 use crate::poller::ScreenUpdate;
+use crate::ui::chat::TranscriptView;
 use crate::ui::graph::state_color;
 use crate::ui::styled_view::styled_view;
 use crate::ui::term_style::AgentKind;
@@ -39,6 +40,10 @@ pub struct TerminalPanelResponse {
     /// Actions to run; the caller submits each and reports the id via
     /// [`InputPanelState::submitted`].
     pub requests: Vec<ActionRequest>,
+    /// Open a PR through the review queue's browser action.
+    pub review: Option<crate::ui::review::ReviewAction>,
+    /// A node link in the conversation was clicked.
+    pub select: Option<NodeId>,
 }
 
 /// What an input action was, for status text and draft handling.
@@ -152,6 +157,8 @@ pub struct InputPanelState {
     statuses: HashMap<String, InputStatus>,
     pending: HashMap<ActionId, Pending>,
     pub interrupt: InterruptGuard,
+    /// Show the terminal's live screen instead of the conversation.
+    pub show_screen: bool,
 }
 
 impl InputPanelState {
@@ -267,8 +274,15 @@ pub fn take_submit_enter(events: &mut Vec<egui::Event>) -> bool {
 /// Input for the selected node's terminal, from the app.
 pub struct PanelInput<'a> {
     pub state: &'a mut InputPanelState,
+    /// The same live rows that drive the graph PR badges.
+    pub review_rows: &'a [crate::review::view::ReviewRow],
     /// The node's row in `terminal list`, if live.
     pub terminal: Option<&'a Terminal>,
+    /// The agent's conversation read from its session transcript, when it has one (Claude
+    /// agents mapped to a session).
+    pub conversation: Option<&'a mut TranscriptView>,
+    /// Whether a node id names a node in the current snapshot (only those become links).
+    pub is_node: &'a dyn Fn(&NodeId) -> bool,
 }
 
 /// The terminal whose screen should be polled for `node`: live terminals only (not dead
@@ -280,8 +294,8 @@ pub fn watch_handle(node: &Node) -> Option<&str> {
     node.terminal_handle.as_deref()
 }
 
-/// The details column for `node`: its label, actions (Open in Orca, Whip, Close…) and
-/// attributes.
+/// The details column for `node`: its label, Close… and attributes. Open in Orca and Whip
+/// sit in the conversation header instead, where they are used.
 pub fn details_panel(
     ui: &mut egui::Ui,
     node: &Node,
@@ -307,44 +321,14 @@ pub fn details_panel(
             });
         });
     });
-    ui.horizontal_wrapped(|ui| {
-        let open = ui
-            .add_enabled(
-                handle.is_some(),
-                crate::ui::widgets::orca_button(ui, handle.is_some()),
-            )
-            .on_hover_text(format!(
-                "Show this terminal's tab in Orca ({})",
-                ui.ctx().format_shortcut(&OPEN_SHORTCUT)
-            ))
-            .on_disabled_hover_text("No live terminal.");
-        if open.clicked()
-            && let Some(handle) = handle
-        {
-            response.requests.push(ActionRequest::open(handle));
-        }
-        let whippable = handle.is_some()
-            && matches!(
-                node.kind,
-                NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal
-            );
-        if ui
-            .add_enabled(whippable, egui::Button::new("Whip"))
-            .on_hover_text("Send this agent a Myrstack nudge now — w")
-            .on_disabled_hover_text("No live terminal to nudge.")
+    if node.kind != NodeKind::Subagent
+        && ui
+            .button(egui::RichText::new("Close…").color(ui.visuals().error_fg_color))
+            .on_hover_text("Kill this session in Orca (asks first) — x")
             .clicked()
-        {
-            response.whip = true;
-        }
-        if node.kind != NodeKind::Subagent
-            && ui
-                .button(egui::RichText::new("Close…").color(ui.visuals().error_fg_color))
-                .on_hover_text("Kill this session in Orca (asks first) — x")
-                .clicked()
-        {
-            response.close_session = true;
-        }
-    });
+    {
+        response.close_session = true;
+    }
     ui.add_space(4.0);
     header(ui, node, screen, handle.is_some(), usage, now_ms);
     response
@@ -354,7 +338,17 @@ pub fn details_panel(
 const OPEN_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
 
-/// The conversation column for `node`: a one-line title, then its live screen and input box.
+/// Below this width the conversation's Open in Orca and Whip sit under its title.
+const ACTIONS_INLINE_MIN_WIDTH: f32 = 420.0;
+
+/// Text of the switch to the agent's conversation.
+pub const CHAT_TAB: &str = "Chat";
+/// Text of the switch to the terminal's live screen.
+pub const SCREEN_TAB: &str = "Screen";
+
+/// The conversation column for `node`: a one-line title, then its conversation (the whole
+/// session, from its transcript) or live screen, and the input box. While the agent needs
+/// input, the live screen also shows above the input box, so its prompt can be answered.
 pub fn terminal_panel(
     ui: &mut egui::Ui,
     node: &Node,
@@ -373,6 +367,16 @@ pub fn terminal_panel(
         response.requests.push(ActionRequest::open(handle));
     }
 
+    let PanelInput {
+        state,
+        terminal,
+        mut conversation,
+        is_node,
+        review_rows,
+    } = input;
+    let has_chat = conversation.is_some();
+    // A narrow pane gives the actions their own row, so the title keeps its room.
+    let actions_below = ui.available_width() < ACTIONS_INLINE_MIN_WIDTH;
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
@@ -382,23 +386,85 @@ pub fn terminal_panel(
             {
                 response.close = true;
             }
+            if has_chat && handle.is_some() {
+                // Right to left: Screen, then Chat.
+                if ui
+                    .selectable_label(state.show_screen, SCREEN_TAB)
+                    .on_hover_text("The terminal's live screen")
+                    .clicked()
+                {
+                    state.show_screen = true;
+                }
+                if ui
+                    .selectable_label(!state.show_screen, CHAT_TAB)
+                    .on_hover_text("The whole conversation, from the session transcript")
+                    .clicked()
+                {
+                    state.show_screen = false;
+                }
+            }
+            if !actions_below {
+                agent_actions(ui, node, handle, &mut response);
+            }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 let color = state_color(node.state, ui.visuals().dark_mode);
                 crate::ui::widgets::state_pill(ui, color, state_label(node.state));
-                ui.add(egui::Label::new(egui::RichText::new(&node.label).strong()).truncate());
+                let has_prs = review_rows
+                    .iter()
+                    .any(|row| row.agent.as_ref().is_some_and(|agent| agent.id == node.id));
+                let name_width = if has_prs && !actions_below {
+                    ui.available_width() * 0.4
+                } else {
+                    ui.available_width()
+                };
+                ui.add_sized(
+                    [name_width, ui.spacing().interact_size.y],
+                    egui::Label::new(egui::RichText::new(&node.label).strong()).truncate(),
+                )
+                .on_hover_text(&node.label);
+                if !actions_below {
+                    response.review =
+                        crate::ui::review::agent_pr_buttons(ui, &node.id, review_rows);
+                }
             });
         });
     });
+    if actions_below {
+        if review_rows
+            .iter()
+            .any(|row| row.agent.as_ref().is_some_and(|agent| agent.id == node.id))
+        {
+            ui.horizontal(|ui| {
+                response.review = crate::ui::review::agent_pr_buttons(ui, &node.id, review_rows);
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                agent_actions(ui, node, handle, &mut response);
+            });
+        });
+    }
     ui.separator();
 
+    let agent = AgentKind::from_identity(node.agent.as_ref());
     let Some(handle) = handle else {
-        ui.weak(match node.kind {
-            NodeKind::Subagent => "Subagents have no terminal.",
-            _ => "No live terminal.",
-        });
+        if conversation.is_some() {
+            response.select = crate::ui::chat::transcript_conversation(
+                ui,
+                ("agent_conversation", &node.id),
+                conversation,
+                false,
+                is_node,
+            );
+        } else {
+            ui.weak(match node.kind {
+                NodeKind::Subagent => "Subagents have no terminal.",
+                _ => "No live terminal.",
+            });
+        }
         return response;
     };
-    let blocked = input_block_reason(input.terminal, screen);
+    let blocked = input_block_reason(terminal, screen);
     let needs_input = node.state == NodeState::NeedsInput;
     egui::Panel::bottom("terminal_input")
         .resizable(false)
@@ -406,16 +472,78 @@ pub fn terminal_panel(
             input_area(
                 ui,
                 handle,
-                input.state,
+                state,
                 blocked,
                 needs_input,
                 now_ms,
                 &mut response.requests,
             );
         });
-    screen_view(ui, screen, AgentKind::from_identity(node.agent.as_ref()));
-
+    let show_chat = conversation.is_some() && !state.show_screen;
+    if !show_chat {
+        screen_view(ui, "terminal_screen", screen, agent);
+        return response;
+    }
+    if needs_input && screen.is_some() {
+        egui::Panel::bottom("terminal_live_screen")
+            .resizable(true)
+            .default_size(ui.available_height() * 0.4)
+            .show(ui, |ui| {
+                ui.weak("Live screen: the agent is waiting for an answer");
+                screen_view(ui, "terminal_screen_live", screen, agent);
+            });
+    }
+    let working = node.state == NodeState::Working;
+    response.select = crate::ui::chat::transcript_conversation(
+        ui,
+        ("agent_conversation", &node.id),
+        conversation.take(),
+        working,
+        is_node,
+    );
     response
+}
+
+/// Open in Orca and Whip for `node`, in a right-to-left header (Whip is added first so it ends
+/// up right of Open in Orca). Neither is shown for the Queen or a subagent: they have no
+/// terminal of their own.
+fn agent_actions(
+    ui: &mut egui::Ui,
+    node: &Node,
+    handle: Option<&str>,
+    response: &mut TerminalPanelResponse,
+) {
+    if matches!(node.kind, NodeKind::Queen | NodeKind::Subagent) {
+        return;
+    }
+    let whippable = handle.is_some()
+        && matches!(
+            node.kind,
+            NodeKind::Coordinator | NodeKind::Worker | NodeKind::Terminal
+        );
+    if ui
+        .add_enabled(whippable, egui::Button::new("Whip"))
+        .on_hover_text("Send this agent a Myrstack nudge now — w")
+        .on_disabled_hover_text("No live terminal to nudge.")
+        .clicked()
+    {
+        response.whip = true;
+    }
+    let open = ui
+        .add_enabled(
+            handle.is_some(),
+            crate::ui::widgets::orca_button(ui, handle.is_some()),
+        )
+        .on_hover_text(format!(
+            "Show this terminal's tab in Orca ({})",
+            ui.ctx().format_shortcut(&OPEN_SHORTCUT)
+        ))
+        .on_disabled_hover_text("No live terminal.");
+    if open.clicked()
+        && let Some(handle) = handle
+    {
+        response.requests.push(ActionRequest::open(handle));
+    }
 }
 
 /// Widget id of `handle`'s input box, so other code can focus it.
@@ -692,7 +820,7 @@ fn header(
         });
 }
 
-fn screen_view(ui: &mut egui::Ui, screen: Option<&ScreenUpdate>, agent: AgentKind) {
+fn screen_view(ui: &mut egui::Ui, id_salt: &str, screen: Option<&ScreenUpdate>, agent: AgentKind) {
     let Some(screen) = screen else {
         return;
     };
@@ -703,7 +831,7 @@ fn screen_view(ui: &mut egui::Ui, screen: Option<&ScreenUpdate>, agent: AgentKin
         .fill(ui.visuals().extreme_bg_color)
         .inner_margin(egui::Margin::symmetric(6, 4))
         .show(ui, |ui| {
-            styled_view(ui, "terminal_screen", &screen.lines, agent, font_size);
+            styled_view(ui, id_salt, &screen.lines, agent, font_size);
         });
 }
 
@@ -783,20 +911,59 @@ mod tests {
         }
     }
 
-    fn click_in_panel(node: &Node, label: &str) -> TerminalPanelResponse {
-        crate::ui::test_util::click_label(label, |ui| details_panel(ui, node, None, None, 0))
+    /// Clicks `label` in `node`'s conversation.
+    fn click_in_chat(node: &Node, label: &str) -> TerminalPanelResponse {
+        let mut state = InputPanelState::default();
+        crate::ui::test_util::click_label(label, |ui| {
+            let input = PanelInput {
+                review_rows: &[],
+                state: &mut state,
+                terminal: None,
+                conversation: None,
+                is_node: &|_| false,
+            };
+            terminal_panel(ui, node, None, input, 0)
+        })
     }
 
     #[test]
     fn whip_button_asks_to_whip_a_live_agent() {
         for kind in [NodeKind::Worker, NodeKind::Coordinator, NodeKind::Terminal] {
-            let response = click_in_panel(&node(kind, true, Some("t1")), "Whip");
+            let response = click_in_chat(&node(kind, true, Some("t1")), "Whip");
             assert!(response.whip, "{kind:?}");
             assert!(response.requests.is_empty());
         }
         // Disabled without a live terminal: the click does nothing.
-        let response = click_in_panel(&node(NodeKind::Worker, false, Some("t1")), "Whip");
+        let response = click_in_chat(&node(NodeKind::Worker, false, Some("t1")), "Whip");
         assert!(!response.whip);
+    }
+
+    #[test]
+    fn open_in_orca_button_asks_to_switch_to_the_terminal() {
+        let response = click_in_chat(&node(NodeKind::Worker, true, Some("t1")), "Open in Orca");
+        assert_eq!(response.requests, vec![ActionRequest::open("t1")]);
+        assert!(!response.whip);
+        // Disabled without a live terminal.
+        let response = click_in_chat(&node(NodeKind::Worker, false, Some("t1")), "Open in Orca");
+        assert!(response.requests.is_empty());
+    }
+
+    #[test]
+    fn narrow_conversation_keeps_the_actions_on_their_own_row() {
+        let node = node(NodeKind::Worker, true, Some("t1"));
+        let mut state = InputPanelState::default();
+        let response = crate::ui::test_util::click_label("Open in Orca", |ui| {
+            ui.set_max_width(ACTIONS_INLINE_MIN_WIDTH - 1.0);
+            let input = PanelInput {
+                review_rows: &[],
+                state: &mut state,
+                terminal: None,
+                conversation: None,
+                is_node: &|_| false,
+            };
+            terminal_panel(ui, &node, None, input, 0)
+        });
+        assert_eq!(response.requests, vec![ActionRequest::open("t1")]);
     }
 
     /// Shapes of one headless frame of `draw`.
@@ -808,34 +975,218 @@ mod tests {
         output
     }
 
+    /// A conversation of `turns` prompts and replies, loaded as from a transcript.
+    fn loaded_view(turns: usize) -> TranscriptView {
+        use crate::chat::history::{HistoryChunk, HistoryRecord};
+        use crate::chat::protocol::parse_line;
+        let mut records = Vec::new();
+        for i in 0..turns {
+            records.push(HistoryRecord::Prompt(format!("question {i}")));
+            let reply = format!(
+                r#"{{"type":"assistant","message":{{"id":"m{i}","content":[{{"type":"text","text":"answer {i}"}}]}}}}"#
+            );
+            records.push(HistoryRecord::Message(parse_line(&reply).unwrap()));
+        }
+        let path = std::path::PathBuf::from("/s.jsonl");
+        let mut view = TranscriptView::new(path.clone());
+        assert!(view.apply(&HistoryChunk {
+            path,
+            reset: false,
+            start: 0,
+            end: 10,
+            records,
+        }));
+        view
+    }
+
+    /// Texts drawn in frames of the agent pane for `node` with a conversation and a screen;
+    /// `click` is clicked in the last frame when given.
+    fn agent_pane(
+        node: &Node,
+        state: &mut InputPanelState,
+        view: &mut TranscriptView,
+        click: Option<&str>,
+    ) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let screen = ScreenUpdate {
+            handle: "t1".into(),
+            lines: vec!["screen row".into()],
+            status: None,
+            read_at_ms: 0,
+            error: None,
+        };
+        let mut texts = Vec::new();
+        let mut events = Vec::new();
+        for i in 0..6 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(700.0, 900.0),
+                )),
+                time: Some(i as f64 / 60.0),
+                events: std::mem::take(&mut events),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let input = PanelInput {
+                    review_rows: &[],
+                    state: &mut *state,
+                    terminal: None,
+                    conversation: Some(&mut *view),
+                    is_node: &|_| false,
+                };
+                terminal_panel(ui, node, Some(&screen), input, 0);
+            });
+            output.textures_delta.clear();
+            if let Some(label) = click
+                && (2..5).contains(&i)
+                && let Some(at) = crate::ui::test_util::text_center(&output, label)
+            {
+                events = match i {
+                    2 => vec![egui::Event::PointerMoved(at)],
+                    _ => vec![egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed: i == 3,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                };
+            }
+            texts = Vec::new();
+            for clipped in &output.shapes {
+                collect_texts(&clipped.shape, &mut texts);
+            }
+        }
+        texts
+    }
+
+    fn collect_texts(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_texts(s, out)),
+            _ => {}
+        }
+    }
+
+    /// With a transcript, the pane shows the conversation at its newest message rather than
+    /// the screen; the switch shows the screen instead.
     #[test]
-    fn attributes_are_in_the_details_not_the_conversation() {
+    fn agent_pane_shows_the_whole_conversation_and_can_switch_to_the_screen() {
+        let node = node(NodeKind::Worker, true, Some("t1"));
+        let mut state = InputPanelState::default();
+        let mut view = loaded_view(500);
+        let texts = agent_pane(&node, &mut state, &mut view, None);
+        let has = |t: &str| texts.iter().any(|x| x == t);
+        assert!(has(CHAT_TAB) && has(SCREEN_TAB), "{texts:?}");
+        assert!(has("answer 499"), "the newest reply is in view: {texts:?}");
+        assert!(!has("question 0"), "only rows in view are drawn");
+        assert!(!has("screen row"), "{texts:?}");
+        assert!(view.list.following());
+
+        let texts = agent_pane(&node, &mut state, &mut view, Some(SCREEN_TAB));
+        assert!(state.show_screen);
+        let texts = if texts.iter().any(|t| t == "screen row") {
+            texts
+        } else {
+            agent_pane(&node, &mut state, &mut view, None)
+        };
+        assert!(texts.iter().any(|t| t == "screen row"), "{texts:?}");
+    }
+
+    /// While the agent waits for an answer, its live screen shows under the conversation.
+    #[test]
+    fn agent_pane_shows_the_live_screen_while_it_needs_input() {
+        let mut node = node(NodeKind::Worker, true, Some("t1"));
+        node.state = NodeState::NeedsInput;
+        let mut state = InputPanelState::default();
+        let mut view = loaded_view(50);
+        let texts = agent_pane(&node, &mut state, &mut view, None);
+        assert!(texts.iter().any(|t| t == "screen row"), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "answer 49"), "{texts:?}");
+    }
+
+    #[test]
+    fn transcript_view_takes_chunks_in_order_only() {
+        use crate::chat::history::{HistoryChunk, HistoryRecord};
+        let path = std::path::PathBuf::from("/s.jsonl");
+        let chunk = |start, end, reset, text: &str| HistoryChunk {
+            path: path.clone(),
+            reset,
+            start,
+            end,
+            records: vec![HistoryRecord::Prompt(text.into())],
+        };
+        let mut view = TranscriptView::new(path.clone());
+        assert!(!view.loaded);
+        assert!(view.apply(&chunk(0, 10, false, "a")));
+        assert!(view.loaded);
+        assert!(!view.apply(&chunk(0, 10, false, "a")), "a stale repeat");
+        assert!(view.apply(&chunk(10, 20, false, "b")));
+        let other = HistoryChunk {
+            path: "/other.jsonl".into(),
+            ..chunk(20, 30, false, "c")
+        };
+        assert!(!view.apply(&other), "another file");
+        assert_eq!(view.transcript.items.len(), 2);
+        assert!(view.apply(&chunk(0, 5, true, "new")), "a rewritten file");
+        assert_eq!(
+            view.transcript.items,
+            vec![crate::chat::ChatItem::User("new".into())]
+        );
+    }
+
+    fn chat_frame(node: &Node) -> egui::FullOutput {
+        let mut state = InputPanelState::default();
+        frame(|ui| {
+            let input = PanelInput {
+                review_rows: &[],
+                state: &mut state,
+                terminal: None,
+                conversation: None,
+                is_node: &|_| false,
+            };
+            terminal_panel(ui, node, None, input, 0);
+        })
+    }
+
+    #[test]
+    fn agent_actions_are_in_the_conversation_attributes_in_the_details() {
         use crate::ui::test_util::text_center;
         let node = node(NodeKind::Worker, true, Some("t1"));
         let details = frame(|ui| {
             details_panel(ui, &node, None, None, 0);
         });
-        for label in ["kind", "terminal", "Whip", "Open in Orca"] {
+        for label in ["kind", "terminal", "Close…"] {
             assert!(text_center(&details, label).is_some(), "{label} in details");
         }
-        let mut state = InputPanelState::default();
-        let conversation = frame(|ui| {
-            let input = PanelInput {
-                state: &mut state,
-                terminal: None,
-            };
-            terminal_panel(ui, &node, None, input, 0);
-        });
-        for label in ["kind", "terminal", "Whip", "Open in Orca"] {
+        for label in ["Whip", "Open in Orca"] {
+            assert!(
+                text_center(&details, label).is_none(),
+                "{label} not in details"
+            );
+        }
+        let conversation = chat_frame(&node);
+        for label in ["Whip", "Open in Orca", "×"] {
+            assert!(
+                text_center(&conversation, label).is_some(),
+                "{label} in chat"
+            );
+        }
+        for label in ["kind", "terminal"] {
             assert!(
                 text_center(&conversation, label).is_none(),
                 "{label} not in chat"
             );
         }
-        assert!(
-            text_center(&conversation, "×").is_some(),
-            "the conversation has its own close"
-        );
+    }
+
+    #[test]
+    fn no_agent_actions_for_subagents() {
+        use crate::ui::test_util::text_center;
+        let conversation = chat_frame(&node(NodeKind::Subagent, true, Some("t1")));
+        for label in ["Whip", "Open in Orca"] {
+            assert!(text_center(&conversation, label).is_none(), "{label}");
+        }
     }
 
     #[test]

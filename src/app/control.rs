@@ -61,7 +61,7 @@ struct Fingerprint {
     whip_log_seq: Option<u64>,
     whip_settings: WhipSettings,
     quotas_at_ms: i64,
-    alerts: (usize, Option<i64>),
+    alerts: u64,
     view: View,
     selected: Option<NodeId>,
     selection: BTreeSet<NodeId>,
@@ -113,7 +113,7 @@ impl MyrstackApp {
             whip_log_seq: self.whip_log.entries().back().map(|i| i.seq),
             whip_settings: self.whip_window.whip().clone(),
             quotas_at_ms: self.quotas.fetched_at_ms,
-            alerts: (self.alerts.len(), self.alerts.last().map(|a| a.at_ms)),
+            alerts: self.notifications.generation(),
             view: self.view,
             selected: self.selected.clone(),
             selection: self.graph.selection(),
@@ -138,7 +138,7 @@ impl MyrstackApp {
             whip_settings: self.whip_window.whip(),
             whip_log: self.whip_log.entries().iter().collect(),
             quotas: &self.quotas,
-            alerts: &self.alerts,
+            alerts: self.notifications.entries(),
             view: self.view,
             selected: self.selected.as_ref().map(NodeId::as_str),
             selection: fingerprint.selection.iter().map(NodeId::as_str).collect(),
@@ -313,6 +313,7 @@ impl MyrstackApp {
             }
             ControlCommand::Review(command) => self.control_review(command),
             ControlCommand::Spawn(args) => return self.control_spawn(args, reply),
+            ControlCommand::Notify(notice) => self.control_notify(notice),
         };
         let error = result.as_ref().err().cloned();
         reply.send(result);
@@ -419,6 +420,7 @@ impl MyrstackApp {
             reply.send(Err(e.clone()));
             return Err(e);
         }
+        self.ant_farm.pulse(crate::ui::ant_farm::Pulse::Broadcast);
         let spawned = std::thread::Builder::new()
             .name("control-broadcast".into())
             .spawn(move || {

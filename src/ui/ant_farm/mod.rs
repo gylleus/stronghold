@@ -1,0 +1,905 @@
+//! The ant farm: a side view of the fleet where an ant's place shows its state. An
+//! alternative to the graph, drawn from the same snapshot, filters and selection.
+//!
+//! [`layout`] decides where everything goes, [`motion`] walks ants to new places and
+//! [`sprites`] draws them; this module ties them to egui and handles input.
+
+pub mod layout;
+#[cfg(test)]
+mod layout_tests;
+pub mod motion;
+pub mod nature;
+pub mod scenery;
+pub mod sprites;
+
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::time::Duration;
+
+use eframe::egui::{self, Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, vec2};
+
+use crate::model::{FleetSnapshot, NodeId};
+use crate::ui::graph::GraphView;
+use layout::{FarmInput, Pose, Scene, Spot, layout};
+use motion::{Walk, route};
+use sprites::{AntLook, Item, Palette, Sprites};
+
+/// Redraw interval while an ant walks.
+const WALK_FRAME: Duration = Duration::from_millis(33);
+/// Redraw interval of the idle animations (digging and its dirt, waving, snoring, the whip):
+/// stepped like pixel art, and slow enough that a farm full of working ants stays cheap.
+const STEP_FRAME: Duration = Duration::from_millis(150);
+/// Walk frames per second.
+const WALK_FPS: f64 = 8.0;
+/// Dig and wave steps per second; matches [`STEP_FRAME`].
+const STEP_FPS: f64 = 4.0;
+/// The busy Queen's hop, in texels per step.
+const QUEEN_HOP: [f32; 4] = [0.0, 2.0, 4.0, 2.0];
+/// How long a Queen's call takes to ripple across the farm.
+const RIPPLE_S: f64 = 1.8;
+/// Delay of a ripple's second ring.
+const ECHO_S: f64 = 0.3;
+/// How long the Queen glows after an inward call's last ring reaches her.
+const ARRIVAL_S: f64 = 0.5;
+/// How long the Queen glows after an ant emerges from her chamber.
+const BIRTH_GLOW_S: f64 = 1.2;
+/// A gap between frames longer than this means the farm was not on screen: ants that
+/// appeared meanwhile are placed, not born.
+const AWAY_S: f64 = 2.5;
+
+/// A call of the Queen that ripples across the farm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pulse {
+    /// A broadcast to the coordinators: a golden ring.
+    Broadcast,
+    /// Karl asked for a status report: a cyan ring gathering in to the Queen.
+    StatusReport,
+}
+
+impl Pulse {
+    /// Whether the call's rings close in on the Queen instead of spreading from her.
+    fn inward(self) -> bool {
+        self == Pulse::StatusReport
+    }
+
+    fn color(self) -> egui::Color32 {
+        match self {
+            Pulse::Broadcast => egui::Color32::from_rgb(0xff, 0xd5, 0x4a),
+            Pulse::StatusReport => egui::Color32::from_rgb(0x6f, 0xe3, 0xff),
+        }
+    }
+}
+
+/// A call rippling across the farm, started at `start_s`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Ripple {
+    pulse: Pulse,
+    start_s: f64,
+}
+
+/// The radius a ripple of `pulse` has reached `elapsed_s` after it started, with an
+/// ease-out: growing from the Queen to `max_r`, or for an inward call shrinking from `max_r`
+/// to her; `None` once it has passed.
+pub fn ripple_radius(pulse: Pulse, elapsed_s: f64, max_r: f32) -> Option<f32> {
+    if !(0.0..RIPPLE_S).contains(&elapsed_s) {
+        return None;
+    }
+    let left = 1.0 - (elapsed_s / RIPPLE_S) as f32;
+    let out = 1.0 - left * left;
+    Some(max_r * if pulse.inward() { 1.0 - out } else { out })
+}
+
+/// How brightly the Queen glows `elapsed_s` into an inward call: rising as the first ring
+/// closes in, peaking when it reaches her and fading over [`ECHO_S`] + [`ARRIVAL_S`].
+fn arrival_glow(elapsed_s: f64) -> f32 {
+    let since = elapsed_s - RIPPLE_S;
+    let glow = if since < 0.0 {
+        1.0 + since / ECHO_S
+    } else {
+        1.0 - since / (ECHO_S + ARRIVAL_S)
+    };
+    glow.clamp(0.0, 1.0) as f32
+}
+
+/// How far an ant `dist` from the Queen hops while a ripple of `radius` passes it: a jump of
+/// up to `height` when the ring is on it, tapering within `width`.
+pub fn hop(dist: f32, radius: f32, width: f32, height: f32) -> f32 {
+    let off = (dist - radius).abs();
+    if off >= width {
+        return 0.0;
+    }
+    height * (1.0 - off / width)
+}
+
+/// What happened in the farm this frame.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AntFarmResponse {
+    /// The ant clicked this frame.
+    pub clicked: Option<NodeId>,
+    /// Empty ground was clicked (clears the selection, as in the graph).
+    pub clicked_empty: bool,
+    pub hovered: Option<NodeId>,
+    /// Ants inside a selection box dragged from empty ground, when it was released this
+    /// frame, and whether Shift/Cmd was held (add to the selection rather than replace it).
+    pub boxed: Option<(Vec<NodeId>, bool)>,
+    /// Nodes to close or whip, picked in an ant's context menu.
+    pub close_requested: Vec<NodeId>,
+    pub whip_requested: Vec<NodeId>,
+}
+
+/// An ant's place and its walk there, if it is still walking.
+#[derive(Debug, Clone)]
+struct Track {
+    spot: Spot,
+    /// Where the spot was last frame, relative to the farm's rect (see [`motion::to_unit`]).
+    at: Pos2,
+    walk: Option<Walk>,
+}
+
+/// Where an ant is drawn this frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Placed {
+    pub pos: Pos2,
+    /// Direction of travel while walking.
+    pub heading: Option<Vec2>,
+}
+
+#[derive(Default)]
+pub struct AntFarmView {
+    sprites: Option<Sprites>,
+    tracks: HashMap<NodeId, Track>,
+    /// Ant whose context menu is open (the one right-clicked last).
+    context_node: Option<NodeId>,
+    /// Where a selection box being dragged started, in screen points.
+    box_origin: Option<Pos2>,
+    /// Every ant drawn so far: a new one walks out of the Queen's chamber.
+    seen: HashSet<NodeId>,
+    /// Time of the last frame drawn; see [`AWAY_S`].
+    last_frame_s: Option<f64>,
+    /// This frame follows a gap: the farm was not on screen.
+    away: bool,
+    /// When ants last emerged from the Queen, for her glow.
+    births: Vec<f64>,
+    /// Calls asked for since the last frame; see [`AntFarmView::pulse`].
+    pending: Vec<Pulse>,
+    ripples: Vec<Ripple>,
+    /// The Queen is working on something (her chat turn runs): she hops about.
+    queen_busy: bool,
+    /// Her chat is the conversation shown: she gets the selection ring.
+    queen_focused: bool,
+}
+
+impl AntFarmView {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Ripples a call of the Queen across the farm, from the next frame it is drawn. Calls
+    /// made while the farm is not shown are dropped then.
+    /// Whether the Queen is busy (thinking on a chat turn). Otherwise she sits still.
+    pub fn set_queen_busy(&mut self, busy: bool) {
+        self.queen_busy = busy;
+    }
+
+    /// Whether the Queen's chat is the conversation shown; she is ringed then.
+    pub fn set_queen_focused(&mut self, focused: bool) {
+        self.queen_focused = focused;
+    }
+
+    pub fn pulse(&mut self, pulse: Pulse) {
+        self.pending.push(pulse);
+    }
+
+    /// Draws the farm filling the available space and handles clicks, hover and the context
+    /// menu. `graph` supplies the filters, selection, PR badges, tooltips and menu, so both
+    /// views act alike.
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        snapshot: &FleetSnapshot,
+        graph: &GraphView,
+    ) -> AntFarmResponse {
+        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        let now_s = ui.input(|i| i.time);
+        let input = FarmInput {
+            snapshot,
+            hidden: graph.hidden(),
+            pr_ready: graph.pr_ready(),
+            now_ms: now_ms(),
+        };
+        let scene = layout(&input, rect);
+        let away = self.last_frame_s.is_none_or(|t| now_s - t > AWAY_S);
+        self.last_frame_s = Some(now_s);
+        self.away = away;
+        if away {
+            self.pending.clear();
+        }
+        self.ripples
+            .extend(self.pending.drain(..).map(|pulse| Ripple {
+                pulse,
+                start_s: now_s,
+            }));
+        self.ripples
+            .retain(|r| now_s - r.start_s < RIPPLE_S + ECHO_S + ARRIVAL_S);
+        self.births.retain(|t| now_s - t < BIRTH_GLOW_S);
+        let placed = self.advance(&scene, now_s);
+        let effects = Effects {
+            ripples: &self.ripples,
+            births: &self.births,
+            queen_busy: self.queen_busy,
+            queen_focused: self.queen_focused,
+        };
+        let sprites = self.sprites.get_or_insert_with(|| Sprites::load(ui.ctx()));
+        let painter = ui.painter_at(rect);
+        let palette = Palette::new(ui.visuals().dark_mode);
+        let selection = graph.selection();
+
+        paint_ground(
+            &painter,
+            sprites,
+            &scene,
+            palette,
+            now_s,
+            ui.visuals().dark_mode,
+        );
+        paint_calls(&painter, sprites, &scene, &effects, now_s, true);
+        let pointer = response.hover_pos();
+        let hovered = pointer.and_then(|p| hit(&scene, &placed, p));
+        paint_ants(
+            &painter,
+            sprites,
+            &scene,
+            &placed,
+            now_s,
+            &selection,
+            hovered.as_ref(),
+            &effects,
+            ui,
+        );
+        paint_calls(&painter, sprites, &scene, &effects, now_s, false);
+
+        // Smooth while ants walk or a call ripples; stepped while anyone digs, waves, sleeps
+        // or is whipped (the Queen always breathes).
+        let walking = placed.iter().any(|p| p.heading.is_some())
+            || !self.ripples.is_empty()
+            || !self.births.is_empty();
+        let stepping = scene.ants.iter().any(|a| {
+            matches!(a.pose, Pose::Dig | Pose::Wait | Pose::Sleep)
+                || (a.pose == Pose::Queen && self.queen_busy)
+                || a.mark == Some(layout::Mark::Whip)
+        });
+        if walking {
+            ui.ctx().request_repaint_after(WALK_FRAME);
+        } else if stepping {
+            ui.ctx().request_repaint_after(STEP_FRAME);
+        }
+
+        if let Some(id) = &hovered {
+            response
+                .clone()
+                .on_hover_ui_at_pointer(|ui| graph.node_tooltip_ui(ui, id));
+        }
+        if response.secondary_clicked() {
+            self.context_node = hovered.clone();
+        }
+        let boxed = self.box_select(ui, &response, &scene, &placed);
+        let menu = match &self.context_node {
+            Some(id) => graph.node_menu(&response, id),
+            None => Default::default(),
+        };
+        AntFarmResponse {
+            clicked: response.clicked().then(|| hovered.clone()).flatten(),
+            clicked_empty: response.clicked() && hovered.is_none(),
+            hovered,
+            close_requested: menu.close,
+            whip_requested: menu.whip,
+            boxed,
+        }
+    }
+
+    /// Starts, draws and finishes a selection box dragged with the primary button from empty
+    /// ground, as in the graph. Returns the ants it covers once released.
+    fn box_select(
+        &mut self,
+        ui: &Ui,
+        response: &egui::Response,
+        scene: &Scene,
+        placed: &[Placed],
+    ) -> Option<(Vec<NodeId>, bool)> {
+        let pointer = ui.input(|i| i.pointer.latest_pos());
+        if response.drag_started_by(egui::PointerButton::Primary) {
+            let origin = ui.input(|i| i.pointer.press_origin()).or(pointer);
+            self.box_origin = origin.filter(|o| hit(scene, placed, *o).is_none());
+        }
+        let origin = self.box_origin?;
+        let current = pointer.unwrap_or(origin);
+        let rect = Rect::from_two_pos(origin, current);
+        let released = response.drag_stopped_by(egui::PointerButton::Primary)
+            || !ui.input(|i| i.pointer.primary_down());
+        if released {
+            self.box_origin = None;
+            let additive = ui.input(|i| crate::ui::graph::is_additive(i.modifiers));
+            return Some((boxed_ants(scene, placed, rect), additive));
+        }
+        let stroke = ui.visuals().selection.stroke;
+        let fill = ui.visuals().selection.bg_fill.gamma_multiply(0.2);
+        ui.painter_at(response.rect)
+            .rect(rect, 2.0, fill, stroke, StrokeKind::Inside);
+        ui.ctx().request_repaint();
+        None
+    }
+
+    /// Starts a walk for every ant whose spot changed, drops finished walks and gone ants,
+    /// and returns where each of `scene.ants` is at `now_s`.
+    ///
+    /// An ant never drawn before walks out of the Queen's chamber, unless the farm was just
+    /// opened (everyone is placed then).
+    pub fn advance(&mut self, scene: &Scene, now_s: f64) -> Vec<Placed> {
+        let fresh = self.seen.is_empty() || self.away;
+        self.tracks
+            .retain(|id, _| scene.ants.iter().any(|a| &a.id == id));
+        let mut current: HashMap<&NodeId, Placed> = HashMap::new();
+        let mut placed = Vec::with_capacity(scene.ants.len());
+        for ant in &scene.ants {
+            // Subagents keep their place behind their parent wherever it walks.
+            if let Spot::Trail(parent, _) = &ant.spot
+                && let (Some(p), Some(parent_ant)) = (current.get(parent), scene.ant(parent))
+            {
+                let at = Placed {
+                    pos: p.pos + (ant.pos - parent_ant.pos),
+                    heading: p.heading,
+                };
+                self.tracks.insert(
+                    ant.id.clone(),
+                    Track {
+                        spot: ant.spot.clone(),
+                        at: motion::to_unit(ant.pos, scene.rect),
+                        walk: None,
+                    },
+                );
+                self.seen.insert(ant.id.clone());
+                current.insert(&ant.id, at);
+                placed.push(at);
+                continue;
+            }
+            let born = !fresh && ant.spot != Spot::Queen && self.seen.insert(ant.id.clone());
+            self.seen.insert(ant.id.clone());
+            let track = self.tracks.entry(ant.id.clone()).or_insert_with(|| Track {
+                spot: ant.spot.clone(),
+                at: motion::to_unit(ant.pos, scene.rect),
+                walk: None,
+            });
+            if born {
+                let from = scene.queen_chamber.center() + vec2(0.0, 0.3 * scene.cell());
+                let path = route(from, ant.pos, false, scene.gallery.center().y);
+                track.walk = Some(Walk::new(&path, scene.rect, now_s));
+                self.births.push(now_s);
+            }
+            if track.spot != ant.spot {
+                let from = match &track.walk {
+                    Some(walk) => walk.sample(scene.rect, now_s).0,
+                    None => motion::from_unit(track.at, scene.rect),
+                };
+                let same_area = track.spot.area() == ant.spot.area();
+                let path = route(from, ant.pos, same_area, scene.gallery.center().y);
+                track.walk = Some(Walk::new(&path, scene.rect, now_s));
+                track.spot = ant.spot.clone();
+            }
+            track.at = motion::to_unit(ant.pos, scene.rect);
+            if let Some(walk) = &mut track.walk {
+                walk.retarget(ant.pos, scene.rect);
+                if walk.done(now_s) {
+                    track.walk = None;
+                }
+            }
+            let at = match &track.walk {
+                Some(walk) => {
+                    let (pos, heading) = walk.sample(scene.rect, now_s);
+                    Placed {
+                        pos,
+                        heading: Some(heading),
+                    }
+                }
+                None => Placed {
+                    pos: ant.pos,
+                    heading: None,
+                },
+            };
+            current.insert(&ant.id, at);
+            placed.push(at);
+        }
+        placed
+    }
+}
+
+/// The ants whose cell overlaps `rect`, in draw order.
+pub fn boxed_ants(scene: &Scene, placed: &[Placed], rect: Rect) -> Vec<NodeId> {
+    scene
+        .ants
+        .iter()
+        .zip(placed)
+        .filter(|(ant, at)| Rect::from_center_size(at.pos, Vec2::splat(ant.size)).intersects(rect))
+        .map(|(ant, _)| ant.id.clone())
+        .collect()
+}
+
+/// The ant under `pointer`, topmost first.
+fn hit(scene: &Scene, placed: &[Placed], pointer: Pos2) -> Option<NodeId> {
+    scene
+        .ants
+        .iter()
+        .zip(placed)
+        .rev()
+        .find(|(ant, at)| Rect::from_center_size(at.pos, Vec2::splat(ant.size)).contains(pointer))
+        .map(|(ant, _)| ant.id.clone())
+}
+
+fn paint_ground(
+    painter: &egui::Painter,
+    sprites: &Sprites,
+    scene: &Scene,
+    palette: Palette,
+    now_s: f64,
+    dark: bool,
+) {
+    let px = scene.px;
+    let a = scene.cell();
+    sprites.ground(painter, scene.rect, scene.surface_y, px, palette);
+    // The sky, then roots under the plants (passages are dug through them).
+    if dark {
+        for (at, bright) in scenery::stars(scene) {
+            sprites.star(painter, at, px, bright);
+        }
+    }
+    for piece in scenery::sky(scene, now_s, dark) {
+        let alpha = if piece.deco == nature::Deco::Cloud && dark {
+            0.35
+        } else {
+            1.0
+        };
+        sprites.deco(painter, piece.deco, piece.foot, px, alpha);
+    }
+    let plants = scenery::surface(scene);
+    for (i, plant) in plants.iter().enumerate() {
+        if plant.deco.rooted() {
+            let width = plant.deco.extent(px)[0];
+            sprites.roots(painter, plant.foot, width, px, i);
+        }
+    }
+    // Shafts up from the gallery to the landing, the Queen's chamber and storage.
+    let gy = scene.gallery.center().y;
+    let up = |x: f32, top: f32| {
+        Rect::from_min_max(egui::pos2(x - 0.6 * a, top), egui::pos2(x + 0.6 * a, gy))
+    };
+    for shaft in [
+        up(scene.landing.center().x, scene.surface_y - px),
+        up(
+            scene.queen_chamber.center().x,
+            scene.queen_chamber.bottom() - px,
+        ),
+        up(scene.storage.center().x, scene.storage.bottom() - px),
+    ] {
+        sprites.passage(painter, shaft, px);
+    }
+    for tunnel in &scene.tunnels {
+        sprites.passage(painter, tunnel.shaft, px);
+    }
+    sprites.passage(painter, scene.gallery, px);
+    sprites.mound(painter, scene.landing.center().x, scene.surface_y, a, px);
+    for plant in &plants {
+        sprites.deco(painter, plant.deco, plant.foot, px, 1.0);
+    }
+    sprites.passage(painter, scene.queen_chamber, px);
+    sprites.passage(painter, scene.storage, px);
+    for tunnel in &scene.tunnels {
+        sprites.passage(painter, tunnel.chamber, px);
+    }
+
+    // Each tunnel's name and progress under the gallery, above its shaft.
+    let font = FontId::monospace(9.0 + 2.0 * px);
+    for tunnel in &scene.tunnels {
+        let top = egui::pos2(tunnel.shaft.center().x, scene.gallery.bottom() + 3.0 * px);
+        let width = tunnel.chamber.width() + 0.4 * a;
+        let text = label(
+            painter,
+            top,
+            Align2::CENTER_TOP,
+            &tunnel.label,
+            font.clone(),
+            width,
+            palette,
+        );
+        // The run's task progress: a bar filling as tasks complete, and the count.
+        if let (Some(progress), Some((done, total))) = (tunnel.progress, tunnel.tasks) {
+            let count = format!("{done}/{total} tasks done");
+            let small = FontId::monospace(8.0 + 1.5 * px);
+            let bar_w = width.min(text.width().max(3.0 * a));
+            let bar = Rect::from_center_size(
+                egui::pos2(top.x, text.bottom() + 3.0 * px),
+                vec2(bar_w, 2.0 * px),
+            );
+            painter.rect_filled(bar.expand(px), 0.0, palette.label_shadow);
+            painter.rect_filled(bar, 0.0, egui::Color32::from_rgb(0x5a, 0x3a, 0x22));
+            let filled = Rect::from_min_size(bar.min, vec2(bar.width() * progress, bar.height()));
+            painter.rect_filled(filled, 0.0, egui::Color32::from_rgb(0x8f, 0xd0, 0x5a));
+            label(
+                painter,
+                egui::pos2(top.x, bar.bottom() + 2.0 * px),
+                Align2::CENTER_TOP,
+                &count,
+                small,
+                width,
+                palette,
+            );
+        }
+    }
+    sprites.sign(
+        painter,
+        egui::pos2(scene.rect.left() + 0.3 * a, scene.surface_y),
+        px,
+        "Karl",
+        FontId::monospace(10.0 + 2.0 * px),
+        palette,
+    );
+    label(
+        painter,
+        scene.storage.left_top() + vec2(2.0 * px, 2.0 * px),
+        Align2::LEFT_TOP,
+        "Ready for review",
+        font,
+        scene.storage.width(),
+        palette,
+    );
+    // PR-ready crumbs pile up in storage, left of the ants.
+    for i in 0..scene.pr_ready {
+        let (row, col) = (i / 4, i % 4);
+        let min = scene.storage.left_bottom()
+            + vec2(
+                2.0 * px + col as f32 * 10.0 * px + (row % 2) as f32 * 5.0 * px,
+                -a - row as f32 * 8.0 * px,
+            );
+        sprites.item(
+            painter,
+            Rect::from_min_size(min, Vec2::splat(a)),
+            Item::Pile,
+            1.0,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_ants(
+    painter: &egui::Painter,
+    sprites: &Sprites,
+    scene: &Scene,
+    placed: &[Placed],
+    now_s: f64,
+    selection: &BTreeSet<NodeId>,
+    hovered: Option<&NodeId>,
+    effects: &Effects,
+    ui: &Ui,
+) {
+    let px = scene.px;
+    let origin = queen_center(scene);
+    let max_r = farthest(scene, origin);
+    let walk_frame = (now_s * WALK_FPS) as usize;
+    let step = (now_s * STEP_FPS) as usize;
+    let accent = ui.visuals().selection.bg_fill;
+    let palette = Palette::new(ui.visuals().dark_mode);
+    let hover = ui.visuals().widgets.hovered.fg_stroke.color;
+    for (ant, at) in scene.ants.iter().zip(placed) {
+        let walking = at.heading.is_some();
+        let mut cell = Rect::from_center_size(at.pos, Vec2::splat(ant.size));
+        let tpx = ant.size / layout::CELL;
+        let facing_right = match at.heading {
+            Some(h) if h.x.abs() > 0.1 => h.x > 0.0,
+            _ => ant.facing_right,
+        };
+        let frame = match ant.pose {
+            _ if walking => walk_frame,
+            Pose::Dig => step,
+            Pose::Queen if effects.queen_busy => step,
+            _ => 0,
+        };
+        if !walking {
+            match ant.pose {
+                Pose::Wait => cell = cell.translate(vec2(0.0, -((step % 2) as f32) * 2.0 * tpx)),
+                Pose::Dig => cell = cell.translate(vec2(0.0, -((step % 2) as f32) * tpx)),
+                // Belly up: the flipped sprite needs lowering to lie on the floor.
+                Pose::Sleep | Pose::Failed => cell = cell.translate(vec2(0.0, 2.0 * tpx)),
+                // A busy Queen hops about; otherwise she sits still.
+                Pose::Queen if effects.queen_busy => {
+                    cell = cell.translate(vec2(0.0, -QUEEN_HOP[step % QUEEN_HOP.len()] * tpx))
+                }
+                _ => {}
+            }
+        }
+        // Ants hop as a call's ring passes them.
+        if ant.pose != Pose::Queen {
+            let dist = (at.pos - origin).length();
+            let lift: f32 = effects
+                .ripples
+                .iter()
+                .filter_map(|r| ripple_radius(r.pulse, now_s - r.start_s, max_r))
+                .map(|radius| hop(dist, radius, scene.cell(), 4.0 * tpx))
+                .fold(0.0, f32::max);
+            cell = cell.translate(vec2(0.0, -(lift / tpx).round() * tpx));
+        }
+        let look = AntLook {
+            red: ant.pose == Pose::Failed,
+            frame,
+            facing_right,
+            upside_down: matches!(ant.pose, Pose::Failed | Pose::Sleep) && !walking,
+            alpha: ant.alpha,
+        };
+        if ant.pose == Pose::Queen {
+            sprites.ant(painter, cell, look);
+            let crown = Rect::from_center_size(
+                cell.center_top()
+                    + vec2(
+                        if facing_right { 0.25 } else { -0.25 } * ant.size,
+                        ant.size * 0.3,
+                    ),
+                Vec2::splat(ant.size * 0.5),
+            );
+            sprites.item(painter, crown, Item::Crown, 1.0);
+            // Ringed while selected or while her chat is the conversation shown.
+            if selection.contains(&ant.id) || effects.queen_focused {
+                let ring = cell.expand(px);
+                painter.rect_stroke(ring, 0.0, Stroke::new(px, accent), StrokeKind::Outside);
+            } else if hovered == Some(&ant.id) {
+                painter.rect_stroke(
+                    cell.expand(px),
+                    0.0,
+                    Stroke::new(1.0, hover),
+                    StrokeKind::Outside,
+                );
+            }
+            continue;
+        }
+        sprites.ant(painter, cell, look);
+        if ant.pose == Pose::Carry || (walking && ant.state == crate::model::NodeState::Done) {
+            let crumb = Rect::from_center_size(
+                cell.center()
+                    + vec2(
+                        if facing_right { 0.35 } else { -0.35 } * ant.size,
+                        -0.1 * ant.size,
+                    ),
+                Vec2::splat(ant.size * 0.5),
+            );
+            sprites.item(painter, crumb, Item::Crumb, ant.alpha);
+        }
+        if !walking && ant.pose == Pose::Dig {
+            let seed = (ant.pos.x * 0.37 + ant.pos.y * 0.11).rem_euclid(1.0);
+            let t = (now_s * 6.0).floor() / 6.0;
+            sprites.dirt(painter, cell, facing_right, tpx, t, seed);
+        }
+        if !walking && ant.mark == Some(layout::Mark::Whip) {
+            sprites.whip(painter, cell, tpx, step);
+        }
+        if let Some(mark) = ant.mark
+            && !walking
+        {
+            let size = layout::CELL * (tpx - 1.0).max(1.0);
+            let mut anchor = cell.center() + vec2(0.25 * ant.size, -tpx);
+            if mark == layout::Mark::Sleep {
+                // The bubble floats, and z's drift up from it and fade.
+                anchor.y -= SLEEP_BOB[step % SLEEP_BOB.len()] * tpx;
+                let offset = (ant.pos.x * 0.37 + ant.pos.y * 0.11).rem_euclid(1.0) as f64;
+                for i in 0..2 {
+                    let t = ((step as f64 / 10.0) + offset + i as f64 * 0.5).fract() as f32;
+                    let pos = anchor
+                        + vec2(
+                            0.35 * size + (t * 6.0).sin() * 2.0 * tpx,
+                            -size - t * 1.2 * size,
+                        );
+                    let snapped = egui::pos2((pos.x / px).round() * px, (pos.y / px).round() * px);
+                    sprites.snore(painter, snapped, tpx, (1.0 - t) * ant.alpha, palette);
+                }
+            }
+            sprites.bubble(painter, anchor, size, mark, ant.alpha);
+        }
+        if let Some(name) = &ant.tag {
+            let selected = selection.contains(&ant.id);
+            let width = 2.0 * scene.cell() - 2.0 * px;
+            tag(
+                painter,
+                cell.center_bottom(),
+                name,
+                px,
+                width,
+                selected.then_some(accent),
+                palette,
+            );
+        }
+        let ring = cell.expand(px);
+        if selection.contains(&ant.id) {
+            painter.rect_stroke(ring, 0.0, Stroke::new(px, accent), StrokeKind::Outside);
+        } else if hovered == Some(&ant.id) {
+            painter.rect_stroke(ring, 0.0, Stroke::new(1.0, hover), StrokeKind::Outside);
+        }
+    }
+}
+
+/// Lines a name tag wraps onto before it is cut.
+const TAG_ROWS: usize = 2;
+
+/// The sleep bubble's float, in texels per step.
+const SLEEP_BOB: [f32; 4] = [0.0, 1.0, 2.0, 1.0];
+
+/// The effects running this frame, from [`AntFarmView`].
+struct Effects<'a> {
+    ripples: &'a [Ripple],
+    births: &'a [f64],
+    queen_busy: bool,
+    queen_focused: bool,
+}
+
+/// Where the Queen sits.
+fn queen_center(scene: &Scene) -> Pos2 {
+    scene
+        .ants
+        .iter()
+        .find(|a| a.pose == Pose::Queen)
+        .map_or(scene.queen_chamber.center(), |q| q.pos)
+}
+
+/// Distance from `origin` to the farm's farthest corner.
+fn farthest(scene: &Scene, origin: Pos2) -> f32 {
+    let r = scene.rect;
+    [
+        r.left_top(),
+        r.right_top(),
+        r.left_bottom(),
+        r.right_bottom(),
+    ]
+    .iter()
+    .map(|c| (*c - origin).length())
+    .fold(0.0, f32::max)
+}
+
+/// The Queen's calls: her glow and the rings behind the ants (`behind`), then the sparkles
+/// riding the rings and those of a birth over them.
+fn paint_calls(
+    painter: &egui::Painter,
+    sprites: &Sprites,
+    scene: &Scene,
+    effects: &Effects,
+    now_s: f64,
+    behind: bool,
+) {
+    let px = scene.px;
+    let a = scene.cell();
+    let origin = queen_center(scene);
+    let max_r = farthest(scene, origin);
+    let step = (now_s * 12.0) as usize;
+    for ripple in effects.ripples {
+        let color = ripple.pulse.color();
+        let elapsed = now_s - ripple.start_s;
+        // An outward call fades as it spreads; an inward one holds until it reaches the Queen,
+        // who glows and sparkles as it arrives.
+        let (fade, glow) = if ripple.pulse.inward() {
+            (1.0, arrival_glow(elapsed))
+        } else {
+            let fade = (1.0 - elapsed / (RIPPLE_S + ECHO_S)).clamp(0.0, 1.0) as f32;
+            (fade, fade)
+        };
+        if behind {
+            sprites.glow(painter, origin, 2.5 * a, color, glow);
+        } else if ripple.pulse.inward() && glow > 0.0 {
+            for i in 0..8 {
+                let angle = i as f32 / 8.0 * std::f32::consts::TAU + elapsed as f32;
+                let p = origin + vec2(angle.cos(), angle.sin() * 0.6) * (0.6 + glow * 0.6) * a;
+                let big = (i + step).is_multiple_of(2);
+                sprites.sparkle(painter, p, px, color.gamma_multiply(glow), big);
+            }
+        }
+        for (delay, strength) in [(0.0, 1.0), (ECHO_S, 0.5)] {
+            let Some(radius) = ripple_radius(ripple.pulse, elapsed - delay, max_r) else {
+                continue;
+            };
+            let alpha = fade * strength;
+            if behind {
+                sprites.ring(
+                    painter,
+                    origin,
+                    radius,
+                    px,
+                    color.gamma_multiply(alpha * 0.8),
+                );
+                continue;
+            }
+            // Sparkles ride the ring, twinkling.
+            for i in 0..24 {
+                if (i + step).is_multiple_of(3) {
+                    continue;
+                }
+                let angle = i as f32 / 24.0 * std::f32::consts::TAU + radius * 0.002;
+                let jitter = ((i * 7) % 5) as f32 * px;
+                let p = origin + vec2(angle.cos(), angle.sin()) * (radius - jitter);
+                if scene.rect.contains(p) {
+                    let big = (i + step).is_multiple_of(5);
+                    sprites.sparkle(painter, p, px, color.gamma_multiply(alpha), big);
+                }
+            }
+        }
+    }
+    // A birth: the Queen glows warm and sparkles.
+    for &born in effects.births {
+        let t = ((now_s - born) / BIRTH_GLOW_S).clamp(0.0, 1.0) as f32;
+        let warm = egui::Color32::from_rgb(0xff, 0xe0, 0x8a);
+        if behind {
+            sprites.glow(painter, origin, 1.6 * a, warm, 1.0 - t);
+            continue;
+        }
+        for i in 0..6 {
+            let angle = i as f32 / 6.0 * std::f32::consts::TAU + t * 2.0;
+            let p = origin + vec2(angle.cos(), angle.sin() * 0.6) * (0.8 + t) * a;
+            sprites.sparkle(
+                painter,
+                p,
+                px,
+                warm.gamma_multiply(1.0 - t),
+                (i + step).is_multiple_of(2),
+            );
+        }
+    }
+}
+
+/// Text with a hard pixel shadow, cut to `width`; returns where it went.
+fn label(
+    painter: &egui::Painter,
+    pos: Pos2,
+    align: Align2,
+    text: &str,
+    font: FontId,
+    width: f32,
+    palette: Palette,
+) -> Rect {
+    let galley = |color| {
+        let mut job =
+            egui::text::LayoutJob::simple_singleline(text.to_string(), font.clone(), color);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(8.0));
+        painter.layout_job(job)
+    };
+    let shadow = galley(palette.label_shadow);
+    let rect = align.anchor_size(pos, shadow.size());
+    painter.galley(rect.min + vec2(1.0, 1.0), shadow, palette.label_shadow);
+    painter.galley(rect.min, galley(palette.label), palette.label);
+    rect
+}
+
+/// An ant's name tag under `top`: light text on a dark chip, or on `highlight` when the ant is
+/// selected.
+fn tag(
+    painter: &egui::Painter,
+    top: Pos2,
+    name: &str,
+    px: f32,
+    width: f32,
+    highlight: Option<egui::Color32>,
+    palette: Palette,
+) {
+    let font = FontId::proportional(8.0 + 1.5 * px);
+    let mut job = egui::text::LayoutJob::simple(name.to_string(), font, palette.label, 0.0);
+    job.wrap = egui::text::TextWrapping {
+        max_width: (width - 2.0 * px).max(8.0),
+        max_rows: TAG_ROWS,
+        break_anywhere: false,
+        overflow_character: Some('…'),
+    };
+    job.halign = egui::Align::Center;
+    let galley = painter.layout_job(job);
+    // Centered lines sit around x = 0 in the galley; place its rect's middle under `top`.
+    let text = galley.rect;
+    let origin = top - vec2(text.center().x, text.top());
+    let chip = text.translate(origin.to_vec2()).expand2(vec2(px, 0.0));
+    let fill = highlight.unwrap_or(palette.label_shadow.gamma_multiply(0.75));
+    painter.rect_filled(chip, 0.0, fill);
+    painter.galley(origin, galley, palette.label);
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
+}

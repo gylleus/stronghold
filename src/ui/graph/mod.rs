@@ -5,6 +5,7 @@ mod fit;
 #[cfg(test)]
 mod fit_tests;
 mod layout;
+mod nav;
 mod regions;
 mod saved;
 #[cfg(test)]
@@ -41,12 +42,13 @@ pub use layout::{
     REGION_PADDING, RunClusters, RunClustersParams, SettleTracker, memberships, region_rect,
     repo_indices,
 };
+use nav::{ScrollAction, ScrollSource, route_scroll};
 pub use regions::{Region, region_color, regions};
 pub use saved::{MAX_SAVED_POSITIONS, SavedLayout, SavedView};
 pub use select::{circle_intersects_rect, is_additive};
 pub use shape::{
-    ALL_STATES, FleetNodeShape, NodePayload, StateGlyph, agent_marker, contrast_ratio, fade_alpha,
-    hexagon, legend, node_radius, pr_color, queen_color, state_color, state_glyph,
+    ALL_STATES, FleetNodeShape, NodePayload, StateGlyph, UnreadBadge, agent_marker, contrast_ratio,
+    fade_alpha, hexagon, legend, node_radius, pr_color, queen_color, state_color, state_glyph,
 };
 pub use tooltip::{coordinator_gone_note, format_ago, kind_label, preview_line, state_label};
 
@@ -63,8 +65,6 @@ const SPAWN_NEAR: f32 = 40.0;
 const SPAWN_CENTER: f32 = 80.0;
 /// Cosine of the half-angle of the cone [`GraphView::outside_graph`] looks along.
 const SPAWN_CONE_COS: f32 = 0.7;
-/// Zoom factor per scrolled point.
-const SCROLL_ZOOM_SPEED: f32 = 0.0015;
 const MIN_ZOOM: f32 = 0.05;
 const MAX_ZOOM: f32 = 10.0;
 /// Margin around focused nodes, as a fraction of their bounding box.
@@ -95,9 +95,9 @@ type EdgeKey = (NodeId, NodeId, EdgeKind);
 
 /// What a node's context menu asked for this frame.
 #[derive(Debug, Default)]
-struct MenuPick {
-    close: Vec<NodeId>,
-    whip: Vec<NodeId>,
+pub struct MenuPick {
+    pub close: Vec<NodeId>,
+    pub whip: Vec<NodeId>,
 }
 
 /// Interactive force-directed view of a [`FleetSnapshot`].
@@ -117,6 +117,8 @@ pub struct GraphView {
     usage: HashMap<NodeId, Usage>,
     /// Nodes whose agent has a PR in the review queue; drawn with a "PR" badge.
     pr_ready: HashSet<NodeId>,
+    /// Unread notifications per node; drawn as a count badge.
+    unread: HashMap<NodeId, UnreadBadge>,
     id: String,
     /// Canvas point new unrelated nodes spawn around (the layout's gravity center).
     anchor: Pos2,
@@ -152,6 +154,8 @@ pub struct GraphView {
     box_select: Option<select::BoxSelect>,
     /// Nodes the user dragged: the layout leaves them where they were dropped.
     pinned: HashSet<NodeId>,
+    /// Device of the latest scroll over the graph; see [`ScrollSource`].
+    scroll_source: ScrollSource,
 }
 
 impl Default for GraphView {
@@ -177,6 +181,7 @@ impl GraphView {
             repos: HashMap::new(),
             usage: HashMap::new(),
             pr_ready: HashSet::new(),
+            unread: HashMap::new(),
             id: id.into(),
             anchor: Pos2::new(640.0, 400.0),
             layout_initialized: false,
@@ -196,6 +201,7 @@ impl GraphView {
             primary: None,
             box_select: None,
             pinned: HashSet::new(),
+            scroll_source: ScrollSource::default(),
         }
     }
 
@@ -218,6 +224,28 @@ impl GraphView {
             }
         }
         self.pr_ready = nodes;
+    }
+
+    /// The nodes with a PR ready for review.
+    pub fn pr_ready(&self) -> &HashSet<NodeId> {
+        &self.pr_ready
+    }
+
+    /// Marks the nodes with unread notifications (a count badge), updating drawn nodes in
+    /// place.
+    pub fn set_unread(&mut self, nodes: HashMap<NodeId, UnreadBadge>) {
+        if nodes == self.unread {
+            return;
+        }
+        for (id, &idx) in &self.index {
+            let want = nodes.get(id).copied();
+            if let Some(node) = self.graph.node_mut(idx)
+                && node.payload().unread != want
+            {
+                node.payload_mut().unread = want;
+            }
+        }
+        self.unread = nodes;
     }
 
     /// Applies a snapshot: adds new nodes and edges, removes vanished ones and updates the rest
@@ -271,6 +299,7 @@ impl GraphView {
                     if let Some(graph_node) = self.graph.node_mut(idx) {
                         let mut payload = payload(node, snapshot);
                         payload.pr_ready = self.pr_ready.contains(&node.id);
+                        payload.unread = self.unread.get(&node.id).copied();
                         if *graph_node.payload() != payload {
                             *graph_node.payload_mut() = payload;
                         }
@@ -296,6 +325,7 @@ impl GraphView {
             let label = node.label.clone();
             let mut payload = payload(node, snapshot);
             payload.pr_ready = self.pr_ready.contains(&node.id);
+            payload.unread = self.unread.get(&node.id).copied();
             let idx = self.graph.add_node_custom(payload, |n| {
                 n.set_location(location);
                 n.set_label(label);
@@ -556,7 +586,7 @@ impl GraphView {
                 _ => {}
             }
         }
-        if self.scroll_zoom(ui, &response.response) {
+        if self.scroll_navigate(ui, &response.response) || self.key_pan(ui) {
             user_navigated = true;
         }
         if self.apply_focus(ui, response.response.rect.size()) {
@@ -585,28 +615,13 @@ impl GraphView {
         }
 
         let hovered = self.graph.hovered_node().and_then(|idx| self.node_id(idx));
-        if let Some(node) = hovered.as_ref().and_then(|id| self.nodes.get(id))
+        if let Some(id) = hovered.as_ref().filter(|id| self.nodes.contains_key(*id))
             && !dragging
         {
-            let objective = node
-                .run_id
-                .as_ref()
-                .and_then(|r| self.objectives.get(r))
-                .map(String::as_str);
-            let now_ms = now_ms();
-            let usage = self.usage.get(&node.id);
-            let gone = self
-                .index
-                .get(&node.id)
-                .and_then(|&i| self.graph.node(i))
-                .is_some_and(|n| n.payload().coordinator_gone);
-            response.response.clone().on_hover_ui_at_pointer(|ui| {
-                let repo = self.repos.get(&node.id).map(String::as_str);
-                tooltip::node_tooltip(ui, node, objective, repo, usage, now_ms);
-                if gone {
-                    tooltip::coordinator_gone_note(ui);
-                }
-            });
+            response
+                .response
+                .clone()
+                .on_hover_ui_at_pointer(|ui| self.node_tooltip_ui(ui, id));
         }
 
         let menu = self.node_context_menu(&response.response, hovered.as_ref());
@@ -631,7 +646,39 @@ impl GraphView {
         if response.secondary_clicked() {
             self.context_node = hovered.cloned();
         }
-        let Some(node) = self.context_node.as_ref().and_then(|id| self.nodes.get(id)) else {
+        match self.context_node.clone() {
+            Some(id) => self.node_menu(response, &id),
+            None => MenuPick::default(),
+        }
+    }
+
+    /// The tooltip of node `id`: what it is, its run, repo, agent, branch and usage.
+    pub fn node_tooltip_ui(&self, ui: &mut Ui, id: &NodeId) {
+        let Some(node) = self.nodes.get(id) else {
+            return;
+        };
+        let objective = node
+            .run_id
+            .as_ref()
+            .and_then(|r| self.objectives.get(r))
+            .map(String::as_str);
+        let usage = self.usage.get(&node.id);
+        let gone = self
+            .index
+            .get(&node.id)
+            .and_then(|&i| self.graph.node(i))
+            .is_some_and(|n| n.payload().coordinator_gone);
+        let repo = self.repos.get(&node.id).map(String::as_str);
+        tooltip::node_tooltip(ui, node, objective, repo, usage, now_ms());
+        if gone {
+            tooltip::coordinator_gone_note(ui);
+        }
+    }
+
+    /// The context menu of node `id` on `response`; returns the nodes to close or whip, if
+    /// picked. On a node of a multi-selection it acts on the whole selection.
+    pub fn node_menu(&self, response: &egui::Response, id: &NodeId) -> MenuPick {
+        let Some(node) = self.nodes.get(id) else {
             return MenuPick::default();
         };
         let selection = self.selection();
@@ -949,22 +996,52 @@ impl GraphView {
         running
     }
 
-    /// Zooms around the pointer on plain scroll (egui_graphs itself only zooms on
-    /// ctrl+scroll and pinch). Returns whether it zoomed.
-    fn scroll_zoom(&self, ui: &mut Ui, response: &egui::Response) -> bool {
+    /// Pans or zooms on scroll over the graph, per [`route_scroll`] (egui_graphs itself only
+    /// zooms, on ⌘+scroll and pinch). Returns whether the view moved.
+    fn scroll_navigate(&mut self, ui: &mut Ui, response: &egui::Response) -> bool {
         let Some(pointer) = response.hover_pos() else {
             return false;
         };
-        let (scroll, zoom_delta) = ui.input(|i| (i.smooth_scroll_delta(), i.zoom_delta()));
-        if zoom_delta != 1.0 || scroll.y == 0.0 {
+        let (source, scroll, zoom_delta, ctrl) = ui.input(|i| {
+            (
+                ScrollSource::from_events(&i.events),
+                i.smooth_scroll_delta(),
+                i.zoom_delta(),
+                i.modifiers.ctrl,
+            )
+        });
+        if let Some(source) = source {
+            self.scroll_source = source;
+        }
+        if zoom_delta != 1.0 {
             return false;
         }
+        let Some(action) = route_scroll(self.scroll_source, scroll, ctrl) else {
+            return false;
+        };
         let mut meta = MetadataFrame::new(Some(self.id.clone())).load(ui);
-        let new_zoom = (meta.zoom * (scroll.y * SCROLL_ZOOM_SPEED).exp()).clamp(MIN_ZOOM, MAX_ZOOM);
-        let local = pointer - response.rect.left_top();
-        meta.pan = local - (local - meta.pan) * (new_zoom / meta.zoom);
-        meta.zoom = new_zoom;
+        match action {
+            ScrollAction::Pan(delta) => meta.pan += delta,
+            ScrollAction::Zoom(factor) => {
+                let new_zoom = (meta.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+                let local = pointer - response.rect.left_top();
+                meta.pan = local - (local - meta.pan) * (new_zoom / meta.zoom);
+                meta.zoom = new_zoom;
+            }
+        }
         meta.save(ui);
+        true
+    }
+
+    /// Pans while arrow keys are held. Returns whether the view moved.
+    fn key_pan(&self, ui: &mut Ui) -> bool {
+        let Some(delta) = nav::arrow_pan(ui.ctx()) else {
+            return false;
+        };
+        let mut meta = MetadataFrame::new(Some(self.id.clone())).load(ui);
+        meta.pan += delta;
+        meta.save(ui);
+        ui.ctx().request_repaint();
         true
     }
 }
@@ -982,6 +1059,7 @@ fn payload(node: &Node, snapshot: &FleetSnapshot) -> NodePayload {
             .as_ref()
             .and_then(|_| agent_marker(node.agent.as_ref())),
         pr_ready: false,
+        unread: None,
     }
 }
 
