@@ -1013,3 +1013,63 @@ fn a_dead_ant_falls_to_the_bottom() {
     assert!((mid.alpha - 0.5).abs() < 0.01);
     assert_eq!(still.frame(RECT, 10.0 + STILL_FADE_S), None);
 }
+
+/// A crowded chamber in a narrow tunnel packs its ants side by side, spread across the
+/// chamber, rather than one per row down a tall farm.
+#[test]
+fn a_crowded_chamber_packs_side_by_side() {
+    let mut s = FleetSnapshot::default();
+    s.nodes
+        .push(node("queen", NodeKind::Queen, None, NodeState::Working));
+    for r in 0..6 {
+        let name = format!("r{r}");
+        s.runs.push(run(&name, 1, 4));
+        let workers = if r == 0 { 9 } else { 1 };
+        for w in 0..workers {
+            s.nodes.push(node(
+                &format!("{name}-w{w}"),
+                NodeKind::Worker,
+                Some(&name),
+                NodeState::Failed,
+            ));
+        }
+    }
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 1400.0));
+    let pr_ready = HashSet::new();
+    let hidden = BTreeSet::new();
+    let input = FarmInput {
+        snapshot: &s,
+        hidden: &hidden,
+        pr_ready: &pr_ready,
+        now_ms: 0,
+    };
+    let scene = layout(&input, rect);
+    let chamber = scene.tunnels[tunnel_of(&scene, "r0-w0")].chamber;
+    let ants: Vec<&Ant> = scene
+        .ants
+        .iter()
+        .filter(|a| a.id.as_str().starts_with("r0-"))
+        .collect();
+    let mut rows: Vec<f32> = ants.iter().map(|a| a.pos.y).collect();
+    rows.sort_by(f32::total_cmp);
+    rows.dedup();
+    let widest = rows
+        .iter()
+        .map(|y| ants.iter().filter(|a| a.pos.y == *y).count())
+        .max()
+        .unwrap();
+    assert!(
+        rows.len() <= widest,
+        "{} rows of up to {widest}",
+        rows.len()
+    );
+    for ant in ants {
+        // The name tag is two cells wide.
+        let tag = Rect::from_center_size(ant.pos, vec2(2.0 * ant.size, ant.size));
+        assert!(
+            tag.left() >= chamber.left() - 0.5 && tag.right() <= chamber.right() + 0.5,
+            "{} stays in its chamber",
+            ant.id.as_str()
+        );
+    }
+}

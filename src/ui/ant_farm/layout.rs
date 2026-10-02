@@ -217,6 +217,12 @@ fn band(size: Vec2, a: f32, crowd: Crowd) -> (f32, usize, usize, f32) {
     (surface, landing_per_row, storage_per_row, storage_h)
 }
 
+/// Ants that fit side by side in a chamber `width` wide: slots need their gap only between
+/// them.
+fn chamber_per_row(width: f32, a: f32) -> usize {
+    (((width + (SLOT - 2.0) * a) / (SLOT * a)).floor() as usize).max(1)
+}
+
 /// Height of a chamber holding `n` ants, `per_row` to a row.
 fn chamber_height(n: usize, per_row: usize, a: f32) -> f32 {
     let rows = n.div_ceil(per_row).max(1) as f32;
@@ -224,22 +230,33 @@ fn chamber_height(n: usize, per_row: usize, a: f32) -> f32 {
 }
 
 /// Points per texel for a view of `size`: the biggest whole scale that leaves each tunnel
-/// room for an ant and its name tag, and fits the crowds on the landing,
-/// in storage and in the fullest chamber.
+/// room for an ant and its name tag, fits the crowds on the landing, in storage and in the
+/// fullest chamber, and packs that chamber side by side: no more rows than ants to a row.
+/// When no scale packs it, the smallest that fits, which packs it best.
 pub fn pixel_scale(size: Vec2, crowd: Crowd) -> f32 {
     let column = size.x / crowd.tunnels.max(1) as f32;
+    // Whether the farm fits at `px`, and whether the fullest chamber is packed then.
     let fits = |px: f32| {
         let a = CELL * px;
-        let per_row = (((column - 0.6 * a) / (SLOT * a)).floor() as usize).max(1);
+        let per_row = chamber_per_row(column - 0.6 * a, a);
         let (surface, _, _, storage_h) = band(size, a, crowd);
         let gallery_bottom = surface + 0.4 * a + storage_h + 1.8 * a;
         let bottom = gallery_bottom + a + chamber_height(crowd.chamber, per_row, a) + 0.3 * a;
-        column >= (SLOT + 0.6) * a && bottom <= size.y
+        let fits = column >= (SLOT + 0.6) * a && bottom <= size.y;
+        (fits, crowd.chamber.div_ceil(per_row) <= per_row)
     };
-    [4.0, 3.0, 2.0]
+    let fitting: Vec<(f32, bool)> = [4.0, 3.0, 2.0, 1.0]
         .into_iter()
-        .find(|px| fits(*px))
-        .unwrap_or(1.0)
+        .filter_map(|px| match fits(px) {
+            (true, packed) => Some((px, packed)),
+            (false, _) => None,
+        })
+        .collect();
+    fitting
+        .iter()
+        .find(|(_, packed)| *packed)
+        .or(fitting.last())
+        .map_or(1.0, |(px, _)| *px)
 }
 
 /// Where an ant of `kind` in `state` belongs, before slots are assigned.
@@ -479,7 +496,13 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
     let n = keys.len().max(1);
     let column_w = rect.width() / n as f32;
     let chamber_w = (column_w - 0.6 * a).max(SLOT * a);
-    let per_row = ((chamber_w / (SLOT * a)).floor() as usize).max(1);
+    let per_row = chamber_per_row(chamber_w, a);
+    // A full row spreads across the chamber.
+    let slot_w = if per_row > 1 {
+        ((chamber_w - 2.0 * a) / (per_row - 1) as f32).max(SLOT * a)
+    } else {
+        SLOT * a
+    };
     let below = (rect.bottom() - 0.3 * a) - (gallery.bottom() + a);
     let tunnels: Vec<Tunnel> = keys
         .iter()
@@ -601,7 +624,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         for (k, node) in nodes.iter().enumerate() {
             let (row, col) = (k / per_row, k % per_row);
             let pos = pos2(
-                chamber.right() - (col as f32 + 0.5) * SLOT * a,
+                chamber.right() - a - col as f32 * slot_w,
                 chamber.bottom() - (0.5 + TAG) * a - row as f32 * ROW * a,
             );
             let is_pr = input.pr_ready.contains(&node.id);
