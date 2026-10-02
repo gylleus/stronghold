@@ -124,6 +124,8 @@ pub struct MyrstackApp {
     control: control::AppControl,
     /// "Close session" confirmation dialog and the log of closes.
     close: ui::close::CloseDialog,
+    /// Worktree count in the top bar, the cleanup window and its broom.
+    worktrees: ui::worktrees::WorktreePanel,
     /// Who fetched which playbook version, re-read off the UI thread.
     playbook_watch: playbook::PlaybookWatch,
     /// The Queen's chat, drawn in the conversation column.
@@ -210,6 +212,7 @@ impl MyrstackApp {
             help_open: false,
             frame_stats: ui::frame_stats::FrameStats::default(),
             close: ui::close::CloseDialog::default(),
+            worktrees: ui::worktrees::WorktreePanel::new(ctx),
             playbook_watch: playbook::PlaybookWatch::spawn(repaint_once(ctx)),
             chat,
             whip_now: whip_now::WhipNowState::default(),
@@ -778,6 +781,8 @@ impl MyrstackApp {
         if let Some(data) = &self.data {
             ui.weak(format!("{} terminals", data.terminals.len()));
             ui.separator();
+            self.worktrees.top_bar(ui, &data.worktrees);
+            ui.separator();
             ui.weak(format!(
                 "updated {} ago",
                 ui::table::format_age(now_ms - data.polled_at_ms)
@@ -887,6 +892,16 @@ impl MyrstackApp {
     }
 
     /// Draws the dialog and submits a confirmed plan's steps, in order.
+    /// The worktree cleanup window and the broom while it removes.
+    fn worktree_cleanup(&mut self, ctx: &egui::Context, now_ms: i64) {
+        let worktrees = self.data.as_ref().map(|d| &d.worktrees[..]);
+        if self.worktrees.tick(worktrees, now_ms) {
+            self.poller.send(PollerCommand::RefreshNow);
+        }
+        self.worktrees.window(ctx);
+        self.worktrees.broom(ctx);
+    }
+
     fn close_dialog(&mut self, ctx: &egui::Context) {
         let terminals = self.data.as_ref().map_or(&[][..], |d| &d.terminals[..]);
         let confirmed =
@@ -1084,6 +1099,7 @@ impl eframe::App for MyrstackApp {
         self.panes(ui, now_ms);
         self.notification_toasts(ui.ctx(), top_bar.response.rect.bottom());
         self.close_dialog(ui.ctx());
+        self.worktree_cleanup(ui.ctx(), now_ms);
         self.settings_window(ui.ctx(), now_ms);
         if self.whip_window.take_whip_stalled() {
             self.request_whip_stalled(None);

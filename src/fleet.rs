@@ -39,6 +39,8 @@ pub struct FleetData {
     /// Names chosen for worktrees in Orca (by the Queen at spawn, or renamed in Orca), by
     /// worktree path; see [`chosen_worktree_names`]. Agents in a named worktree go by it.
     pub worktree_names: BTreeMap<String, String>,
+    /// Orca's worktree list, for the worktree count and cleanup.
+    pub worktrees: Vec<Worktree>,
 }
 
 /// The worktrees whose Orca display name was chosen rather than defaulted, by path. Orca

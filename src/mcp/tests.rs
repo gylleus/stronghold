@@ -449,6 +449,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "mark_pr_ready",
         "review_queue",
         "notify",
+        "clean_worktrees",
     ];
     assert_eq!(names, expected);
     let reads = [
@@ -472,6 +473,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "set_whip",
         "whip_agents",
         "spawn_session",
+        "clean_worktrees",
     ];
     for tool in tools {
         let name = tool["name"].as_str().unwrap();
@@ -1928,4 +1930,32 @@ fn spawn_session_offers_allow_suffix_and_passes_it_on() {
         json!({"mode": "new_worktree", "repo": "r", "name": "x", "prompt": "go", "allow_suffix": true}),
     );
     assert_eq!(server.control().calls[0].1["allow_suffix"], true);
+}
+
+/// A real cleanup needs the approved ids; bad arguments fail before Orca is asked anything.
+#[test]
+fn clean_worktrees_refuses_a_real_run_without_ids() {
+    let mut server = McpServer::new(FakeControl::default());
+    for args in [
+        json!({"dry_run": false}),
+        json!({"dry_run": false, "ids": []}),
+        json!({"dry_run": "no"}),
+        json!({"ids": "r::/w/a"}),
+        json!({"dry_run": false, "ids": [1]}),
+    ] {
+        let r = call(&mut server, "clean_worktrees", args.clone());
+        assert_eq!(r["isError"], true, "{args}");
+    }
+    let tools = rpc(&mut server, "tools/list", json!({}));
+    let tool = tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "clean_worktrees")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        tool["inputSchema"]["properties"]["dry_run"]["default"],
+        true
+    );
 }

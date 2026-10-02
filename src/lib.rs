@@ -27,6 +27,7 @@ pub mod spawn;
 pub mod ui;
 pub mod voice;
 pub mod whip;
+pub mod worktrees;
 
 pub use app::MyrstackApp;
 

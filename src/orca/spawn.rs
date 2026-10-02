@@ -76,6 +76,25 @@ pub struct Worktree {
     pub is_archived: bool,
     pub workspace_status: Option<String>,
     pub last_activity_at: Option<i64>,
+    /// E.g. `github:owner/repo`; Orca's id for a repo without a remote is `repo:<id>`.
+    pub project_id: Option<String>,
+    pub is_pinned: bool,
+    /// The linked GitHub PR's number, as Orca sends it.
+    #[serde(rename = "linkedPR")]
+    pub linked_pr: Option<Value>,
+    /// Where the branch pushes to.
+    pub push_target: Option<PushTarget>,
+    /// The ref the worktree was created from, e.g. `refs/remotes/origin/main`.
+    pub base_ref: Option<String>,
+    pub created_at: Option<i64>,
+}
+
+/// `pushTarget` of a worktree.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PushTarget {
+    pub remote_name: Option<String>,
+    pub branch_name: Option<String>,
 }
 
 impl Worktree {
@@ -104,6 +123,16 @@ impl Worktree {
     /// The `--worktree` selector.
     pub fn selector(&self) -> String {
         format!("id:{}", self.id)
+    }
+
+    /// The linked PR's number, when Orca sends one.
+    pub fn linked_pr_number(&self) -> Option<u64> {
+        match self.linked_pr.as_ref()? {
+            Value::Number(n) => n.as_u64(),
+            Value::String(s) => s.trim().trim_start_matches('#').parse().ok(),
+            Value::Object(o) => o.get("number").and_then(Value::as_u64),
+            _ => None,
+        }
     }
 }
 
