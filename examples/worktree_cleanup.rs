@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use myrstack::ui::worktrees::WorktreePanel;
-use myrstack::worktrees::{Plan, PlanEntry, SweepMarker, Verdict};
+use myrstack::worktrees::{BuildDir, Plan, PlanEntry, SweepMarker, Verdict};
 
 const WINDOW: [f32; 2] = [1100.0, 720.0];
 const GB: u64 = 1024 * 1024 * 1024;
@@ -21,9 +21,26 @@ fn entry(repo: &str, name: &str, bytes: Option<u64>, remove: bool, reason: &str)
         path: format!("~/orca/workspaces/{repo}/{name}"),
         branch: Some(format!("gylleus/{name}")),
         bytes,
+        // Kept worktrees show what their build output costs.
+        build: bytes
+            .filter(|_| !remove)
+            .map(|b| {
+                vec![
+                    BuildDir {
+                        path: "target".into(),
+                        bytes: b * 3 / 5,
+                    },
+                    BuildDir {
+                        path: ".venv".into(),
+                        bytes: b / 5,
+                    },
+                ]
+            })
+            .unwrap_or_default(),
         verdict: Verdict {
             remove,
             reasons: vec![reason.into()],
+            ..Verdict::default()
         },
     }
 }
@@ -60,6 +77,28 @@ fn plan() -> Plan {
                 "PR #8291 closed; HEAD is on origin/gylleus/docs-recs-custom-css",
             ),
             entry(
+                "recommendations",
+                "rperf",
+                Some(4 * GB),
+                true,
+                "HEAD is in merged PR #150's head",
+            ),
+            entry(
+                "recommendations",
+                "serving-field",
+                Some(GB * 12 / 5),
+                true,
+                "PR #137 closed; HEAD is on origin/gylleus/live-static-baseline; first saves 19 \
+                 notes (ANSWER-1.md, ANSWER-10.md, ANSWER-2.md, +16 more)",
+            ),
+            entry(
+                "recommendations",
+                "demo-check-shopify-13374187",
+                Some(3 * GB),
+                false,
+                "untracked files need a decision: demo-check/ (139 MB)",
+            ),
+            entry(
                 "depict",
                 "sra-storefront",
                 None,
@@ -69,7 +108,7 @@ fn plan() -> Plan {
             entry(
                 "realtime",
                 "median-per-pricelist",
-                None,
+                Some(2 * GB),
                 false,
                 "1 uncommitted change (?? MEDIAN-PRICELIST-REPORT.md)",
             ),

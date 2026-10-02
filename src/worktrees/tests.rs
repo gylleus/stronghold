@@ -22,6 +22,7 @@ fn clean() -> Facts {
             merged_into: Some("main".into()),
             on_remote: None,
             ahead: Some(2),
+            ..GitFacts::default()
         }),
         pr: PrLookup::None,
     }
@@ -135,7 +136,8 @@ fn closed_pr_with_pushed_head_is_removed() {
         decide(&f),
         Verdict {
             remove: true,
-            reasons: vec!["PR #8 closed; HEAD is on origin/x".into()]
+            reasons: vec!["PR #8 closed; HEAD is on origin/x".into()],
+            ..Verdict::default()
         }
     );
 }
@@ -150,6 +152,265 @@ fn merged_pr_with_local_only_commits_is_kept() {
         state: PrState::Merged,
     };
     kept_for(&f, "3 commits not on any remote");
+}
+
+/// Unmerged, local-only commits: the squash-aware checks all came back empty.
+fn local_only(f: &mut Facts) {
+    unmerged(f);
+    f.pr = PrLookup::None;
+}
+
+#[test]
+fn rebase_merged_commits_are_removed() {
+    let mut f = clean();
+    local_only(&mut f);
+    git_mut(&mut f).patches_in = Some("origin/main".into());
+    let v = decide(&f);
+    assert!(v.remove, "{v:?}");
+    assert_eq!(v.reasons, vec!["every commit's patch is in origin/main"]);
+}
+
+#[test]
+fn squash_merged_content_is_removed() {
+    let mut f = clean();
+    local_only(&mut f);
+    git_mut(&mut f).content_in = Some("origin/main".into());
+    let v = decide(&f);
+    assert!(v.remove, "{v:?}");
+    assert_eq!(
+        v.reasons,
+        vec!["its changes are already in origin/main (squash-merged)"]
+    );
+}
+
+/// The branch was deleted after the PR merged; GitHub still has HEAD under the PR. A detached
+/// HEAD gets the same check.
+#[test]
+fn head_inside_a_merged_pr_is_removed_even_detached() {
+    let mut f = clean();
+    local_only(&mut f);
+    let g = git_mut(&mut f);
+    g.merged_pr_head = Some(150);
+    g.branch = None;
+    let v = decide(&f);
+    assert!(v.remove, "{v:?}");
+    assert_eq!(v.reasons, vec!["HEAD is in merged PR #150's head"]);
+}
+
+/// Content already in the base doesn't override an open PR or unknown PR state.
+#[test]
+fn squash_checks_never_override_an_open_or_unknown_pr() {
+    let mut f = clean();
+    local_only(&mut f);
+    git_mut(&mut f).content_in = Some("main".into());
+    f.pr = PrLookup::Found {
+        number: 3,
+        state: PrState::Open,
+    };
+    kept_for(&f, "PR #3 is open");
+    f.pr = PrLookup::Unknown("gh: offline".into());
+    kept_for(&f, "PR state unknown");
+}
+
+/// A commit that exists nowhere else keeps the worktree.
+#[test]
+fn local_only_commit_keeps_it() {
+    let mut f = clean();
+    local_only(&mut f);
+    kept_for(&f, "3 commits not merged into the base");
+}
+
+#[test]
+fn notes_and_logs_alone_are_saved_then_removed() {
+    let mut f = clean();
+    let g = git_mut(&mut f);
+    g.notes = vec!["PLAN.md".into(), "DIAGNOSIS.md".into()];
+    g.logs = vec!["tsall.log".into()];
+    let v = decide(&f);
+    assert!(v.remove, "{v:?}");
+    assert_eq!(
+        v.reasons,
+        vec![
+            "merged into main",
+            "first saves 2 notes (PLAN.md, DIAGNOSIS.md) and deletes 1 log"
+        ]
+    );
+    assert_eq!(v.notes, vec!["PLAN.md", "DIAGNOSIS.md"]);
+    assert_eq!(v.logs, vec!["tsall.log"]);
+}
+
+/// Notes don't make unmerged work removable.
+#[test]
+fn notes_on_unmerged_work_keep_it_and_are_not_planned() {
+    let mut f = clean();
+    local_only(&mut f);
+    git_mut(&mut f).notes = vec!["PLAN.md".into()];
+    let v = decide(&f);
+    assert!(!v.remove);
+    assert!(v.notes.is_empty());
+}
+
+#[test]
+fn other_untracked_files_keep_it_with_their_size() {
+    let mut f = clean();
+    let g = git_mut(&mut f);
+    g.notes = vec!["DEMO-READINESS.md".into()];
+    g.untracked = vec![
+        ("demo-check/".into(), 139 * 1024 * 1024),
+        ("probe.py".into(), 2048),
+    ];
+    kept_for(
+        &f,
+        "untracked files need a decision: demo-check/ (139 MB), probe.py (2.0 KB)",
+    );
+}
+
+#[test]
+fn status_splits_notes_logs_and_the_rest() {
+    let split = split_status(
+        " M src/a.rs\n?? DIAGNOSIS.md\n?? docs/Answer-2.MD\n?? tsall.log\n?? demo-check/x.jsonl\n\
+         ?? \"we\\\"ird.md\"\n?? .beads/issues.jsonl\n",
+    );
+    assert_eq!(split.dirty, vec![" M src/a.rs"]);
+    assert_eq!(split.notes, vec!["DIAGNOSIS.md", "docs/Answer-2.MD"]);
+    assert_eq!(split.logs, vec!["tsall.log"]);
+    assert_eq!(split.other, vec!["demo-check/x.jsonl", "\"we\\\"ird.md\""]);
+}
+
+#[test]
+fn untracked_files_group_by_top_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("demo-check/kv")).unwrap();
+    fs::write(dir.path().join("demo-check/a.jsonl"), "1234").unwrap();
+    fs::write(dir.path().join("demo-check/kv/b.txt"), "12").unwrap();
+    fs::write(dir.path().join("probe.py"), "123456789").unwrap();
+    let paths = ["demo-check/a.jsonl", "demo-check/kv/b.txt", "probe.py"].map(String::from);
+    assert_eq!(
+        group_untracked(dir.path(), &paths),
+        vec![("probe.py".to_string(), 9), ("demo-check/".to_string(), 6)]
+    );
+}
+
+#[test]
+fn save_notes_copies_then_deletes_notes_and_logs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let wt = tmp.path().join("wt");
+    let dest = tmp.path().join("notes/recommendations/rperf");
+    fs::create_dir_all(wt.join("docs")).unwrap();
+    fs::write(wt.join("PLAN.md"), "plan").unwrap();
+    fs::write(wt.join("docs/REVIEW-1.md"), "review").unwrap();
+    fs::write(wt.join("run.log"), "log").unwrap();
+    // A different PLAN.md from an earlier save is kept; the new one gets a suffix.
+    fs::create_dir_all(&dest).unwrap();
+    fs::write(dest.join("PLAN.md"), "older plan").unwrap();
+
+    let notes = vec!["PLAN.md".to_string(), "docs/REVIEW-1.md".to_string()];
+    save_notes(&wt, &dest, &notes, &["run.log".to_string()]).unwrap();
+    assert_eq!(
+        fs::read_to_string(dest.join("PLAN.md")).unwrap(),
+        "older plan"
+    );
+    assert_eq!(fs::read_to_string(dest.join("PLAN-2.md")).unwrap(), "plan");
+    assert_eq!(
+        fs::read_to_string(dest.join("docs/REVIEW-1.md")).unwrap(),
+        "review"
+    );
+    assert!(!wt.join("PLAN.md").exists());
+    assert!(!wt.join("docs/REVIEW-1.md").exists());
+    assert!(!wt.join("run.log").exists());
+
+    // Saving the same note again doesn't duplicate it.
+    fs::write(wt.join("PLAN.md"), "plan").unwrap();
+    save_notes(&wt, &dest, &["PLAN.md".to_string()], &[]).unwrap();
+    assert!(!dest.join("PLAN-3.md").exists());
+}
+
+#[test]
+fn save_notes_refuses_paths_outside_the_worktree_and_keeps_everything() {
+    let tmp = tempfile::tempdir().unwrap();
+    let wt = tmp.path().join("wt");
+    fs::create_dir_all(&wt).unwrap();
+    fs::write(wt.join("PLAN.md"), "plan").unwrap();
+    let err = save_notes(
+        &wt,
+        &tmp.path().join("dest"),
+        &["PLAN.md".to_string()],
+        &["../x.log".to_string()],
+    )
+    .unwrap_err();
+    assert!(err.contains("unsafe path"), "{err}");
+    assert!(wt.join("PLAN.md").exists());
+    // A missing note fails before anything is deleted.
+    fs::write(wt.join("a.log"), "x").unwrap();
+    assert!(
+        save_notes(
+            &wt,
+            &tmp.path().join("dest"),
+            &["PLAN.md".to_string(), "GONE.md".to_string()],
+            &["a.log".to_string()]
+        )
+        .is_err()
+    );
+    assert!(wt.join("PLAN.md").exists());
+    assert!(wt.join("a.log").exists());
+}
+
+#[test]
+fn du_breakdown_finds_the_outermost_build_dirs() {
+    let text = "9000000\t/w/rperf/target\n\
+                100\t/w/rperf/src\n\
+                300000\t/w/rperf/ts/node_modules/x/node_modules\n\
+                800000\t/w/rperf/ts/node_modules\n\
+                200000\t/w/rperf/ts/.yarn\n\
+                1200000\t/w/rperf/.venv\n\
+                5\t/w/rperf-other/target\n\
+                11300000\t/w/rperf\n";
+    let b = parse_du_breakdown(Path::new("/w/rperf"), text).unwrap();
+    assert_eq!(b.total, 11_300_000 * 1024);
+    let found: Vec<(&str, u64)> = b
+        .build
+        .iter()
+        .map(|d| (d.path.as_str(), d.bytes / 1024))
+        .collect();
+    assert_eq!(
+        found,
+        vec![
+            ("target", 9_000_000),
+            (".venv", 1_200_000),
+            ("ts/node_modules", 800_000),
+            ("ts/.yarn", 200_000)
+        ]
+    );
+    assert_eq!(parse_du_breakdown(Path::new("/w/rperf"), ""), None);
+}
+
+#[test]
+fn kept_entries_show_their_size_and_build_output() {
+    let e = PlanEntry {
+        bytes: Some(12 * 1024 * 1024 * 1024),
+        build: vec![
+            BuildDir {
+                path: "target".into(),
+                bytes: 9 * 1024 * 1024 * 1024,
+            },
+            BuildDir {
+                path: "apps/x/node_modules".into(),
+                bytes: 44 * 1024,
+            },
+        ],
+        ..PlanEntry::default()
+    };
+    assert_eq!(e.size_text(), "12.0 GB: target 9.0 GB");
+    let e = PlanEntry {
+        repo: "recommendations".into(),
+        name: "recs-core-fewer-docs".into(),
+        path: "/private/tmp/rperf".into(),
+        ..PlanEntry::default()
+    };
+    assert_eq!(
+        e.notes_dir(Path::new("/n")),
+        Path::new("/n/recommendations/rperf")
+    );
 }
 
 #[test]
@@ -226,6 +487,28 @@ fn lsof_output_parses_and_matches_inside_dirs() {
     assert_eq!(
         processes_inside(Path::new("/w/myrstack/a"), &list, 300),
         vec!["cargo (100)".to_string()]
+    );
+}
+
+/// An orphaned watch loop elsewhere whose command line names the worktree doesn't hold it;
+/// one whose working directory is inside does, orphaned or not.
+#[test]
+fn only_the_working_directory_holds_a_worktree() {
+    let list = vec![
+        ProcessCwd {
+            pid: 66845,
+            command: "zsh".into(),
+            cwd: "/Users/k/repo/depict/depict".into(),
+        },
+        ProcessCwd {
+            pid: 7,
+            command: "sleep".into(),
+            cwd: "/w/recommendations/serving-field/ts".into(),
+        },
+    ];
+    assert_eq!(
+        processes_inside(Path::new("/w/recommendations/serving-field"), &list, 1),
+        vec!["sleep (7)".to_string()]
     );
 }
 
@@ -419,7 +702,9 @@ fn plan_text_lists_removals_and_keeps() {
         verdict: Verdict {
             remove,
             reasons: vec![reason.into()],
+            ..Verdict::default()
         },
+        ..PlanEntry::default()
     };
     let plan = Plan {
         entries: vec![
@@ -437,7 +722,7 @@ fn plan_text_lists_removals_and_keeps() {
     assert_eq!(plan.freed_bytes(), 2 * 1024 * 1024 * 1024);
     assert_eq!(
         plan.text(),
-        "2 linked worktrees: 1 to remove (frees 2.0 GB), 1 kept.\n\
+        "2 linked worktrees: 1 to remove (frees 2.0 GB), 1 kept (holding 0 B).\n\
          Remove:\n- myrstack/old (2.0 GB): merged into main\n\
          Keep:\n- myrstack/live: live terminal: t\n\
          Directories Orca doesn't list (not touched): /w/stray"
@@ -461,6 +746,7 @@ fn execution_summary_counts_outcomes() {
         branch: None,
         bytes: Some(1024 * 1024),
         reason: "merged into main".into(),
+        notes_saved_to: None,
         outcome,
         at_ms: 0,
     };
@@ -552,12 +838,18 @@ fn git_facts_reads_merged_ahead_and_dirty() {
         .remove
     );
 
-    // Untracked files inside new directories count as dirty.
+    // Untracked files inside new directories are listed: notes, logs and the rest by folder.
     fs::create_dir(wt.join("notes")).unwrap();
     fs::write(wt.join("notes/n.md"), "x").unwrap();
+    fs::write(wt.join("notes/data.csv"), "12345").unwrap();
+    fs::write(wt.join("run.log"), "x").unwrap();
     let f = git_facts(&wt, None).unwrap();
-    assert_eq!(f.dirty, vec!["?? notes/n.md".to_string()]);
+    assert!(f.dirty.is_empty());
+    assert_eq!(f.notes, vec!["notes/n.md".to_string()]);
+    assert_eq!(f.logs, vec!["run.log".to_string()]);
+    assert_eq!(f.untracked, vec![("notes/".to_string(), 5)]);
     fs::remove_dir_all(wt.join("notes")).unwrap();
+    fs::remove_file(wt.join("run.log")).unwrap();
 
     // Merged into main: removable.
     git(&repo, &["merge", "-q", "--no-ff", "-m", "merge", "feature"]);
@@ -587,4 +879,137 @@ fn sweep_marker_goes_stale() {
     write_marker(&path, &marker);
     assert_eq!(running_sweep(&path, 3_000), Some(marker));
     assert_eq!(running_sweep(&path, 2_000 + 10 * 60 * 1000), None);
+}
+
+// ---------------------------------------------------------------------------
+// Squash-aware git checks against a real repository
+
+/// A repo on `main` with one base commit and a worktree on `feature`.
+fn repo_with_feature() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    commit(&repo, "base");
+    let wt = tmp.path().join("wt");
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature",
+            wt.to_str().unwrap(),
+        ],
+    );
+    (tmp, repo, wt)
+}
+
+fn rev(dir: &Path, r: &str) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", r])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+#[test]
+fn git_facts_sees_a_squash_merge() {
+    let (_tmp, repo, wt) = repo_with_feature();
+    commit(&wt, "one");
+    commit(&wt, "two");
+    commit(&repo, "unrelated");
+    git(&repo, &["merge", "-q", "--squash", "feature"]);
+    git(&repo, &["commit", "-q", "-m", "squash"]);
+    let f = git_facts(&wt, None).unwrap();
+    assert_eq!(f.merged_into, None);
+    assert_eq!(f.patches_in, None);
+    assert_eq!(f.content_in.as_deref(), Some("main"));
+    assert!(
+        decide(&Facts {
+            git: Ok(f),
+            ..clean()
+        })
+        .remove
+    );
+}
+
+#[test]
+fn git_facts_sees_cherry_picked_commits() {
+    let (_tmp, repo, wt) = repo_with_feature();
+    commit(&wt, "one");
+    commit(&repo, "unrelated");
+    git(&repo, &["cherry-pick", "feature"]);
+    let f = git_facts(&wt, None).unwrap();
+    assert_eq!(f.merged_into, None);
+    assert_eq!(f.patches_in.as_deref(), Some("main"));
+}
+
+/// A commit that exists nowhere else: every check comes back empty and the worktree is kept,
+/// even when a merged PR exists for an earlier commit and main has part of the work.
+#[test]
+fn git_facts_keeps_a_commit_that_exists_nowhere_else() {
+    let (_tmp, repo, wt) = repo_with_feature();
+    commit(&wt, "one");
+    let pr_head = rev(&wt, "HEAD");
+    git(&repo, &["merge", "-q", "--squash", "feature"]);
+    git(&repo, &["commit", "-q", "-m", "squash"]);
+    commit(&wt, "after-merge");
+    let mut f = git_facts(&wt, None).unwrap();
+    assert_eq!(f.merged_into, None);
+    assert_eq!(f.patches_in, None);
+    assert_eq!(f.content_in, None);
+    let prs = vec![PrRow {
+        number: 9,
+        state: "MERGED".into(),
+        head_ref_name: "feature".into(),
+        head_ref_oid: pr_head,
+    }];
+    f.merged_pr_head = merged_pr_containing(&wt, &f.head, &prs);
+    assert_eq!(f.merged_pr_head, None);
+    let v = decide(&Facts {
+        git: Ok(f),
+        pr: PrLookup::Found {
+            number: 9,
+            state: PrState::Merged,
+        },
+        ..clean()
+    });
+    assert!(!v.remove, "{v:?}");
+    assert!(v.reasons.iter().any(|r| r.contains("not on any remote")));
+}
+
+#[test]
+fn merged_pr_head_contains_head_or_its_ancestors() {
+    let (_tmp, _repo, wt) = repo_with_feature();
+    commit(&wt, "one");
+    let first = rev(&wt, "HEAD");
+    commit(&wt, "two");
+    let second = rev(&wt, "HEAD");
+    let row = |number: u64, state: &str, oid: &str| PrRow {
+        number,
+        state: state.into(),
+        head_ref_name: "gone".into(),
+        head_ref_oid: oid.into(),
+    };
+    let missing = "0123456789abcdef0123456789abcdef01234567";
+    let prs = vec![
+        row(1, "OPEN", &second),
+        row(2, "MERGED", missing),
+        row(3, "MERGED", &second),
+    ];
+    // HEAD is the PR head.
+    assert_eq!(merged_pr_containing(&wt, &second, &prs), Some(3));
+    // A detached HEAD on an earlier commit of the PR.
+    git(&wt, &["checkout", "-q", "--detach", &first]);
+    assert_eq!(merged_pr_containing(&wt, &first, &prs), Some(3));
+    // Only an open PR or a head missing locally: no proof.
+    assert_eq!(merged_pr_containing(&wt, &first, &prs[..2]), None);
+    // A commit past the PR head isn't in it.
+    git(&wt, &["checkout", "-q", "feature"]);
+    commit(&wt, "three");
+    assert_eq!(merged_pr_containing(&wt, &rev(&wt, "HEAD"), &prs), None);
 }
