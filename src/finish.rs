@@ -29,6 +29,10 @@ pub const LOG_FILE: &str = "finished.jsonl";
 const MAX_LOG_BYTES: u64 = 512 * 1024;
 /// How long after the reply the terminal is closed, so the agent receives it.
 pub const CLOSE_DELAY_MS: i64 = 2_000;
+/// Why a finish without `approval` is refused.
+pub const APPROVAL_MISSING: &str = "\"approval\" is missing: ask Karl first (ask_karl: \
+     done, anything else or can I close?) and stay; pass approval \"karl\" once he says you \
+     can go, or \"trivial\" only for a tiny one-shot task with nothing to follow up";
 /// Longest summary kept.
 pub const MAX_SUMMARY_CHARS: usize = 300;
 /// Paths `git status` may show without counting as uncommitted work: the beads export.
@@ -76,6 +80,36 @@ impl FinishOutcome {
     }
 }
 
+/// Why the agent may leave: Karl said so, or the task was a one-shot with nothing to follow
+/// up. Karl usually has follow-ups, so an agent that thinks it's done asks him first
+/// (`ask_karl`) and stays.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Approval {
+    /// Karl told the agent it can go.
+    #[default]
+    Karl,
+    /// A tiny one-shot task (a lookup, a one-line fix) with nothing Karl could follow up on.
+    Trivial,
+}
+
+impl Approval {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "karl" => Some(Self::Karl),
+            "trivial" => Some(Self::Trivial),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Karl => "karl",
+            Self::Trivial => "trivial",
+        }
+    }
+}
+
 /// One agent session that ended itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FinishedSession {
@@ -84,6 +118,8 @@ pub struct FinishedSession {
     pub handle: Option<String>,
     pub label: String,
     pub outcome: FinishOutcome,
+    #[serde(default)]
+    pub approval: Approval,
     pub summary: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr_url: Option<String>,
@@ -167,6 +203,8 @@ fn append(path: &Path, finished: &FinishedSession) -> io::Result<()> {
 pub struct FinishRequest {
     pub summary: String,
     pub outcome: FinishOutcome,
+    /// Required to leave; `None` only on a `dry_run`.
+    pub approval: Option<Approval>,
     pub pr_url: Option<String>,
     /// Override the guards' problems (not a refusal).
     pub force: bool,
@@ -182,6 +220,7 @@ impl FinishRequest {
         json!({
             "summary": self.summary,
             "outcome": self.outcome.name(),
+            "approval": self.approval.map(Approval::name),
             "pr_url": self.pr_url,
             "force": self.force,
             "forced": self.forced,
@@ -205,9 +244,17 @@ impl FinishRequest {
                 ))
             })?,
         };
+        let approval = match p.str("approval")?.map(str::trim).filter(|a| !a.is_empty()) {
+            None if dry_run => None,
+            None => return Err(ControlError::invalid_params(APPROVAL_MISSING)),
+            Some(a) => Some(Approval::parse(a).ok_or_else(|| {
+                ControlError::invalid_params(format!("unknown approval {a:?}; use karl or trivial"))
+            })?),
+        };
         Ok(Self {
             summary,
             outcome,
+            approval,
             pr_url: p
                 .str("pr_url")?
                 .map(str::trim)

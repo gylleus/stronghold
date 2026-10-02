@@ -1,7 +1,7 @@
 //! Durable approvals. An approved send is never retried automatically.
 
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::channel::OutboundMessage;
 use super::slack::SlackSender;
@@ -183,9 +183,6 @@ impl DraftQueue {
         Ok(queue)
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
     pub fn drafts(&self) -> &[Draft] {
         &self.saved.drafts
     }

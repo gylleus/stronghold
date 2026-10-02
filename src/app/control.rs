@@ -226,7 +226,7 @@ impl MyrstackApp {
 
     /// Carries out one command. Replies immediately, or later for terminal sends and broadcasts.
     /// The returned error is only for logging; it has been sent as the reply.
-    pub(super) fn run_control_command(
+    fn run_control_command(
         &mut self,
         ctx: &egui::Context,
         command: ControlCommand,

@@ -328,7 +328,7 @@ impl<I: SlackIo> SlackChannel<I> {
     }
 
     pub fn configure(&mut self, settings: EnvoySettings) {
-        self.subscribed.retain(|c| settings.channels.contains(c));
+        self.subscribed.clear();
         self.errors.retain(|c, _| settings.channels.contains(c));
         self.settings = settings;
         self.next_poll_ms = 0;
@@ -379,6 +379,7 @@ impl<I: SlackIo> SlackChannel<I> {
                     self.ingest(e, batch);
                 }
                 Ok(BridgeLine::Error(_)) => {
+                    self.subscribed.retain(|c| c != channel);
                     self.errors.insert(
                         channel.into(),
                         "Bridge subscription error; check channel membership".into(),
@@ -563,6 +564,7 @@ impl<I: SlackIo> Channel for SlackChannel<I> {
                     match self.io.subscribe(&self.bridge, channel) {
                         Ok(()) => {
                             self.subscribed.push(channel.clone());
+                            self.errors.remove(channel);
                         }
                         Err(e) => {
                             self.errors.insert(channel.clone(), e);
@@ -600,11 +602,14 @@ impl<I: SlackIo> Channel for SlackChannel<I> {
         }
         batch.notices.extend(self.poll_errors.values().cloned());
         self.inbox.subscription_errors = self.errors.clone();
-        if let Err(e) = self.inbox.save(&self.path) {
+        if self.inbox != old
+            && let Err(e) = self.inbox.save(&self.path)
+        {
             self.inbox = old;
             self.next_poll_ms = 0;
             return Err(format!("Cannot save Envoy inbox: {e}"));
         }
+        batch.events.retain(|e| self.inbox.get(&e.id()).is_some());
         Ok(batch)
     }
     fn send(&mut self, approved: &OutboundMessage) -> Result<(), String> {

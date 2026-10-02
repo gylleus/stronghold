@@ -51,7 +51,7 @@ pub enum Item {
     Pile,
 }
 
-/// The farm's palette, picked per system theme.
+/// The farm's palette, picked by the local time of day.
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
     pub sky_top: Color32,
@@ -61,21 +61,28 @@ pub struct Palette {
 }
 
 impl Palette {
-    pub fn new(dark: bool) -> Self {
-        if dark {
-            Self {
-                sky_top: Color32::from_rgb(0x12, 0x14, 0x2b),
-                sky_bottom: Color32::from_rgb(0x2a, 0x2a, 0x4e),
-                label: Color32::from_rgb(0xf3, 0xe9, 0xd2),
-                label_shadow: Color32::from_rgb(0x1a, 0x10, 0x08),
-            }
-        } else {
-            Self {
-                sky_top: Color32::from_rgb(0x7f, 0xc8, 0xf0),
-                sky_bottom: Color32::from_rgb(0xc8, 0xec, 0xff),
-                label: Color32::from_rgb(0xfb, 0xf4, 0xe4),
-                label_shadow: Color32::from_rgb(0x2b, 0x1a, 0x0c),
-            }
+    pub const NIGHT: Self = Self {
+        sky_top: Color32::from_rgb(0x12, 0x14, 0x2b),
+        sky_bottom: Color32::from_rgb(0x2a, 0x2a, 0x4e),
+        label: Color32::from_rgb(0xf3, 0xe9, 0xd2),
+        label_shadow: Color32::from_rgb(0x1a, 0x10, 0x08),
+    };
+    pub const DAY: Self = Self {
+        sky_top: Color32::from_rgb(0x7f, 0xc8, 0xf0),
+        sky_bottom: Color32::from_rgb(0xc8, 0xec, 0xff),
+        label: Color32::from_rgb(0xfb, 0xf4, 0xe4),
+        label_shadow: Color32::from_rgb(0x2b, 0x1a, 0x0c),
+    };
+
+    /// The palette at `daylight` (0 night, 1 day; see [`crate::ui::daylight`]).
+    pub fn new(daylight: f32) -> Self {
+        let mix = |night, day| crate::ui::daylight::mix(night, day, daylight);
+        let (n, d) = (Self::NIGHT, Self::DAY);
+        Self {
+            sky_top: mix(n.sky_top, d.sky_top),
+            sky_bottom: mix(n.sky_bottom, d.sky_bottom),
+            label: mix(n.label, d.label),
+            label_shadow: mix(n.label_shadow, d.label_shadow),
         }
     }
 }
@@ -194,8 +201,8 @@ impl Sprites {
     }
 
     /// A star: a dot, or a little cross for a bright one.
-    pub fn star(&self, painter: &Painter, at: Pos2, px: f32, bright: bool) {
-        let color = Color32::from_rgb(0xfb, 0xf4, 0xd0);
+    pub fn star(&self, painter: &Painter, at: Pos2, px: f32, bright: bool, alpha: f32) {
+        let color = Color32::from_rgb(0xfb, 0xf4, 0xd0).gamma_multiply(alpha);
         if bright {
             self.sparkle(painter, at, px, color, false);
         } else {

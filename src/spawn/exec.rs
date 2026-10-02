@@ -10,7 +10,7 @@ use crossbeam_channel::{Receiver, Sender};
 use serde_json::Value;
 
 use super::resolve::{LiveAgent, name_conflict, new_worktree_of};
-use super::verify::{Expect, ScreenVerdict, classify_screen};
+use super::verify::{Expect, ScreenVerdict, classify_screen, codex_approvals_on};
 use super::{Agent, SpawnArgs, SpawnContext, SpawnPlan, Step, build_plan, catalog::Catalog};
 use crate::actions::{GONE_TERMINAL_CODES, Key, Wake};
 use crate::model::NodeId;
@@ -36,6 +36,10 @@ const MAX_MODAL_ANSWERS: u32 = 2;
 const MAX_ENTERS: u32 = 3;
 /// Idle reads with an empty input box before the prompt is typed again.
 const IDLE_READS_BEFORE_RETYPE: u32 = 2;
+/// The note when a Codex session came up asking for approval.
+pub const CODEX_APPROVALS_ON: &str = "Codex started with approvals on (its header lacks \
+     \"permissions: YOLO mode\"); it will ask before every action. Relaunch it with \
+     --dangerously-bypass-approvals-and-sandbox";
 
 /// Caller identity variables `orca` reads besides [`crate::orca::client::SENDER_IDENTITY_ENV`];
 /// Myrstack acts as itself (or explicitly `--from` a coordinator), never as the terminal that
@@ -580,6 +584,11 @@ impl PlanRun<'_> {
                         let summary = check.summary();
                         self.verified = true;
                         self.notes.append(&mut check.notes);
+                        if check.approvals_on {
+                            return Ok(StepStatus::Warned(format!(
+                                "{summary}; {CODEX_APPROVALS_ON}"
+                            )));
+                        }
                         return Ok(StepStatus::Done(Some(summary)));
                     }
                     VerifyStep::Send(input, why) => {
@@ -592,6 +601,9 @@ impl PlanRun<'_> {
                 }
             }
             if backend.elapsed() >= deadline {
+                if check.approvals_on {
+                    check.notes.push(CODEX_APPROVALS_ON.into());
+                }
                 self.notes.append(&mut check.notes);
                 return Ok(StepStatus::Warned(format!(
                     "could not confirm the prompt started within {} s (last screen: {}); check \
@@ -635,6 +647,8 @@ pub struct Verifier {
     enters: u32,
     retyped: bool,
     idle_reads: u32,
+    /// Codex's header showed it asking for approval (no "YOLO mode").
+    pub approvals_on: bool,
     last: Option<ScreenVerdict>,
     pub notes: Vec<String>,
 }
@@ -650,6 +664,7 @@ impl Verifier {
             enters: 0,
             retyped: false,
             idle_reads: 0,
+            approvals_on: false,
             last: None,
             notes: Vec::new(),
         }
@@ -657,6 +672,9 @@ impl Verifier {
 
     /// Decides on one screen read.
     pub fn next(&mut self, lines: &[String]) -> VerifyStep {
+        if self.agent == Agent::Codex && codex_approvals_on(lines) {
+            self.approvals_on = true;
+        }
         let verdict = classify_screen(lines, self.agent, &self.expect);
         self.last = Some(verdict.clone());
         if verdict != ScreenVerdict::IdleEmpty {

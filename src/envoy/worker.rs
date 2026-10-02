@@ -56,10 +56,13 @@ impl Worker {
                 EnvoySettings::default(),
             );
             let mut active = false;
+            let mut published: Option<(Inbox, BridgeStatus, Vec<String>)> = None;
+            let mut last_error: Option<String> = None;
             loop {
                 match commands.recv_timeout(Duration::from_secs(2)) {
                     Ok(Work::Configure(settings)) => {
                         active = settings.is_some();
+                        published = None;
                         if let Some(settings) = settings {
                             slack.configure(settings);
                         }
@@ -90,13 +93,33 @@ impl Worker {
                 }
                 if active {
                     let update = match slack.poll(crate::control::server::now_ms()) {
-                        Ok(batch) => Update::Polled {
-                            inbox: slack.inbox.clone(),
-                            events: batch.events,
-                            bridge: slack.health(),
-                            notices: batch.notices,
-                        },
-                        Err(e) => Update::Error(e),
+                        Ok(batch) => {
+                            let bridge = slack.health();
+                            let unchanged =
+                                published.as_ref().is_some_and(|(inbox, status, notices)| {
+                                    inbox == &slack.inbox
+                                        && *status == bridge
+                                        && *notices == batch.notices
+                                });
+                            if unchanged && last_error.is_none() {
+                                continue;
+                            }
+                            last_error = None;
+                            published = Some((slack.inbox.clone(), bridge, batch.notices.clone()));
+                            Update::Polled {
+                                inbox: slack.inbox.clone(),
+                                events: batch.events,
+                                bridge,
+                                notices: batch.notices,
+                            }
+                        }
+                        Err(e) => {
+                            if last_error.as_ref() == Some(&e) {
+                                continue;
+                            }
+                            last_error = Some(e.clone());
+                            Update::Error(e)
+                        }
                     };
                     if results.send(update).is_err() {
                         break;

@@ -36,6 +36,7 @@ use petgraph::stable_graph::{DefaultIx, EdgeIndex, NodeIndex};
 
 use crate::claude::Usage;
 use crate::model::{EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, RepoIndex};
+use crate::ui::daylight;
 use layout::centroid;
 
 pub use edge::FleetEdgeShape;
@@ -472,15 +473,27 @@ impl GraphView {
         }))
     }
 
-    /// Fills the `backdrop` slot with the repo regions as the widget at `rect` drew them.
+    /// Fills the `backdrop` slot with the time-of-day sky wash and the repo regions as the
+    /// widget at `rect` drew them.
     fn paint_regions(&self, ui: &Ui, backdrop: egui::layers::ShapeIdx, rect: Rect) {
+        let mut shapes = vec![daylight::wash(
+            rect,
+            daylight::daylight(),
+            ui.visuals().dark_mode,
+        )];
         let regions = self.repo_regions();
-        if regions.is_empty() {
-            return;
+        if !regions.is_empty() {
+            let meta = MetadataFrame::new(Some(self.id.clone())).load(ui);
+            let origin = meta.pan + rect.left_top().to_vec2();
+            shapes.extend(regions::region_shapes(
+                &regions,
+                meta.zoom,
+                origin,
+                ui.visuals(),
+                ui.ctx(),
+            ));
         }
-        let meta = MetadataFrame::new(Some(self.id.clone())).load(ui);
-        let origin = meta.pan + rect.left_top().to_vec2();
-        let shapes = regions::region_shapes(&regions, meta.zoom, origin, ui.visuals(), ui.ctx());
+        daylight::schedule_repaint(ui.ctx());
         ui.painter()
             .with_clip_rect(rect)
             .set(backdrop, egui::Shape::Vec(shapes));

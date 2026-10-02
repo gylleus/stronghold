@@ -1,0 +1,14 @@
+
+  >_ OpenAI Codex (v0.160.0)
+     ~/orca/workspaces/myrstack/codex-never-ask
+  Bring your unfinished thoughts.
+
+› Fix the flaky checkout test in packages/platform: it times out on CI about one run in
+  five.
+
+• Working (3s • esc to interrupt)
+
+› Ask Codex to do anything
+
+  GPT-6-Astra high · ~/orca/workspaces/myrstack/codex-never-ask
+  ← for agents · ? for shortcuts                                         ⚠ 3 warnings · f2 to view

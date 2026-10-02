@@ -546,15 +546,17 @@ notification is filed under the caller's terminal.
 
 ### `ask`
 
-`{"question", "context"?, "severity"?: "warn"|"urgent", "url"?: http(s), "origin"?}`. An
+`{"question", "context"?, "severity"?: "info"|"warn"|"urgent" (default warn), "url"?: http(s),
+"origin"?}`. An
 agent's question to Karl (the `ask_karl` MCP tool). Notifies him like `notify` and marks the
 caller's terminal waiting (needs input) until he answers. The reply is `notify`'s plus
 `"waiting": true|false` (false when the origin matches no terminal).
 
 ### `finish`
 
-`{"summary", "outcome"?: "done"|"handed_over"|"abandoned", "pr_url"?, "force"?, "forced"?:
-[…], "dry_run"?, "origin"?}`. An agent ending its own session (the `finish_session` MCP tool).
+`{"summary", "approval": "karl"|"trivial", "outcome"?: "done"|"handed_over"|"abandoned",
+"pr_url"?, "force"?, "forced"?: […], "dry_run"?, "origin"?}` (`approval` is optional only on a
+`dry_run`). An agent ending its own session (the `finish_session` MCP tool).
 With `dry_run` it returns the caller's node (`agent`: id, label, kind, worktree, branch) with
 `refused` (a worker) and `problems` (open tasks, PRs in the review queue). Otherwise a refusal,
 or problems without `force`, fail with `refused`; past them the app records the outcome
@@ -562,7 +564,7 @@ or problems without `force`, fail with `refused`; past them the app records the 
 the terminal after `closing_in_ms` with the `plan` returned.
 
 ```json
-{"v":1,"method":"finish","params":{"summary":"Merged into main","origin":{"terminal_handle":"term_…"}}}
+{"v":1,"method":"finish","params":{"summary":"Merged into main","approval":"karl","origin":{"terminal_handle":"term_…"}}}
 → {"ok":true,"result":{"dry_run":false,"agent":{"id":"term:term_…",…},"finished":{…},
    "closing_in_ms":2000,"plan":{…},"notification":"delivered"}}
 ```

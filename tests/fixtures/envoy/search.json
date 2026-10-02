@@ -22,17 +22,17 @@
         "team": "T123",
         "score": 0,
         "channel": {
-          "id": "D123",
+          "id": "C456",
           "is_channel": true,
           "is_group": false,
-          "is_im": true,
-          "is_mpim": false,
+          "is_im": false,
+          "is_mpim": true,
           "is_shared": false,
           "is_org_shared": false,
           "is_ext_shared": false,
           "is_private": true,
           "is_archived": false,
-          "name": "sample-dm",
+          "name": "sample-group-dm",
           "pending_shared": [],
           "is_pending_ext_shared": false
         },
@@ -43,7 +43,7 @@
         "ts": "1790000000.000001",
         "blocks": [],
         "text": "Please check the sample build.",
-        "permalink": "https://example.slack.com/archives/D123/p1790000000000001",
+        "permalink": "https://example.slack.com/archives/C456/p1790000000000001",
         "no_reactions": true
       },
       {

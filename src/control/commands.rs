@@ -80,8 +80,10 @@ impl FilterChange {
 /// labels, resolved by the app against its current snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlCommand {
+    /// Inbox, drafting and relay requests, restricted to the persisted Envoy terminal.
     Envoy(crate::envoy::control::EnvoyCommand),
-    /// Type text into an agent; from identifies the sender for traffic.
+    /// Type `text` into the agent's terminal, then Enter when `enter`. `from` is the sender's
+    /// terminal handle (`from`, or the caller's `origin`), `None` for the Queen or Karl.
     Send {
         agent: String,
         text: String,

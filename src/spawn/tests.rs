@@ -178,7 +178,29 @@ fn codex_with_a_model_gets_model_flag_before_the_prompt() {
     let Step::CreateTerminal { command, .. } = &plan.steps[0] else {
         panic!("{:?}", plan.steps[0]);
     };
-    assert_eq!(command, r#"codex --model gpt-6-astra 'don'"'"'t stop'"#);
+    assert_eq!(
+        command,
+        r#"codex --dangerously-bypass-approvals-and-sandbox --model gpt-6-astra 'don'"'"'t stop'"#
+    );
+}
+
+#[test]
+fn codex_in_a_new_worktree_launches_its_own_never_ask_terminal() {
+    let mut req = request(new_worktree());
+    req.agent = Agent::Codex;
+    let plan = build_plan(&req).unwrap();
+    let create = plan.steps[0].orca_args(&plan.initial).unwrap().unwrap();
+    assert!(
+        !create.iter().any(|a| a.starts_with("--agent")),
+        "{create:?}"
+    );
+    let Step::CreateTerminal { command, .. } = &plan.steps[2] else {
+        panic!("{:?}", plan.steps[2]);
+    };
+    assert_eq!(
+        command,
+        &format!("codex --dangerously-bypass-approvals-and-sandbox '{PROMPT}'")
+    );
 }
 
 #[test]
@@ -511,6 +533,10 @@ fn shell_quoting_matches_orca() {
         launch_command(Agent::Claude, Some("sonnet"), "go"),
         "claude --model sonnet go"
     );
+    assert_eq!(
+        launch_command(Agent::Codex, None, ""),
+        "codex --dangerously-bypass-approvals-and-sandbox"
+    );
 }
 
 #[test]
@@ -661,6 +687,60 @@ fn classifies_codex_launch_screens() {
             &Expect::Prompt(PROMPT.into())
         ),
         ScreenVerdict::IdleEmpty
+    );
+}
+
+#[test]
+fn flags_a_codex_session_that_asks_for_approval() {
+    assert!(codex_approvals_on(&screen!("spawn_codex_approvals_on.txt")));
+    assert!(!codex_approvals_on(&screen!("spawn_codex_yolo.txt")));
+    assert!(!codex_approvals_on(&screen!(
+        "spawn_codex_started_synthetic.txt"
+    )));
+    // No header on screen: nothing to tell.
+    assert!(!codex_approvals_on(&screen!("codex_working_synthetic.txt")));
+
+    let expect = Expect::Prompt(PROMPT.into());
+    let mut v = Verifier::new(Agent::Codex, &expect, true);
+    assert_eq!(
+        v.next(&screen!("spawn_codex_approvals_on.txt")),
+        VerifyStep::Done
+    );
+    assert!(v.approvals_on);
+    let mut v = Verifier::new(Agent::Codex, &expect, true);
+    assert_eq!(v.next(&screen!("spawn_codex_yolo.txt")), VerifyStep::Done);
+    assert!(!v.approvals_on && v.notes.is_empty());
+}
+
+#[test]
+fn codex_launch_with_approvals_on_ends_verify_with_a_warning() {
+    let mut req = request(existing());
+    req.agent = Agent::Codex;
+    let plan = build_plan(&req).unwrap();
+    let mut fake = Fake::default()
+        .reply(
+            "terminal create",
+            Ok(result(orca_fixture!("terminal_create.json"))),
+        )
+        .reply(
+            "terminal wait",
+            Ok(result(orca_fixture!("terminal_wait_idle.json"))),
+        )
+        .screens(vec![screen!("spawn_codex_approvals_on.txt")]);
+    let (result, progress) = run(&plan, &mut fake);
+    let outcome = result.unwrap();
+    assert_eq!(
+        outcome.notes,
+        vec![format!("prompt taken; {}", exec::CODEX_APPROVALS_ON)]
+    );
+    let verify_end = progress
+        .iter()
+        .map(|Progress::Step { status, .. }| status)
+        .rfind(|s| s.is_finished())
+        .unwrap();
+    assert!(
+        matches!(verify_end, StepStatus::Warned(n) if n.contains("approvals on")),
+        "{verify_end:?}"
     );
 }
 
