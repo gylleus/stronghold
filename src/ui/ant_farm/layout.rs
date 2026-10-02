@@ -45,6 +45,7 @@ pub enum TunnelKey {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Spot {
     Queen,
+    Entrance,
     /// On the surface waiting for Karl, the nth in line.
     Landing(usize),
     /// In the storage chamber with its crumb, the nth on the pile.
@@ -71,6 +72,7 @@ impl Spot {
     pub fn area(&self) -> Area {
         match self {
             Spot::Queen => Area::Queen,
+            Spot::Entrance => Area::Landing,
             Spot::Landing(_) => Area::Landing,
             Spot::Storage(_) => Area::Storage,
             Spot::Mouth(t, _) | Spot::Chamber(t, _) => Area::Tunnel(*t),
@@ -291,6 +293,7 @@ pub fn pixel_scale(size: Vec2, crowd: Crowd) -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Home {
     Queen,
+    Entrance,
     Landing,
     Storage,
     Mouth,
@@ -305,6 +308,7 @@ pub enum Home {
 pub fn home(kind: NodeKind, state: NodeState, pr_ready: bool) -> Home {
     match kind {
         NodeKind::Queen => return Home::Queen,
+        NodeKind::Envoy => return Home::Entrance,
         NodeKind::Subagent => return Home::Trail,
         NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {}
     }
@@ -323,6 +327,9 @@ pub fn home(kind: NodeKind, state: NodeState, pr_ready: bool) -> Home {
 }
 
 pub fn pose(kind: NodeKind, state: NodeState, home: Home) -> Pose {
+    if kind == NodeKind::Envoy {
+        return Pose::Stand;
+    }
     if kind == NodeKind::Queen {
         return Pose::Queen;
     }
@@ -454,7 +461,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
     // Tunnels: runs in run-list order, then runs the list lacks, then repos by name.
     let mut keys: Vec<TunnelKey> = Vec::new();
     for n in &visible {
-        if matches!(homes[&n.id], Home::Queen | Home::Trail) {
+        if matches!(homes[&n.id], Home::Queen | Home::Entrance | Home::Trail) {
             continue;
         }
         let key = tunnel_key(n, &repos);
@@ -633,6 +640,10 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                 continue;
             }
             Home::Chamber => continue,
+            Home::Entrance => (
+                Spot::Entrance,
+                pos2(queen_chamber.center().x, surface_y - 0.5 * a),
+            ),
             Home::Queen => (Spot::Queen, queen_chamber.center() + vec2(0.0, 0.2 * a)),
             Home::Landing => {
                 let k = landing_n;
@@ -758,14 +769,14 @@ fn ant(node: &Node, spot: Spot, pos: Pos2, size: f32, home: Home, pr: bool, now_
         pos,
         size,
         pose,
-        mark: if node.kind == NodeKind::Queen {
+        mark: if matches!(node.kind, NodeKind::Queen | NodeKind::Envoy) {
             None
         } else {
             mark(node.state, pr)
         },
         facing_right: pose == Pose::Dig,
         tag: match node.kind {
-            NodeKind::Worker | NodeKind::Terminal => Some(node.label.clone()),
+            NodeKind::Worker | NodeKind::Terminal | NodeKind::Envoy => Some(node.label.clone()),
             NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Subagent | NodeKind::Queen => {
                 None
             }

@@ -1595,3 +1595,26 @@ fn interrupted_spawns_are_recorded_shown_and_pruned() {
     assert_eq!(section(&[], now), "");
     assert!(load(&dir.path().join("missing.json"), now).is_empty());
 }
+
+#[test]
+fn envoy_identity_is_observed_before_readiness_and_survives_save_failure() {
+    let plan = build_plan(&request(existing())).unwrap();
+    let mut fake = Fake::default().reply(
+        "terminal create",
+        Ok(result(orca_fixture!("terminal_create.json"))),
+    );
+    let mut recorded = None;
+    let failure = exec::run_plan_observed(&plan, &mut fake, &mut |_| {}, &mut |context| {
+        recorded.clone_from(&context.handle);
+        Err("disk full".into())
+    })
+    .unwrap_err();
+    assert!(recorded.is_some());
+    assert_eq!(failure.context.handle, recorded);
+    assert_eq!(
+        fake.calls.len(),
+        1,
+        "no readiness or prompt submission before persistence"
+    );
+    assert!(fake.sent.is_empty());
+}

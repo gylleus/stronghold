@@ -2,7 +2,13 @@
 //! protocols later). The app ingests channel events, keeps the drafts Karl approves and sends
 //! only on his approval; the Envoy session reads, triages and drafts.
 
+pub mod session;
 pub mod settings;
+
+/// Persisted session identity supplied by the app lifecycle owner.
+pub trait EnvoyIdentity {
+    fn envoy_handle(&self) -> Option<&str>;
+}
 
 /// Whether the Envoy's session is running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -67,6 +67,7 @@ pub fn add_font(fonts: &mut egui::FontDefinitions) {
 
 pub fn kind_icon(kind: NodeKind) -> char {
     match kind {
+        NodeKind::Envoy => '✉',
         NodeKind::Queen => CROWN,
         NodeKind::Coordinator => TREE_STRUCTURE,
         NodeKind::Attendant => HEADSET,

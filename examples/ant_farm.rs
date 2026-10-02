@@ -251,6 +251,9 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState, repo: &
 /// subagents under a worker and a terminal.
 fn fleet() -> FleetSnapshot {
     let mut s = FleetSnapshot::default();
+    let mut envoy = node("envoy", NodeKind::Envoy, None, NodeState::Idle, "myrstack");
+    envoy.label = "Envoy · listening".into();
+    s.nodes.push(envoy);
     s.nodes
         .push(node("queen", NodeKind::Queen, None, NodeState::Working, ""));
     let objectives = [

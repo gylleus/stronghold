@@ -565,7 +565,8 @@ impl PollState {
         if due.terminals {
             let result = source.terminals();
             self.apply(CallKey::Terminals, "terminal list", result, |d, v| {
-                d.terminals = v
+                d.terminals = v;
+                d.terminals_polled_at_ms = Some(wall_ms);
             });
         }
         if due.runs_workers {

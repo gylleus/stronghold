@@ -88,6 +88,7 @@ pub fn state_with(members: Vec<Option<Membership>>, repos: Vec<Option<u32>>) -> 
 /// Which cluster a node belongs to and its role there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Membership {
+    Envoy,
     /// The center of run cluster `.0`.
     Coordinator(u32),
     /// A worker (or other node) of run cluster `.0`.
@@ -135,6 +136,8 @@ pub fn memberships(nodes: &[ClusterNode]) -> Vec<Option<Membership>> {
     for n in nodes.iter().filter(|n| n.run.is_none()) {
         out[n.index] = Some(if n.kind == NodeKind::Queen {
             Membership::Queen
+        } else if n.kind == NodeKind::Envoy {
+            Membership::Envoy
         } else {
             parent_membership(nodes, &out, n.parent)
         });
@@ -173,7 +176,10 @@ pub fn repo_indices(nodes: &[ClusterNode]) -> Vec<Option<u32>> {
     let by_index: HashMap<usize, &ClusterNode> = nodes.iter().map(|n| (n.index, n)).collect();
     let len = nodes.iter().map(|n| n.index + 1).max().unwrap_or(0);
     let mut out = vec![None; len];
-    for n in nodes.iter().filter(|n| n.kind != NodeKind::Queen) {
+    for n in nodes
+        .iter()
+        .filter(|n| !matches!(n.kind, NodeKind::Queen | NodeKind::Envoy))
+    {
         let mut at = Some(n);
         for _ in 0..nodes.len() {
             let Some(node) = at else { break };
@@ -310,7 +316,7 @@ fn group_key(role: Membership, repo: Option<u32>) -> GroupKey {
     match role {
         Membership::Coordinator(c) | Membership::Member(c) => GroupKey::Run(c),
         Membership::Loose => GroupKey::Loose(repo.unwrap_or(NO_REPO_INDEX)),
-        Membership::Queen => GroupKey::Queen,
+        Membership::Queen | Membership::Envoy => GroupKey::Queen,
     }
 }
 
@@ -530,6 +536,14 @@ fn apply_cluster_forces(
             let push = queen_exclusion(region.rect.expand(params.queen_gap), pos[q]);
             for &i in &region.nodes {
                 disp[i] += push * params.repo_separation;
+            }
+        }
+        for (i, role) in nodes.roles.iter().enumerate() {
+            if *role == Some(Membership::Envoy) {
+                disp[i] = capped(
+                    (pos[q] + Vec2::new(100.0, 0.0) - pos[i]) * params.queen_pull,
+                    params.max_gravity,
+                );
             }
         }
         // The queen ignores every other force: it only heads for the view center.

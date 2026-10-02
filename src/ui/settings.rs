@@ -4,6 +4,7 @@
 //! edited section replaced. Opened from the top bar's gear, the palette's "Settings…" and ⌘,;
 //! the "Whip…" button and "Whip settings…" open it on the Whip section.
 
+pub mod envoy;
 pub mod general;
 pub mod notifications;
 pub mod queen;
@@ -29,6 +30,7 @@ pub use voice::{ModelStatus, VoiceModel, VoiceStatus};
 pub enum Section {
     #[default]
     Queen,
+    Envoy,
     Whip,
     Notifications,
     Voice,
@@ -36,8 +38,9 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 5] = [
+    pub const ALL: [Section; 6] = [
         Section::Queen,
+        Section::Envoy,
         Section::Whip,
         Section::Notifications,
         Section::Voice,
@@ -47,6 +50,7 @@ impl Section {
     pub fn title(self) -> &'static str {
         match self {
             Section::Queen => "Queen",
+            Section::Envoy => "Envoy",
             Section::Whip => "Whip",
             Section::Notifications => "Notifications",
             Section::Voice => "Voice",
@@ -106,6 +110,7 @@ pub struct SettingsPane {
     queen_draft: queen::QueenDraft,
     voice_draft: VoiceSettings,
     notify_draft: NotifySettings,
+    envoy_draft: envoy::EnvoyDraft,
     /// "Whip all stalled now" was clicked; see [`SettingsPane::take_whip_stalled`].
     whip_stalled: bool,
 }
@@ -130,6 +135,7 @@ impl SettingsPane {
             queen_draft: queen::QueenDraft::new(&applied.queen),
             voice_draft: applied.voice.clone(),
             notify_draft: applied.notifications.clone(),
+            envoy_draft: envoy::EnvoyDraft::new(&applied.envoy),
             applied,
             path,
             message,
@@ -147,6 +153,10 @@ impl SettingsPane {
         &self.applied.queen
     }
 
+    pub fn envoy(&self) -> &crate::envoy::settings::EnvoySettings {
+        &self.applied.envoy
+    }
+
     pub fn voice(&self) -> &VoiceSettings {
         &self.applied.voice
     }
@@ -161,6 +171,7 @@ impl SettingsPane {
         self.queen_draft = queen::QueenDraft::new(&self.applied.queen);
         self.voice_draft = self.applied.voice.clone();
         self.notify_draft = self.applied.notifications.clone();
+        self.envoy_draft = envoy::EnvoyDraft::new(&self.applied.envoy);
         self.section = section;
         self.open = true;
     }
@@ -256,6 +267,7 @@ impl SettingsPane {
         ui.add_space(4.0);
         match self.section {
             Section::Queen => queen::section(self, ui, &cx.queen, out),
+            Section::Envoy => envoy::section(self, ui),
             Section::Whip => {
                 out.whip = whip::form(self, ui);
                 ui.separator();

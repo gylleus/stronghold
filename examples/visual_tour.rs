@@ -188,6 +188,15 @@ impl eframe::App for Tour {
                     let _ = ui.button("Fit");
                     ui.add_space(40.0);
                     ui::queen::quick_actions(ui, None);
+                    ui::queen::envoy_control(
+                        ui,
+                        myrstack::envoy::EnvoyStatus {
+                            session: myrstack::envoy::SessionState::Running,
+                            bridge: myrstack::envoy::BridgeStatus::Ok,
+                            pending_drafts: 0,
+                            dry_run: true,
+                        },
+                    );
                 });
             });
         if !self.graph_only {
@@ -323,6 +332,9 @@ fn fleet() -> FleetSnapshot {
             }
         }
     }
+    let mut envoy = node(NodeId::terminal("envoy"), NodeKind::Envoy, NodeState::Idle);
+    envoy.label = "Envoy · listening".into();
+    snapshot.nodes.push(envoy);
     snapshot.add_queen();
     snapshot
 }

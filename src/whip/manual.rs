@@ -159,6 +159,9 @@ fn plan_node(
     now_ms: i64,
 ) -> Result<ManualNudge, String> {
     match node.kind {
+        NodeKind::Envoy => {
+            return Err("the Envoy listens while idle; it does not need nudging".into());
+        }
         NodeKind::Queen => return Err("the Queen is Myrstack itself".into()),
         NodeKind::Subagent => return Err("subagents have no terminal to nudge".into()),
         NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {}

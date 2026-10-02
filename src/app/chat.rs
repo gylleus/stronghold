@@ -161,6 +161,7 @@ impl MyrstackApp {
     pub(super) fn queen_quick_actions(&mut self, ui: &mut egui::Ui) {
         use crate::ui::commands::{self, ActionId};
         use crate::ui::queen::{QueenQuickAction, quick_actions};
+        self.envoy_quick_actions(ui);
         let cx = self.palette_context();
         let status_disabled = commands::disabled_reason(ActionId::StatusReport, &cx);
         let action = match quick_actions(ui, status_disabled) {

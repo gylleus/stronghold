@@ -1127,3 +1127,25 @@ fn subagent_trails_take_room_in_the_chamber() {
         assert!(chamber.expand(1.0).contains(a.pos), "{} outside", a.id.0);
     }
 }
+
+#[test]
+fn envoy_has_an_entrance_post_without_a_work_tunnel() {
+    let mut snapshot = FleetSnapshot::default();
+    snapshot
+        .nodes
+        .push(node("queen", NodeKind::Queen, None, NodeState::Idle));
+    snapshot
+        .nodes
+        .push(node("envoy", NodeKind::Envoy, None, NodeState::Idle));
+    for state in [NodeState::Idle, NodeState::Working, NodeState::NeedsInput] {
+        snapshot.nodes[1].state = state;
+        let scene = scene(&snapshot);
+        let envoy = ant(&scene, "envoy");
+        assert_eq!(envoy.spot, Spot::Entrance);
+        assert_eq!(envoy.pose, Pose::Stand);
+        assert_eq!(envoy.mark, None);
+        assert!(envoy.pos.y < scene.surface_y);
+        assert!((envoy.pos.x - scene.queen_chamber.center().x).abs() < 1.0);
+        assert!(scene.tunnels.is_empty());
+    }
+}

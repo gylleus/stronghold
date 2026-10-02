@@ -24,6 +24,8 @@ pub const REVIVAL_GRACE_MS: i64 = 2 * 60_000;
 pub struct FleetData {
     /// Wall-clock time the poll finished, in ms since the Unix epoch.
     pub polled_at_ms: i64,
+    /// Start of the latest successful terminal-list poll.
+    pub terminals_polled_at_ms: Option<i64>,
     pub terminals: Vec<Terminal>,
     pub runs: Vec<Run>,
     pub workers: Vec<Worker>,
