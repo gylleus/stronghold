@@ -158,7 +158,8 @@ fn existing_worktree_plan_launches_claude_with_the_prompt_as_argv() {
         plan.steps[2],
         Step::Verify {
             expect: Expect::Prompt(PROMPT.into()),
-            retype: true
+            retype: true,
+            allow_bypass: true
         }
     );
     assert_eq!(plan.initial.worktree_path.as_deref(), Some(WT_PATH));
@@ -310,7 +311,8 @@ fn worker_plan_creates_the_task_as_the_coordinator_then_starts_it() {
         plan.steps[3],
         Step::Verify {
             expect: Expect::AnyInput,
-            retype: false
+            retype: false,
+            allow_bypass: true
         }
     );
 }
@@ -503,7 +505,8 @@ fn empty_prompt_launches_bare_agent_and_expects_only_readiness() {
         plan.steps[2],
         Step::Verify {
             expect: Expect::Ready,
-            retype: true
+            retype: true,
+            allow_bypass: true
         }
     );
     let plan = build_plan(&SpawnRequest {
@@ -1697,4 +1700,97 @@ fn envoy_identity_is_observed_before_readiness_and_survives_save_failure() {
         "no readiness or prompt submission before persistence"
     );
     assert!(fake.sent.is_empty());
+}
+
+#[test]
+fn envoy_verification_never_accepts_bypass_permissions() {
+    let mut plan = build_plan(&request(existing())).unwrap();
+    for step in &mut plan.steps {
+        if let Step::Verify { allow_bypass, .. } = step {
+            *allow_bypass = false;
+        }
+    }
+    let mut fake = Fake::default()
+        .reply(
+            "terminal create",
+            Ok(result(orca_fixture!("terminal_create.json"))),
+        )
+        .reply(
+            "terminal wait",
+            Ok(result(orca_fixture!("terminal_wait_idle.json"))),
+        )
+        .screens(vec![screen!("spawn_claude_bypass_modal_synthetic.txt")]);
+    let (result, _) = run(&plan, &mut fake);
+    assert!(
+        result
+            .unwrap_err()
+            .message
+            .contains("refused the Bypass Permissions")
+    );
+    assert!(fake.sent.is_empty());
+}
+
+#[test]
+fn envoy_preflight_refuses_a_live_home_agent_without_a_saved_identity() {
+    let catalog = Catalog {
+        repos: vec![crate::orca::spawn::Repo {
+            id: "repo".into(),
+            path: "/repo/myrstack".into(),
+            ..Default::default()
+        }],
+        worktrees: vec![crate::orca::spawn::Worktree {
+            id: "home".into(),
+            repo_id: Some("repo".into()),
+            path: "/worktrees/envoy-home".into(),
+            ..Default::default()
+        }],
+    };
+    for terminal in [
+        json!({"handle":"existing", "worktreeId":"home", "agentIdentity":"claude", "title":"Renamed"}),
+        json!({"handle":"existing", "worktreePath":"/worktrees/envoy-home", "agentIdentity":"codex"}),
+        json!({"handle":"existing", "worktreeId":"home", "preview":"❯ Try a prompt"}),
+    ] {
+        let mut fake = Fake {
+            catalog: catalog.clone(),
+            ..Default::default()
+        }
+        .reply("terminal list", Ok(json!({"terminals":[terminal]})));
+        let error = crate::envoy::session::prepare(&mut fake, &Default::default()).unwrap_err();
+        assert!(error.contains("already in envoy-home (existing)"));
+        assert_eq!(fake.calls.len(), 1);
+    }
+    let mut fake = Fake {
+        catalog,
+        ..Default::default()
+    }
+    .reply(
+        "terminal list",
+        Ok(json!({"terminals":[
+            {"handle":"shell", "worktreeId":"home", "preview":"envoy-home %"},
+            {"handle":"other", "worktreeId":"elsewhere", "agentIdentity":"claude"}
+        ]})),
+    );
+    assert!(crate::envoy::session::prepare(&mut fake, &Default::default()).is_ok());
+    fake.replies.push_back((
+        "terminal list",
+        Ok(json!({"terminals":[], "truncated":true})),
+    ));
+    assert!(
+        crate::envoy::session::prepare(&mut fake, &Default::default())
+            .unwrap_err()
+            .contains("incomplete")
+    );
+    fake.replies.push_back((
+        "terminal list",
+        Err(OrcaError::Api(crate::orca::ApiError {
+            code: "unavailable".into(),
+            message: "not running".into(),
+            data: Value::Null,
+        })),
+    ));
+    assert!(
+        crate::envoy::session::prepare(&mut fake, &Default::default())
+            .unwrap_err()
+            .contains("Cannot check")
+    );
 }

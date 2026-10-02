@@ -1,4 +1,4 @@
-//! Settings for the next Envoy session.
+//! Envoy preferences and its immediate dry-run safety switch.
 
 use eframe::egui;
 
@@ -25,6 +25,10 @@ impl EnvoyDraft {
 
     fn value(&self) -> EnvoySettings {
         EnvoySettings {
+            poll_secs: self
+                .settings
+                .poll_secs
+                .max(crate::envoy::settings::MIN_POLL_SECS),
             model: self.model.settings.normalized().model,
             channels: self
                 .channels
@@ -38,8 +42,8 @@ impl EnvoyDraft {
     }
 }
 
-pub(super) fn section(pane: &mut SettingsPane, ui: &mut egui::Ui) {
-    ui.weak("Changes apply on the next Start.");
+pub(super) fn section(pane: &mut SettingsPane, ui: &mut egui::Ui, out: &mut super::PaneOutput) {
+    ui.weak("Dry run ON applies immediately when saved. Other changes apply on the next Start.");
     let draft = &mut pane.envoy_draft;
     egui::Grid::new("envoy_settings")
         .num_columns(2)
@@ -66,7 +70,10 @@ pub(super) fn section(pane: &mut SettingsPane, ui: &mut egui::Ui) {
             ui.push_id("envoy", |ui| queen::model_picker(ui, &mut draft.model));
             ui.end_row();
             ui.label("Poll interval (seconds)");
-            ui.add(egui::DragValue::new(&mut draft.settings.poll_secs).range(1..=86400));
+            ui.add(
+                egui::DragValue::new(&mut draft.settings.poll_secs)
+                    .range(crate::envoy::settings::MIN_POLL_SECS..=86400),
+            );
             ui.end_row();
             ui.label("Channels (IDs, one per line)");
             ui.add(egui::TextEdit::multiline(&mut draft.channels).desired_rows(3));
@@ -83,7 +90,7 @@ pub(super) fn section(pane: &mut SettingsPane, ui: &mut egui::Ui) {
         );
     }
     if draft.settings.agent == "codex" {
-        ui.weak("Codex uses a read-only sandbox; it has no per-command deny flag.");
+        ui.weak("Codex Envoy starts are unavailable: its MCP tool restrictions are not supported. Choose Claude.");
     }
     let changed = draft.value() != pane.applied.envoy;
     let (save, revert) = save_row(ui, pane, changed, "Save Envoy settings");
@@ -91,23 +98,24 @@ pub(super) fn section(pane: &mut SettingsPane, ui: &mut egui::Ui) {
         pane.envoy_draft = EnvoyDraft::new(&pane.applied.envoy);
     }
     if save {
-        pane.save_envoy();
+        out.envoy = pane.save_envoy();
     }
 }
 
 impl SettingsPane {
-    fn save_envoy(&mut self) {
+    fn save_envoy(&mut self) -> Option<EnvoySettings> {
         let settings = self.envoy_draft.value();
         if let Some(model) = &settings.model
             && !crate::spawn::valid_model(model)
         {
             self.message = Some((true, "Invalid model ID".into()));
-            return;
+            return None;
         }
         let mut next = self.applied.clone();
         next.envoy = settings;
         self.commit(next);
         self.envoy_draft = EnvoyDraft::new(&self.applied.envoy);
+        Some(self.applied.envoy.clone())
     }
 }
 
@@ -125,12 +133,19 @@ mod tests {
         pane.envoy_draft.settings.poll_secs = 30;
         pane.envoy_draft.channels = " C_TEST \n C_OTHER\n".into();
         pane.envoy_draft.model.pick_custom("test-model");
-        pane.save_envoy();
+        let applied = pane.save_envoy().unwrap();
+        assert_eq!(&applied, pane.envoy());
         let loaded = SettingsPane::load(Some(path));
         assert_eq!(loaded.envoy(), pane.envoy());
         assert_eq!(loaded.envoy().channels, ["C_TEST", "C_OTHER"]);
         assert_eq!(loaded.envoy().model.as_deref(), Some("test-model"));
         assert_eq!(loaded.queen(), pane.queen());
         assert!(!loaded.envoy().dry_run);
+    }
+    #[test]
+    fn draft_cannot_save_a_poll_interval_below_thirty() {
+        let mut draft = EnvoyDraft::new(&EnvoySettings::default());
+        draft.settings.poll_secs = 1;
+        assert_eq!(draft.value().poll_secs, 30);
     }
 }

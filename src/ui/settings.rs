@@ -75,6 +75,8 @@ pub struct PaneContext<'a> {
 /// What the user changed this frame.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct PaneOutput {
+    /// Saved Envoy preferences; safety ON also applies to the current session.
+    pub envoy: Option<crate::envoy::settings::EnvoySettings>,
     /// Saved whip settings.
     pub whip: Option<WhipSettings>,
     /// Saved Queen settings (the Queen restarts when her model or effort changed).
@@ -267,7 +269,7 @@ impl SettingsPane {
         ui.add_space(4.0);
         match self.section {
             Section::Queen => queen::section(self, ui, &cx.queen, out),
-            Section::Envoy => envoy::section(self, ui),
+            Section::Envoy => envoy::section(self, ui, out),
             Section::Whip => {
                 out.whip = whip::form(self, ui);
                 ui.separator();

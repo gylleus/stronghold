@@ -146,6 +146,8 @@ pub enum Step {
         expect: Expect,
         /// Type the prompt again when the agent sits idle with an empty input box.
         retype: bool,
+        /// Whether this launch permits accepting the bypass-permissions warning.
+        allow_bypass: bool,
     },
     /// Close the plain shell Orca opens in a new worktree next to the agent's terminal, so no
     /// empty terminal is left behind.
@@ -356,6 +358,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
             Expect::Prompt(prompt.clone())
         },
         retype,
+        allow_bypass: true,
     };
     let wait = Step::WaitIdle {
         timeout_ms: WAIT_IDLE_MS,
@@ -513,6 +516,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
             steps.push(Step::Verify {
                 expect: Expect::AnyInput,
                 retype: false,
+                allow_bypass: true,
             });
             if new_worktree {
                 steps.push(Step::CloseStartupShell);

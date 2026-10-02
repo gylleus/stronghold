@@ -4,6 +4,24 @@ use super::{MyrstackApp, repaint_once};
 use crate::envoy::{EnvoyIdentity, EnvoyStatus, SessionState};
 
 impl MyrstackApp {
+    pub(super) fn apply_envoy_settings(
+        &mut self,
+        settings: &crate::envoy::settings::EnvoySettings,
+    ) {
+        if !settings.dry_run {
+            return;
+        }
+        let saved = self.envoy_session.enable_dry_run();
+        let configured = self
+            .envoy_core
+            .configure(self.envoy_session.settings().clone());
+        if let Err(error) = saved.and(configured) {
+            self.envoy_core.stop();
+            self.envoy_session.error = Some(error);
+        }
+        self.overlays_changed = true;
+    }
+
     pub(super) fn envoy_status(&self) -> EnvoyStatus {
         let mut status = self.envoy_session.status();
         if self.envoy_core.envoy_handle().is_some() {

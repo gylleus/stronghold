@@ -494,7 +494,11 @@ impl PlanRun<'_> {
                     )))),
                 }
             }
-            Step::Verify { expect, retype } => self.verify(expect, *retype, backend),
+            Step::Verify {
+                expect,
+                retype,
+                allow_bypass,
+            } => self.verify(expect, *retype, *allow_bypass, backend),
             Step::CloseStartupShell => Ok(self.close_startup_shell(backend)),
         }
     }
@@ -559,6 +563,7 @@ impl PlanRun<'_> {
         &mut self,
         expect: &Expect,
         retype: bool,
+        allow_bypass: bool,
         backend: &mut dyn SpawnBackend,
     ) -> Result<StepStatus, String> {
         let handle = self
@@ -579,6 +584,11 @@ impl PlanRun<'_> {
                 }
             };
             if let Some(lines) = screen {
+                if !allow_bypass
+                    && classify_screen(&lines, agent, expect) == ScreenVerdict::BypassModal
+                {
+                    return Err("Restricted launch refused the Bypass Permissions prompt".into());
+                }
                 match check.next(&lines) {
                     VerifyStep::Done => {
                         let summary = check.summary();
