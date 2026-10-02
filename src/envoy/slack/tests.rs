@@ -232,3 +232,19 @@ fn quiet_ticks_do_not_rewrite_inbox_and_subscription_retry_clears_error() {
     c.poll(NOW + 1).unwrap();
     assert_eq!(fs::metadata(&c.path).unwrap().modified().unwrap(), modified);
 }
+
+#[test]
+fn reenable_reasserts_channel_subscriptions() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.poll(NOW).unwrap();
+    assert_eq!(c.io.subscriptions.len(), 1);
+    c.configure(c.settings.clone());
+    c.poll(NOW + 1).unwrap();
+    assert_eq!(c.io.subscriptions.len(), 2);
+    assert!(
+        c.io.subscriptions
+            .iter()
+            .all(|(path, channel)| path == dir.path() && channel == "C123")
+    );
+}

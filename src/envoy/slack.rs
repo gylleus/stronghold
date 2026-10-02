@@ -328,7 +328,7 @@ impl<I: SlackIo> SlackChannel<I> {
     }
 
     pub fn configure(&mut self, settings: EnvoySettings) {
-        self.subscribed.retain(|c| settings.channels.contains(c));
+        self.subscribed.clear();
         self.errors.retain(|c, _| settings.channels.contains(c));
         self.settings = settings;
         self.next_poll_ms = 0;
