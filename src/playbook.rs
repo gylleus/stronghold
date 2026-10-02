@@ -1,4 +1,4 @@
-//! The fleet playbook: the Markdown rules coordinators, attendants and workers run by. Myrstack
+//! The fleet playbook: the Markdown rules coordinators, attendants, workers and the Envoy run by. Myrstack
 //! serves them (MCP prompts, resources and tools; `myrstack playbook`) straight from disk on
 //! every request, stamped with the git version they came from. See `playbook/README.md`.
 
@@ -24,9 +24,10 @@ pub const PROTOCOL: &str = "_AGENT_PROTOCOL.md";
 pub const ATTENDANT_BRIEF: &str = "ATTENDANT-BRIEF-TEMPLATE.md";
 pub const KICKOFF: &str = "KICKOFF-TEMPLATE.md";
 pub const README: &str = "README.md";
+pub const ENVOY: &str = "ENVOY-PLAYBOOK.md";
 
 /// The known files, in listing order.
-pub const FILES: [&str; 5] = [PLAYBOOK, PROTOCOL, ATTENDANT_BRIEF, KICKOFF, README];
+pub const FILES: [&str; 6] = [PLAYBOOK, PROTOCOL, ATTENDANT_BRIEF, KICKOFF, ENVOY, README];
 
 /// The line a prompt puts before the docs.
 pub const STANDING_RULES: &str = "These are your standing rules for this session; follow them.";
@@ -37,6 +38,7 @@ pub enum Role {
     Coordinator,
     Attendant,
     Worker,
+    Envoy,
 }
 
 /// One piece of a role's docs: a whole file, or some of its `## ` sections.
@@ -47,13 +49,19 @@ pub struct Part {
 }
 
 impl Role {
-    pub const ALL: [Role; 3] = [Role::Coordinator, Role::Attendant, Role::Worker];
+    pub const ALL: [Role; 4] = [
+        Role::Coordinator,
+        Role::Attendant,
+        Role::Worker,
+        Role::Envoy,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Role::Coordinator => "coordinator",
             Role::Attendant => "attendant",
             Role::Worker => "worker",
+            Role::Envoy => "envoy",
         }
     }
 
@@ -68,6 +76,7 @@ impl Role {
             Role::Coordinator => "Coordinator playbook",
             Role::Attendant => "Attendant brief",
             Role::Worker => "Worker protocol",
+            Role::Envoy => "Envoy playbook",
         }
     }
 
@@ -82,6 +91,10 @@ impl Role {
                  playbook's Coordinator duties and Token economy sections."
             }
             Role::Worker => "Standing rules for a dispatched worker: the agent protocol.",
+            Role::Envoy => {
+                "Standing rules for the Envoy, Karl's Slack diplomat: the Envoy playbook only \
+                 (it is not a worker)."
+            }
         }
     }
 
@@ -107,12 +120,30 @@ impl Role {
                 },
             ],
             Role::Worker => &[WHOLE_PROTOCOL],
+            Role::Envoy => &[Part {
+                file: ENVOY,
+                sections: None,
+            }],
         }
     }
 
     pub fn files(self) -> Vec<&'static str> {
         self.parts().iter().map(|p| p.file).collect()
     }
+}
+
+/// The first prompt of the Envoy session.
+pub fn envoy_launch_prompt(dry_run: bool) -> String {
+    let mode = if dry_run {
+        "Dry-run is ON: drafts and relays are recorded and shown, nothing leaves."
+    } else {
+        "Dry-run is OFF: drafts Karl approves are posted to Slack."
+    };
+    format!(
+        "You are the Envoy. Load your standing rules with the myrstack MCP tool get_playbook \
+         (role=envoy) and follow them. {mode} Then wait: Myrstack types each new event into \
+         this terminal as an `Envoy event:` line. Don't poll."
+    )
 }
 
 /// What to serve: a role's docs or one file.
@@ -664,7 +695,7 @@ pub fn run_cli(args: &[String]) -> Option<Result<()>> {
     })
 }
 
-const USAGE: &str = "usage: myrstack playbook [coordinator|attendant|worker|<file>] \
+const USAGE: &str = "usage: myrstack playbook [coordinator|attendant|worker|envoy|<file>] \
                      [--section <title>] [--list]\n       \
                      myrstack playbook attendant-brief <run_id>\n       \
                      myrstack playbook kickoff <task_id>";
