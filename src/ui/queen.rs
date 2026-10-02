@@ -448,3 +448,51 @@ mod envoy_draft_tests {
         ));
     }
 }
+
+/// `true` starts the Envoy; `false` opens its existing close confirmation.
+pub fn envoy_control(ui: &mut Ui, status: crate::envoy::EnvoyStatus) -> Option<bool> {
+    use crate::envoy::SessionState;
+    let stopped = status.session == SessionState::Stopped;
+    let clicked = ui
+        .add_enabled(
+            status.session != SessionState::Starting,
+            egui::Button::new(if stopped { "Start Envoy" } else { "Stop Envoy" }),
+        )
+        .clicked();
+    ui.weak(format!(
+        "{} · {}",
+        status.health().label(),
+        if status.dry_run { "dry run" } else { "live" }
+    ));
+    clicked.then_some(stopped)
+}
+
+#[cfg(test)]
+mod envoy_tests {
+    use super::*;
+    use crate::envoy::{BridgeStatus, EnvoyStatus, SessionState};
+
+    #[test]
+    fn start_stop_controls_reflect_session_state() {
+        let mut status = EnvoyStatus {
+            session: SessionState::Stopped,
+            bridge: BridgeStatus::Missing,
+            pending_drafts: 0,
+            dry_run: true,
+        };
+        assert_eq!(
+            crate::ui::test_util::click_label("Start Envoy", |ui| envoy_control(ui, status)),
+            Some(true)
+        );
+        status.session = SessionState::Running;
+        assert_eq!(
+            crate::ui::test_util::click_label("Stop Envoy", |ui| envoy_control(ui, status)),
+            Some(false)
+        );
+        status.session = SessionState::Starting;
+        assert_eq!(
+            crate::ui::test_util::click_label("Stop Envoy", |ui| envoy_control(ui, status)),
+            None
+        );
+    }
+}

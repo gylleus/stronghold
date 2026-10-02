@@ -83,6 +83,8 @@ pub enum NodeKind {
     Worker,
     /// A live terminal outside any run.
     Terminal,
+    /// The persistent listener session, identified by terminal handle.
+    Envoy,
     /// A Claude subagent under a terminal (M3).
     Subagent,
     /// The fleet's hub, linked to every coordinator and loose terminal; broadcasts start here.
@@ -377,8 +379,10 @@ impl FleetSnapshot {
             .nodes
             .iter()
             .filter(|n| {
-                matches!(n.kind, NodeKind::Coordinator | NodeKind::Terminal)
-                    || self.coordinator_gone(n)
+                matches!(
+                    n.kind,
+                    NodeKind::Coordinator | NodeKind::Terminal | NodeKind::Envoy
+                ) || self.coordinator_gone(n)
             })
             .map(|n| Edge {
                 from: queen.id.clone(),
@@ -418,6 +422,23 @@ impl FleetSnapshot {
             ) {
                 node.state = NodeState::NeedsInput;
                 node.preview = Some(format!("Asks: {question}"));
+            }
+        }
+        self.add_queen();
+    }
+
+    /// Identity follows the handle even when the agent rewrites its terminal title.
+    pub fn mark_envoy(&mut self, handle: Option<&str>, status: crate::envoy::EnvoyStatus) {
+        let Some(handle) = handle else {
+            return;
+        };
+        for node in &mut self.nodes {
+            if node.live
+                && node.kind != NodeKind::Subagent
+                && node.terminal_handle.as_deref() == Some(handle)
+            {
+                node.kind = NodeKind::Envoy;
+                node.label = format!("Envoy · {}", status.health().label());
             }
         }
         self.add_queen();

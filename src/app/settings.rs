@@ -39,6 +39,9 @@ impl MyrstackApp {
             },
         };
         let out = self.whip_window.show(ctx, &cx);
+        if let Some(settings) = &out.envoy {
+            self.apply_envoy_settings(settings);
+        }
         if let Some(whip) = out.whip {
             self.whip.update_settings(whip);
         }
