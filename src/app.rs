@@ -442,6 +442,9 @@ impl MyrstackApp {
     }
 
     fn details_contents(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+        if self.selected_envoy() {
+            self.envoy_drafts_button(ui);
+        }
         if self.queen_selected() {
             self.queen_details(ui, now_ms);
             return;
@@ -505,10 +508,7 @@ impl MyrstackApp {
 
     /// The Queen's details: the review queue, her header and fleet summary, and broadcast.
     fn queen_details(&mut self, ui: &mut egui::Ui, now_ms: i64) {
-        let pending = self.envoy_core.pending_count();
-        if ui.button(format!("Envoy drafts ({pending})")).clicked() {
-            self.envoy_core.open_request = true;
-        }
+        self.envoy_drafts_button(ui);
         let (review_rows, review_note, review_state) = self.review_view(now_ms);
         let playbook = self.playbook_status();
         let review_action = ui::review::review_section(

@@ -493,6 +493,19 @@ impl AppEnvoy {
 }
 
 impl MyrstackApp {
+    pub(super) fn selected_envoy(&self) -> bool {
+        self.envoy_core.envoy_handle().is_some_and(|handle| {
+            self.selected_node()
+                .is_some_and(|node| node.terminal_handle.as_deref() == Some(handle))
+        })
+    }
+
+    pub(super) fn envoy_drafts_button(&mut self, ui: &mut egui::Ui) {
+        if crate::ui::queen::envoy_drafts_button(ui, self.envoy_core.pending_count()) {
+            self.envoy_core.open_request = true;
+        }
+    }
+
     pub(super) fn envoy_pane(&mut self, ui: &mut egui::Ui) {
         let action = self.envoy_panel.show(
             ui,
