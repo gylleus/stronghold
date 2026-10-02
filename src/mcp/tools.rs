@@ -12,6 +12,7 @@ use crate::control::view::{
 use crate::control::{ControlError, ErrorCode};
 use crate::mcp::backend::{CallError, Control, NOT_RUNNING};
 use crate::quota::format_duration;
+use crate::review::mark::Origin;
 
 /// Agents `list_agents` returns by default, and at most.
 pub const DEFAULT_LIST_LIMIT: usize = 50;
@@ -449,13 +450,18 @@ pub fn definitions() -> Vec<Value> {
 // Calls
 
 /// Runs a tool; `None` when there is no such tool.
-pub fn call(control: &mut dyn Control, name: &str, args: &Value) -> Option<ToolOutput> {
+pub fn call(
+    control: &mut dyn Control,
+    origin: &Origin,
+    name: &str,
+    args: &Value,
+) -> Option<ToolOutput> {
     let p = Params::new(args);
     let result = match name {
         "fleet_status" => fleet_status(control),
         "list_agents" => list_agents(control, &p),
         "get_agent" => get_agent(control, &p),
-        "send_to_agent" => send_to_agent(control, &p),
+        "send_to_agent" => send_to_agent(control, origin, &p),
         "press_key" => press_key(control, &p),
         "close_agents" => close_agents(control, &p),
         "broadcast_to_coordinators" => broadcast(control, &p),
@@ -1037,7 +1043,8 @@ fn get_agent(control: &mut dyn Control, p: &Params) -> ToolResult {
     Ok(ToolOutput::ok(out.join("\n"), result))
 }
 
-fn send_to_agent(control: &mut dyn Control, p: &Params) -> ToolResult {
+/// Sends as `origin`, so Myrstack draws the message from the caller.
+fn send_to_agent(control: &mut dyn Control, origin: &Origin, p: &Params) -> ToolResult {
     let id = p.required_str("id")?;
     let text = p
         .str("text")?
@@ -1048,7 +1055,8 @@ fn send_to_agent(control: &mut dyn Control, p: &Params) -> ToolResult {
             "text is empty and submit is false: nothing to send".into(),
         ));
     }
-    let result = control.call("send", json!({"id": id, "text": text, "enter": submit}))?;
+    let params = json!({"id": id, "text": text, "enter": submit, "origin": origin});
+    let result = control.call("send", params)?;
     let agent = result.get("agent").and_then(Value::as_str).unwrap_or(id);
     let text = if submit {
         format!("Sent to {agent} and pressed Enter.")

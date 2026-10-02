@@ -466,7 +466,10 @@ fn every_action_reaches_the_handler() {
     let h = Harness::new();
     let calls = [
         ("send", json!({"id": "a", "text": "hi"})),
-        ("send", json!({"id": "a", "text": "draft", "enter": false})),
+        (
+            "send",
+            json!({"id": "a", "text": "draft", "enter": false, "origin": {"terminal_handle": "term_c"}}),
+        ),
         ("enter", json!({"id": "a"})),
         ("esc", json!({"id": "a"})),
         ("interrupt", json!({"id": "a"})),
@@ -499,11 +502,13 @@ fn every_action_reaches_the_handler() {
             agent: "a".into(),
             text: "hi".into(),
             enter: true,
+            from: None,
         },
         ControlCommand::Send {
             agent: "a".into(),
             text: "draft".into(),
             enter: false,
+            from: Some("term_c".into()),
         },
         ControlCommand::Key {
             agent: "a".into(),
@@ -1007,4 +1012,19 @@ fn status_reports_queen_auto_read_only() {
             .chain(READ_METHODS)
             .all(|m| !m.contains("auto"))
     );
+}
+
+#[test]
+fn agent_message_is_an_action() {
+    use crate::traffic::{AgentMessage, MessageKind};
+    let parsed = ControlCommand::parse(
+        "agent_message",
+        &json!({"from": "term_e", "to": "run:r1", "kind": "relay"}),
+    );
+    assert_eq!(
+        parsed.unwrap().unwrap(),
+        ControlCommand::AgentMessage(AgentMessage::new("term_e", "run:r1", MessageKind::Relay))
+    );
+    let missing = ControlCommand::parse("agent_message", &json!({"from": "term_e"}));
+    assert!(missing.unwrap().is_err());
 }

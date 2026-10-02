@@ -17,6 +17,7 @@ mod review;
 mod settings;
 mod spawn;
 mod talk;
+mod traffic;
 mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo};
@@ -122,6 +123,8 @@ pub struct MyrstackApp {
     finish_closes: Vec<lifecycle::PendingClose>,
     /// Asks or finished sessions changed: rebuild the snapshot.
     overlays_changed: bool,
+    /// Messages between agents, for the graph and the ant farm to draw.
+    traffic: crate::traffic::Traffic,
     /// Every notification's dispatcher, the saved inbox, toasts and node badges.
     notifications: notifications::AppNotifications,
     /// Debug-logged frames per second and repaint causes.
@@ -223,6 +226,7 @@ impl MyrstackApp {
             ),
             finish_closes: Vec::new(),
             overlays_changed: true,
+            traffic: Default::default(),
             notifications: notifications::AppNotifications::load(),
             search: ui::search::SearchPalette::default(),
             help_open: false,
@@ -263,6 +267,9 @@ impl MyrstackApp {
             return false;
         };
         if !status.new_log.is_empty() {
+            for message in status.new_log.iter().filter_map(crate::traffic::from_whip) {
+                self.traffic.push(message);
+            }
             let new = status.new_log.len();
             self.whip_log.extend(status.new_log.drain(..));
             log::debug!(
@@ -456,6 +463,15 @@ impl MyrstackApp {
             self.apply_review_action(action);
         }
         for request in &response.requests {
+            if let (crate::actions::Action::Send { handle, .. }, ui::terminal::InputKind::Text) =
+                (&request.action, request.kind)
+            {
+                self.traffic.push(crate::traffic::AgentMessage::new(
+                    "karl",
+                    handle.clone(),
+                    crate::traffic::MessageKind::Instruction,
+                ));
+            }
             let action = self.actions.submit(request.action.clone());
             self.input.submitted(action, request);
         }
@@ -1018,6 +1034,9 @@ impl eframe::App for MyrstackApp {
                 data.needs_input
                     .insert(screen.handle.clone(), verdict.clone());
             }
+            for message in self.traffic.inbox.update(&data.inbox, now_ms()) {
+                self.traffic.push(message);
+            }
             self.data = Some(data);
             rebuild = true;
         }
@@ -1089,6 +1108,7 @@ impl eframe::App for MyrstackApp {
             self.spawn_select_pending();
         }
         self.poll_notifications(ctx);
+        self.poll_traffic(ctx);
         self.poll_chat();
         self.talk_logic(ctx);
         self.poll_control(ctx);

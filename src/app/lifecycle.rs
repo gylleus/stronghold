@@ -27,7 +27,7 @@ pub(super) struct PendingClose {
 
 impl MyrstackApp {
     /// The caller's node, from its Orca identity.
-    fn caller(&self, origin: &Origin) -> Option<&Node> {
+    pub(super) fn caller(&self, origin: &Origin) -> Option<&Node> {
         let agent = self.review_agent(origin)?;
         self.snapshot.as_ref()?.node(&agent.id)
     }
