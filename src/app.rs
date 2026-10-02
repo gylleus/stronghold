@@ -1081,6 +1081,7 @@ impl eframe::App for MyrstackApp {
             }
             self.screen = Some(update);
         }
+        self.sync_envoy_core();
         rebuild |= self.poll_whip();
         rebuild |= std::mem::take(&mut self.overlays_changed);
         self.poll_quota();
@@ -1097,7 +1098,7 @@ impl eframe::App for MyrstackApp {
             snapshot.mark_waiting(&self.asks.waiting(data, self.claude_data.as_ref()));
             self.finished.prune(now, crate::model::RELEASED_FADE_MS);
             snapshot.add_finished(self.finished.recent(now, crate::model::RELEASED_FADE_MS));
-            snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_session.status());
+            snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_status());
             self.graph.set_hidden(&self.filter.hidden(&snapshot));
             self.graph.sync(&snapshot);
             if let Some(claude) = &self.claude_data {
@@ -1125,7 +1126,9 @@ impl eframe::App for MyrstackApp {
         self.talk_logic(ctx);
         self.poll_control(ctx);
         self.poll_review();
+        let envoy_before = self.envoy_status();
         self.poll_envoy();
+        self.overlays_changed |= envoy_before != self.envoy_status();
         self.poll_whip_now();
         self.poll_spawn();
         self.run_finish_closes();

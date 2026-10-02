@@ -28,7 +28,6 @@ pub fn authorize(
     }
 }
 
-
 /// Whether the Envoy's session is running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionState {

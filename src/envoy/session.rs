@@ -8,7 +8,6 @@ use crate::fleet::FleetData;
 use crate::spawn::{Agent, Catalog, SpawnPlan, SpawnRequest, SpawnTarget, Step, shell_quote};
 
 pub const HOME: &str = "envoy-home";
-pub const PROMPT: &str = "Load your rules with get_playbook role=envoy, then wait for events.";
 
 pub fn plan(catalog: &Catalog, settings: &EnvoySettings) -> Result<SpawnPlan, String> {
     let repo = catalog
@@ -40,11 +39,11 @@ pub fn plan(catalog: &Catalog, settings: &EnvoySettings) -> Result<SpawnPlan, St
         target,
         agent,
         model: settings.model.clone(),
-        prompt: PROMPT.into(),
+        prompt: crate::playbook::envoy_launch_prompt(settings.dry_run),
         label: Some("Envoy".into()),
     })
     .map_err(|e| e.0)?;
-    let command = command(agent, plan.request.model.as_deref());
+    let command = command(agent, plan.request.model.as_deref(), &plan.request.prompt);
     let mut needs_terminal = false;
     for step in &mut plan.steps {
         match step {
@@ -75,7 +74,7 @@ pub fn plan(catalog: &Catalog, settings: &EnvoySettings) -> Result<SpawnPlan, St
     Ok(plan)
 }
 
-fn command(agent: Agent, model: Option<&str>) -> String {
+fn command(agent: Agent, model: Option<&str>, prompt: &str) -> String {
     let mut args = vec![agent.as_str().to_string()];
     if let Some(model) = model {
         args.extend(["--model".into(), shell_quote(model)]);
@@ -90,7 +89,7 @@ fn command(agent: Agent, model: Option<&str>) -> String {
             "never".into(),
         ]),
     }
-    args.extend(["--".into(), shell_quote(PROMPT)]);
+    args.extend(["--".into(), shell_quote(prompt)]);
     args.join(" ")
 }
 
@@ -102,13 +101,14 @@ struct SavedSession {
 
 #[derive(Debug)]
 enum Event {
-    Created(String),
+    Created { handle: String, persisted: bool },
     Done(Result<(), String>),
 }
 
 pub struct Session {
     path: PathBuf,
     handle: Option<String>,
+    persisted: bool,
     recovering: bool,
     load_failed: bool,
     receiver: Option<Receiver<Event>>,
@@ -142,6 +142,7 @@ impl Session {
             load_failed: error.is_some(),
             path,
             recovering: handle.is_some(),
+            persisted: handle.is_some(),
             handle,
             receiver: None,
             created_at_ms: 0,
@@ -152,6 +153,12 @@ impl Session {
 
     pub fn handle(&self) -> Option<&str> {
         self.handle.as_deref()
+    }
+
+    /// Only a persisted, recovered or fully launched identity may enable ingestion.
+    pub fn running_handle(&self) -> Option<&str> {
+        self.handle()
+            .filter(|_| self.persisted && self.state() == SessionState::Running)
     }
 
     pub fn settings(&self) -> &EnvoySettings {
@@ -209,17 +216,21 @@ impl Session {
                             if let Some(handle) = &context.handle
                                 && recorded.as_ref() != Some(handle)
                             {
-                                // Keep the in-memory handle even if the disk fills after terminal creation.
-                                let _ = tx.send(Event::Created(handle.clone()));
-                                wake();
-                                persist(
+                                let saved = persist(
                                     &path,
                                     Some(&SavedSession {
                                         handle: handle.clone(),
                                         settings: settings.clone(),
                                     }),
-                                )
-                                .map_err(|e| format!("Cannot save Envoy identity: {e}"))?;
+                                );
+                                // Keep the handle for Stop when persistence fails; leave ingestion off.
+                                let _ = tx.send(Event::Created {
+                                    handle: handle.clone(),
+                                    persisted: saved.is_ok(),
+                                });
+                                wake();
+                                saved
+                                    .map_err(|e| format!("Cannot save {}: {e}", path.display()))?;
                                 recorded = Some(handle.clone());
                             }
                             Ok(())
@@ -241,7 +252,8 @@ impl Session {
         loop {
             let event = self.receiver.as_ref().map(|rx| rx.try_recv());
             match event {
-                Some(Ok(Event::Created(handle))) => {
+                Some(Ok(Event::Created { handle, persisted })) => {
+                    self.persisted = persisted;
                     self.created_at_ms = now_ms();
                     self.handle = Some(handle);
                     changed = true;
@@ -279,6 +291,7 @@ impl Session {
         match persist(&self.path, None) {
             Ok(()) => {
                 self.handle = None;
+                self.persisted = false;
                 self.recovering = false;
             }
             Err(e) => {
@@ -400,7 +413,7 @@ mod tests {
                     .collect();
                 assert_eq!(launches.len(), 1);
                 let command = launches[0];
-                assert!(command.ends_with(&format!(" -- {}", shell_quote(PROMPT))));
+                assert!(command.ends_with(&format!(" -- {}", shell_quote(&plan.request.prompt))));
                 if agent == "claude" {
                     assert!(command.contains("--disallowedTools Bash Monitor -- "));
                 } else {
@@ -434,6 +447,7 @@ mod tests {
             },
         );
         assert_eq!(session.state(), SessionState::Starting);
+        assert_eq!(session.running_handle(), None);
         assert!(
             session.status().dry_run,
             "running settings survive config changes"
@@ -468,6 +482,7 @@ mod tests {
         data.terminals_polled_at_ms = Some(3);
         assert!(session.reconcile(&data));
         assert_eq!(session.state(), SessionState::Stopped);
+        assert_eq!(session.running_handle(), None);
         assert!(!path.exists());
         assert_eq!(
             Session::load(path, &EnvoySettings::default()).handle(),
@@ -502,7 +517,11 @@ mod tests {
         let mut session = Session::load(dir.path().join("session.json"), &EnvoySettings::default());
         let (tx, rx) = mpsc::channel();
         session.receiver = Some(rx);
-        tx.send(Event::Created("partial".into())).unwrap();
+        tx.send(Event::Created {
+            handle: "partial".into(),
+            persisted: true,
+        })
+        .unwrap();
         tx.send(Event::Done(Err("verification failed".into())))
             .unwrap();
         assert!(session.poll());
@@ -521,5 +540,50 @@ mod tests {
                 .start(&EnvoySettings::default(), Box::new(|| {}))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn failed_persistence_keeps_stop_available_without_enabling_ingestion() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::load(dir.path().join("session.json"), &EnvoySettings::default());
+        let (tx, rx) = mpsc::channel();
+        session.receiver = Some(rx);
+        tx.send(Event::Created {
+            handle: "unsaved".into(),
+            persisted: false,
+        })
+        .unwrap();
+        tx.send(Event::Done(Err("disk full".into()))).unwrap();
+        session.poll();
+        assert_eq!(session.handle(), Some("unsaved"));
+        assert_eq!(session.state(), SessionState::Running);
+        assert_eq!(session.running_handle(), None);
+        assert!(
+            session
+                .start(&EnvoySettings::default(), Box::new(|| {}))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn launch_uses_playbook_prompt_with_the_session_dry_run_mode() {
+        for dry_run in [true, false] {
+            let settings = EnvoySettings {
+                dry_run,
+                ..Default::default()
+            };
+            let plan = plan(&catalog(), &settings).unwrap();
+            assert_eq!(
+                plan.request.prompt,
+                crate::playbook::envoy_launch_prompt(dry_run)
+            );
+            assert!(plan.request.prompt.contains("role=envoy"));
+            let expected = if dry_run {
+                "Dry-run is ON"
+            } else {
+                "Dry-run is OFF"
+            };
+            assert!(plan.request.prompt.contains(expected));
+        }
     }
 }

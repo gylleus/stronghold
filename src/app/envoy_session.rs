@@ -1,11 +1,34 @@
 //! Envoy lifecycle controls alongside the Queen's quick actions.
 
 use super::{MyrstackApp, repaint_once};
-use crate::envoy::SessionState;
+use crate::envoy::{EnvoyIdentity, EnvoyStatus, SessionState};
 
 impl MyrstackApp {
-    pub(super) fn envoy_quick_actions(&mut self, ui: &mut eframe::egui::Ui) {
+    pub(super) fn envoy_status(&self) -> EnvoyStatus {
         let mut status = self.envoy_session.status();
+        if self.envoy_core.envoy_handle().is_some() {
+            self.envoy_core.apply_status(&mut status);
+        }
+        status
+    }
+
+    pub(super) fn sync_envoy_core(&mut self) {
+        match self.envoy_session.running_handle() {
+            Some(handle) if self.envoy_core.envoy_handle() != Some(handle) => {
+                if let Err(error) = self
+                    .envoy_core
+                    .set_enabled(handle.to_owned(), self.envoy_session.settings().clone())
+                {
+                    self.envoy_session.error = Some(error);
+                }
+            }
+            None if self.envoy_core.envoy_handle().is_some() => self.envoy_core.stop(),
+            _ => {}
+        }
+    }
+
+    pub(super) fn envoy_quick_actions(&mut self, ui: &mut eframe::egui::Ui) {
+        let mut status = self.envoy_status();
         if status.session == SessionState::Stopped {
             status.dry_run = self.whip_window.envoy().dry_run;
         }
