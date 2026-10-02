@@ -4,7 +4,8 @@
 //! message's usage, so records are deduplicated by `message.id` within a session.
 //! Subagent transcripts (`<session dir>/subagents/agent-*.jsonl`) count towards the session
 //! and are also kept per agent. Files are tailed from a remembered offset, so after the first
-//! read a refresh only parses appended lines. Only tokens are counted, never dollars.
+//! read a refresh only parses appended lines. Only tokens are counted, never dollars. The
+//! same pass reads the main transcript's tool calls for [`SessionUsage::building`].
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -12,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use super::activity::{ToolActivity, tool_calls};
 use super::sessions::SessionInfo;
 use super::subagents::{Tail, session_dir, tail_file};
 use super::worker::ClaudeData;
@@ -90,6 +92,8 @@ pub struct SessionUsage {
     pub total: Usage,
     /// Per subagent id.
     pub subagents: BTreeMap<String, Usage>,
+    /// The main agent is editing or building (see [`ToolActivity::building`]).
+    pub building: bool,
 }
 
 /// "950 tok", "12k tok", "1.2M tok", "3.4B tok".
@@ -120,6 +124,7 @@ struct SessionCache {
     /// `message.id`s already counted.
     seen: HashSet<String>,
     usage: SessionUsage,
+    activity: ToolActivity,
 }
 
 /// Incremental per-session token counter.
@@ -158,7 +163,13 @@ fn update(cache: &mut SessionCache, session: &SessionInfo) {
         let tail = cache.tails.entry(path.clone()).or_default();
         let seen = &mut cache.seen;
         let usage = &mut cache.usage;
+        let activity = &mut cache.activity;
         tail_file(&path, tail, |line| {
+            if agent.is_none() {
+                for (build, at_ms) in tool_calls(line) {
+                    activity.record(build, at_ms);
+                }
+            }
             let Some((id, model, counts)) = parse_usage(line) else {
                 return;
             };
@@ -175,6 +186,7 @@ fn update(cache: &mut SessionCache, session: &SessionInfo) {
             }
         });
     }
+    cache.usage.building = cache.activity.building();
 }
 
 /// `(path, agent id)` of every `agent-<id>.jsonl` in `dir`.
@@ -264,6 +276,22 @@ impl ClaudeData {
             return self.usage.get(session)?.subagents.get(agent);
         }
         self.usage_for_handle(node.terminal_handle.as_deref()?)
+    }
+
+    /// Nodes whose Claude session is editing or building right now.
+    pub fn building_nodes<'a>(&self, nodes: impl IntoIterator<Item = &'a Node>) -> HashSet<NodeId> {
+        nodes
+            .into_iter()
+            .filter(|n| n.kind != NodeKind::Subagent)
+            .filter(|n| {
+                n.terminal_handle
+                    .as_deref()
+                    .and_then(|h| self.session_by_handle.get(h)?.session())
+                    .and_then(|s| self.usage.get(&s.session_id))
+                    .is_some_and(|u| u.building)
+            })
+            .map(|n| n.id.clone())
+            .collect()
     }
 
     /// [`ClaudeData::node_usage`] for every node that has any.
@@ -370,6 +398,27 @@ mod tests {
         assert_eq!(usage.total.by_model.len(), 2);
         assert_eq!(usage.total.by_model["claude-opus-5"].output, 100);
         assert!(usage.subagents.is_empty());
+    }
+
+    fn tool(name: &str, at: &str) -> Value {
+        json!({"type": "assistant", "timestamp": at, "message": {"id": at, "model": "m",
+            "content": [{"type": "tool_use", "id": "t", "name": name, "input": {}}],
+            "usage": {"input_tokens": 1}}})
+    }
+
+    #[test]
+    fn building_follows_the_main_agents_latest_tool_calls() {
+        let fake = Fake::new();
+        append(&fake.main(), &[tool("Edit", "2026-10-02T10:00:00Z")]);
+        append(&fake.agent("a1"), &[tool("Read", "2026-10-02T10:01:00Z")]);
+        let mut tracker = UsageTracker::new();
+        let session = SessionInfo {
+            dir: Some(fake.tmp.path().join(SESSION)),
+            ..fake.session()
+        };
+        assert!(tracker.refresh(std::slice::from_ref(&session))[SESSION].building);
+        append(&fake.main(), &[tool("Read", "2026-10-02T10:00:30Z")]);
+        assert!(!tracker.refresh(&[session])[SESSION].building);
     }
 
     #[test]
