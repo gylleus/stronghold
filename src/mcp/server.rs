@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use serde_json::{Value, json};
 
 use crate::mcp::backend::Control;
-use crate::mcp::{lifecycle, notify, playbook, review, tools};
+use crate::mcp::{envoy, lifecycle, notify, playbook, review, tools};
 use crate::playbook::Playbook;
 
 /// Protocol versions this server speaks, newest first. `initialize` echoes the client's version
@@ -248,6 +248,7 @@ impl<C: Control> McpServer<C> {
                 all.extend(review::definitions());
                 all.extend(notify::definitions());
                 all.extend(lifecycle::definitions());
+                all.extend(envoy::definitions());
                 Ok(json!({ "tools": all }))
             }
             "tools/call" => self.call_tool(params),
@@ -307,6 +308,7 @@ impl<C: Control> McpServer<C> {
                     log.as_deref(),
                 )
             })
+            .or_else(|| envoy::call(&mut self.control, &self.review.origin, name, &args))
             .or_else(|| review::call(&mut self.control, &self.review, name, &args))
             .or_else(|| notify::call(&mut self.control, &self.review.origin, name, &args))
             .or_else(|| {

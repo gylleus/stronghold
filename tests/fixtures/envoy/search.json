@@ -1,0 +1,81 @@
+{
+  "ok": true,
+  "query": "to:U111 is:dm",
+  "messages": {
+    "total": 2,
+    "pagination": {
+      "page": 1,
+      "page_count": 1,
+      "per_page": 2,
+      "total_count": 2
+    },
+    "paging": {
+      "count": 2,
+      "page": 1,
+      "pages": 1,
+      "total": 2
+    },
+    "matches": [
+      {
+        "db_message": {},
+        "iid": "fixture",
+        "team": "T123",
+        "score": 0,
+        "channel": {
+          "id": "D123",
+          "is_channel": true,
+          "is_group": false,
+          "is_im": true,
+          "is_mpim": false,
+          "is_shared": false,
+          "is_org_shared": false,
+          "is_ext_shared": false,
+          "is_private": true,
+          "is_archived": false,
+          "name": "sample-dm",
+          "pending_shared": [],
+          "is_pending_ext_shared": false
+        },
+        "rank_score": 0,
+        "type": "message",
+        "user": "U123",
+        "username": "Avery",
+        "ts": "1790000000.000001",
+        "blocks": [],
+        "text": "Please check the sample build.",
+        "permalink": "https://example.slack.com/archives/D123/p1790000000000001",
+        "no_reactions": true
+      },
+      {
+        "db_message": {},
+        "iid": "fixture",
+        "team": "T123",
+        "score": 0,
+        "channel": {
+          "id": "D123",
+          "is_channel": false,
+          "is_group": false,
+          "is_im": true,
+          "is_mpim": false,
+          "is_shared": false,
+          "is_org_shared": false,
+          "is_ext_shared": false,
+          "is_private": true,
+          "is_archived": false,
+          "name": "sample-dm",
+          "user": "fixture",
+          "pending_shared": []
+        },
+        "rank_score": 0,
+        "type": "message",
+        "user": "U124",
+        "username": "Casey",
+        "ts": "1790000000.000002",
+        "blocks": [],
+        "text": "Please check the sample build.",
+        "permalink": "https://example.slack.com/archives/D123/p1790000000000002",
+        "no_reactions": true
+      }
+    ]
+  }
+}

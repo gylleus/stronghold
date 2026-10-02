@@ -451,6 +451,12 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "notify",
         "ask_karl",
         "finish_session",
+        "envoy_inbox",
+        "envoy_event",
+        "envoy_draft",
+        "envoy_drafts",
+        "envoy_relay",
+        "envoy_propose_task",
     ];
     assert_eq!(names, expected);
     let reads = [
@@ -465,6 +471,9 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "attendant_brief",
         "kickoff",
         "review_queue",
+        "envoy_inbox",
+        "envoy_event",
+        "envoy_drafts",
     ];
     let destructive = [
         "send_to_agent",
@@ -2178,4 +2187,55 @@ fn finish_session_passes_on_a_refusal_and_myrstack_being_down() {
     );
     assert!(is_error(&r));
     assert!(bad.control().calls.is_empty());
+}
+
+#[test]
+fn envoy_tools_refuse_missing_and_non_envoy_origins() {
+    let mut missing =
+        McpServer::new(FakeControl::default()).with_review_env(review::ReviewEnv::default());
+    for method in crate::envoy::control::METHODS {
+        assert_eq!(call(&mut missing, method, json!({}))["isError"], true);
+    }
+    assert!(missing.control().calls.is_empty());
+    let mut control = FakeControl::default();
+    for method in crate::envoy::control::METHODS {
+        control = control.reply(
+            method,
+            Err(CallError::Control(ControlError::new(
+                ErrorCode::Refused,
+                "Only the persisted Envoy terminal may call Envoy tools",
+            ))),
+        );
+    }
+    let mut other = agent_server(control);
+    for method in crate::envoy::control::METHODS {
+        let result = call(
+            &mut other,
+            method,
+            json!({"origin":{"terminal_handle":"forged"}}),
+        );
+        assert_eq!(result["isError"], true);
+    }
+    assert!(
+        other
+            .control()
+            .calls
+            .iter()
+            .all(|(_, p)| p["origin"] == json!(agent_origin()))
+    );
+}
+
+#[test]
+fn envoy_tools_preserve_args_and_have_no_approval_tool() {
+    let mut server = agent_server(FakeControl::default());
+    let args = json!({"in_reply_to":{"conversation":"C123","ts":"1790000000.000001"},"text":"A draft","rationale":"Reply requested"});
+    assert_eq!(
+        call(&mut server, "envoy_draft", args.clone())["isError"],
+        false
+    );
+    let (method, params) = &server.control().calls[0];
+    assert_eq!(method, "envoy_draft");
+    assert_eq!(params["text"], args["text"]);
+    assert_eq!(params["origin"], json!(agent_origin()));
+    assert!(!crate::envoy::control::METHODS.contains(&"envoy_approve"));
 }
