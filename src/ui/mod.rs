@@ -9,6 +9,7 @@ pub mod columns;
 pub mod commands;
 pub mod dictation;
 pub mod dock;
+pub mod envelope;
 pub mod frame_stats;
 pub mod graph;
 pub mod history;

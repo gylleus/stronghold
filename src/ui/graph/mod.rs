@@ -5,6 +5,7 @@ mod fit;
 #[cfg(test)]
 mod fit_tests;
 mod layout;
+mod mail;
 mod nav;
 mod regions;
 mod saved;
@@ -159,6 +160,8 @@ pub struct GraphView {
     pinned: HashSet<NodeId>,
     /// Device of the latest scroll over the graph; see [`ScrollSource`].
     scroll_source: ScrollSource,
+    /// Messages flying between nodes; see [`mail`].
+    mail: crate::ui::envelope::Flights,
 }
 
 impl Default for GraphView {
@@ -206,6 +209,7 @@ impl GraphView {
             box_select: None,
             pinned: HashSet::new(),
             scroll_source: ScrollSource::default(),
+            mail: Default::default(),
         }
     }
 
@@ -578,6 +582,7 @@ impl GraphView {
             .inner;
         self.last_top_left = Some(response.response.rect.left_top());
         self.paint_regions(ui, backdrop, response.response.rect);
+        self.paint_mail(ui, response.response.rect);
 
         let mut clicked = None;
         let mut user_navigated = false;

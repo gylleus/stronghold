@@ -8,6 +8,7 @@ pub mod death;
 pub mod layout;
 #[cfg(test)]
 mod layout_tests;
+pub mod mail;
 pub mod motion;
 pub mod nature;
 pub mod scenery;
@@ -173,6 +174,8 @@ pub struct AntFarmView {
     queen_busy: bool,
     /// Her chat is the conversation shown: she gets the selection ring.
     queen_focused: bool,
+    /// Messages carried between ants; see [`mail`].
+    mail: crate::ui::envelope::Flights,
 }
 
 impl AntFarmView {
@@ -194,6 +197,12 @@ impl AntFarmView {
 
     pub fn pulse(&mut self, pulse: Pulse) {
         self.pending.push(pulse);
+    }
+
+    /// Carries a message between ants, asked for at `now_s` (egui time); `still` for Reduce
+    /// motion.
+    pub fn message(&mut self, flight: crate::traffic::Flight, now_s: f64, still: bool) {
+        self.mail.push(flight, now_s, still);
     }
 
     /// Draws the farm filling the available space and handles clicks, hover and the context
@@ -266,6 +275,7 @@ impl AntFarmView {
             ui,
         );
         paint_falls(&painter, sprites, &scene, &self.falls, now_s);
+        mail::paint(&painter, &scene, &placed, self.mail.tick(now_s), now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
 
         // Smooth while ants walk or a call ripples; stepped while anyone digs, waves, sleeps
@@ -273,7 +283,8 @@ impl AntFarmView {
         let walking = placed.iter().any(|p| p.heading.is_some())
             || !self.ripples.is_empty()
             || !self.births.is_empty()
-            || !self.falls.is_empty();
+            || !self.falls.is_empty()
+            || !self.mail.is_empty();
         let stepping = scene.ants.iter().any(|a| {
             matches!(a.pose, Pose::Dig | Pose::Build | Pose::Wait | Pose::Sleep)
                 || (a.pose == Pose::Queen && self.queen_busy)

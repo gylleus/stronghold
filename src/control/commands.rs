@@ -80,11 +80,13 @@ impl FilterChange {
 /// labels, resolved by the app against its current snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlCommand {
-    /// Type `text` into the agent's terminal, then Enter when `enter`.
+    /// Type `text` into the agent's terminal, then Enter when `enter`. `from` is the sender's
+    /// terminal handle (`from`, or the caller's `origin`), `None` for the Queen or Karl.
     Send {
         agent: String,
         text: String,
         enter: bool,
+        from: Option<String>,
     },
     Key {
         agent: String,
@@ -141,6 +143,8 @@ pub enum ControlCommand {
     /// An agent ending its own session (`finish_session`), or with `dry_run` checking whether
     /// it may.
     Finish(crate::finish::FinishRequest),
+    /// A message between agents happened elsewhere (the Envoy's relays, say): draw it.
+    AgentMessage(crate::traffic::AgentMessage),
 }
 
 impl ControlCommand {
@@ -169,10 +173,15 @@ impl ControlCommand {
                         "empty \"text\" without enter sends nothing",
                     ));
                 }
+                let from = match p.str("from")? {
+                    Some(from) => Some(from.to_owned()),
+                    None => crate::finish::origin_of(params)?.terminal_handle,
+                };
                 Ok(Self::Send {
                     agent: agent()?,
                     text: text.to_owned(),
                     enter,
+                    from,
                 })
             })(),
             "enter" => key(TerminalKey::Enter),
@@ -274,6 +283,9 @@ impl ControlCommand {
             "notify" => crate::notify::agent::AgentNotice::from_params(params).map(Self::Notify),
             "ask" => crate::ask::AskRequest::from_params(params).map(Self::Ask),
             "finish" => crate::finish::FinishRequest::from_params(params).map(Self::Finish),
+            "agent_message" => {
+                crate::traffic::AgentMessage::from_params(params).map(Self::AgentMessage)
+            }
             _ => return None,
         };
         Some(result)

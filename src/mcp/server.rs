@@ -318,7 +318,7 @@ impl<C: Control> McpServer<C> {
                 lifecycle::call(&mut self.control, &self.review.origin, cwd, name, &args)
             })
             .or_else(|| worktrees::call(name, &args))
-            .or_else(|| tools::call(&mut self.control, name, &args))
+            .or_else(|| tools::call(&mut self.control, &self.review.origin, name, &args))
             .ok_or_else(|| (INVALID_PARAMS, format!("unknown tool: {name}")))?;
         let mut output = output;
         match name {
