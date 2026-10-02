@@ -1041,6 +1041,7 @@ fn a_crowded_chamber_packs_side_by_side() {
         snapshot: &s,
         hidden: &hidden,
         pr_ready: &pr_ready,
+        building: &HashSet::new(),
         now_ms: 0,
     };
     let scene = layout(&input, rect);
