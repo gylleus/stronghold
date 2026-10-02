@@ -9,6 +9,9 @@
 //! - control API commands: `send` (`send_to_agent`, from its caller or the Queen), `notify` and
 //!   `ask` (an agent to Karl), and the generic `agent_message {from, to, kind}`;
 //! - Karl typing into a terminal from Myrstack, and the whip's nudges ([`from_whip`]).
+//! - `orca terminal send`s Claude terminals run, read from their transcripts
+//!   ([`crate::claude::forwards::SendWatch`]). Myrstack's own sends (the whip's, Karl's) run in
+//!   its process, never in a transcript, so they are not drawn twice.
 //!
 //! In-process emitters (the Envoy's relays, say) push through a [`TrafficSender`]; other
 //! processes call the control API's `agent_message`.
