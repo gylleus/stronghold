@@ -789,7 +789,7 @@ fn scenery_stays_on_the_surface_and_in_the_sky() {
                 }
             }
         }
-        for (star, _) in scenery::stars(&scene, now) {
+        for (star, _) in scenery::stars(&scene) {
             assert!(scene.rect.contains(star) && star.y < scene.surface_y);
         }
     }

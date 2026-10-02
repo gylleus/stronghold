@@ -446,7 +446,7 @@ fn paint_ground(
     sprites.ground(painter, scene.rect, scene.surface_y, px, palette);
     // The sky, then roots under the plants (passages are dug through them).
     if dark {
-        for (at, bright) in scenery::stars(scene, now_s) {
+        for (at, bright) in scenery::stars(scene) {
             sprites.star(painter, at, px, bright);
         }
     }
