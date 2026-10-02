@@ -9,9 +9,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::detect::PromptKind;
 use crate::orca::spawn::Worktree;
-use crate::orca::{InboxMessage, Run, Task, Terminal, Timestamp, Worker};
+use crate::orca::{
+    DispatchStatus, InboxMessage, Run, Task, TaskStatus, Terminal, Timestamp, Worker,
+};
 
 pub use roles::{AttendantSignal, Forward, RunRoles};
+
+/// Terminal output this long after a task failed means its agent is working anyway: an agent
+/// that died at launch prints its error within moments and then stays quiet.
+pub const REVIVAL_GRACE_MS: i64 = 2 * 60_000;
 
 /// Everything one poll cycle fetched from Orca, unprocessed.
 #[derive(Debug, Clone, Default)]
@@ -39,6 +45,8 @@ pub struct FleetData {
     /// Names chosen for worktrees in Orca (by the Queen at spawn, or renamed in Orca), by
     /// worktree path; see [`chosen_worktree_names`]. Agents in a named worktree go by it.
     pub worktree_names: BTreeMap<String, String>,
+    /// Orca's worktree list, for the worktree count and cleanup.
+    pub worktrees: Vec<Worktree>,
 }
 
 /// The worktrees whose Orca display name was chosen rather than defaulted, by path. Orca
@@ -84,6 +92,57 @@ impl FleetData {
     /// [`FleetData::run_roles`]. `None` when no live candidate exists.
     pub fn effective_coordinator(&self, run_id: &str) -> Option<String> {
         self.run_roles(run_id).coordinator
+    }
+
+    /// Latest sign of life, in ms, of a worker whose task Orca marked failed although the
+    /// worker kept working: the Codex launch race (`agent_prompt_blocked`/`_stalled`) fails the
+    /// dispatch while the agent starts anyway, and Orca then rejects its heartbeats and reports.
+    ///
+    /// Counts only a failure with no recorded result (a coordinator retiring a task writes its
+    /// reason there) on a terminal no newer dispatch has taken over. Signs of life are the
+    /// worker's messages about the task after the failure, rejected ones included, and
+    /// `output_ms` (its terminal's last output) more than [`REVIVAL_GRACE_MS`] after it.
+    pub fn alive_after_failure(&self, task: &Task, output_ms: Option<i64>) -> Option<i64> {
+        if task.status != TaskStatus::Failed || task_has_result(task) {
+            return None;
+        }
+        let failed_at = ts_ms(&task.completed_at)?;
+        let worker = self
+            .workers
+            .iter()
+            .filter(|w| w.task_id.as_deref() == Some(task.id.as_str()))
+            .find(|w| {
+                task.dispatch_id.is_none() || task.dispatch_id.as_deref() == Some(&w.dispatch_id)
+            })?;
+        let handle = worker.agent_terminal_handle.as_deref()?;
+        let terminal = self.terminal(handle).filter(|t| !t.orphaned)?;
+        let taken_over = self.workers.iter().any(|w| {
+            w.dispatch_id != worker.dispatch_id
+                && w.agent_terminal_handle.as_deref() == Some(handle)
+                && w.dispatch_status == Some(DispatchStatus::Dispatched)
+        });
+        if taken_over {
+            return None;
+        }
+        let from_dispatch = format!("dispatch:{}", worker.dispatch_id);
+        let messages = self
+            .inbox
+            .iter()
+            .filter(|m| {
+                let from = m.from_handle.as_deref();
+                from == Some(handle) || from == Some(from_dispatch.as_str())
+            })
+            .filter(|m| {
+                m.parsed_payload()
+                    .and_then(|p| p.task_id)
+                    .is_some_and(|id| id == task.id)
+            })
+            .filter_map(|m| ts_ms(&m.created_at))
+            .filter(|&ms| ms > failed_at);
+        let output = output_ms
+            .or_else(|| ts_ms(&terminal.last_output_at))
+            .filter(|&ms| ms > failed_at + REVIVAL_GRACE_MS);
+        messages.chain(output).max()
     }
 
     /// The coordinator when the declared one is not an attendant. `coordinator_handle` can be
@@ -134,8 +193,102 @@ impl FleetData {
     }
 }
 
+/// A failed task whose result says why: the coordinator retired it on purpose.
+fn task_has_result(task: &Task) -> bool {
+    task.result
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|r| !r.is_empty() && r != "null" && r != "\"\"")
+}
+
 fn ts_ms(ts: &Option<Timestamp>) -> Option<i64> {
     ts.as_ref().and_then(Timestamp::epoch_ms)
+}
+
+#[cfg(test)]
+mod revival_tests {
+    use super::*;
+    use serde_json::json;
+
+    const MIN: i64 = 60_000;
+    const FAILED_AT: i64 = 1_790_000_000_000;
+
+    fn data(result: Option<&str>, last_output: i64, inbox: Vec<InboxMessage>) -> FleetData {
+        let mut task = json!({
+            "id": "t1", "run_id": "run_1", "status": "failed", "dispatch_id": "ctx_1",
+            "completed_at": FAILED_AT,
+        });
+        if let Some(r) = result {
+            task["result"] = json!(r);
+        }
+        FleetData {
+            terminals: vec![Terminal {
+                handle: "term_w".into(),
+                connected: true,
+                last_output_at: Some(Timestamp::Millis(last_output)),
+                ..Default::default()
+            }],
+            workers: vec![worker("ctx_1", "failed")],
+            tasks: [("run_1".into(), vec![serde_json::from_value(task).unwrap()])].into(),
+            inbox,
+            ..Default::default()
+        }
+    }
+
+    fn worker(dispatch: &str, status: &str) -> Worker {
+        serde_json::from_value(json!({
+            "dispatchId": dispatch, "taskId": "t1", "runId": "run_1",
+            "dispatchStatus": status, "agentTerminalHandle": "term_w",
+        }))
+        .unwrap()
+    }
+
+    fn task(d: &FleetData) -> &Task {
+        &d.tasks["run_1"][0]
+    }
+
+    fn rejected_done(at: i64) -> InboxMessage {
+        serde_json::from_value(json!({
+            "id": "m1", "run_id": "run_1", "from_handle": "term_w", "type": "worker_done",
+            "subject": "Rejected worker_done: done", "created_at": at,
+            "payload": json!({"taskId": "t1", "_orcaLifecycleRejection": "revoked"}).to_string(),
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn output_well_after_the_failure_revives() {
+        let d = data(None, FAILED_AT + 10 * MIN, vec![]);
+        assert_eq!(
+            d.alive_after_failure(task(&d), None),
+            Some(FAILED_AT + 10 * MIN)
+        );
+    }
+
+    #[test]
+    fn launch_noise_alone_does_not() {
+        let d = data(None, FAILED_AT + 30_000, vec![]);
+        assert_eq!(d.alive_after_failure(task(&d), None), None);
+    }
+
+    #[test]
+    fn rejected_reports_count_as_life() {
+        let d = data(None, FAILED_AT, vec![rejected_done(FAILED_AT + 5 * MIN)]);
+        assert_eq!(
+            d.alive_after_failure(task(&d), None),
+            Some(FAILED_AT + 5 * MIN)
+        );
+    }
+
+    #[test]
+    fn a_recorded_reason_or_a_newer_dispatch_means_it_is_over() {
+        let d = data(Some("Superseded by t2"), FAILED_AT + 10 * MIN, vec![]);
+        assert_eq!(d.alive_after_failure(task(&d), None), None);
+
+        let mut d = data(None, FAILED_AT + 10 * MIN, vec![]);
+        d.workers.push(worker("ctx_2", "dispatched"));
+        assert_eq!(d.alive_after_failure(task(&d), None), None);
+    }
 }
 
 #[cfg(test)]

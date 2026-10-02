@@ -278,6 +278,8 @@ subagents or on workers whose terminal is gone.
 | `id` | string (required) | |
 | `text` | string (required) | may be empty when `enter` is true |
 | `enter` | bool | true: press Enter after the text |
+| `from` | string | the sender, for the message animation; else `origin`'s terminal, else the Queen |
+| `origin` | object | the caller's Orca identity (`send_to_agent` passes it) |
 
 ```json
 {"v":1,"method":"send","params":{"id":"term_…","text":"continue"}}
@@ -541,6 +543,49 @@ review announcement after an agent's handover about the same PR is dropped likew
 `rate_limited` (at most 5 per agent per 10 min;
 `retry_after_ms`). An `agent` that matches no node is reported as `unknown_agent` and the
 notification is filed under the caller's terminal.
+
+### `ask`
+
+`{"question", "context"?, "severity"?: "info"|"warn"|"urgent" (default warn), "url"?: http(s),
+"origin"?}`. An
+agent's question to Karl (the `ask_karl` MCP tool). Notifies him like `notify` and marks the
+caller's terminal waiting (needs input) until he answers. The reply is `notify`'s plus
+`"waiting": true|false` (false when the origin matches no terminal).
+
+### `finish`
+
+`{"summary", "approval": "karl"|"trivial", "outcome"?: "done"|"handed_over"|"abandoned",
+"pr_url"?, "force"?, "forced"?: […], "dry_run"?, "origin"?}` (`approval` is optional only on a
+`dry_run`). An agent ending its own session (the `finish_session` MCP tool).
+With `dry_run` it returns the caller's node (`agent`: id, label, kind, worktree, branch) with
+`refused` (a worker) and `problems` (open tasks, PRs in the review queue). Otherwise a refusal,
+or problems without `force`, fail with `refused`; past them the app records the outcome
+(`finished`, with `forced` = the caller's problems plus the app's), notifies Karl and closes
+the terminal after `closing_in_ms` with the `plan` returned.
+
+```json
+{"v":1,"method":"finish","params":{"summary":"Merged into main","approval":"karl","origin":{"terminal_handle":"term_…"}}}
+→ {"ok":true,"result":{"dry_run":false,"agent":{"id":"term:term_…",…},"finished":{…},
+   "closing_in_ms":2000,"plan":{…},"notification":"delivered"}}
+```
+
+### `agent_message`
+
+`{"from", "to", "kind"?}`. Draws a message between agents, which happened elsewhere, as an
+envelope flying from `from` to `to` in the graph and the ant farm; nothing is sent. Each end
+is a node id, a terminal handle, `run:<id>` (its coordinator), `dispatch:<id>`, `queen`,
+`karl` or `slack` (the outside world: the landing mound in the ant farm, the Queen in the
+graph). `kind` picks the look: `instruction`, `message` (default), `ask` (or `question`,
+`escalation`), `merge_ready`, `relay` (or `slack`, `envoy`), `nudge` or `status`. Unknown ends
+are ignored. Bus messages, `send`, `notify`, `ask`, whip nudges and Karl's typing are drawn
+already; this is for traffic the app can't see, such as the Envoy's relays.
+
+```json
+{"v":1,"method":"agent_message","params":{"from":"term_envoy","to":"run:r1","kind":"relay"}}
+→ {"ok":true,"result":{"drawn":true}}
+```
+
+In the app's own code, push a `traffic::AgentMessage` through `Traffic::sender()` instead.
 
 ## Notifications
 

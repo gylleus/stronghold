@@ -248,6 +248,12 @@ impl NotificationCenter {
         Outcome::Delivered { id, delivery }
     }
 
+    /// Starts the cooldown of `target` as if Myrstack had just notified it, so the
+    /// needs-input notification that follows an agent's own question doesn't repeat it.
+    pub fn hold_cooldown(&mut self, target: &str, now_ms: i64) {
+        self.cooldowns.insert(target.to_owned(), now_ms);
+    }
+
     /// A `source` entry from the last [`PER_TARGET_COOLDOWN_MS`] about the PR `link` names
     /// (a Review entry's target, an Agent entry's url).
     fn recent_about_pr(&self, source: Source, link: Option<&str>, now_ms: i64) -> Option<u64> {
@@ -451,6 +457,20 @@ mod tests {
             c.dispatch(agent("a", "later", Severity::Info), &s, AGENT_WINDOW_MS),
             Outcome::Delivered { .. }
         ));
+    }
+
+    #[test]
+    fn an_agents_question_holds_back_the_needs_input_notification() {
+        let mut c = NotificationCenter::default();
+        let s = NotifySettings::default();
+        assert!(matches!(
+            c.dispatch(agent("t1", "Question: merge?", Severity::Warn), &s, 0),
+            Outcome::Delivered { .. }
+        ));
+        c.hold_cooldown("t1", 0);
+        let input =
+            Incoming::new(Source::NeedsInput, Severity::Warn, "needs input", "").with_target("t1");
+        assert_eq!(c.dispatch(input, &s, MIN), Outcome::Cooldown);
     }
 
     #[test]

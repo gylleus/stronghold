@@ -8,6 +8,7 @@ use eframe::egui;
 mod chat;
 mod control;
 mod dictation;
+mod lifecycle;
 mod notifications;
 mod palette;
 mod panes;
@@ -16,6 +17,7 @@ mod review;
 mod settings;
 mod spawn;
 mod talk;
+mod traffic;
 mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo};
@@ -113,6 +115,16 @@ pub struct MyrstackApp {
     /// through it.
     notifier: Arc<Notifier>,
     needs_input_detector: NeedsInputDetector,
+    /// Questions agents asked Karl with `ask_karl`, until answered.
+    asks: crate::ask::Asks,
+    /// Sessions that ended themselves with `finish_session`, shown done while they fade.
+    finished: crate::finish::FinishLog,
+    /// Self-finished terminals waiting to be closed, once the agent got its reply.
+    finish_closes: Vec<lifecycle::PendingClose>,
+    /// Asks or finished sessions changed: rebuild the snapshot.
+    overlays_changed: bool,
+    /// Messages between agents, for the graph and the ant farm to draw.
+    traffic: crate::traffic::Traffic,
     /// Every notification's dispatcher, the saved inbox, toasts and node badges.
     notifications: notifications::AppNotifications,
     /// Debug-logged frames per second and repaint causes.
@@ -124,6 +136,8 @@ pub struct MyrstackApp {
     control: control::AppControl,
     /// "Close session" confirmation dialog and the log of closes.
     close: ui::close::CloseDialog,
+    /// Worktree count in the top bar, the cleanup window and its broom.
+    worktrees: ui::worktrees::WorktreePanel,
     /// Who fetched which playbook version, re-read off the UI thread.
     playbook_watch: playbook::PlaybookWatch,
     /// The Queen's chat, drawn in the conversation column.
@@ -205,11 +219,20 @@ impl MyrstackApp {
             whip_window,
             notifier,
             needs_input_detector: NeedsInputDetector::new(),
+            asks: crate::ask::Asks::new(),
+            finished: crate::finish::FinishLog::load(
+                crate::finish::FinishLog::default_path(),
+                now_ms() - crate::model::RELEASED_FADE_MS,
+            ),
+            finish_closes: Vec::new(),
+            overlays_changed: true,
+            traffic: Default::default(),
             notifications: notifications::AppNotifications::load(),
             search: ui::search::SearchPalette::default(),
             help_open: false,
             frame_stats: ui::frame_stats::FrameStats::default(),
             close: ui::close::CloseDialog::default(),
+            worktrees: ui::worktrees::WorktreePanel::new(ctx),
             playbook_watch: playbook::PlaybookWatch::spawn(repaint_once(ctx)),
             chat,
             whip_now: whip_now::WhipNowState::default(),
@@ -244,6 +267,9 @@ impl MyrstackApp {
             return false;
         };
         if !status.new_log.is_empty() {
+            for message in status.new_log.iter().filter_map(crate::traffic::from_whip) {
+                self.traffic.push(message);
+            }
             let new = status.new_log.len();
             self.whip_log.extend(status.new_log.drain(..));
             log::debug!(
@@ -437,6 +463,15 @@ impl MyrstackApp {
             self.apply_review_action(action);
         }
         for request in &response.requests {
+            if let (crate::actions::Action::Send { handle, .. }, ui::terminal::InputKind::Text) =
+                (&request.action, request.kind)
+            {
+                self.traffic.push(crate::traffic::AgentMessage::new(
+                    "karl",
+                    handle.clone(),
+                    crate::traffic::MessageKind::Instruction,
+                ));
+            }
             let action = self.actions.submit(request.action.clone());
             self.input.submitted(action, request);
         }
@@ -778,6 +813,8 @@ impl MyrstackApp {
         if let Some(data) = &self.data {
             ui.weak(format!("{} terminals", data.terminals.len()));
             ui.separator();
+            self.worktrees.top_bar(ui, &data.worktrees);
+            ui.separator();
             ui.weak(format!(
                 "updated {} ago",
                 ui::table::format_age(now_ms - data.polled_at_ms)
@@ -796,7 +833,7 @@ impl MyrstackApp {
         }
         self.whip_window.gear_button(ui);
         self.whip_window.button(ui);
-        self.inbox_menu(ui, now_ms);
+        self.notifications_bell(ui);
         self.review_badge(ui);
         self.close.log_menu(ui, now_ms);
         if let Some(data) = &self.data
@@ -887,6 +924,16 @@ impl MyrstackApp {
     }
 
     /// Draws the dialog and submits a confirmed plan's steps, in order.
+    /// The worktree cleanup window and the broom while it removes.
+    fn worktree_cleanup(&mut self, ctx: &egui::Context, now_ms: i64) {
+        let worktrees = self.data.as_ref().map(|d| &d.worktrees[..]);
+        if self.worktrees.tick(worktrees, now_ms) {
+            self.poller.send(PollerCommand::RefreshNow);
+        }
+        self.worktrees.window(ctx);
+        self.worktrees.broom(ctx);
+    }
+
     fn close_dialog(&mut self, ctx: &egui::Context) {
         let terminals = self.data.as_ref().map_or(&[][..], |d| &d.terminals[..]);
         let confirmed =
@@ -923,6 +970,7 @@ impl MyrstackApp {
         {
             self.panes = panes;
         }
+        self.panes.notifications = state.notifications_panel;
         self.chat_hidden = state.chat_hidden;
         self.filter = state.filter;
         self.selected = state.layout.selected.clone();
@@ -939,6 +987,7 @@ impl MyrstackApp {
             layout: self.graph.export_layout(),
             recent_actions: self.search.recents().keys(),
             panes: self.panes.encode(),
+            notifications_panel: self.panes.notifications,
             ..PersistedState::default()
         }
     }
@@ -985,6 +1034,9 @@ impl eframe::App for MyrstackApp {
                 data.needs_input
                     .insert(screen.handle.clone(), verdict.clone());
             }
+            for message in self.traffic.inbox.update(&data.inbox, now_ms()) {
+                self.traffic.push(message);
+            }
             self.data = Some(data);
             rebuild = true;
         }
@@ -1019,19 +1071,27 @@ impl eframe::App for MyrstackApp {
             self.screen = Some(update);
         }
         rebuild |= self.poll_whip();
+        rebuild |= std::mem::take(&mut self.overlays_changed);
         self.poll_quota();
         self.poll_playbook();
         if rebuild && let Some(data) = &self.data {
-            let snapshot = FleetSnapshot::build_with_stalled(
+            let now = now_ms();
+            let mut snapshot = FleetSnapshot::build_with_stalled(
                 data,
                 self.claude_data.as_ref(),
                 &self.whip_status.escalated,
-                now_ms(),
+                now,
             );
+            self.asks.prune(data, self.claude_data.as_ref());
+            snapshot.mark_waiting(&self.asks.waiting(data, self.claude_data.as_ref()));
+            self.finished.prune(now, crate::model::RELEASED_FADE_MS);
+            snapshot.add_finished(self.finished.recent(now, crate::model::RELEASED_FADE_MS));
             self.graph.set_hidden(&self.filter.hidden(&snapshot));
             self.graph.sync(&snapshot);
             if let Some(claude) = &self.claude_data {
                 self.graph.set_usage(claude.node_usages(&snapshot.nodes));
+                self.graph
+                    .set_building(claude.building_nodes(&snapshot.nodes));
             }
             if let Some(id) = &self.selected
                 && snapshot.node(id).is_none()
@@ -1048,12 +1108,14 @@ impl eframe::App for MyrstackApp {
             self.spawn_select_pending();
         }
         self.poll_notifications(ctx);
+        self.poll_traffic(ctx);
         self.poll_chat();
         self.talk_logic(ctx);
         self.poll_control(ctx);
         self.poll_review();
         self.poll_whip_now();
         self.poll_spawn();
+        self.run_finish_closes();
         for result in self.actions.poll() {
             self.control_action_done(&result);
             if self.input.on_result(&result, now_ms()) {
@@ -1084,6 +1146,7 @@ impl eframe::App for MyrstackApp {
         self.panes(ui, now_ms);
         self.notification_toasts(ui.ctx(), top_bar.response.rect.bottom());
         self.close_dialog(ui.ctx());
+        self.worktree_cleanup(ui.ctx(), now_ms);
         self.settings_window(ui.ctx(), now_ms);
         if self.whip_window.take_whip_stalled() {
             self.request_whip_stalled(None);

@@ -200,7 +200,7 @@ impl Sprites {
         }
     }
 
-    /// A star: a dot, or a little cross while it twinkles.
+    /// A star: a dot, or a little cross for a bright one.
     pub fn star(&self, painter: &Painter, at: Pos2, px: f32, bright: bool, alpha: f32) {
         let color = Color32::from_rgb(0xfb, 0xf4, 0xd0).gamma_multiply(alpha);
         if bright {
@@ -413,6 +413,54 @@ impl Sprites {
             shadow,
         );
         painter.text(pos, egui::Align2::CENTER_CENTER, "z", font, color);
+    }
+
+    /// A builder's hard hat and hammer on the ant at `cell`; the hammer is raised on even
+    /// `step`s and strikes the face on odd ones, with a spark.
+    pub fn builder(&self, painter: &Painter, cell: Rect, facing_right: bool, px: f32, step: usize) {
+        let hat = Color32::from_rgb(0xf2, 0xc1, 0x2e);
+        let brim = Color32::from_rgb(0xc8, 0x8e, 0x1a);
+        let wood = Color32::from_rgb(0x8a, 0x4b, 0x1c);
+        let iron = Color32::from_rgb(0x8f, 0x96, 0x9e);
+        // Texel `(x, y)` of the left-facing sprite, mirrored when the ant faces right.
+        let dot = |x: i32, y: i32, color: Color32| {
+            let x = if facing_right { 15 - x } else { x };
+            let min = cell.min + vec2(x as f32 * px, y as f32 * px);
+            painter.rect_filled(Rect::from_min_size(min, vec2(px, px)), 0.0, color);
+        };
+        for x in 2..=4 {
+            dot(x, 5, hat);
+        }
+        for x in 1..=5 {
+            dot(x, 6, hat);
+        }
+        for x in 0..=6 {
+            dot(x, 7, brim);
+        }
+        let raised = step.is_multiple_of(2);
+        type Texels = &'static [(i32, i32)];
+        let (handle, head): (Texels, Texels) = if raised {
+            (
+                &[(1, 11), (0, 10), (-1, 9), (-2, 8)],
+                &[(-4, 6), (-3, 6), (-2, 6), (-4, 7), (-3, 7), (-2, 7)],
+            )
+        } else {
+            (
+                &[(1, 12), (0, 12), (-1, 12), (-2, 12)],
+                &[(-4, 11), (-3, 11), (-4, 12), (-3, 12), (-4, 13), (-3, 13)],
+            )
+        };
+        for &(x, y) in handle {
+            dot(x, y, wood);
+        }
+        for &(x, y) in head {
+            dot(x, y, iron);
+        }
+        if !raised {
+            let spark = Color32::from_rgb(0xff, 0xf0, 0x8a);
+            dot(-6, 11, spark);
+            dot(-5, 14, spark);
+        }
     }
 
     /// Dirt flying from the digger's feet at `now_s`: clods kicked up and back behind it,

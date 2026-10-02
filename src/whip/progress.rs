@@ -53,6 +53,9 @@ pub struct TaskProgress {
     /// The owner asked a question on the current dispatch that nobody has answered yet, so a
     /// silent worker is the coordinator's problem, not the worker's.
     pub waiting_on_ask: bool,
+    /// Orca marked the task failed but its worker kept working; see
+    /// [`FleetData::alive_after_failure`]. Its rejected messages and output count as progress.
+    pub failed_but_alive: bool,
 }
 
 /// Activity facts for one Run's coordinator.
@@ -537,6 +540,7 @@ fn task_progress(
         source: ProgressSource::None,
         phase: None,
         waiting_on_ask: false,
+        failed_but_alive: false,
     };
 
     let mut latest = Latest::default();
@@ -571,6 +575,15 @@ fn task_progress(
         && let Some(handle) = progress.owner_handle.as_deref()
     {
         latest.offer(tracker.output_ms(handle), ProgressSource::TerminalOutput);
+    }
+
+    let output_ms = progress
+        .owner_handle
+        .as_deref()
+        .and_then(|h| tracker.output_ms(h));
+    if let Some(alive_ms) = data.alive_after_failure(task, output_ms) {
+        progress.failed_but_alive = true;
+        latest.offer(Some(alive_ms), ProgressSource::TerminalOutput);
     }
 
     progress.last_progress_ms = latest.ms;

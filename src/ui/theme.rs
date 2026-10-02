@@ -16,6 +16,10 @@ const SYSTEM_FONT_FILES: [&str; 2] = [
     "/System/Library/Fonts/SFNS.ttf",
 ];
 
+/// A bold macOS face, a file and its index in it, for [`bold_family`].
+const BOLD_FONT_FILE: (&str, u32) = ("/System/Library/Fonts/HelveticaNeue.ttc", 1);
+const BOLD_FAMILY_NAME: &str = "bold";
+
 /// macOS faces with arrows (`→`, `↓`) and dingbats (`✓`, `✗`) the text faces lack, tried last
 /// for proportional and monospace text.
 const SYMBOL_FONT_FILES: [&str; 2] = [
@@ -60,8 +64,43 @@ pub fn fonts() -> egui::FontDefinitions {
             fonts.families.entry(family).or_default().push(path.into());
         }
     }
+    add_bold_font(&mut fonts);
     super::icons::add_font(&mut fonts);
     fonts
+}
+
+/// Adds the bold family: the bold face, then the proportional fonts (alone where the bold
+/// face is missing).
+fn add_bold_font(fonts: &mut egui::FontDefinitions) {
+    let mut chain = Vec::new();
+    let (path, index) = BOLD_FONT_FILE;
+    if let Ok(bytes) = std::fs::read(path) {
+        let mut data = egui::FontData::from_owned(bytes);
+        data.index = index;
+        fonts.font_data.insert("bold".into(), data.into());
+        chain.push("bold".to_owned());
+    }
+    chain.extend(
+        fonts
+            .families
+            .get(&egui::FontFamily::Proportional)
+            .cloned()
+            .unwrap_or_default(),
+    );
+    fonts
+        .families
+        .insert(egui::FontFamily::Name(BOLD_FAMILY_NAME.into()), chain);
+}
+
+/// The font family for bold text; proportional on a context without [`fonts`] (e.g. headless
+/// tests).
+pub fn bold_family(ctx: &egui::Context) -> egui::FontFamily {
+    let family = egui::FontFamily::Name(BOLD_FAMILY_NAME.into());
+    if ctx.fonts(|f| f.definitions().families.contains_key(&family)) {
+        family
+    } else {
+        egui::FontFamily::Proportional
+    }
 }
 
 /// The style for one system theme: shared type, spacing and shape, themed palette.

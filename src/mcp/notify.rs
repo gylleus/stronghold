@@ -15,16 +15,19 @@ use crate::review::mark::Origin;
 macro_rules! rules_text {
     () => {
         "When to call notify (the fleet playbook's rules): \
-(1) Blocked on Karl: a permission, credential, passkey or 2FA, prod approval, or a decision only \
-he can make. Severity warn, or urgent if work is stalled and can't wait; say what you need and \
-what it unblocks. \
+(1) Blocked on Karl for something he must do: a permission, credential, passkey or 2FA, prod \
+approval. Severity warn, or urgent if work is stalled and can't wait; say what you need and \
+what it unblocks. A question you wait on him to answer goes through ask_karl instead. \
 (2) Handover, you're done and the next move is Karl's: a PR ready for his review (right after \
 merge_ready and mark_pr_ready; a coordinator after the ready marker), a merge waiting on him, a \
 run or campaign finished. Severity info, with the url and one line on what he needs to do next; \
 a status, never a question about merging. Myrstack folds a PR handover into its own \
-\"PR ready for review\" notification, so Karl gets one. \
+\"PR ready for review\" notification, so Karl gets one. When you'd stay for his follow-ups \
+(you usually would), make the handover an ask_karl (info, \"Done: ... Anything else, or can I \
+close?\") instead, not both. \
 (3) Not for progress or routine status; one notification per event. A terminal waiting at a \
-prompt already shows as needs input and is notified by Myrstack. \
+prompt already shows as needs input and is notified by Myrstack; leaving, once Karl says so, is \
+finish_session, which records and tells Karl itself. \
 (4) Workers under a coordinator go through it (ask, escalation, merge_ready) and don't call \
 notify, except to summon Karl for a credential step; a standalone session with no coordinator \
 notifies Karl directly. \
@@ -149,7 +152,7 @@ fn notify(control: &mut dyn Control, origin: &Origin, args: &Value) -> ToolOutpu
     }
 }
 
-fn reply_text(reply: &Value) -> String {
+pub(crate) fn reply_text(reply: &Value) -> String {
     let flag = |k: &str| reply.pointer(&format!("/delivery/{k}")) == Some(&Value::Bool(true));
     let mut out = match reply["outcome"].as_str() {
         Some("delivered") => {

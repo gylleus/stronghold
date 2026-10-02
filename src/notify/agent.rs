@@ -148,16 +148,27 @@ pub fn reply(
     unknown_agent: Option<&str>,
     quiet: bool,
 ) -> Value {
-    let mut reply = json!({
-        "outcome": outcome.name(),
-        "id": outcome.id(),
-        "severity": notice.severity.name(),
-        "agent": node.map(|(id, label)| json!({ "id": id, "label": label })),
-        "quiet": quiet,
-    });
+    let mut reply = outcome_reply(outcome, notice.severity, node, quiet);
     if let Some(agent) = unknown_agent {
         reply["unknown_agent"] = json!(agent);
     }
+    reply
+}
+
+/// The reply about a notification an agent raised: what became of it and how it was delivered.
+pub fn outcome_reply(
+    outcome: &Outcome,
+    severity: Severity,
+    node: Option<(&str, &str)>,
+    quiet: bool,
+) -> Value {
+    let mut reply = json!({
+        "outcome": outcome.name(),
+        "id": outcome.id(),
+        "severity": severity.name(),
+        "agent": node.map(|(id, label)| json!({ "id": id, "label": label })),
+        "quiet": quiet,
+    });
     match outcome {
         Outcome::Delivered { delivery, .. } => {
             reply["delivery"] = json!({

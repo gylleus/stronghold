@@ -37,11 +37,11 @@ Use the heartbeat command from your preamble verbatim. Don't retype it from
 this page, because the capability flag is per dispatch.
 
 - **At every phase change.** Send a heartbeat when you move into a new phase.
-- **During long steps, at least every 5 min.** This is Orca's rule. Never let
-  more than 7 min pass without a heartbeat, which is half of Myrstack's
-  15-min default stall threshold. A long build, CI wait, Ankra wait or review
-  subagent counts as a long step. Send the heartbeat from inside the turn
-  while you wait.
+- **Before a quiet wait.** Before a step that may print nothing for over
+  10 min (a CI or Ankra wait, a long build, a review subagent), send one, and
+  another every 10 min while it lasts, from inside the turn. Terminal output
+  counts as progress, so a step that prints needs no extra heartbeats.
+  Orca's preamble still says every 5 min; the whip needs less.
 - **`--phase` is one word** from this list: `planning`, `investigating`,
   `implementing`, `reviewing`, `verifying`, `waiting`. Put detail in
   `--body` (one line, for example `--body "PR #208 open, waiting on Ankra"`),
@@ -102,6 +102,15 @@ Every 60 s, for each task, Myrstack takes the newest of these three signals:
 
 - **Worker stalled:** the task is `dispatched`, the newest signal is older
   than the threshold (default 15 min), and the terminal isn't NeedsInput.
+- **Failed but alive:** Orca sometimes fails a Codex dispatch at launch
+  (`agent_prompt_blocked`/`_stalled`) while the agent starts anyway, and then
+  rejects its heartbeats and reports. A failed task with no recorded result
+  whose worker keeps messaging about it (rejected messages count) or prints
+  output more than 2 min after the failure is treated as working: its node
+  is not shown failed, its coordinator is told once (see "Event forwarding"),
+  and if it then goes silent it is nudged by typing into its terminal, since
+  a bus nudge to its revoked dispatch would be rejected. A coordinator that
+  retires a task on purpose writes the reason as its result, which ends this.
 - **Coordinator stalled:** the Run has `ready` unassigned tasks or finished
   tasks with no follow-up, and the coordinator has had no output or bus
   activity within the threshold. Coordinator terminal output only counts
@@ -124,6 +133,27 @@ A **superseded** Run is one whose coordinator terminal also coordinates a
 newer Run (by `created_at`): the terminal has moved on. Its coordinator is
 never nudged, and a worker of it is left alone once the worker's terminal
 has been silent for longer than the abandon window.
+
+## Event forwarding
+
+Coordinators don't watch the bus (every wake replays their context), so
+Myrstack wakes them. Each whip tick it types one line into a Run's
+coordinator terminal for that Run's new `worker_done`, `merge_ready`,
+`question` and `escalation` messages, and for each failed-but-alive task:
+
+```
+Fleet event: worker_done from fix-login: PR open — msg msg_1. Read in full with `orca orchestration check --run run_1 --all`.
+```
+
+- Heartbeats, `status` messages, rejected messages and the coordinator's own
+  messages are never forwarded.
+- Each event is forwarded once. After a restart only the last 10 min replay.
+- It types only into a live Claude session. If the coordinator's terminal
+  shows a shell (the session exited), events wait, and after 5 min Karl gets
+  one notification for that Run.
+- Runs that still have an attendant are left to it.
+- `whip.forward_events` (default on) switches it off; dry-run logs instead
+  of typing.
 
 ## Myrstack senders
 
@@ -156,7 +186,5 @@ authority.
 - A worker blocked in `ask` stops heartbeating legitimately. Myrstack should
   treat an unanswered `question` from the owner as a stalled coordinator,
   not a stalled worker.
-- The attendant's "Silence is an event too" rule (20 min, read the tail,
-  forward to the coordinator) overlaps with Myrstack's worker nudge. The
-  attendant never nudges, so the two don't collide. With Myrstack live, the
-  attendant rule becomes a backstop for when Myrstack isn't running.
+- The attendant is now a fallback for when Myrstack isn't running: event
+  forwarding and the worker nudge cover its job.

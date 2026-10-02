@@ -197,15 +197,18 @@ pub fn effective_coordinator(run_id: &str, data: &FleetData) -> Option<String> {
     data.effective_coordinator(run_id)
 }
 
-/// Rule 1: a dispatched task whose live owner has shown no progress within the threshold.
-/// A worker waiting on an unanswered ask is the coordinator's stall (rule 3), not its own.
+/// Rule 1: a dispatched task whose live owner has shown no progress within the threshold, or
+/// a failed task whose worker kept working (see [`TaskProgress::failed_but_alive`]) and then
+/// went silent. A worker waiting on an unanswered ask is the coordinator's stall (rule 3), not
+/// its own.
 fn worker_stalled(
     task: &TaskProgress,
     data: &FleetData,
     ctx: &RuleContext<'_>,
     now_ms: i64,
 ) -> Option<StallFinding> {
-    if task.status != TaskStatus::Dispatched || task.waiting_on_ask {
+    let working = task.status == TaskStatus::Dispatched || task.failed_but_alive;
+    if !working || task.waiting_on_ask {
         return None;
     }
     let owner = task.owner_handle.as_deref()?;
@@ -231,8 +234,13 @@ fn worker_stalled(
         reason: StallReason::WorkerNoProgress,
         idle_for_ms: idle,
         evidence: format!(
-            "task {} dispatched, no progress for {} (last signal: {}{phase})",
+            "task {} {}, no progress for {} (last signal: {}{phase})",
             task_label(data, &task.run_id, &task.task_id),
+            if task.failed_but_alive {
+                "failed in Orca but its worker kept going"
+            } else {
+                "dispatched"
+            },
             fmt_duration(idle),
             source_label(&task.source),
         ),
@@ -530,6 +538,7 @@ mod tests {
             },
             phase: Some("implementing".into()),
             waiting_on_ask: false,
+            failed_but_alive: false,
         }
     }
 

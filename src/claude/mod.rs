@@ -1,10 +1,12 @@
 //! Scanner for Claude transcripts and subagents under `~/.claude/projects`.
 
+pub mod activity;
 pub mod forwards;
 pub mod hook;
 pub mod sessions;
 pub mod subagents;
 pub mod transcript;
+pub mod turns;
 pub mod usage;
 pub mod worker;
 
@@ -13,5 +15,6 @@ pub use sessions::{HookMappings, SessionInfo, SessionLocator, SessionMatch, enco
 pub use subagents::{
     SubagentInfo, SubagentParent, SubagentScanner, SubagentState, SubagentWatcher,
 };
+pub use turns::{OpenQuestion, Turn, TurnTracker};
 pub use usage::{SessionUsage, TokenCounts, Usage, UsageTracker, format_tokens};
 pub use worker::{ClaudeData, ClaudeWorker, ClaudeWorkerConfig};

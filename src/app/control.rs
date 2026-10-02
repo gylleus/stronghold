@@ -20,6 +20,7 @@ use crate::control::{
 use crate::model::{Node, NodeId};
 use crate::orca::{OrcaClient, TerminalInput};
 use crate::poller::PollerCommand;
+use crate::traffic::{AgentMessage, MessageKind};
 use crate::ui::sidebar::FleetFilter;
 use crate::whip::WhipSettings;
 
@@ -226,7 +227,21 @@ impl MyrstackApp {
         reply: Reply,
     ) -> Result<(), ControlError> {
         let result = match command {
-            ControlCommand::Send { agent, text, enter } => {
+            ControlCommand::Send {
+                agent,
+                text,
+                enter,
+                from,
+            } => {
+                if !text.is_empty() {
+                    let from = from.unwrap_or_else(|| "queen".into());
+                    let kind = match from.as_str() {
+                        "queen" => MessageKind::Instruction,
+                        _ => MessageKind::Message,
+                    };
+                    self.traffic
+                        .push(AgentMessage::new(from, agent.clone(), kind));
+                }
                 let input = TerminalInput {
                     text: (!text.is_empty()).then_some(text),
                     enter,
@@ -313,7 +328,23 @@ impl MyrstackApp {
             }
             ControlCommand::Review(command) => self.control_review(command),
             ControlCommand::Spawn(args) => return self.control_spawn(args, reply),
-            ControlCommand::Notify(notice) => self.control_notify(notice),
+            ControlCommand::Notify(notice) => {
+                let kind = match notice.severity {
+                    crate::notify::Severity::Info => MessageKind::Status,
+                    _ => MessageKind::Ask,
+                };
+                self.traffic_to_karl(&notice.origin, notice.agent.as_deref(), kind);
+                self.control_notify(notice)
+            }
+            ControlCommand::Ask(ask) => {
+                self.traffic_to_karl(&ask.origin, None, MessageKind::Ask);
+                self.control_ask(ask)
+            }
+            ControlCommand::AgentMessage(message) => {
+                self.traffic.push(message);
+                Ok(json!({ "drawn": true }))
+            }
+            ControlCommand::Finish(request) => self.control_finish(request),
         };
         let error = result.as_ref().err().cloned();
         reply.send(result);
@@ -577,7 +608,7 @@ impl MyrstackApp {
     }
 }
 
-fn plan_json(plan: &ClosePlan, labels: &[String]) -> Value {
+pub(super) fn plan_json(plan: &ClosePlan, labels: &[String]) -> Value {
     json!({
         "targets": plan.targets.iter().map(|t| json!({
             "id": t.id,

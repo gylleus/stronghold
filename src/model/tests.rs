@@ -878,3 +878,69 @@ fn live_coordinators() {
         );
     }
 }
+
+fn finished(node_id: &str, at_ms: i64) -> crate::finish::FinishedSession {
+    crate::finish::FinishedSession {
+        node_id: node_id.into(),
+        handle: node_id.strip_prefix("term:").map(str::to_string),
+        label: "ant".into(),
+        outcome: crate::finish::FinishOutcome::Done,
+        approval: crate::finish::Approval::Karl,
+        summary: "merged into main".into(),
+        pr_url: None,
+        forced: Vec::new(),
+        worktree_path: None,
+        branch: None,
+        at_ms,
+    }
+}
+
+#[test]
+fn a_terminal_waiting_on_karls_answer_needs_input() {
+    let mut snap = FleetSnapshot::build(&scenario(), NOW);
+    let loose = NodeId::terminal(LOOSE);
+    assert_ne!(snap.node(&loose).unwrap().state, NodeState::NeedsInput);
+    let waiting = [
+        (LOOSE.to_string(), "Merge now?".to_string()),
+        ("term_gone".to_string(), "Ignored?".to_string()),
+    ]
+    .into_iter()
+    .collect();
+    snap.mark_waiting(&waiting);
+    let node = snap.node(&loose).unwrap();
+    assert_eq!(node.state, NodeState::NeedsInput);
+    assert_eq!(node.preview.as_deref(), Some("Asks: Merge now?"));
+    assert_eq!(snap.queen().unwrap().state, NodeState::NeedsInput);
+    assert_eq!(
+        snap.nodes
+            .iter()
+            .filter(|n| n.kind == NodeKind::Queen)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn a_finished_session_shows_done_then_fades_once_closed() {
+    let mut snap = FleetSnapshot::build(&scenario(), NOW);
+    let nodes = snap.nodes.len();
+    let edges = snap.edges.len();
+    snap.add_finished(&[
+        finished(&NodeId::terminal(LOOSE).0, NOW - MINUTE),
+        finished("term:term_closed", NOW - MINUTE),
+    ]);
+    // Still open (the close is on its way): the same node, done.
+    let live = snap.node(&NodeId::terminal(LOOSE)).unwrap();
+    assert_eq!(live.state, NodeState::Done);
+    assert_eq!(live.preview.as_deref(), Some("Finished: merged into main"));
+    assert_eq!(live.released_at_ms, None);
+    // Closed: back as a fading done terminal, linked to the queen.
+    let gone = snap.node(&NodeId("term:term_closed".into())).unwrap();
+    assert_eq!(gone.state, NodeState::Done);
+    assert!(!gone.live);
+    assert_eq!(gone.kind, NodeKind::Terminal);
+    assert_eq!(gone.released_at_ms, Some(NOW - MINUTE));
+    assert_eq!(snap.nodes.len(), nodes + 1);
+    assert_eq!(snap.edges.len(), edges + 1);
+    assert!(snap.edges.iter().any(|e| e.to.0 == "term:term_closed"));
+}

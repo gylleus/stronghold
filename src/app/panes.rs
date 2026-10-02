@@ -29,6 +29,7 @@ impl TabViewer for Panes<'_> {
             Pane::Graph => "Graph".into(),
             Pane::Details => "Details".into(),
             Pane::Conversation => self.app.conversation_title().into(),
+            Pane::Notifications => self.app.notifications_title().into(),
         }
     }
 
@@ -42,14 +43,16 @@ impl TabViewer for Panes<'_> {
                 self.app.conversation_left = Some(ui.max_rect().left());
                 self.app.conversation_contents(ui, now_ms);
             }
+            Pane::Notifications => self.app.notifications_pane(ui, now_ms),
         }
     }
 
     fn is_closeable(&self, tab: &Pane) -> bool {
-        *tab == Pane::Conversation
+        matches!(tab, Pane::Conversation | Pane::Notifications)
     }
 
     /// Closing the conversation hides it as ⌘J does; it returns with the next selection.
+    /// Closing the notifications collapses their panel to its strip.
     fn on_close(&mut self, tab: &mut Pane) -> OnCloseResponse {
         if *tab == Pane::Conversation {
             self.app.hide_conversation();
@@ -71,6 +74,8 @@ impl MyrstackApp {
     /// The dock filling the window below the top bar.
     pub(super) fn panes(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         self.panes.set_conversation(self.has_conversation());
+        self.panes.sync_notifications();
+        self.notifications_strip(ui);
         if let Some(pane) = self.bring_forward.take() {
             self.panes.activate(pane);
         }
@@ -87,9 +92,13 @@ impl MyrstackApp {
             .show_inside(ui, &mut Panes { app: self, now_ms });
         // Closing the conversation's tab took it out already; it returns to where it was.
         if before.contains(Pane::Conversation) && !dock.contains(Pane::Conversation) {
-            dock.closed_conversation(before);
+            dock.closed_conversation(before.clone());
+        }
+        if before.contains(Pane::Notifications) && !dock.contains(Pane::Notifications) {
+            dock.closed_notifications(&before);
         }
         self.panes = dock;
+        self.apply_panel_layout();
     }
 
     /// Restores the default pane arrangement.
@@ -107,6 +116,20 @@ impl MyrstackApp {
         } else {
             self.selected_node()
                 .map_or_else(|| "Conversation".to_owned(), |node| node.label.clone())
+        }
+    }
+
+    /// The notifications tab's title, with the unread count.
+    fn notifications_title(&self) -> String {
+        match self
+            .notifications
+            .entries()
+            .iter()
+            .filter(|e| !e.read)
+            .count()
+        {
+            0 => "Notifications".to_owned(),
+            n => format!("Notifications ({n})"),
         }
     }
 

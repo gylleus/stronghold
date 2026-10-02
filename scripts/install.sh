@@ -39,16 +39,26 @@ if [[ $mode == uninstall ]]; then
 fi
 
 cargo build --release --manifest-path "$root/Cargo.toml"
-python3 "$root/scripts/bundle.py" --binary "$root/target/release/myrstack" \
-  --out "$root/target/release/Myrstack.app"
 
-# Swap the new bundle in with a rename, so a half-copied app is never in place.
+# A bundle left in a worktree's target/ is a second Myrstack.app with the same bundle id, and
+# Launch Services may open that stale copy instead of the installed one; drop it.
+built="$root/target/release/Myrstack.app"
+if [[ -d $built ]]; then
+  "$lsregister" -u "$built" 2>/dev/null || true
+  rm -rf "$built"
+fi
+
+# Bundle straight into a staging copy and swap it in with a rename, so a half-copied app is
+# never in place.
 mkdir -p "$apps"
-staging="$apps/.Myrstack.app.new"
-rm -rf "$staging"
-ditto "$root/target/release/Myrstack.app" "$staging"
+staging_dir="$apps/.Myrstack.staging"
+staging="$staging_dir/Myrstack.app"
+rm -rf "$staging_dir"
+mkdir -p "$staging_dir"
+python3 "$root/scripts/bundle.py" --binary "$root/target/release/myrstack" --out "$staging"
 rm -rf "$app"
 mv "$staging" "$app"
+rmdir "$staging_dir"
 # Register it so notification clicks and `open -b ai.depict.myrstack` find this copy.
 "$lsregister" -f "$app" 2>/dev/null || true
 echo "installed $app"

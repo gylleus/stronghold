@@ -61,9 +61,30 @@ impl WhipLogItem {
         let (handle, target) = match action {
             WhipAction::Nudge {
                 handle, targets, ..
-            } => (handle, (targets.len() == 1).then(|| &targets[0])),
-            WhipAction::Escalate { target, .. } => (target_handle(target), Some(target)),
-            WhipAction::NotifyNeedsInput { handle, .. } => (handle, None),
+            } => (Some(handle), (targets.len() == 1).then(|| &targets[0])),
+            WhipAction::Escalate { target, .. } => (Some(target_handle(target)), Some(target)),
+            WhipAction::NotifyNeedsInput { handle, .. } => (Some(handle), None),
+            WhipAction::Forward {
+                handle, run_ids, ..
+            } => {
+                let run_id = (run_ids.len() == 1).then(|| run_ids[0].clone());
+                return Self {
+                    seq,
+                    entry,
+                    handle: Some(handle.clone()),
+                    run_id,
+                    task_id: None,
+                };
+            }
+            WhipAction::CoordinatorUnreachable { run_id, .. } => {
+                return Self {
+                    seq,
+                    entry,
+                    handle: None,
+                    run_id: Some(run_id.clone()),
+                    task_id: None,
+                };
+            }
         };
         let (run_id, task_id) = match target {
             Some(StallTarget::Worker {
@@ -75,7 +96,7 @@ impl WhipLogItem {
         Self {
             seq,
             entry,
-            handle: Some(handle.clone()),
+            handle: handle.cloned(),
             run_id,
             task_id,
         }

@@ -5,6 +5,7 @@ mod fit;
 #[cfg(test)]
 mod fit_tests;
 mod layout;
+mod mail;
 mod nav;
 mod regions;
 mod saved;
@@ -116,6 +117,8 @@ pub struct GraphView {
     repos: HashMap<NodeId, String>,
     /// Claude token usage per node, for tooltips.
     usage: HashMap<NodeId, Usage>,
+    /// Nodes whose agent is editing or building; the ant farm gives them a hard hat.
+    building: HashSet<NodeId>,
     /// Nodes whose agent has a PR in the review queue; drawn with a "PR" badge.
     pr_ready: HashSet<NodeId>,
     /// Unread notifications per node; drawn as a count badge.
@@ -157,6 +160,8 @@ pub struct GraphView {
     pinned: HashSet<NodeId>,
     /// Device of the latest scroll over the graph; see [`ScrollSource`].
     scroll_source: ScrollSource,
+    /// Messages flying between nodes; see [`mail`].
+    mail: crate::ui::envelope::Flights,
 }
 
 impl Default for GraphView {
@@ -181,6 +186,7 @@ impl GraphView {
             objectives: HashMap::new(),
             repos: HashMap::new(),
             usage: HashMap::new(),
+            building: HashSet::new(),
             pr_ready: HashSet::new(),
             unread: HashMap::new(),
             id: id.into(),
@@ -203,12 +209,22 @@ impl GraphView {
             box_select: None,
             pinned: HashSet::new(),
             scroll_source: ScrollSource::default(),
+            mail: Default::default(),
         }
     }
 
     /// Claude token usage per node, shown in tooltips.
     pub fn set_usage(&mut self, usage: HashMap<NodeId, Usage>) {
         self.usage = usage;
+    }
+
+    /// Nodes whose agent is editing or building right now.
+    pub fn set_building(&mut self, nodes: HashSet<NodeId>) {
+        self.building = nodes;
+    }
+
+    pub fn building(&self) -> &HashSet<NodeId> {
+        &self.building
     }
 
     /// Marks the nodes with a PR ready for review (a "PR" badge), updating drawn nodes in place.
@@ -578,6 +594,7 @@ impl GraphView {
             .inner;
         self.last_top_left = Some(response.response.rect.left_top());
         self.paint_regions(ui, backdrop, response.response.rect);
+        self.paint_mail(ui, response.response.rect);
 
         let mut clicked = None;
         let mut user_navigated = false;

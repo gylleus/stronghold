@@ -3,11 +3,14 @@
 //! body line) and the review decision.
 
 use std::io::Read;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::orca::client::resolve_binary;
 
 /// Fields `gh pr view --json` is asked for.
 pub const GH_FIELDS: &str = "number,title,state,isDraft,headRefOid,mergedAt,url,body,\
@@ -404,13 +407,21 @@ pub struct GhCli {
     pub binary: String,
 }
 
+/// Install locations checked when `gh` isn't on `PATH`: an app launched from Finder gets only
+/// `/usr/bin:/bin:/usr/sbin:/sbin`, without Homebrew's bin dirs.
+pub const GH_FALLBACK_PATHS: &[&str] = &["/opt/homebrew/bin/gh", "/usr/local/bin/gh"];
+
 impl Default for GhCli {
+    /// `$MYRSTACK_GH_BIN` when set, else `gh` resolved on `PATH`, then [`GH_FALLBACK_PATHS`].
     fn default() -> Self {
+        let binary = std::env::var("MYRSTACK_GH_BIN")
+            .ok()
+            .filter(|b| !b.is_empty())
+            .unwrap_or_else(|| "gh".into());
+        let path = std::env::var_os("PATH");
+        let resolved = resolve_binary(Path::new(&binary), path.as_deref(), GH_FALLBACK_PATHS);
         Self {
-            binary: std::env::var("MYRSTACK_GH_BIN")
-                .ok()
-                .filter(|b| !b.is_empty())
-                .unwrap_or_else(|| "gh".into()),
+            binary: resolved.to_string_lossy().into_owned(),
         }
     }
 }
@@ -462,7 +473,10 @@ fn run_with_timeout(
         .spawn()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                GhError::Unavailable(format!("`{binary}` is not installed"))
+                GhError::Unavailable(format!(
+                    "`{binary}` not found on PATH or in {}",
+                    GH_FALLBACK_PATHS.join(", ")
+                ))
             } else {
                 GhError::Unavailable(format!("cannot run `{binary}`: {e}"))
             }

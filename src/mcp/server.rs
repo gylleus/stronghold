@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use serde_json::{Value, json};
 
 use crate::mcp::backend::Control;
-use crate::mcp::{notify, playbook, review, tools};
+use crate::mcp::{lifecycle, notify, playbook, review, tools, worktrees};
 use crate::playbook::Playbook;
 
 /// Protocol versions this server speaks, newest first. `initialize` echoes the client's version
@@ -46,7 +46,8 @@ prompt), stalled (the whip escalated it), done, failed.
 Start with fleet_status. Agent ids (term:…, dispatch:…, sub:…) come from list_agents or \
 fleet_status; a terminal handle or an exact label also works. send_to_agent, press_key, \
 close_agents, broadcast_to_coordinators, set_whip and spawn_session act on real agents, so confirm \
-with Karl first (the Queen in auto mode needn't: Karl approved her actions up front). close_agents \
+with Karl first (the Queen in auto mode needn't: Karl approved her actions up front; nor does a \
+coordinator starting workers on its own run with spawn_session). close_agents \
 only shows the plan unless dry_run=false is passed. spawn_session \
 starts a new session (existing worktree, new worktree, or a run's worker) with a prompt.
 
@@ -64,8 +65,15 @@ review_queue lists what is waiting, with CI, Ankra and ready-marker state.
 
 Reaching Karl: notify {title, message, severity: info|warn|urgent, url} sends Karl a pop-up \
 and sound through Myrstack, kept in his inbox and attributed to your terminal (clicking it \
-selects your node and opens url). alerts lists his inbox; fleet_status reports unread ones. ",
-    notify::rules_text!()
+selects your node and opens url). alerts lists his inbox; fleet_status reports unread ones.
+
+Worktrees: clean_worktrees plans removing Orca worktrees nothing needs any more (dry run by \
+default; a real run takes the approved ids). ",
+    notify::rules_text!(),
+    "
+
+",
+    lifecycle::rules_text!()
 );
 
 /// The MCP session state over one [`Control`].
@@ -242,6 +250,8 @@ impl<C: Control> McpServer<C> {
                 all.extend(playbook::tool_definitions());
                 all.extend(review::definitions());
                 all.extend(notify::definitions());
+                all.extend(lifecycle::definitions());
+                all.extend(worktrees::definitions());
                 Ok(json!({ "tools": all }))
             }
             "tools/call" => self.call_tool(params),
@@ -303,7 +313,12 @@ impl<C: Control> McpServer<C> {
             })
             .or_else(|| review::call(&mut self.control, &self.review, name, &args))
             .or_else(|| notify::call(&mut self.control, &self.review.origin, name, &args))
-            .or_else(|| tools::call(&mut self.control, name, &args))
+            .or_else(|| {
+                let cwd = std::env::current_dir().ok();
+                lifecycle::call(&mut self.control, &self.review.origin, cwd, name, &args)
+            })
+            .or_else(|| worktrees::call(name, &args))
+            .or_else(|| tools::call(&mut self.control, &self.review.origin, name, &args))
             .ok_or_else(|| (INVALID_PARAMS, format!("unknown tool: {name}")))?;
         let mut output = output;
         match name {

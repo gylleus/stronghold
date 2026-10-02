@@ -431,6 +431,33 @@ fn notify_parses_into_a_command() {
     assert!(crate::control::server::ACTION_METHODS.contains(&"notify"));
 }
 
+#[test]
+fn ask_and_finish_parse_into_commands() {
+    let params = json!({
+        "question": "Merge now?",
+        "context": "CI is green.",
+        "origin": {"terminal_handle": "term_a"},
+    });
+    let Some(Ok(ControlCommand::Ask(ask))) = ControlCommand::parse("ask", &params) else {
+        panic!("ask parses");
+    };
+    assert_eq!(ask.question, "Merge now?");
+    assert_eq!(ask.severity, crate::notify::Severity::Warn);
+    assert_eq!(ask.origin.terminal_handle.as_deref(), Some("term_a"));
+    assert!(ControlCommand::parse("ask", &json!({})).unwrap().is_err());
+
+    let params = json!({"summary": "Merged", "approval": "karl", "origin": {"pane_key": "a:b"}});
+    let Some(Ok(ControlCommand::Finish(finish))) = ControlCommand::parse("finish", &params) else {
+        panic!("finish parses");
+    };
+    assert_eq!(finish.summary, "Merged");
+    assert!(!finish.dry_run && !finish.force);
+    assert_eq!(finish.origin.pane_key.as_deref(), Some("a:b"));
+    for method in ["ask", "finish"] {
+        assert!(crate::control::server::ACTION_METHODS.contains(&method));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Actions over the socket
 
@@ -439,7 +466,10 @@ fn every_action_reaches_the_handler() {
     let h = Harness::new();
     let calls = [
         ("send", json!({"id": "a", "text": "hi"})),
-        ("send", json!({"id": "a", "text": "draft", "enter": false})),
+        (
+            "send",
+            json!({"id": "a", "text": "draft", "enter": false, "origin": {"terminal_handle": "term_c"}}),
+        ),
         ("enter", json!({"id": "a"})),
         ("esc", json!({"id": "a"})),
         ("interrupt", json!({"id": "a"})),
@@ -472,11 +502,13 @@ fn every_action_reaches_the_handler() {
             agent: "a".into(),
             text: "hi".into(),
             enter: true,
+            from: None,
         },
         ControlCommand::Send {
             agent: "a".into(),
             text: "draft".into(),
             enter: false,
+            from: Some("term_c".into()),
         },
         ControlCommand::Key {
             agent: "a".into(),
@@ -980,4 +1012,19 @@ fn status_reports_queen_auto_read_only() {
             .chain(READ_METHODS)
             .all(|m| !m.contains("auto"))
     );
+}
+
+#[test]
+fn agent_message_is_an_action() {
+    use crate::traffic::{AgentMessage, MessageKind};
+    let parsed = ControlCommand::parse(
+        "agent_message",
+        &json!({"from": "term_e", "to": "run:r1", "kind": "relay"}),
+    );
+    assert_eq!(
+        parsed.unwrap().unwrap(),
+        ControlCommand::AgentMessage(AgentMessage::new("term_e", "run:r1", MessageKind::Relay))
+    );
+    let missing = ControlCommand::parse("agent_message", &json!({"from": "term_e"}));
+    assert!(missing.unwrap().is_err());
 }

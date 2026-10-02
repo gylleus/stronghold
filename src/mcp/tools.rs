@@ -12,6 +12,7 @@ use crate::control::view::{
 use crate::control::{ControlError, ErrorCode};
 use crate::mcp::backend::{CallError, Control, NOT_RUNNING};
 use crate::quota::format_duration;
+use crate::review::mark::Origin;
 
 /// Agents `list_agents` returns by default, and at most.
 pub const DEFAULT_LIST_LIMIT: usize = 50;
@@ -329,7 +330,9 @@ pub fn definitions() -> Vec<Value> {
              repo and name); \"worker\" adds a task to run_id (as its coordinator) and starts a \
              worker on it (give exactly one of: repo + name for a new worktree, worktree, or \
              terminal to reuse an agent already running there); the prompt is the task spec. \
-             Only when Karl asks for a new session. Returns the new terminal and node id; the \
+             Use it when Karl asks for a new session, and as a coordinator to start each \
+             worker of its own run (worker mode; the playbook's default way to start one). \
+             Returns the new terminal and node id; the \
              dashboard selects it once it appears. A new worktree whose name or branch already \
              exists is refused with the existing worktree and its live agents (send_to_agent \
              them instead); allow_suffix=true lets Orca pick name-2 for a deliberate second \
@@ -447,13 +450,18 @@ pub fn definitions() -> Vec<Value> {
 // Calls
 
 /// Runs a tool; `None` when there is no such tool.
-pub fn call(control: &mut dyn Control, name: &str, args: &Value) -> Option<ToolOutput> {
+pub fn call(
+    control: &mut dyn Control,
+    origin: &Origin,
+    name: &str,
+    args: &Value,
+) -> Option<ToolOutput> {
     let p = Params::new(args);
     let result = match name {
         "fleet_status" => fleet_status(control),
         "list_agents" => list_agents(control, &p),
         "get_agent" => get_agent(control, &p),
-        "send_to_agent" => send_to_agent(control, &p),
+        "send_to_agent" => send_to_agent(control, origin, &p),
         "press_key" => press_key(control, &p),
         "close_agents" => close_agents(control, &p),
         "broadcast_to_coordinators" => broadcast(control, &p),
@@ -1035,7 +1043,8 @@ fn get_agent(control: &mut dyn Control, p: &Params) -> ToolResult {
     Ok(ToolOutput::ok(out.join("\n"), result))
 }
 
-fn send_to_agent(control: &mut dyn Control, p: &Params) -> ToolResult {
+/// Sends as `origin`, so Myrstack draws the message from the caller.
+fn send_to_agent(control: &mut dyn Control, origin: &Origin, p: &Params) -> ToolResult {
     let id = p.required_str("id")?;
     let text = p
         .str("text")?
@@ -1046,7 +1055,8 @@ fn send_to_agent(control: &mut dyn Control, p: &Params) -> ToolResult {
             "text is empty and submit is false: nothing to send".into(),
         ));
     }
-    let result = control.call("send", json!({"id": id, "text": text, "enter": submit}))?;
+    let params = json!({"id": id, "text": text, "enter": submit, "origin": origin});
+    let result = control.call("send", params)?;
     let agent = result.get("agent").and_then(Value::as_str).unwrap_or(id);
     let text = if submit {
         format!("Sent to {agent} and pressed Enter.")

@@ -449,6 +449,9 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "mark_pr_ready",
         "review_queue",
         "notify",
+        "ask_karl",
+        "finish_session",
+        "clean_worktrees",
     ];
     assert_eq!(names, expected);
     let reads = [
@@ -472,6 +475,8 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "set_whip",
         "whip_agents",
         "spawn_session",
+        "finish_session",
+        "clean_worktrees",
     ];
     for tool in tools {
         let name = tool["name"].as_str().unwrap();
@@ -532,7 +537,7 @@ fn each_tool_maps_to_its_control_request() {
             json!({"id": "term:a", "text": "continue"}),
             vec![(
                 "send",
-                json!({"id": "term:a", "text": "continue", "enter": true}),
+                json!({"id": "term:a", "text": "continue", "enter": true, "origin": agent_origin()}),
             )],
         ),
         (
@@ -540,7 +545,7 @@ fn each_tool_maps_to_its_control_request() {
             json!({"id": "term:a", "text": "draft", "submit": false}),
             vec![(
                 "send",
-                json!({"id": "term:a", "text": "draft", "enter": false}),
+                json!({"id": "term:a", "text": "draft", "enter": false, "origin": agent_origin()}),
             )],
         ),
         (
@@ -659,7 +664,7 @@ fn each_tool_maps_to_its_control_request() {
                           "children": [], "screen": null}),
                 ),
             );
-        let mut server = McpServer::new(control);
+        let mut server = agent_server(control);
         let r = call(&mut server, tool, args.clone());
         assert!(!is_error(&r), "{tool} {args}: {}", text(&r));
         let expected: Vec<(String, Value)> = expected
@@ -1495,7 +1500,7 @@ fn notify_is_listed_with_when_to_call_it() {
     assert!(instructions.contains("notify {title, message, severity"));
     // The tool and the server instructions give the same rules.
     assert!(description.contains(notify::RULES));
-    assert!(instructions.ends_with(notify::RULES));
+    assert!(instructions.contains(notify::RULES));
 }
 
 #[test]
@@ -1928,4 +1933,318 @@ fn spawn_session_offers_allow_suffix_and_passes_it_on() {
         json!({"mode": "new_worktree", "repo": "r", "name": "x", "prompt": "go", "allow_suffix": true}),
     );
     assert_eq!(server.control().calls[0].1["allow_suffix"], true);
+}
+
+// ---------------------------------------------------------------------------
+// ask_karl and finish_session
+
+#[test]
+fn ask_karl_and_finish_session_are_listed_with_when_to_call_them() {
+    let mut server = McpServer::new(FakeControl::default());
+    let r = rpc(&mut server, "tools/list", json!({}));
+    let tools = r["result"]["tools"].as_array().unwrap();
+    let ask = tools.iter().find(|t| t["name"] == "ask_karl").unwrap();
+    assert_eq!(ask["inputSchema"]["required"], json!(["question"]));
+    let finish = tools
+        .iter()
+        .find(|t| t["name"] == "finish_session")
+        .unwrap();
+    assert_eq!(
+        finish["inputSchema"]["required"],
+        json!(["summary", "approval"])
+    );
+    assert_eq!(
+        finish["inputSchema"]["properties"]["outcome"]["enum"],
+        json!(["done", "handed_over", "abandoned"])
+    );
+    let finish_text = finish["description"].as_str().unwrap();
+    for phrase in [
+        "once Karl said you can go",
+        "Anything else, or can I close?",
+        "trivial",
+        "worktree and branch are kept",
+        "force",
+        "coordinator",
+    ] {
+        assert!(
+            finish_text.contains(phrase),
+            "finish_session mentions {phrase:?}"
+        );
+    }
+    let init = rpc(&mut server, "initialize", json!({}));
+    let instructions = init["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.ends_with(lifecycle::RULES));
+    assert!(lifecycle::RULES.contains("call ask_karl"));
+    assert!(lifecycle::RULES.contains("finish_session only once Karl says you can go"));
+    assert!(lifecycle::RULES.contains("Anything else, or can I close?"));
+    // notify points plain questions at ask_karl.
+    assert!(notify::RULES.contains("ask_karl"));
+}
+
+#[test]
+fn ask_karl_sends_the_question_with_the_callers_identity() {
+    let reply = json!({
+        "outcome": "delivered", "id": 9, "severity": "warn", "quiet": false,
+        "agent": {"id": "term:term_442fcb9f", "label": "realtime-255"},
+        "delivery": {"native": true, "in_app": true, "sound": false},
+        "waiting": true,
+    });
+    let mut server = agent_server(FakeControl::default().reply("ask", Ok(reply)));
+    let r = call(
+        &mut server,
+        "ask_karl",
+        json!({"question": "Merge now or wait for the migration?", "context": "Migration lands Friday."}),
+    );
+    assert!(!is_error(&r), "{r}");
+    let t = text(&r);
+    assert!(
+        t.starts_with("Sent to Karl (macOS pop-up, Myrstack pop-up)."),
+        "{t}"
+    );
+    assert!(t.contains("needs input until Karl answers"), "{t}");
+    assert!(t.contains("End your turn now"), "{t}");
+    let (method, params) = &server.control().calls[0];
+    assert_eq!(method, "ask");
+    assert_eq!(params["question"], "Merge now or wait for the migration?");
+    assert_eq!(params["context"], "Migration lands Friday.");
+    assert_eq!(params["severity"], "warn");
+    assert_eq!(params["origin"]["terminal_handle"], "term_442fcb9f");
+}
+
+#[test]
+fn ask_karl_refuses_bad_arguments_and_says_when_myrstack_is_down() {
+    let mut server = agent_server(FakeControl::default());
+    let r = call(&mut server, "ask_karl", json!({"question": "  "}));
+    assert!(is_error(&r));
+    let r = call(
+        &mut server,
+        "ask_karl",
+        json!({"question": "Ok?", "severity": "loud"}),
+    );
+    assert!(is_error(&r));
+    assert!(server.control().calls.is_empty());
+
+    let mut down = agent_server(FakeControl::default().reply("ask", Err(CallError::NotRunning)));
+    let r = call(&mut down, "ask_karl", json!({"question": "Ok?"}));
+    assert!(is_error(&r));
+    assert!(text(&r).contains("Ask in the chat"), "{}", text(&r));
+}
+
+/// Answers `finish`: `check` to the dry run, `done` to the real one.
+#[derive(Default)]
+struct FinishControl {
+    calls: Vec<Value>,
+    check: Value,
+    done: Option<Result<Value, CallError>>,
+}
+
+impl Control for FinishControl {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, CallError> {
+        assert_eq!(method, "finish");
+        let dry = params["dry_run"] == true;
+        self.calls.push(params);
+        if dry {
+            Ok(self.check.clone())
+        } else {
+            self.done.clone().unwrap_or_else(|| {
+                Ok(json!({
+                    "dry_run": false,
+                    "agent": self.check["agent"],
+                    "closing_in_ms": 2000,
+                }))
+            })
+        }
+    }
+}
+
+/// A finish check for a terminal whose worktree is `worktree`, with the app's `problems`.
+fn finish_check(worktree: &std::path::Path, problems: Value) -> Value {
+    json!({
+        "dry_run": true,
+        "agent": {
+            "id": "term:term_442fcb9f", "label": "realtime-255", "kind": "terminal",
+            "worktree": worktree, "branch": "gylleus/realtime-255",
+        },
+        "refused": null,
+        "problems": problems,
+    })
+}
+
+#[test]
+fn finish_session_checks_then_finishes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let control = FinishControl {
+        check: finish_check(dir.path(), json!([])),
+        ..FinishControl::default()
+    };
+    let mut server = agent_server(control);
+    let r = call(
+        &mut server,
+        "finish_session",
+        json!({"summary": "Fixed the retry bug; merged into main", "pr_url": "https://github.com/o/r/pull/3", "approval": "karl"}),
+    );
+    assert!(!is_error(&r), "{r}");
+    let t = text(&r);
+    assert!(
+        t.starts_with("Finished: Myrstack recorded it (done)"),
+        "{t}"
+    );
+    assert!(t.contains("closes this terminal in about 2 s"), "{t}");
+    assert!(t.contains("branch gylleus/realtime-255 are kept"), "{t}");
+    let calls = &server.control().calls;
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0]["dry_run"], true);
+    assert_eq!(calls[1]["dry_run"], false);
+    assert_eq!(calls[1]["summary"], "Fixed the retry bug; merged into main");
+    assert_eq!(calls[1]["pr_url"], "https://github.com/o/r/pull/3");
+    assert_eq!(calls[1]["origin"]["terminal_handle"], "term_442fcb9f");
+    assert_eq!(calls[1]["forced"], json!([]));
+    assert_eq!(calls[1]["approval"], "karl");
+}
+
+#[test]
+fn finish_session_refuses_with_problems_unless_forced() {
+    // A git worktree with an uncommitted file, and an open PR the app reports.
+    let dir = tempfile::TempDir::new().unwrap();
+    let ok = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .arg(dir.path())
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok);
+    std::fs::write(dir.path().join("scratch.txt"), "x").unwrap();
+    let pr = "https://github.com/o/r/pull/3 is waiting for Karl's review: stay";
+    let check = finish_check(dir.path(), json!([pr]));
+
+    let mut server = agent_server(FinishControl {
+        check: check.clone(),
+        ..FinishControl::default()
+    });
+    let r = call(
+        &mut server,
+        "finish_session",
+        json!({"summary": "done", "approval": "karl"}),
+    );
+    assert!(is_error(&r));
+    let t = text(&r);
+    assert!(
+        t.starts_with("Not finished; your terminal stays open."),
+        "{t}"
+    );
+    assert!(t.contains("uncommitted change"), "{t}");
+    assert!(t.contains("waiting for Karl's review"), "{t}");
+    assert!(t.contains("force: true"), "{t}");
+    assert_eq!(server.control().calls.len(), 1, "only the check ran");
+
+    let mut forced = agent_server(FinishControl {
+        check,
+        ..FinishControl::default()
+    });
+    let r = call(
+        &mut forced,
+        "finish_session",
+        json!({"summary": "Karl called it off", "outcome": "abandoned", "force": true, "approval": "karl"}),
+    );
+    assert!(!is_error(&r), "{r}");
+    assert!(text(&r).contains("left despite"), "{}", text(&r));
+    let calls = &forced.control().calls;
+    assert_eq!(calls[1]["force"], true);
+    assert_eq!(calls[1]["outcome"], "abandoned");
+    // The git problems travel to the app to be recorded; the app adds its own.
+    let sent = calls[1]["forced"].as_array().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].as_str().unwrap().contains("uncommitted change"));
+}
+
+#[test]
+fn finish_session_passes_on_a_refusal_and_myrstack_being_down() {
+    let mut check = finish_check(std::path::Path::new("/nonexistent"), json!([]));
+    check["refused"] = json!("you're a worker in run r1 (task t1): report to your coordinator");
+    let mut server = agent_server(FinishControl {
+        check,
+        ..FinishControl::default()
+    });
+    let r = call(
+        &mut server,
+        "finish_session",
+        json!({"summary": "done", "force": true, "approval": "trivial"}),
+    );
+    assert!(is_error(&r));
+    assert!(
+        text(&r).starts_with("Can't finish: you're a worker"),
+        "{}",
+        text(&r)
+    );
+    assert_eq!(server.control().calls.len(), 1);
+
+    let mut down = agent_server(FakeControl::default().reply("finish", Err(CallError::NotRunning)));
+    let r = call(
+        &mut down,
+        "finish_session",
+        json!({"summary": "done", "approval": "karl"}),
+    );
+    assert!(is_error(&r));
+    assert!(text(&r).contains("Tell Karl in the chat"), "{}", text(&r));
+
+    let mut bad = agent_server(FakeControl::default());
+    let r = call(
+        &mut bad,
+        "finish_session",
+        json!({"summary": "done", "outcome": "merged", "approval": "karl"}),
+    );
+    assert!(is_error(&r));
+    let r = call(
+        &mut bad,
+        "finish_session",
+        json!({"summary": "done", "approval": "me"}),
+    );
+    assert!(is_error(&r));
+    assert!(bad.control().calls.is_empty());
+}
+
+#[test]
+fn finish_session_without_karls_go_ahead_asks_him_first() {
+    let mut server = agent_server(FinishControl::default());
+    let r = call(
+        &mut server,
+        "finish_session",
+        json!({"summary": "Merged into main"}),
+    );
+    assert!(is_error(&r));
+    let t = text(&r);
+    assert!(
+        t.starts_with("Not finished; your terminal stays open."),
+        "{t}"
+    );
+    assert!(t.contains("ask Karl first (ask_karl"), "{t}");
+    assert!(server.control().calls.is_empty(), "nothing reaches the app");
+}
+
+/// A real cleanup needs the approved ids; bad arguments fail before Orca is asked anything.
+#[test]
+fn clean_worktrees_refuses_a_real_run_without_ids() {
+    let mut server = McpServer::new(FakeControl::default());
+    for args in [
+        json!({"dry_run": false}),
+        json!({"dry_run": false, "ids": []}),
+        json!({"dry_run": "no"}),
+        json!({"ids": "r::/w/a"}),
+        json!({"dry_run": false, "ids": [1]}),
+    ] {
+        let r = call(&mut server, "clean_worktrees", args.clone());
+        assert_eq!(r["isError"], true, "{args}");
+    }
+    let tools = rpc(&mut server, "tools/list", json!({}));
+    let tool = tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "clean_worktrees")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        tool["inputSchema"]["properties"]["dry_run"]["default"],
+        true
+    );
 }

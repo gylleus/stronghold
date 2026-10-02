@@ -21,7 +21,7 @@ use crate::orca::{
 pub use label::{MAX_LABEL_CHARS, strip_spinner, truncate_label};
 pub use queen::{QUEEN_ID, QUEEN_LABEL, fleet_state};
 pub use repo::{NO_REPO, RepoIndex, node_repo, repo_of, run_repo};
-pub use state::{StateInputs, WORKING_WINDOW_MS, derive_state};
+pub use state::{StateInputs, WORKING_WINDOW_MS, derive_state, dispatch_ended};
 
 /// How long a released worker stays in the snapshot after its release, so the UI can fade it.
 pub const RELEASED_FADE_MS: i64 = 10 * 60 * 1_000;
@@ -396,6 +396,84 @@ impl FleetSnapshot {
             .collect();
     }
 
+    /// Marks the live agent terminals in `waiting` (by handle: the question they wait on Karl
+    /// to answer) as NeedsInput, with the question as their preview. Done, failed and
+    /// non-live nodes keep their state. Updates the queen.
+    pub fn mark_waiting(&mut self, waiting: &BTreeMap<String, String>) {
+        if waiting.is_empty() {
+            return;
+        }
+        for node in &mut self.nodes {
+            let Some(question) = node
+                .terminal_handle
+                .as_deref()
+                .filter(|_| node.live && node.kind != NodeKind::Subagent)
+                .and_then(|h| waiting.get(h))
+            else {
+                continue;
+            };
+            if matches!(
+                node.state,
+                NodeState::Idle | NodeState::Working | NodeState::Stalled
+            ) {
+                node.state = NodeState::NeedsInput;
+                node.preview = Some(format!("Asks: {question}"));
+            }
+        }
+        self.add_queen();
+    }
+
+    /// Shows sessions that finished themselves ([`crate::finish`]) as done: a node still in
+    /// the snapshot (its terminal not yet closed) turns Done; a closed one comes back as a
+    /// fading Done terminal. Workers keep their run's own node. Updates the queen.
+    pub fn add_finished<'a>(
+        &mut self,
+        finished: impl IntoIterator<Item = &'a crate::finish::FinishedSession>,
+    ) {
+        let mut changed = false;
+        for f in finished {
+            let id = NodeId(f.node_id.clone());
+            let summary = format!("{}: {}", f.outcome.verb(), f.summary);
+            if let Some(&i) = self.index.get(&id) {
+                let node = &mut self.nodes[i];
+                if node.kind != NodeKind::Worker {
+                    node.state = NodeState::Done;
+                    node.preview = Some(summary);
+                    changed = true;
+                }
+                continue;
+            }
+            if !id.as_str().starts_with("term:") {
+                continue;
+            }
+            self.nodes.push(Node {
+                id: id.clone(),
+                kind: NodeKind::Terminal,
+                label: f.label.clone(),
+                terminal_handle: f.handle.clone(),
+                live: false,
+                run_id: None,
+                task_id: None,
+                dispatch_id: None,
+                agent: None,
+                worktree_path: f.worktree_path.clone(),
+                branch: f.branch.clone(),
+                last_output_ms: Some(f.at_ms),
+                preview: Some(summary),
+                state: NodeState::Done,
+                worker_state: None,
+                dispatch_status: None,
+                worker_terminal_state: None,
+                released_at_ms: Some(f.at_ms),
+            });
+            self.index.insert(id, self.nodes.len() - 1);
+            changed = true;
+        }
+        if changed {
+            self.add_queen();
+        }
+    }
+
     /// The queen node, present in every built snapshot.
     pub fn queen(&self) -> Option<&Node> {
         self.node(&NodeId::queen())
@@ -611,6 +689,12 @@ fn worker_node(
     node.state = derive_state(&StateInputs {
         needs_input: terminal.and_then(|t| data.screen_needs_input(&t.handle)),
         stalled: terminal.is_some_and(|t| stalled.contains(&t.handle)),
+        alive_after_failure: task.is_some_and(|t| {
+            t.dispatch_id
+                .as_deref()
+                .is_none_or(|d| d == worker.dispatch_id)
+                && data.alive_after_failure(t, None).is_some()
+        }),
         ..StateInputs::new(terminal, Some(worker), now_ms)
     });
     node

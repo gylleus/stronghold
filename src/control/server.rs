@@ -66,6 +66,8 @@ pub const ACTION_METHODS: &[&str] = &[
     "spawn",
     "pr_ready",
     "notify",
+    "ask",
+    "finish",
     "review_dismiss",
     "review_done",
 ];

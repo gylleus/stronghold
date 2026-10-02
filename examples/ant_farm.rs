@@ -1,11 +1,12 @@
 //! The ant farm on a synthetic fleet of 6 runs, loose terminals and subagents (about 30
 //! agents), one of each state, to check how it looks.
 //!
-//! `cargo run --example ant_farm [--light] [--shot out.png]`: every few seconds one worker
+//! `cargo run --example ant_farm [--light] [--graph] [--shot out.png]` (`--graph` shows the
+//! same fleet as the graph): every few seconds one worker
 //! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
-//! report, N hatches a new worker and T toggles the Queen thinking. With `--shot`, it saves a screenshot once settled and
-//! another while a worker walks, a new one emerges and a broadcast ripples (`-walk`), then
-//! exits.
+//! report, N hatches a new worker, M sends a burst of messages between ants and T toggles the
+//! Queen thinking. With `--shot`, it saves a screenshot once settled and another while a worker
+//! walks, a new one emerges, a broadcast ripples and messages fly (`-walk`), then exits.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -14,6 +15,7 @@ use eframe::egui;
 use myrstack::model::{
     Edge, EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
 };
+use myrstack::traffic::{AgentMessage, MessageKind};
 use myrstack::ui::ant_farm::{AntFarmView, Pulse};
 use myrstack::ui::graph::GraphView;
 
@@ -27,6 +29,7 @@ fn main() -> eframe::Result {
         .position(|a| a == "--shot")
         .and_then(|i| args.get(i + 1).cloned());
     let light = args.iter().any(|a| a == "--light");
+    let show_graph = args.iter().any(|a| a == "--graph");
     eframe::run_native(
         "ant farm",
         eframe::NativeOptions {
@@ -60,6 +63,7 @@ fn main() -> eframe::Result {
                     farm
                 },
                 shot,
+                show_graph,
                 started: Instant::now(),
                 flipped_at: Instant::now(),
                 stage: 0,
@@ -74,6 +78,7 @@ struct Demo {
     graph: GraphView,
     farm: AntFarmView,
     shot: Option<String>,
+    show_graph: bool,
     started: Instant,
     flipped_at: Instant,
     thinking: bool,
@@ -95,6 +100,27 @@ impl Demo {
         worker.label = "Fresh hatchling".into();
         self.snapshot.nodes.push(worker);
         self.graph.sync(&self.snapshot);
+    }
+
+    /// One message of each kind, plus a repeat that joins its envelope.
+    fn mail(&mut self, now_s: f64) {
+        for (from, to, kind) in [
+            ("run0-w1", "run0-coord", MessageKind::MergeReady),
+            ("run2-w2", "run2-coord", MessageKind::Ask),
+            ("run2-w2", "run2-coord", MessageKind::Ask),
+            ("queen", "run1-coord", MessageKind::Instruction),
+            ("slack", "shop-1", MessageKind::Relay),
+            ("queen", "run3-w1", MessageKind::Nudge),
+            ("shop-2", "karl", MessageKind::Status),
+            ("run4-coord", "run5-coord", MessageKind::Message),
+        ] {
+            let message = AgentMessage::new(from, to, kind);
+            let flight = message
+                .resolve(&self.snapshot)
+                .expect("both ends in the fleet");
+            self.graph.message(flight.clone(), now_s, false);
+            self.farm.message(flight, now_s, false);
+        }
     }
 
     fn flip(&mut self) {
@@ -132,6 +158,10 @@ impl eframe::App for Demo {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
+                if self.show_graph {
+                    self.graph.show(ui);
+                    return;
+                }
                 let response = self.farm.show(ui, &self.snapshot, &self.graph);
                 if let Some(id) = &response.clicked {
                     self.graph.click_node(id, false);
@@ -141,14 +171,18 @@ impl eframe::App for Demo {
             if self.flipped_at.elapsed() >= FLIP_EVERY {
                 self.flip();
             }
-            let (b, st, n, t) = ui.input(|i| {
+            let (b, st, n, t, m) = ui.input(|i| {
                 (
                     i.key_pressed(egui::Key::B),
                     i.key_pressed(egui::Key::S),
                     i.key_pressed(egui::Key::N),
                     i.key_pressed(egui::Key::T),
+                    i.key_pressed(egui::Key::M),
                 )
             });
+            if m {
+                self.mail(ui.input(|i| i.time));
+            }
             if t {
                 self.thinking = !self.thinking;
                 self.farm.set_queen_busy(self.thinking);
@@ -186,6 +220,7 @@ impl eframe::App for Demo {
                     self.flip();
                     self.hatch();
                     self.farm.pulse(Pulse::Broadcast);
+                    self.mail(ui.input(|i| i.time));
                     self.stage = 2;
                 }
             }
