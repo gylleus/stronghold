@@ -23,6 +23,9 @@ pub struct ReviewEnv {
     pub pending: Option<PathBuf>,
     /// The app's saved queue, read when the app isn't running.
     pub queue_file: Option<PathBuf>,
+    /// Where `notify` queues notifications while the app isn't running; `None` refuses to
+    /// queue.
+    pub notify_pending: Option<PathBuf>,
 }
 
 impl ReviewEnv {
@@ -32,6 +35,7 @@ impl ReviewEnv {
             origin: Origin::from_env(),
             pending: mark::default_pending_path(),
             queue_file: (!cfg!(test)).then(ReviewQueue::default_path),
+            notify_pending: crate::notify::pending::default_path(),
         }
     }
 }
@@ -357,6 +361,7 @@ mod tests {
             origin: Origin::from_vars(|k| env.get(k).map(|v| (*v).to_owned())),
             pending: Some(dir.join(mark::PENDING_FILE)),
             queue_file: Some(dir.join(crate::review::queue::QUEUE_FILE)),
+            notify_pending: None,
         }
     }
 

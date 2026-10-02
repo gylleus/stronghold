@@ -1,13 +1,18 @@
 //! The `notify` MCP tool: any agent reaches Karl through Myrstack (a pop-up, a sound, his
 //! inbox), attributed to the agent's Orca terminal like `mark_pr_ready`.
 
+use std::path::Path;
+
 use serde_json::{Value, json};
 
 use crate::control::protocol::Params;
+use crate::control::server::now_ms;
 use crate::mcp::backend::{CallError, Control};
+use crate::mcp::review::ReviewEnv;
 use crate::mcp::tools::ToolOutput;
 use crate::notify::agent::{AgentNotice, MAX_MESSAGE_CHARS, MAX_TITLE_CHARS};
 use crate::notify::dispatch::{AGENT_MAX, AGENT_WINDOW_MS};
+use crate::notify::pending;
 use crate::review::mark::Origin;
 
 /// When to call `notify`, as the fleet playbook's _Human in the loop_ says it. A macro so the
@@ -31,8 +36,9 @@ finish_session, which records and tells Karl itself. \
 (4) Workers under a coordinator go through it (ask, escalation, merge_ready) and don't call \
 notify, except to summon Karl for a credential step; a standalone session with no coordinator \
 notifies Karl directly. \
-(5) If Myrstack isn't running, notify errors: fall back to the existing channels (the osascript \
-summon dialog for blocking asks, the chat and the ticket for handovers)."
+(5) If Myrstack isn't running, notify queues the notification and Karl sees it in his inbox when \
+Myrstack starts. A handover can wait for that; a blocking ask that can't also gets the osascript \
+summon dialog."
     };
 }
 pub(crate) use rules_text;
@@ -49,7 +55,8 @@ pub fn definitions() -> Vec<Value> {
             "Sends Karl, the human who runs this fleet, a notification through Myrstack (his \
              fleet dashboard): a macOS and/or in-app pop-up with a sound, as his settings say, \
              kept in his inbox and attributed to your terminal. Clicking it selects your node \
-             and opens `url`. {RULES} Urgent gets through Karl's quiet mode. Put what and \
+             and opens `url`. Works even when Myrstack isn't running: the notification is \
+             queued and reaches his inbox when it starts. {RULES} Urgent gets through Karl's quiet mode. Put what and \
              which task in the title and the ask in the message. Identical repeats collapse \
              into one; each agent gets at most {AGENT_MAX} per {} minutes.",
             AGENT_WINDOW_MS / 60_000
@@ -94,11 +101,11 @@ pub fn definitions() -> Vec<Value> {
 /// Runs the tool; `None` for other tools.
 pub fn call(
     control: &mut dyn Control,
-    origin: &Origin,
+    env: &ReviewEnv,
     name: &str,
     args: &Value,
 ) -> Option<ToolOutput> {
-    (name == "notify").then(|| notify(control, origin, args))
+    (name == "notify").then(|| notify(control, &env.origin, env.notify_pending.as_deref(), args))
 }
 
 fn error(text: String) -> ToolOutput {
@@ -109,7 +116,12 @@ fn error(text: String) -> ToolOutput {
     }
 }
 
-fn notify(control: &mut dyn Control, origin: &Origin, args: &Value) -> ToolOutput {
+fn notify(
+    control: &mut dyn Control,
+    origin: &Origin,
+    pending: Option<&Path>,
+    args: &Value,
+) -> ToolOutput {
     let p = Params::new(args);
     let fields = (|| {
         Ok::<_, crate::control::ControlError>((
@@ -132,13 +144,7 @@ fn notify(control: &mut dyn Control, origin: &Origin, args: &Value) -> ToolOutpu
     };
     let reply = match control.call("notify", notice.to_params()) {
         Ok(reply) => reply,
-        Err(CallError::NotRunning) => {
-            return error(
-                "Myrstack isn't running, so Karl can't be notified through it. Reach him another \
-                 way (for example the Orca bus) if it can't wait."
-                    .into(),
-            );
-        }
+        Err(CallError::NotRunning) => return queue(pending, &notice),
         Err(e) => return error(format!("Couldn't notify Karl: {e}")),
     };
     let text = reply_text(&reply);
@@ -149,6 +155,35 @@ fn notify(control: &mut dyn Control, origin: &Origin, args: &Value) -> ToolOutpu
         text,
         structured: Some(structured),
         is_error,
+    }
+}
+
+/// Queues `notice` for the app to take when it starts.
+fn queue(pending: Option<&Path>, notice: &AgentNotice) -> ToolOutput {
+    let Some(path) = pending else {
+        return error(
+            "Myrstack isn't running and there is no data dir to queue the notification in. \
+             Reach Karl another way if it can't wait."
+                .into(),
+        );
+    };
+    if let Err(e) = pending::append(path, notice, now_ms()) {
+        return error(format!(
+            "Myrstack isn't running and queuing the notification failed: {e}. Reach Karl \
+             another way if it can't wait."
+        ));
+    }
+    ToolOutput {
+        text: "Myrstack isn't running, so the notification is queued; Karl will see it in his \
+               inbox when Myrstack starts. If it is a blocking ask that can't wait, also summon \
+               him with the osascript dialog."
+            .into(),
+        structured: Some(json!({
+            "outcome": "queued",
+            "severity": notice.severity.name(),
+            "origin": notice.origin,
+        })),
+        is_error: false,
     }
 }
 

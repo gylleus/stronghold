@@ -231,10 +231,17 @@ pub fn append_pending(path: &Path, mark: &ReadyMark) -> io::Result<()> {
 }
 
 pub fn append_pending_bounded(path: &Path, mark: &ReadyMark, max_bytes: u64) -> io::Result<()> {
+    append_jsonl(path, mark, max_bytes)
+}
+
+/// Appends `item` as one JSON line to `path` (created 0600), trimming the file to its newest
+/// half when it grows past `max_bytes`. Shared by the files agents queue into while the app is
+/// down.
+pub fn append_jsonl<T: Serialize>(path: &Path, item: &T, max_bytes: u64) -> io::Result<()> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(dir)?;
     }
-    let mut line = serde_json::to_string(mark).map_err(io::Error::other)?;
+    let mut line = serde_json::to_string(item).map_err(io::Error::other)?;
     line.push('\n');
     let mut file = OpenOptions::new()
         .create(true)
@@ -281,10 +288,16 @@ fn keep_newest(path: &Path, keep_bytes: u64) -> io::Result<()> {
 /// Takes every pending mark (oldest first) and removes the file. Malformed lines are skipped.
 /// The file is renamed before it is read, so a mark appended meanwhile starts a new file.
 pub fn take_pending(path: &Path) -> Vec<ReadyMark> {
+    take_jsonl(path)
+}
+
+/// Takes every line of `path` (oldest first) and removes the file, skipping malformed lines.
+/// The file is renamed before it is read, so a line appended meanwhile starts a new file.
+pub fn take_jsonl<T: serde::de::DeserializeOwned>(path: &Path) -> Vec<T> {
     let taking = path.with_extension("jsonl.taking");
     if let Err(e) = fs::rename(path, &taking) {
         if e.kind() != io::ErrorKind::NotFound {
-            log::warn!("review: cannot take {}: {e}", path.display());
+            log::warn!("cannot take {}: {e}", path.display());
         }
         return Vec::new();
     }
@@ -294,7 +307,7 @@ pub fn take_pending(path: &Path) -> Vec<ReadyMark> {
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| {
             serde_json::from_str(l)
-                .inspect_err(|e| log::warn!("review: skipping a pending mark: {e}"))
+                .inspect_err(|e| log::warn!("skipping a line of {}: {e}", path.display()))
                 .ok()
         })
         .collect()
