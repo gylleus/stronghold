@@ -7,7 +7,7 @@
 //! [`HealthReport`], which the top bar's badge and the control API's `health` method show.
 
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -394,7 +394,7 @@ impl Probes {
                 &crate::claude::hook::default_settings_path(),
                 &crate::claude::hook::data_dir(),
             ),
-            bridge: probe_bridge(&bridge_dir()),
+            bridge: probe_bridge(&crate::envoy::slack::bridge_dir()),
             notifications: probe_notifications(),
         }
     }
@@ -473,14 +473,6 @@ fn probe_hook(settings: &Path, data_dir: &Path) -> HookProbe {
             error: Some(error),
         },
     }
-}
-
-fn bridge_dir() -> PathBuf {
-    directories::BaseDirs::new()
-        .map(|b| b.home_dir().to_path_buf())
-        .unwrap_or_default()
-        .join(".claude")
-        .join("slack-subscriptions")
 }
 
 fn probe_bridge(dir: &Path) -> BridgeProbe {
