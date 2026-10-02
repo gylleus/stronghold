@@ -328,6 +328,11 @@ pub struct NotificationsPanel {
 }
 
 impl NotificationsPanel {
+    /// Expands entry `id`, as clicking it would (without marking it read).
+    pub fn expand(&mut self, id: u64) {
+        self.expanded.insert(id);
+    }
+
     /// The header (unread count, quiet mode, mark all read, clear, side and collapse) over the
     /// history, newest first. `right` is whether the panel sits at the window's right.
     pub fn show(
@@ -394,7 +399,7 @@ fn panel_header(ui: &mut Ui, entries: &[Entry], quiet: bool, right: bool) -> Opt
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .small_button(icons::X.to_string())
+                .small_button(icon_text(ui, icons::X))
                 .on_hover_text("Collapse the panel to a strip at the window's edge")
                 .clicked()
             {
@@ -406,7 +411,7 @@ fn panel_header(ui: &mut Ui, entries: &[Entry], quiet: bool, right: bool) -> Opt
                 (icons::ARROW_RIGHT, "right")
             };
             if ui
-                .small_button(arrow.to_string())
+                .small_button(icon_text(ui, arrow))
                 .on_hover_text(format!(
                     "Move the panel to the {other} side (or drag its tab anywhere)"
                 ))
@@ -442,6 +447,11 @@ fn panel_header(ui: &mut Ui, entries: &[Entry], quiet: bool, right: bool) -> Opt
     action
 }
 
+/// `icon` alone, in the icon font.
+fn icon_text(ui: &Ui, icon: char) -> RichText {
+    RichText::new(icon.to_string()).family(icons::family(ui.ctx()))
+}
+
 /// What Karl did with one entry of the panel.
 struct RowResponse {
     /// Its header was clicked: expand or collapse it.
@@ -464,20 +474,24 @@ fn source_label(entry: &Entry) -> Option<String> {
 fn entry_row(ui: &mut Ui, entry: &Entry, expanded: bool, now_ms: i64, dark: bool) -> RowResponse {
     let color = severity_color(entry.severity, dark);
     let mut action = None;
-    let frame = egui::Frame::new()
-        .inner_margin(egui::Margin {
+    // The background goes under the content once its size and hover are known.
+    let background = ui.painter().add(egui::Shape::Noop);
+    let margin = if expanded {
+        egui::Margin {
+            left: 12,
+            right: 8,
+            top: 8,
+            bottom: 8,
+        }
+    } else {
+        egui::Margin {
             left: 10,
             right: 6,
             top: 5,
             bottom: 5,
-        })
-        .corner_radius(4.0)
-        .fill(if entry.read {
-            Color32::TRANSPARENT
-        } else {
-            color.gamma_multiply(0.12)
-        });
-    let shown = frame.show(ui, |ui| {
+        }
+    };
+    let shown = egui::Frame::new().inner_margin(margin).show(ui, |ui| {
         ui.set_width(ui.available_width());
         let header = ui
             .scope_builder(egui::UiBuilder::new().sense(egui::Sense::click()), |ui| {
@@ -485,7 +499,8 @@ fn entry_row(ui: &mut Ui, entry: &Entry, expanded: bool, now_ms: i64, dark: bool
             })
             .response;
         if expanded {
-            ui.add_space(4.0);
+            ui.add_space(2.0);
+            ui.separator();
             if let Some(a) = entry_details(ui, entry, now_ms) {
                 action = Some(a);
             }
@@ -493,11 +508,40 @@ fn entry_row(ui: &mut Ui, entry: &Entry, expanded: bool, now_ms: i64, dark: bool
         header
     });
     let rect = shown.response.rect;
-    if !entry.read {
-        let stripe = egui::Rect::from_min_size(rect.min, egui::vec2(3.0, rect.height()));
-        ui.painter().rect_filled(stripe, 1.5, color);
-    }
     let header = shown.inner;
+    let visuals = ui.visuals();
+    let accent = visuals.selection.bg_fill;
+    let (fill, stroke) = if expanded {
+        (
+            accent.gamma_multiply(if dark { 0.22 } else { 0.12 }),
+            egui::Stroke::new(1.0, accent.gamma_multiply(0.8)),
+        )
+    } else if header.hovered() {
+        (visuals.widgets.hovered.weak_bg_fill, egui::Stroke::NONE)
+    } else if !entry.read {
+        (color.gamma_multiply(0.12), egui::Stroke::NONE)
+    } else {
+        (Color32::TRANSPARENT, egui::Stroke::NONE)
+    };
+    ui.painter()
+        .set(background, egui::Shape::rect_filled(rect, 5.0, fill));
+    if stroke != egui::Stroke::NONE {
+        ui.painter()
+            .rect_stroke(rect, 5.0, stroke, egui::StrokeKind::Inside);
+    }
+    if !entry.read || expanded {
+        let stripe = egui::Rect::from_min_size(rect.min, egui::vec2(3.0, rect.height()));
+        ui.painter().rect_filled(
+            stripe,
+            egui::CornerRadius {
+                nw: 5,
+                sw: 5,
+                ne: 0,
+                se: 0,
+            },
+            if expanded { accent } else { color },
+        );
+    }
     if header.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
@@ -551,6 +595,10 @@ fn entry_header(ui: &mut Ui, entry: &Entry, expanded: bool, now_ms: i64, color: 
         );
         if let Some(first) = job.sections.first_mut() {
             first.format.color = color;
+        }
+        if expanded && let Some(text) = job.sections.get_mut(1) {
+            text.format.font_id.family = crate::ui::theme::bold_family(ui.ctx());
+            text.format.color = visuals.strong_text_color();
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
