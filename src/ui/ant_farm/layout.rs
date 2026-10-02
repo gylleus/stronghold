@@ -7,11 +7,14 @@
 //! terminals) dropping from the gallery. A coordinator stands at its tunnel's mouth, its
 //! workers in the chamber at the tunnel's end.
 
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
 
-use crate::model::{EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RepoIndex};
+use crate::model::{
+    EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RepoIndex, dispatch_ended,
+};
 
 /// Side of a sprite cell in texels.
 pub const CELL: f32 = 16.0;
@@ -315,6 +318,35 @@ fn chamber_rank(state: NodeState) -> u8 {
     }
 }
 
+/// A dispatch record that is no ant: its terminal is gone and its dispatch ended, so it is a
+/// past attempt (often superseded by a re-dispatch of the same task). Released workers keep
+/// fading out instead, and a dispatch still open without its terminal stays, as failed.
+fn is_history(node: &Node) -> bool {
+    node.kind == NodeKind::Worker
+        && !node.live
+        && node.released_at_ms.is_none()
+        && dispatch_ended(node)
+}
+
+/// Runs whose tasks have all completed or failed and that have no worker left in `nodes`:
+/// their coordinator may be at other work, so the run gets no tunnel.
+fn finished_runs<'a>(snapshot: &'a FleetSnapshot, nodes: &[&Node]) -> HashSet<&'a str> {
+    snapshot
+        .runs
+        .iter()
+        .filter(|r| {
+            r.task_counts
+                .is_some_and(|c| c.total() > 0 && c.completed + c.failed == c.total())
+        })
+        .filter(|r| {
+            !nodes
+                .iter()
+                .any(|n| n.kind == NodeKind::Worker && n.run_id.as_ref() == Some(&r.id))
+        })
+        .map(|r| r.id.as_str())
+        .collect()
+}
+
 fn cut(label: &str) -> String {
     if label.chars().count() <= LABEL_CHARS {
         return label.to_string();
@@ -327,10 +359,28 @@ fn cut(label: &str) -> String {
 /// Lays the farm out in `rect`.
 pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
     let snapshot = input.snapshot;
-    let visible: Vec<&Node> = snapshot
+    let present: Vec<&Node> = snapshot
         .nodes
         .iter()
-        .filter(|n| !input.hidden.contains(&n.id))
+        .filter(|n| !input.hidden.contains(&n.id) && !is_history(n))
+        .collect();
+    let finished = finished_runs(snapshot, &present);
+    // A finished run's coordinator is just a terminal now: no tunnel of its own.
+    let visible: Vec<Cow<Node>> = present
+        .into_iter()
+        .map(|n| match &n.run_id {
+            Some(run)
+                if finished.contains(run.as_str())
+                    && matches!(n.kind, NodeKind::Coordinator | NodeKind::Attendant) =>
+            {
+                Cow::Owned(Node {
+                    kind: NodeKind::Terminal,
+                    run_id: None,
+                    ..n.clone()
+                })
+            }
+            _ => Cow::Borrowed(n),
+        })
         .collect();
     let repos = RepoIndex::new(snapshot).by_node;
     let parents: HashMap<&NodeId, &NodeId> = snapshot

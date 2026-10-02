@@ -8,6 +8,7 @@ use super::motion::{along, route};
 use crate::model::{
     Edge, EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
 };
+use crate::orca::{DispatchStatus, WorkerState, WorkerTerminalState};
 
 const RECT: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1280.0, 800.0));
 
@@ -313,6 +314,103 @@ fn one_tunnel_per_run_then_per_repo() {
     );
     let xs: Vec<f32> = scene.tunnels.iter().map(|t| t.shaft.center().x).collect();
     assert!(xs.windows(2).all(|w| w[0] < w[1]), "left to right: {xs:?}");
+}
+
+#[test]
+fn past_dispatches_without_a_terminal_are_not_drawn() {
+    let mut s = FleetSnapshot::default();
+    s.runs = vec![run("r1", 1, 4)];
+    s.nodes.push(node(
+        "r1-coord",
+        NodeKind::Coordinator,
+        Some("r1"),
+        NodeState::Idle,
+    ));
+    let past = |name: &str, state, worker_state, dispatch_status| Node {
+        live: false,
+        worker_state: Some(worker_state),
+        dispatch_status: Some(dispatch_status),
+        worker_terminal_state: Some(WorkerTerminalState::Reclaimable),
+        ..node(name, NodeKind::Worker, Some("r1"), state)
+    };
+    s.nodes.push(past(
+        "old-done",
+        NodeState::Done,
+        WorkerState::Succeeded,
+        DispatchStatus::Completed,
+    ));
+    s.nodes.push(past(
+        "superseded",
+        NodeState::Failed,
+        WorkerState::Failed,
+        DispatchStatus::Failed,
+    ));
+    s.nodes.push(Node {
+        live: false,
+        dispatch_status: Some(DispatchStatus::Dispatched),
+        ..node("lost", NodeKind::Worker, Some("r1"), NodeState::Failed)
+    });
+    s.nodes.push(Node {
+        live: false,
+        worker_terminal_state: Some(WorkerTerminalState::Released),
+        released_at_ms: Some(0),
+        ..node("released", NodeKind::Worker, Some("r1"), NodeState::Done)
+    });
+    let scene = scene(&s);
+    assert!(
+        scene.ant(&id("old-done")).is_none(),
+        "no done without a terminal"
+    );
+    assert!(scene.ant(&id("superseded")).is_none());
+    assert_eq!(
+        ant(&scene, "lost").pose,
+        Pose::Failed,
+        "an open dispatch that lost its terminal stays, failed"
+    );
+    assert!(
+        scene.ant(&id("released")).is_some(),
+        "released ones fade out"
+    );
+}
+
+#[test]
+fn a_finished_run_without_workers_has_no_tunnel() {
+    let mut s = FleetSnapshot::default();
+    s.runs = vec![run("over", 1, 1), run("ongoing", 2, 2)];
+    let mut coord = node(
+        "over-coord",
+        NodeKind::Coordinator,
+        Some("over"),
+        NodeState::Idle,
+    );
+    coord.label = "Other work".into();
+    coord.worktree_path = Some("/x/orca/workspaces/alpha/one".into());
+    s.nodes.push(coord);
+    s.nodes.push(node(
+        "ongoing-coord",
+        NodeKind::Coordinator,
+        Some("ongoing"),
+        NodeState::Idle,
+    ));
+    s.nodes.push(node(
+        "w",
+        NodeKind::Worker,
+        Some("ongoing"),
+        NodeState::Idle,
+    ));
+    let scene = scene(&s);
+    let keys: Vec<TunnelKey> = scene.tunnels.iter().map(|t| t.key.clone()).collect();
+    assert_eq!(
+        keys,
+        [
+            TunnelKey::Run("ongoing".into()),
+            TunnelKey::Repo("alpha".into()),
+        ],
+        "a finished run's coordinator digs in its repo's tunnel; one with a worker keeps its own"
+    );
+    let c = ant(&scene, "over-coord");
+    assert!(matches!(c.spot, Spot::Chamber(1, _)));
+    assert_eq!(c.tag.as_deref(), Some("Other work"));
 }
 
 #[test]
