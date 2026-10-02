@@ -82,7 +82,7 @@ fn command(agent: Agent, model: Option<&str>) -> String {
     }
     match agent {
         // Denying the whole shell also blocks wrappers and alternate Slack CLIs.
-        Agent::Claude => args.extend(["--disallowedTools".into(), "Bash".into()]),
+        Agent::Claude => args.extend(["--disallowedTools".into(), "Bash".into(), "Monitor".into()]),
         Agent::Codex => args.extend([
             "--sandbox".into(),
             "read-only".into(),
@@ -145,7 +145,7 @@ impl Session {
             handle,
             receiver: None,
             created_at_ms: 0,
-            settings: settings.clone(),
+            settings,
             error,
         }
     }
@@ -402,7 +402,7 @@ mod tests {
                 let command = launches[0];
                 assert!(command.ends_with(&format!(" -- {}", shell_quote(PROMPT))));
                 if agent == "claude" {
-                    assert!(command.contains("--disallowedTools Bash -- "));
+                    assert!(command.contains("--disallowedTools Bash Monitor -- "));
                 } else {
                     assert!(command.contains("--sandbox read-only --ask-for-approval never -- "));
                 }

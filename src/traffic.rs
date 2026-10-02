@@ -74,7 +74,7 @@ impl MessageKind {
 }
 
 /// A message from `from` to `to`, named as the sender knows them: a node id, a terminal handle,
-/// Orca's `run:<id>` (its coordinator) or `dispatch:<id>`, or `queen`, `karl` or `slack`; see
+/// Orca's `run:<id>` (its coordinator) or `dispatch:<id>`, or `queen`, `envoy`, `karl` or `slack`; see
 /// [`resolve`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentMessage {
@@ -152,6 +152,13 @@ pub fn resolve(snapshot: &FleetSnapshot, key: &str) -> Option<Endpoint> {
         "karl" | "human" => return Some(Endpoint::Karl),
         "slack" | "outside" => return Some(Endpoint::Outside),
         "queen" | WHIP_SENDER => return node(NodeId::queen()),
+        "envoy" => {
+            return snapshot
+                .nodes
+                .iter()
+                .find(|n| n.kind == NodeKind::Envoy && n.live)
+                .map(|n| Endpoint::Node(n.id.clone()));
+        }
         _ => {}
     }
     if let Some(found) = node(NodeId(key.to_owned())) {
