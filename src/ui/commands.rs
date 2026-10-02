@@ -28,6 +28,7 @@ pub enum ActionId {
     FitGraph,
     ResetLayout,
     ResetPanes,
+    ToggleNotifications,
     GraphView,
     TableView,
     AntFarmView,
@@ -205,6 +206,13 @@ pub const ACTIONS: &[Action] = &[
         "reset_panes",
         "Reset pane layout",
         "dock panes tabs columns sidebar details conversation arrangement default restore",
+        None,
+    ),
+    action(
+        ActionId::ToggleNotifications,
+        "toggle_notifications",
+        "Show/hide notifications",
+        "notifications inbox bell panel history alerts unread collapse",
         None,
     ),
     action(
@@ -491,6 +499,8 @@ pub enum Dispatch {
     ResetLayout,
     /// Put the dock's panes back in their default arrangement.
     ResetPanes,
+    /// Open the notifications panel, or collapse it when it is in front.
+    ToggleNotifications,
     SetView(View),
     ClearFilters,
     ShowOnly(NodeState),
@@ -521,6 +531,7 @@ pub fn dispatch(id: ActionId) -> Dispatch {
         A::FitGraph => Dispatch::Key(KeyCommand::Fit),
         A::ResetLayout => Dispatch::ResetLayout,
         A::ResetPanes => Dispatch::ResetPanes,
+        A::ToggleNotifications => Dispatch::ToggleNotifications,
         A::GraphView => Dispatch::SetView(View::Graph),
         A::TableView => Dispatch::SetView(View::Table),
         A::AntFarmView => Dispatch::SetView(View::AntFarm),
@@ -670,6 +681,7 @@ mod tests {
             (A::FitGraph, Dispatch::Key(KeyCommand::Fit)),
             (A::ResetLayout, Dispatch::ResetLayout),
             (A::ResetPanes, Dispatch::ResetPanes),
+            (A::ToggleNotifications, Dispatch::ToggleNotifications),
             (A::GraphView, Dispatch::SetView(View::Graph)),
             (A::TableView, Dispatch::SetView(View::Table)),
             (A::AntFarmView, Dispatch::SetView(View::AntFarm)),

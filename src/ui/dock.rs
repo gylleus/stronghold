@@ -5,6 +5,9 @@
 //! The conversation pane comes and goes with what it has to show (see
 //! `MyrstackApp::has_conversation`); taking it out remembers the arrangement, so it returns
 //! where it was unless the other panes moved meanwhile.
+//!
+//! The notifications pane is in while its panel is open; collapsing it (its tab's close
+//! button or the panel's own) remembers its side and width, and it returns there.
 
 use eframe::egui;
 use egui_dock::{DockState, NodeIndex, SurfaceIndex};
@@ -22,9 +25,11 @@ pub enum Pane {
     /// The Queen's chat, the selected agent's screen and input, a subagent's transcript or the
     /// multi-selection.
     Conversation,
+    /// The notification history, newest first.
+    Notifications,
 }
 
-/// Panes that are always in the layout; only the conversation can be taken out.
+/// Panes that are always in the layout; the conversation and notifications can be taken out.
 const FIXED: [Pane; 3] = [Pane::Sidebar, Pane::Graph, Pane::Details];
 
 // Default widths as shares of the window, matching the old fixed columns on a 1728 pt
@@ -32,12 +37,52 @@ const FIXED: [Pane; 3] = [Pane::Sidebar, Pane::Graph, Pane::Details];
 const CONVERSATION_SHARE: f32 = 0.45;
 const SIDEBAR_SHARE_OF_REST: f32 = 0.27;
 const DETAILS_SHARE_OF_MIDDLE: f32 = 0.39;
+/// The notifications panel's default width as a share of the window.
+const NOTIFICATIONS_SHARE: f32 = 0.2;
+
+/// A window edge the notifications panel sits at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Side {
+    #[default]
+    Left,
+    Right,
+}
+
+impl Side {
+    pub fn other(self) -> Self {
+        match self {
+            Side::Left => Side::Right,
+            Side::Right => Side::Left,
+        }
+    }
+}
+
+/// The notifications panel: open or collapsed, and where it returns when opened.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationsDock {
+    pub open: bool,
+    pub side: Side,
+    /// Its width as a share of the window.
+    pub share: f32,
+}
+
+impl Default for NotificationsDock {
+    fn default() -> Self {
+        Self {
+            open: true,
+            side: Side::Left,
+            share: NOTIFICATIONS_SHARE,
+        }
+    }
+}
 
 /// The pane arrangement and, while the conversation is out, the arrangement it left.
 #[derive(Clone)]
 pub struct PaneLayout {
     dock: DockState<Pane>,
     stashed: Option<DockState<Pane>>,
+    pub notifications: NotificationsDock,
 }
 
 impl Default for PaneLayout {
@@ -73,6 +118,7 @@ impl PaneLayout {
         Self {
             dock,
             stashed: None,
+            notifications: NotificationsDock::default(),
         }
     }
 
@@ -155,6 +201,95 @@ impl PaneLayout {
     pub fn closed_conversation(&mut self, before: PaneLayout) {
         self.stashed = Some(before.dock);
     }
+
+    /// Puts the notifications pane in or takes it out to match whether its panel is open. It
+    /// comes in as a full-height column at its side; taken out, it keeps its side and width.
+    pub fn sync_notifications(&mut self) {
+        match (
+            self.notifications.open,
+            self.dock.find_tab(&Pane::Notifications),
+        ) {
+            (true, None) => {
+                let share = self.notifications.share.clamp(0.08, 0.6);
+                let tree = self.dock.main_surface_mut();
+                match self.notifications.side {
+                    Side::Left => {
+                        tree.split_left(NodeIndex::root(), share, vec![Pane::Notifications]);
+                    }
+                    Side::Right => {
+                        tree.split_right(NodeIndex::root(), 1.0 - share, vec![Pane::Notifications]);
+                    }
+                }
+            }
+            (false, Some(path)) => {
+                self.remember_notifications_place();
+                self.dock.remove_tab(path);
+            }
+            _ => {}
+        }
+    }
+
+    /// Collapses the notifications panel to its strip.
+    pub fn collapse_notifications(&mut self) {
+        self.notifications.open = false;
+        self.sync_notifications();
+    }
+
+    /// Opens the notifications panel, bringing its tab to the front.
+    pub fn open_notifications(&mut self) {
+        self.notifications.open = true;
+        self.sync_notifications();
+        self.activate(Pane::Notifications);
+    }
+
+    /// The notifications tab was closed in the dock; `before` is the layout that had it.
+    pub fn closed_notifications(&mut self, before: &PaneLayout) {
+        self.notifications = before.notifications;
+        if let Some((side, share)) = before.notifications_place() {
+            self.notifications.side = side;
+            self.notifications.share = share;
+        }
+        self.notifications.open = false;
+    }
+
+    /// Moves the open notifications panel to the other side of the window.
+    pub fn switch_notifications_side(&mut self) {
+        let side = self
+            .notifications_place()
+            .map_or(self.notifications.side, |(side, _)| side);
+        self.collapse_notifications();
+        self.notifications.side = side.other();
+        self.open_notifications();
+    }
+
+    fn remember_notifications_place(&mut self) {
+        if let Some((side, share)) = self.notifications_place() {
+            self.notifications.side = side;
+            self.notifications.share = share;
+        }
+    }
+
+    /// The side and width share the notifications pane was last drawn at, from the dock's
+    /// rects; `None` before it was drawn.
+    fn notifications_place(&self) -> Option<(Side, f32)> {
+        let path = self.dock.find_tab(&Pane::Notifications)?;
+        let rect = self.dock.leaf(path.node_path()).ok()?.rect;
+        let area = self
+            .dock
+            .iter_leaves()
+            .map(|(_, leaf)| leaf.rect)
+            .filter(|r| r.is_finite() && r.is_positive())
+            .reduce(|a, b| a.union(b))?;
+        if !rect.is_finite() || !rect.is_positive() {
+            return None;
+        }
+        let side = if rect.center().x < area.center().x {
+            Side::Left
+        } else {
+            Side::Right
+        };
+        Some((side, (rect.width() / area.width()).clamp(0.08, 0.6)))
+    }
 }
 
 /// Each tab group's panes, in tree order: the arrangement without sizes.
@@ -172,6 +307,7 @@ fn valid(dock: &DockState<Pane>) -> bool {
         .all(|(index, _)| index == SurfaceIndex::main())
         && FIXED.iter().all(|pane| count(*pane) == 1)
         && count(Pane::Conversation) <= 1
+        && count(Pane::Notifications) <= 1
 }
 
 /// Where the top bar's Queen quick actions line up: the conversation pane's left edge when it
@@ -339,5 +475,88 @@ mod tests {
         assert_eq!(quick_actions_anchor(Some(600.0), bar), Some(600.0));
         assert_eq!(quick_actions_anchor(Some(100.0), bar), None);
         assert_eq!(quick_actions_anchor(None, bar), None);
+    }
+
+    /// Gives each leaf the rect DockArea would, as if the layout was drawn `window` wide.
+    fn draw(layout: &mut PaneLayout, window: f32) {
+        fn place(tree: &mut egui_dock::Tree<Pane>, node: NodeIndex, rect: egui::Rect) {
+            match &mut tree[node] {
+                egui_dock::Node::Leaf(leaf) => leaf.rect = rect,
+                egui_dock::Node::Horizontal(split) => {
+                    let (left, right) = rect.split_left_right_at_fraction(split.fraction);
+                    place(tree, node.left(), left);
+                    place(tree, node.right(), right);
+                }
+                egui_dock::Node::Vertical(split) => {
+                    let (top, bottom) = rect.split_top_bottom_at_fraction(split.fraction);
+                    place(tree, node.left(), top);
+                    place(tree, node.right(), bottom);
+                }
+                egui_dock::Node::Empty => {}
+            }
+        }
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(window, 900.0));
+        place(layout.dock.main_surface_mut(), NodeIndex::root(), rect);
+    }
+
+    #[test]
+    fn notifications_open_as_a_left_column_by_default() {
+        let mut layout = PaneLayout::default();
+        layout.sync_notifications();
+        let placed = columns(&layout.dock, 1728.0);
+        assert_eq!(placed[0].0, Pane::Notifications);
+        assert!((placed[0].2 - 0.2 * 1728.0).abs() < 1.0, "{placed:?}");
+        let saved = layout.encode().unwrap();
+        let restored = PaneLayout::decode(&saved).unwrap();
+        assert!(restored.contains(Pane::Notifications));
+    }
+
+    #[test]
+    fn collapsed_notifications_return_at_their_side_and_width() {
+        let mut layout = PaneLayout::default();
+        layout.notifications.side = Side::Right;
+        layout.notifications.share = 0.25;
+        layout.sync_notifications();
+        draw(&mut layout, 2000.0);
+        let placed = columns(&layout.dock, 2000.0);
+        assert_eq!(placed.last().unwrap().0, Pane::Notifications);
+        layout.collapse_notifications();
+        assert!(!layout.contains(Pane::Notifications));
+        assert!(!layout.notifications.open);
+        assert_eq!(layout.notifications.side, Side::Right);
+        assert!((layout.notifications.share - 0.25).abs() < 0.01);
+        layout.open_notifications();
+        let placed = columns(&layout.dock, 2000.0);
+        let last = placed.last().unwrap();
+        assert_eq!(last.0, Pane::Notifications);
+        assert!((last.2 - 500.0).abs() < 1.0, "{placed:?}");
+    }
+
+    #[test]
+    fn notifications_switch_sides() {
+        let mut layout = PaneLayout::default();
+        layout.sync_notifications();
+        draw(&mut layout, 1728.0);
+        layout.switch_notifications_side();
+        assert!(layout.notifications.open);
+        assert_eq!(layout.notifications.side, Side::Right);
+        let placed = columns(&layout.dock, 1728.0);
+        assert_eq!(placed.last().unwrap().0, Pane::Notifications);
+    }
+
+    #[test]
+    fn closing_the_notifications_tab_collapses_them_where_they_were() {
+        let mut layout = PaneLayout::default();
+        layout.notifications.side = Side::Right;
+        layout.sync_notifications();
+        draw(&mut layout, 1728.0);
+        let before = layout.clone();
+        let path = layout.dock.find_tab(&Pane::Notifications).unwrap();
+        layout.dock.remove_tab(path);
+        layout.closed_notifications(&before);
+        assert!(!layout.notifications.open);
+        assert_eq!(layout.notifications.side, Side::Right);
+        layout.sync_notifications();
+        assert!(!layout.contains(Pane::Notifications), "stays collapsed");
     }
 }

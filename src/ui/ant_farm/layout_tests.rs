@@ -86,6 +86,7 @@ fn scene_with(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>, pr: &[&str]) 
         snapshot,
         hidden,
         pr_ready: &pr_ready,
+        building: &HashSet::new(),
         now_ms: 0,
     };
     layout(&input, RECT)
@@ -643,6 +644,7 @@ fn a_resize_moves_ants_without_walking() {
         snapshot: &s,
         hidden: &hidden,
         pr_ready: &pr_ready,
+        building: &HashSet::new(),
         now_ms: 0,
     };
     let smaller = layout(&input, Rect::from_min_size(Pos2::ZERO, vec2(900.0, 600.0)));
@@ -687,6 +689,7 @@ fn clicking_an_ant_reports_it() {
         snapshot: &s,
         hidden: &hidden,
         pr_ready: &pr_ready,
+        building: &HashSet::new(),
         now_ms: 0,
     };
     let scene = layout(&input, rect);
@@ -743,6 +746,7 @@ fn dragging_a_box_selects_the_ants_in_it() {
         snapshot: &s,
         hidden: &hidden,
         pr_ready: &pr_ready,
+        building: &HashSet::new(),
         now_ms: 0,
     };
     let scene = layout(&input, rect);
@@ -893,6 +897,29 @@ fn scenery_stays_on_the_surface_and_in_the_sky() {
     }
 }
 
+#[test]
+fn building_diggers_build() {
+    let s = snapshot();
+    let building: HashSet<NodeId> = ["working", "idle", "r1-coord"].map(id).into();
+    let input = FarmInput {
+        snapshot: &s,
+        hidden: &BTreeSet::new(),
+        pr_ready: &HashSet::new(),
+        building: &building,
+        now_ms: 0,
+    };
+    let scene = layout(&input, RECT);
+    let pose_of = |name: &str| scene.ant(&id(name)).unwrap().pose;
+    assert_eq!(pose_of("working"), Pose::Build);
+    assert!(scene.ant(&id("working")).unwrap().facing_right);
+    assert_eq!(pose_of("idle"), Pose::Sleep, "only working ants build");
+    assert_eq!(
+        pose_of("r1-coord"),
+        Pose::Stand,
+        "coordinators keep standing"
+    );
+}
+
 /// An ant removed from the fleet falls; one filtered out or changing state does not.
 #[test]
 fn only_removed_ants_fall() {
@@ -985,4 +1012,118 @@ fn a_dead_ant_falls_to_the_bottom() {
     assert!(!mid.upside_down);
     assert!((mid.alpha - 0.5).abs() < 0.01);
     assert_eq!(still.frame(RECT, 10.0 + STILL_FADE_S), None);
+}
+
+/// A crowded chamber in a narrow tunnel packs its ants side by side, spread across the
+/// chamber, rather than one per row down a tall farm.
+#[test]
+fn a_crowded_chamber_packs_side_by_side() {
+    let mut s = FleetSnapshot::default();
+    s.nodes
+        .push(node("queen", NodeKind::Queen, None, NodeState::Working));
+    for r in 0..6 {
+        let name = format!("r{r}");
+        s.runs.push(run(&name, 1, 4));
+        let workers = if r == 0 { 9 } else { 1 };
+        for w in 0..workers {
+            s.nodes.push(node(
+                &format!("{name}-w{w}"),
+                NodeKind::Worker,
+                Some(&name),
+                NodeState::Failed,
+            ));
+        }
+    }
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 1400.0));
+    let pr_ready = HashSet::new();
+    let hidden = BTreeSet::new();
+    let input = FarmInput {
+        snapshot: &s,
+        hidden: &hidden,
+        pr_ready: &pr_ready,
+        building: &HashSet::new(),
+        now_ms: 0,
+    };
+    let scene = layout(&input, rect);
+    let chamber = scene.tunnels[tunnel_of(&scene, "r0-w0")].chamber;
+    let ants: Vec<&Ant> = scene
+        .ants
+        .iter()
+        .filter(|a| a.id.as_str().starts_with("r0-"))
+        .collect();
+    let mut rows: Vec<f32> = ants.iter().map(|a| a.pos.y).collect();
+    rows.sort_by(f32::total_cmp);
+    rows.dedup();
+    let widest = rows
+        .iter()
+        .map(|y| ants.iter().filter(|a| a.pos.y == *y).count())
+        .max()
+        .unwrap();
+    assert!(
+        rows.len() <= widest,
+        "{} rows of up to {widest}",
+        rows.len()
+    );
+    for ant in ants {
+        // The name tag is two cells wide.
+        let tag = Rect::from_center_size(ant.pos, vec2(2.0 * ant.size, ant.size));
+        assert!(
+            tag.left() >= chamber.left() - 0.5 && tag.right() <= chamber.right() + 0.5,
+            "{} stays in its chamber",
+            ant.id.as_str()
+        );
+    }
+}
+
+/// A chamber ant's subagents, nested ones too, line up behind it in room it reserves:
+/// they never cover another ant or each other.
+#[test]
+fn subagent_trails_take_room_in_the_chamber() {
+    let mut s = FleetSnapshot::default();
+    s.runs = vec![run("r1", 1, 4)];
+    for name in ["a", "b", "c", "d"] {
+        s.nodes
+            .push(node(name, NodeKind::Worker, Some("r1"), NodeState::Working));
+    }
+    for (sub, parent) in [
+        ("s1", "a"),
+        ("s2", "a"),
+        ("s3", "a"),
+        ("s4", "s1"),
+        ("s5", "b"),
+    ] {
+        s.nodes
+            .push(node(sub, NodeKind::Subagent, None, NodeState::Working));
+        s.edges.push(Edge {
+            from: id(parent),
+            to: id(sub),
+            kind: EdgeKind::Subagent,
+        });
+    }
+    let scene = scene(&s);
+    let nested = ant(&scene, "s4");
+    assert!(matches!(&nested.spot, Spot::Trail(root, _) if *root == id("a")));
+    let boxes: Vec<(&str, Rect)> = scene
+        .ants
+        .iter()
+        .map(|a| {
+            (
+                a.id.0.as_str(),
+                Rect::from_center_size(a.pos, Vec2::splat(a.size)),
+            )
+        })
+        .collect();
+    for (i, (x, rx)) in boxes.iter().enumerate() {
+        for (y, ry) in &boxes[i + 1..] {
+            let overlap = rx.intersect(*ry);
+            assert!(
+                overlap.width() <= 0.5 || overlap.height() <= 0.5,
+                "{x} overlaps {y}"
+            );
+        }
+    }
+    let chamber = scene.tunnels[0].chamber;
+    for a in &scene.ants {
+        assert!(chamber.expand(1.0).contains(a.pos), "{} outside", a.id.0);
+    }
 }

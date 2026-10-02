@@ -71,6 +71,7 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `notify` | `title`, `message`, `severity` (`info` \| `warn` \| `urgent`), `url`, `agent` | `notify` | not destructive |
 | `ask_karl` | `question`, `context`, `severity` (`info` \| `warn` \| `urgent`), `url` | `ask` | not destructive |
 | `finish_session` | `summary`, `approval` (`karl` \| `trivial`), `outcome` (`done` \| `handed_over` \| `abandoned`), `pr_url`, `force` | `finish` (a `dry_run` check, then the real one) | destructive |
+| `clean_worktrees` | `dry_run` (**default true**), `ids` (needed with `dry_run: false`) | – (runs `orca`, `git`, `gh` itself) | destructive |
 
 `mark_pr_ready` is for fleet agents: the server is registered at user scope, so every Claude
 session (fleet agents in Orca terminals included) has it. It sends the caller's Orca identity
@@ -120,6 +121,18 @@ A closed finished terminal stays in the graph as a fading done node for 10 minut
 call both is in the tool descriptions and the server instructions (`src/mcp/lifecycle.rs`,
 `rules_text!`), and in the playbook's _Human in the loop_.
 
+`clean_worktrees` is the top bar's worktree cleanup (`src/worktrees.rs`) as a tool, so the
+Queen can run it on request. A worktree is removable only when no Orca terminal, process or
+live dispatch is in it, it has no uncommitted changes (the beads export aside) and no open PR,
+it is older than two hours and not pinned, and its HEAD is merged into a base branch (its
+base ref, `origin/HEAD`, local or remote `main`/`master`) or its PR is merged or closed with
+HEAD on a remote. Anything unknown (git unreadable, `gh` failing) keeps it. The dry run
+returns the plan with `removable_ids`; a real run removes only the `ids` passed that a fresh
+evaluation still finds removable, re-checks each right before `orca worktree rm` (no
+`--force`), and logs every attempt to `worktree-cleanup.jsonl` in the data dir. While it runs,
+`worktree-sweep.json` there makes the app show its broom. Folders under `~/orca/workspaces`
+that Orca doesn't list are reported, never touched.
+
 All tools set `openWorldHint: false`. Agent ids are node ids from `list_agents` or
 `fleet_status` (`term:…`, `dispatch:…`, `sub:…`). A terminal handle or an exact label also
 works.
@@ -129,6 +142,8 @@ works.
 - `close_agents` is a **dry run unless the chat passes `dry_run: false`**. The dry run
   returns the plan: targets, the `orca` commands it would run, and warnings such as a run
   losing its coordinator. The chat should show the plan to Karl before closing.
+- `clean_worktrees` is a **dry run unless the chat passes `dry_run: false` with the `ids`
+  Karl approved** from a dry run's plan.
 - `send_to_agent`, `press_key`, `broadcast_to_coordinators` and `set_whip` act on real
   agents or on saved settings. Their descriptions tell the model to confirm with Karl first; the Queen in auto mode
   skips that (Karl approved her actions up front).

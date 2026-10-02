@@ -2,7 +2,7 @@
 //! nudges, dry-run.
 //!
 //! Stored as JSON in the user's config dir (`~/Library/Application Support/Myrstack/settings.json`
-//! on macOS) with one top-level key per section (`whip`, `queen`, `voice`, `notifications`). Missing sections and
+//! on macOS) with one top-level key per section (`whip`, `queen`, `voice`, `notifications`, `envoy`). Missing sections and
 //! fields take their defaults, so older files load. A missing file gives the defaults; an
 //! unreadable or invalid one gives the defaults plus a warning.
 
@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::chat::settings::QueenSettings;
+use crate::envoy::settings::EnvoySettings;
 use crate::notify::NotifySettings;
 use crate::voice::settings::VoiceSettings;
 use crate::whip::rules::{DEFAULT_ABANDON_AFTER_MS, DEFAULT_THRESHOLD_MS};
@@ -33,6 +34,8 @@ pub struct Settings {
     pub voice: VoiceSettings,
     /// How notifications reach Karl: pop-ups, sounds, quiet mode.
     pub notifications: NotifySettings,
+    /// The Envoy session and its channels.
+    pub envoy: EnvoySettings,
 }
 
 /// Global whip configuration. Durations are in ms.

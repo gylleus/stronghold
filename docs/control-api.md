@@ -278,6 +278,8 @@ subagents or on workers whose terminal is gone.
 | `id` | string (required) | |
 | `text` | string (required) | may be empty when `enter` is true |
 | `enter` | bool | true: press Enter after the text |
+| `from` | string | the sender, for the message animation; else `origin`'s terminal, else the Queen |
+| `origin` | object | the caller's Orca identity (`send_to_agent` passes it) |
 
 ```json
 {"v":1,"method":"send","params":{"id":"term_…","text":"continue"}}
@@ -566,6 +568,24 @@ the terminal after `closing_in_ms` with the `plan` returned.
 → {"ok":true,"result":{"dry_run":false,"agent":{"id":"term:term_…",…},"finished":{…},
    "closing_in_ms":2000,"plan":{…},"notification":"delivered"}}
 ```
+
+### `agent_message`
+
+`{"from", "to", "kind"?}`. Draws a message between agents, which happened elsewhere, as an
+envelope flying from `from` to `to` in the graph and the ant farm; nothing is sent. Each end
+is a node id, a terminal handle, `run:<id>` (its coordinator), `dispatch:<id>`, `queen`,
+`karl` or `slack` (the outside world: the landing mound in the ant farm, the Queen in the
+graph). `kind` picks the look: `instruction`, `message` (default), `ask` (or `question`,
+`escalation`), `merge_ready`, `relay` (or `slack`, `envoy`), `nudge` or `status`. Unknown ends
+are ignored. Bus messages, `send`, `notify`, `ask`, whip nudges and Karl's typing are drawn
+already; this is for traffic the app can't see, such as the Envoy's relays.
+
+```json
+{"v":1,"method":"agent_message","params":{"from":"term_envoy","to":"run:r1","kind":"relay"}}
+→ {"ok":true,"result":{"drawn":true}}
+```
+
+In the app's own code, push a `traffic::AgentMessage` through `Traffic::sender()` instead.
 
 ## Notifications
 
