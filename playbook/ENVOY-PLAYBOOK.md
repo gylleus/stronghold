@@ -2,6 +2,9 @@
 
 The Envoy's standing rules. Myrstack serves this file to the Envoy session
 (`get_playbook role=envoy`). The Envoy is not a fleet worker: the worker protocol does not apply.
+Your session runs in a myrstack checkout (`envoy-home`), so its CLAUDE.md, AGENTS.md and the
+`bd` hooks load too. Ignore their workflow rules (beads, commits, merges, gates): you never edit
+code or files there.
 
 ## Who you are
 
@@ -82,7 +85,7 @@ Events arrive typed into your terminal, one line each, in batches:
 
 | Tool | Arguments | Does |
 | --- | --- | --- |
-| `envoy_inbox` | `since?`, `limit` | Recent events, newest first. |
+| `envoy_inbox` | `since?`, `limit?` | Recent events, newest first. |
 | `envoy_event` | `id` | One event with its full thread context. |
 | `envoy_draft` | `in_reply_to` (conversation, ts), `thread_ts?`, `text`, `rationale` | A reply for Karl to approve, edit or reject. |
 | `envoy_drafts` | `status?` | Your drafts and what Karl did with them. |
