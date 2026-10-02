@@ -69,8 +69,8 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `mark_pr_ready` | `pr_url`, `title`, `summary` | `pr_ready` (queued in `pr-ready.jsonl` when the app is down) | not destructive, idempotent |
 | `review_queue` | – | `review_queue` (the saved queue when the app is down) | read-only |
 | `notify` | `title`, `message`, `severity` (`info` \| `warn` \| `urgent`), `url`, `agent` | `notify` | not destructive |
-| `ask_karl` | `question`, `context`, `severity` (`warn` \| `urgent`), `url` | `ask` | not destructive |
-| `finish_session` | `summary`, `outcome` (`done` \| `handed_over` \| `abandoned`), `pr_url`, `force` | `finish` (a `dry_run` check, then the real one) | destructive |
+| `ask_karl` | `question`, `context`, `severity` (`info` \| `warn` \| `urgent`), `url` | `ask` | not destructive |
+| `finish_session` | `summary`, `approval` (`karl` \| `trivial`), `outcome` (`done` \| `handed_over` \| `abandoned`), `pr_url`, `force` | `finish` (a `dry_run` check, then the real one) | destructive |
 | `clean_worktrees` | `dry_run` (**default true**), `ids` (needed with `dry_run: false`) | – (runs `orca`, `git`, `gh` itself) | destructive |
 
 `mark_pr_ready` is for fleet agents: the server is registered at user scope, so every Claude
@@ -102,7 +102,11 @@ session whose last turn ended (`stop_reason: end_turn`) on a line ending in `?` 
 last four lines also shows needs input, until the next prompt (`src/claude/turns.rs`,
 `src/ask.rs`). Waiting nodes are not nudged by the whip.
 
-`finish_session` lets an agent that is truly done close its own terminal. The server first
+`finish_session` lets an agent close its own terminal once Karl said it can go. Karl often
+has follow-ups, so an agent that thinks it's done asks him first (`ask_karl`, info: "Done:
+… Anything else, or can I close?") and stays; `approval` (required) is `karl` once he said go,
+or `trivial` for a tiny one-shot task with nothing to follow up. Without it the call is
+refused before reaching the app. The server then
 asks the app (`finish` with `dry_run`) who the caller is and what the fleet says: workers are
 refused (their coordinator reuses or releases them), and a coordinator with open tasks or an
 agent with a PR still in the review queue gets a problem. It then checks the caller's git

@@ -13,8 +13,9 @@ Coordinator: Karl's coordinator Claude Code session. Human: Karl. You are a work
 Orca dispatch — you have a `taskId` and a `dispatchId` in your preamble. If you do not have
 both, you are NOT under a dispatch: do the work as an ordinary handoff and send no lifecycle
 messages. Such a standalone session reaches Karl itself, by the playbook's _Human in the loop_:
-`ask_karl` before ending any turn that waits on his answer, and `finish_session` once your work
-is merged or handed over and nothing is left, instead of idling.
+`ask_karl` before ending any turn that waits on his answer, including "Done: <one line>.
+Anything else, or can I close?" when you think you're done, and `finish_session` only once he
+says you can go (or for a tiny one-shot task with nothing to follow up).
 
 ## Lifecycle
 

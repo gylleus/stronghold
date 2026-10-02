@@ -8,7 +8,9 @@ use serde_json::{Value, json};
 
 use crate::ask::{AskRequest, MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS};
 use crate::control::protocol::Params;
-use crate::finish::{FinishOutcome, FinishRequest, MAX_SUMMARY_CHARS, git_problems};
+use crate::finish::{
+    APPROVAL_MISSING, Approval, FinishOutcome, FinishRequest, MAX_SUMMARY_CHARS, git_problems,
+};
 use crate::mcp::backend::{CallError, Control};
 use crate::mcp::notify::reply_text;
 use crate::mcp::tools::ToolOutput;
@@ -24,12 +26,14 @@ question first, then end your turn. Myrstack only sees prompts and menus on your
 question in the chat reaches Karl only through ask_karl (Myrstack also flags a turn that ends \
 on a question, as a backstop). Don't use it for permission prompts or AskUserQuestion menus \
 (already detected) or for status; workers under a coordinator ask their coordinator instead. \
-Leaving: when you're truly done (work merged or handed over, review addressed, nothing left), \
-call finish_session with a one-line summary instead of sitting idle: Myrstack records the \
-outcome, shows you done and closes your terminal; your worktree and branch are kept. It refuses \
-while you have uncommitted changes, commits neither merged nor pushed, or a PR still waiting on \
-Karl's review (your terminal is needed for his comments); pass force only when Karl said to stop \
-anyway. Workers under a coordinator report to it instead; it releases them."
+Done: when you think you're done, don't close yourself: Karl often has follow-ups or feedback. \
+Call ask_karl (severity info) with \"Done: <one line>. Anything else, or can I close?\" (that is \
+your handover; put the PR in url) and stay. Call finish_session only once Karl says you can go \
+(approval karl), or for a tiny one-shot task with nothing to follow up (approval trivial). It \
+records the outcome, shows you done and closes your terminal; your worktree and branch are kept. \
+It refuses while you have uncommitted changes, commits neither merged nor pushed, or a PR still \
+waiting on Karl's review; pass force only when Karl said to stop anyway. Workers under a \
+coordinator report to it instead; it releases them."
     };
 }
 pub(crate) use rules_text;
@@ -51,8 +55,11 @@ pub fn definitions() -> Vec<Value> {
                  plain-text question (a decision, a go-ahead, a missing fact), then end your \
                  turn; don't keep working on anything that depends on the answer. Without it \
                  a question in the chat can sit unseen: Myrstack only detects permission \
-                 prompts and menus by itself. Not for permission prompts or AskUserQuestion \
-                 menus (already detected), progress or handovers (use notify). Workers under a \
+                 prompts and menus by itself. When you think you're done, ask it here too \
+                 (severity info): \"Done: <one line>. Anything else, or can I close?\", with \
+                 the PR in url; that is your handover, and Karl may have follow-ups, so stay \
+                 until he answers. Not for permission prompts or AskUserQuestion menus \
+                 (already detected) or progress. Workers under a \
                  coordinator ask the coordinator instead. If Myrstack isn't running it \
                  errors: ask in the chat and end your turn."
             ),
@@ -69,9 +76,9 @@ pub fn definitions() -> Vec<Value> {
                     },
                     "severity": {
                         "type": "string",
-                        "enum": ["warn", "urgent"],
+                        "enum": ["info", "warn", "urgent"],
                         "default": "warn",
-                        "description": "urgent only when work is stalled and can't wait; it gets through Karl's quiet mode.",
+                        "description": "info for \"I'm done, can I close?\"; warn when work waits on the answer; urgent only when it's stalled and can't wait (it gets through Karl's quiet mode).",
                     },
                     "url": {
                         "type": "string",
@@ -91,9 +98,12 @@ pub fn definitions() -> Vec<Value> {
         json!({
             "name": "finish_session",
             "title": "Finish this session",
-            "description": "Ends your own session when you are truly done, instead of sitting \
-                idle until Karl closes you: your work is merged or handed over, any review is \
-                addressed, and nothing is left to do. Myrstack records the outcome (shown to \
+            "description": "Ends your own session, once Karl said you can go. Don't close \
+                yourself just because you think you're done: Karl often has follow-up questions \
+                or feedback, so first ask him with ask_karl (\"Done: <one line>. Anything else, \
+                or can I close?\") and stay; call this when he says go (approval: karl). The \
+                only exception is a tiny one-shot task with nothing to follow up, such as a \
+                lookup or a one-line fix (approval: trivial). Myrstack records the outcome (shown to \
                 Karl in his inbox), shows your node as done and closes your terminal a couple of \
                 seconds after replying, so make it your last call and end your turn right \
                 after. Your git worktree and branch are kept (cleanup is the coordinator's or \
@@ -104,7 +114,7 @@ pub fn definitions() -> Vec<Value> {
                 tasks; fix those first, or pass force: true only when Karl explicitly told you to \
                 stop anyway (the overridden problems are recorded and shown to him). A worker \
                 under a coordinator can't finish itself: report to your coordinator \
-                (worker_done, merge_ready) and it reuses or releases you. Send any handover notify before this.",
+                (worker_done, merge_ready) and it reuses or releases you.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -122,13 +132,18 @@ pub fn definitions() -> Vec<Value> {
                         "type": "string",
                         "description": "The PR the work went into, if any.",
                     },
+                    "approval": {
+                        "type": "string",
+                        "enum": ["karl", "trivial"],
+                        "description": "karl: Karl told you that you can go. trivial: a tiny one-shot task with nothing he could follow up on. Anything else: ask him first and stay.",
+                    },
                     "force": {
                         "type": "boolean",
                         "default": false,
                         "description": "Leave despite the guards' problems. Only when Karl said so.",
                     },
                 },
-                "required": ["summary"],
+                "required": ["summary", "approval"],
             },
             "annotations": {
                 "title": "Finish this session",
@@ -219,9 +234,10 @@ fn finish_session(
             p.str("outcome")?.map(str::to_owned),
             p.str("pr_url")?.map(str::to_owned),
             p.bool("force")?.unwrap_or(false),
+            p.str("approval")?.map(str::trim).map(str::to_owned),
         ))
     })();
-    let (summary, outcome, pr_url, force) = match fields {
+    let (summary, outcome, pr_url, force, approval) = match fields {
         Ok(f) => f,
         Err(e) => return error(format!("Invalid arguments: {}", e.message)),
     };
@@ -239,9 +255,25 @@ fn finish_session(
             }
         },
     };
+    let approval = match approval.as_deref().filter(|a| !a.is_empty()) {
+        None => {
+            return error(format!(
+                "Not finished; your terminal stays open. {APPROVAL_MISSING}."
+            ));
+        }
+        Some(a) => match Approval::parse(a) {
+            Some(a) => a,
+            None => {
+                return error(format!(
+                    "Invalid arguments: unknown approval {a:?}; use karl or trivial"
+                ));
+            }
+        },
+    };
     let mut request = FinishRequest {
         summary,
         outcome,
+        approval: Some(approval),
         pr_url,
         force,
         forced: Vec::new(),

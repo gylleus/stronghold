@@ -446,7 +446,7 @@ fn ask_and_finish_parse_into_commands() {
     assert_eq!(ask.origin.terminal_handle.as_deref(), Some("term_a"));
     assert!(ControlCommand::parse("ask", &json!({})).unwrap().is_err());
 
-    let params = json!({"summary": "Merged", "outcome": "done", "origin": {"pane_key": "a:b"}});
+    let params = json!({"summary": "Merged", "approval": "karl", "origin": {"pane_key": "a:b"}});
     let Some(Ok(ControlCommand::Finish(finish))) = ControlCommand::parse("finish", &params) else {
         panic!("finish parses");
     };

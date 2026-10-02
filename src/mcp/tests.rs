@@ -1949,14 +1949,19 @@ fn ask_karl_and_finish_session_are_listed_with_when_to_call_them() {
         .iter()
         .find(|t| t["name"] == "finish_session")
         .unwrap();
-    assert_eq!(finish["inputSchema"]["required"], json!(["summary"]));
+    assert_eq!(
+        finish["inputSchema"]["required"],
+        json!(["summary", "approval"])
+    );
     assert_eq!(
         finish["inputSchema"]["properties"]["outcome"]["enum"],
         json!(["done", "handed_over", "abandoned"])
     );
     let finish_text = finish["description"].as_str().unwrap();
     for phrase in [
-        "truly done",
+        "once Karl said you can go",
+        "Anything else, or can I close?",
+        "trivial",
         "worktree and branch are kept",
         "force",
         "coordinator",
@@ -1970,7 +1975,8 @@ fn ask_karl_and_finish_session_are_listed_with_when_to_call_them() {
     let instructions = init["result"]["instructions"].as_str().unwrap();
     assert!(instructions.ends_with(lifecycle::RULES));
     assert!(lifecycle::RULES.contains("call ask_karl"));
-    assert!(lifecycle::RULES.contains("call finish_session"));
+    assert!(lifecycle::RULES.contains("finish_session only once Karl says you can go"));
+    assert!(lifecycle::RULES.contains("Anything else, or can I close?"));
     // notify points plain questions at ask_karl.
     assert!(notify::RULES.contains("ask_karl"));
 }
@@ -2013,9 +2019,9 @@ fn ask_karl_refuses_bad_arguments_and_says_when_myrstack_is_down() {
     let r = call(
         &mut server,
         "ask_karl",
-        json!({"question": "Ok?", "severity": "info"}),
+        json!({"question": "Ok?", "severity": "loud"}),
     );
-    assert!(is_error(&r), "info isn't a question's severity");
+    assert!(is_error(&r));
     assert!(server.control().calls.is_empty());
 
     let mut down = agent_server(FakeControl::default().reply("ask", Err(CallError::NotRunning)));
@@ -2075,7 +2081,7 @@ fn finish_session_checks_then_finishes() {
     let r = call(
         &mut server,
         "finish_session",
-        json!({"summary": "Fixed the retry bug; merged into main", "pr_url": "https://github.com/o/r/pull/3"}),
+        json!({"summary": "Fixed the retry bug; merged into main", "pr_url": "https://github.com/o/r/pull/3", "approval": "karl"}),
     );
     assert!(!is_error(&r), "{r}");
     let t = text(&r);
@@ -2093,6 +2099,7 @@ fn finish_session_checks_then_finishes() {
     assert_eq!(calls[1]["pr_url"], "https://github.com/o/r/pull/3");
     assert_eq!(calls[1]["origin"]["terminal_handle"], "term_442fcb9f");
     assert_eq!(calls[1]["forced"], json!([]));
+    assert_eq!(calls[1]["approval"], "karl");
 }
 
 #[test]
@@ -2114,7 +2121,11 @@ fn finish_session_refuses_with_problems_unless_forced() {
         check: check.clone(),
         ..FinishControl::default()
     });
-    let r = call(&mut server, "finish_session", json!({"summary": "done"}));
+    let r = call(
+        &mut server,
+        "finish_session",
+        json!({"summary": "done", "approval": "karl"}),
+    );
     assert!(is_error(&r));
     let t = text(&r);
     assert!(
@@ -2133,7 +2144,7 @@ fn finish_session_refuses_with_problems_unless_forced() {
     let r = call(
         &mut forced,
         "finish_session",
-        json!({"summary": "Karl called it off", "outcome": "abandoned", "force": true}),
+        json!({"summary": "Karl called it off", "outcome": "abandoned", "force": true, "approval": "karl"}),
     );
     assert!(!is_error(&r), "{r}");
     assert!(text(&r).contains("left despite"), "{}", text(&r));
@@ -2157,7 +2168,7 @@ fn finish_session_passes_on_a_refusal_and_myrstack_being_down() {
     let r = call(
         &mut server,
         "finish_session",
-        json!({"summary": "done", "force": true}),
+        json!({"summary": "done", "force": true, "approval": "trivial"}),
     );
     assert!(is_error(&r));
     assert!(
@@ -2168,7 +2179,11 @@ fn finish_session_passes_on_a_refusal_and_myrstack_being_down() {
     assert_eq!(server.control().calls.len(), 1);
 
     let mut down = agent_server(FakeControl::default().reply("finish", Err(CallError::NotRunning)));
-    let r = call(&mut down, "finish_session", json!({"summary": "done"}));
+    let r = call(
+        &mut down,
+        "finish_session",
+        json!({"summary": "done", "approval": "karl"}),
+    );
     assert!(is_error(&r));
     assert!(text(&r).contains("Tell Karl in the chat"), "{}", text(&r));
 
@@ -2176,10 +2191,34 @@ fn finish_session_passes_on_a_refusal_and_myrstack_being_down() {
     let r = call(
         &mut bad,
         "finish_session",
-        json!({"summary": "done", "outcome": "merged"}),
+        json!({"summary": "done", "outcome": "merged", "approval": "karl"}),
+    );
+    assert!(is_error(&r));
+    let r = call(
+        &mut bad,
+        "finish_session",
+        json!({"summary": "done", "approval": "me"}),
     );
     assert!(is_error(&r));
     assert!(bad.control().calls.is_empty());
+}
+
+#[test]
+fn finish_session_without_karls_go_ahead_asks_him_first() {
+    let mut server = agent_server(FinishControl::default());
+    let r = call(
+        &mut server,
+        "finish_session",
+        json!({"summary": "Merged into main"}),
+    );
+    assert!(is_error(&r));
+    let t = text(&r);
+    assert!(
+        t.starts_with("Not finished; your terminal stays open."),
+        "{t}"
+    );
+    assert!(t.contains("ask Karl first (ask_karl"), "{t}");
+    assert!(server.control().calls.is_empty(), "nothing reaches the app");
 }
 
 /// A real cleanup needs the approved ids; bad arguments fail before Orca is asked anything.

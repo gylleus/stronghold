@@ -148,6 +148,7 @@ impl MyrstackApp {
             handle: node.terminal_handle.clone(),
             label: node.label.clone(),
             outcome: req.outcome,
+            approval: req.approval.unwrap_or_default(),
             summary: req.summary.clone(),
             pr_url: req.pr_url.clone(),
             forced: forced.clone(),
