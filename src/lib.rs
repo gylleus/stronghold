@@ -13,6 +13,7 @@ pub mod close;
 pub mod codex;
 pub mod control;
 pub mod detect;
+pub mod envoy;
 pub mod finish;
 pub mod fleet;
 pub mod hotkey;
