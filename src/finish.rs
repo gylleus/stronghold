@@ -2,7 +2,8 @@
 //! leaving with work stranded, and the record of how each finished session ended.
 //!
 //! The MCP server checks the agent's git worktree ([`git_problems`]); the app checks the fleet
-//! (an open dispatch, a coordinator's open tasks, a PR still in Karl's review queue). Past the
+//! ([`fleet_problems`]: workers belong to their coordinator, a coordinator's open tasks, a PR
+//! still in Karl's review queue). Past the
 //! guards the app records a [`FinishedSession`] in `<data dir>/finished.jsonl`, closes the
 //! terminal with the same plan as `close_agents`, and shows the node as done while it fades
 //! out. The worktree and branch are kept: removing them is the coordinator's post-merge cleanup
@@ -243,10 +244,15 @@ pub fn fleet_problems(
         }
         NodeKind::Worker if has_active_dispatch(node) => Some(format!(
             "you're a worker in run {} (task {}): report to your coordinator as the worker \
-             protocol says (merge_ready, or an escalation) and let it release your terminal; \
-             a worker never closes itself while its dispatch is open",
+             protocol says (worker_done, merge_ready or an escalation); it reuses or releases \
+             your terminal",
             node.run_id.as_deref().unwrap_or("?"),
             node.task_id.as_deref().unwrap_or("?"),
+        )),
+        NodeKind::Worker => Some(format!(
+            "you're a worker in run {}: after worker_done your terminal is your coordinator's \
+             to reuse or release (or Karl's to close), so end your turn and idle",
+            node.run_id.as_deref().unwrap_or("?"),
         )),
         _ => None,
     };

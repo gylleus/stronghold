@@ -103,8 +103,8 @@ pub fn definitions() -> Vec<Value> {
                 merged or Karl says you're not needed), and while a coordinator's run has open \
                 tasks; fix those first, or pass force: true only when Karl explicitly told you to \
                 stop anyway (the overridden problems are recorded and shown to him). A worker \
-                with an open dispatch can't finish itself: report to your coordinator \
-                (merge_ready) and it releases you. Send any handover notify before this.",
+                under a coordinator can't finish itself: report to your coordinator \
+                (worker_done, merge_ready) and it reuses or releases you. Send any handover notify before this.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

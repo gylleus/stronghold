@@ -202,7 +202,7 @@ mod fleet {
     }
 
     #[test]
-    fn a_worker_with_an_open_dispatch_reports_to_its_coordinator() {
+    fn a_worker_reports_to_its_coordinator_instead() {
         let mut w = node(NodeKind::Worker);
         w.run_id = Some("run_1".into());
         w.task_id = Some("task_9".into());
@@ -213,10 +213,11 @@ mod fleet {
         let refusal = refusal.expect("refused");
         assert!(refusal.contains("run run_1 (task task_9)"), "{refusal}");
         assert!(refusal.contains("coordinator"), "{refusal}");
-        // Settled: nothing holds it.
+        // Settled: the coordinator still reuses or releases it.
         w.worker_state = Some(WorkerState::Succeeded);
         w.dispatch_status = Some(DispatchStatus::Completed);
-        assert_eq!(fleet_problems(&w, &snapshot(0), &[]), (None, Vec::new()));
+        let refusal = fleet_problems(&w, &snapshot(0), &[]).0.expect("refused");
+        assert!(refusal.contains("after worker_done"), "{refusal}");
     }
 
     #[test]
