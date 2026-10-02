@@ -157,9 +157,8 @@ impl AppEnvoy {
         self.pending.clear();
     }
 
-    fn merge_polled(&mut self, inbox: Inbox, events: Vec<InboundEvent>) {
+    fn merge_polled(&mut self, mut inbox: Inbox, events: Vec<InboundEvent>) {
         self.pending.retain(|e| inbox.get(&e.id()).is_some());
-        let mut inbox = inbox;
         self.acknowledged.retain(|id| inbox.get(id).is_some());
         inbox.mark_forwarded(&self.acknowledged.iter().cloned().collect::<Vec<_>>());
         self.inbox = inbox;
@@ -193,8 +192,12 @@ impl AppEnvoy {
 
     pub fn apply_status(&self, status: &mut EnvoyStatus) {
         status.bridge = self.bridge;
-        status.pending_drafts = self.drafts.as_ref().map_or(0, DraftQueue::pending_count);
+        status.pending_drafts = self.pending_count();
         status.dry_run = self.settings.dry_run;
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.drafts.as_ref().map_or(0, DraftQueue::pending_count)
     }
 
     pub fn drafts(&self) -> &[Draft] {
@@ -295,13 +298,26 @@ impl AppEnvoy {
         &mut self,
         id: &str,
         edited_text: Option<&str>,
+        queen_ready: bool,
         queen: impl FnOnce(&str) -> bool,
     ) -> Result<bool, String> {
+        let proposal = self
+            .drafts()
+            .iter()
+            .any(|d| d.id == id && d.kind == DraftKind::TaskProposal);
+        if !self.settings.dry_run {
+            if proposal && !queen_ready {
+                return Err("Queen chat is busy; try approval when she is ready".into());
+            }
+            if !proposal {
+                self.worker()?;
+            }
+        }
         let queue = self
             .drafts
             .as_mut()
             .ok_or("Envoy draft store unavailable")?;
-        let completed = apply_approval(
+        apply_approval(
             queue,
             id,
             edited_text,
@@ -326,8 +342,7 @@ impl AppEnvoy {
                     Ok(false)
                 }
             },
-        )?;
-        Ok(completed)
+        )
     }
 
     fn poll_updates(&mut self) -> (Vec<Incoming>, Vec<AgentMessage>) {
@@ -367,6 +382,17 @@ impl AppEnvoy {
                     self.notices = current;
                 }
                 Update::Sent { id, result } => {
+                    if let Err(error) = &result {
+                        notifications.push(
+                            Incoming::new(
+                                Source::Envoy,
+                                Severity::Warn,
+                                "Envoy reply failed",
+                                error,
+                            )
+                            .with_target(DRAFTS_TARGET),
+                        );
+                    }
                     if let Some(from) = self.outgoing.remove(&id)
                         && result.is_ok()
                     {
@@ -432,6 +458,33 @@ impl AppEnvoy {
         Ok(record)
     }
 
+    fn edit(&mut self, id: &str, text: &str) -> Result<(), String> {
+        self.queue()?.edit(id, text, now_ms())
+    }
+
+    fn panel_action(
+        &mut self,
+        action: crate::ui::envoy::DraftAction,
+        queen_ready: bool,
+        queen: impl FnOnce(&str) -> bool,
+    ) -> (String, Result<bool, String>) {
+        match action {
+            crate::ui::envoy::DraftAction::Approve { id, text } => {
+                let result = self
+                    .edit(&id, &text)
+                    .and_then(|()| self.approve(&id, None, queen_ready, queen));
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::Reject(id) => {
+                let result = self
+                    .queue()
+                    .and_then(|q| q.reject(&id, now_ms()))
+                    .map(|()| false);
+                (id, result)
+            }
+        }
+    }
+
     fn queue(&mut self) -> Result<&mut DraftQueue, String> {
         self.drafts
             .as_mut()
@@ -449,42 +502,25 @@ impl MyrstackApp {
             self.envoy_core.error.as_deref(),
         );
         if let Some(action) = action {
-            let (id, result) = match action {
-                crate::ui::envoy::DraftAction::Approve { id, text } => {
-                    let result = self
-                        .envoy_edit(&id, &text)
-                        .and_then(|()| self.envoy_approve(&id, None));
-                    (id, result)
-                }
-                crate::ui::envoy::DraftAction::Reject(id) => {
-                    let result = self.envoy_reject(&id);
-                    (id, result)
-                }
-            };
-            self.envoy_panel.result(&id, result);
+            let ready = self.chat_ready();
+            let chat = &mut self.chat;
+            let (id, result) = self
+                .envoy_core
+                .panel_action(action, ready, |text| chat.session_mut().send(text));
+            if matches!(result, Ok(true)) {
+                self.open_chat();
+            }
+            self.envoy_panel.result(&id, result.map(|_| ()));
         }
     }
 
     pub fn envoy_approve(&mut self, id: &str, edited_text: Option<&str>) -> Result<(), String> {
-        let dry_run = self.envoy_core.settings.dry_run;
-        let proposal = self
-            .envoy_core
-            .drafts()
-            .iter()
-            .any(|d| d.id == id && d.kind == DraftKind::TaskProposal);
-        if !dry_run {
-            if proposal && !self.chat_ready() {
-                return Err("Queen chat is busy; try approval when she is ready".into());
-            }
-            if !proposal {
-                self.envoy_core.worker()?;
-            }
-        }
+        let ready = self.chat_ready();
         let chat = &mut self.chat;
         let completed = self
             .envoy_core
-            .approve(id, edited_text, |text| chat.session_mut().send(text))?;
-        if completed && proposal {
+            .approve(id, edited_text, ready, |text| chat.session_mut().send(text))?;
+        if completed {
             self.open_chat();
         }
         Ok(())
@@ -494,7 +530,7 @@ impl MyrstackApp {
         self.envoy_core.queue()?.reject(id, now_ms())
     }
     pub fn envoy_edit(&mut self, id: &str, text: &str) -> Result<(), String> {
-        self.envoy_core.queue()?.edit(id, text, now_ms())
+        self.envoy_core.edit(id, text)
     }
     pub fn envoy_drafts(&self) -> &[Draft] {
         self.envoy_core.drafts()

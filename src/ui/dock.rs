@@ -27,6 +27,7 @@ pub enum Pane {
     Conversation,
     /// The notification history, newest first.
     Notifications,
+    /// Pending Envoy drafts and delivery history.
     Envoy,
 }
 
@@ -198,6 +199,7 @@ impl PaneLayout {
         }
     }
 
+    /// Opens the drafts beside the details, or brings its existing tab forward.
     pub fn open_envoy(&mut self) {
         if !self.contains(Pane::Envoy) {
             self.dock

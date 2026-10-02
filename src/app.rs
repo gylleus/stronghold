@@ -500,11 +500,7 @@ impl MyrstackApp {
 
     /// The Queen's details: the review queue, her header and fleet summary, and broadcast.
     fn queen_details(&mut self, ui: &mut egui::Ui, now_ms: i64) {
-        let pending = self
-            .envoy_drafts()
-            .iter()
-            .filter(|d| d.status == crate::envoy::drafts::DraftStatus::Pending)
-            .count();
+        let pending = self.envoy_core.pending_count();
         if ui.button(format!("Envoy drafts ({pending})")).clicked() {
             self.envoy_core.open_request = true;
         }

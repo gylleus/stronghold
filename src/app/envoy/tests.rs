@@ -271,14 +271,14 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
             panic!("pointer approval missing");
         };
         assert_eq!(text, edited);
-        let result = core
-            .queue()
-            .unwrap()
-            .edit(&id, &text, now_ms())
-            .and_then(|()| {
-                core.approve(&id, None, |_| panic!("reply must not reach Queen"))
-                    .map(|_| ())
-            });
+        let (_, result) = core.panel_action(
+            DraftAction::Approve {
+                id: id.clone(),
+                text,
+            },
+            true,
+            |_| panic!("reply must not reach Queen"),
+        );
         if secret {
             assert!(result.is_err());
             assert_eq!(core.drafts()[0].status, DraftStatus::Pending);
@@ -295,7 +295,10 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
                     DraftStatus::Sent
                 }
             );
-            assert!(core.approve(&id, None, |_| true).is_err(), "no second send");
+            assert!(
+                core.approve(&id, None, true, |_| true).is_err(),
+                "no second send"
+            );
         }
         let sends = sent.lock().unwrap();
         assert_eq!(sends.len(), usize::from(!dry_run && !secret));
@@ -426,4 +429,45 @@ fn seed_envoy_panel_fixture() {
         ron::to_string(&state).unwrap(),
     )]);
     std::fs::write(dir.join("app.ron"), ron::to_string(&storage).unwrap()).unwrap();
+}
+
+#[test]
+fn send_failure_raises_targeted_warning_and_keeps_history_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, _commands, updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    let draft = core
+        .queue()
+        .unwrap()
+        .create(Draft::reply(
+            ReplyTo {
+                conversation: "C123".into(),
+                ts: "1.000001".into(),
+            },
+            None,
+            "Reply".into(),
+            "Requested".into(),
+            0,
+        ))
+        .unwrap();
+    core.queue()
+        .unwrap()
+        .begin_approval(&draft.id, None, false, 0)
+        .unwrap();
+    updates
+        .send(Update::Sent {
+            id: draft.id,
+            result: Err("fixture send failed".into()),
+        })
+        .unwrap();
+    let (notices, _) = core.poll_updates();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].target.as_deref(), Some(DRAFTS_TARGET));
+    assert_eq!(notices[0].severity, Severity::Warn);
+    assert_eq!(core.drafts()[0].status, DraftStatus::Failed);
+    assert_eq!(
+        core.drafts()[0].error.as_deref(),
+        Some("fixture send failed")
+    );
 }

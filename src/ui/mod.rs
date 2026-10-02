@@ -11,6 +11,7 @@ pub mod daylight;
 pub mod dictation;
 pub mod dock;
 pub mod envelope;
+pub mod envoy;
 pub mod frame_stats;
 pub mod graph;
 pub mod history;
@@ -40,5 +41,3 @@ pub mod whip_log;
 pub mod whip_now;
 pub mod widgets;
 pub mod worktrees;
-
-pub mod envoy;

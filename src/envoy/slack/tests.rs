@@ -8,6 +8,7 @@ struct Fake {
     replies: VecDeque<Value>,
     methods: Vec<String>,
     subscriptions: Vec<(PathBuf, String)>,
+    subscribe_error: Option<String>,
 }
 impl SlackSender for Fake {
     fn send(&mut self, _: &OutboundMessage) -> Result<(), String> {
@@ -24,7 +25,7 @@ impl SlackIo for Fake {
     }
     fn subscribe(&mut self, dir: &Path, channel: &str) -> Result<(), String> {
         self.subscriptions.push((dir.into(), channel.into()));
-        Ok(())
+        self.subscribe_error.clone().map_or(Ok(()), Err)
     }
 }
 fn channel(dir: &Path) -> SlackChannel<Fake> {
@@ -303,7 +304,7 @@ fn bridge_error_survives_successful_subscribe_until_new_feed_line() {
 }
 
 #[test]
-fn search_and_history_stop_at_five_pages_without_advancing_watermarks() {
+fn search_and_history_bound_catchup_and_report_skipped_older_messages() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = channel(dir.path());
     c.io.replies =
@@ -314,7 +315,10 @@ fn search_and_history_stop_at_five_pages_without_advancing_watermarks() {
             .contains("5 pages")
     );
     assert_eq!(c.io.methods.len(), 5);
-    assert!(c.inbox.poll_watermarks.is_empty());
+    assert_eq!(
+        c.inbox.poll_watermarks[&format!("mention:{}", c.settings.karl_user_id)],
+        NOW
+    );
     c.io.methods.clear();
     c.io.replies = std::iter::repeat_n(
         json!({"messages":[],"response_metadata":{"next_cursor":"next"}}),
@@ -327,5 +331,44 @@ fn search_and_history_stop_at_five_pages_without_advancing_watermarks() {
             .contains("5 pages")
     );
     assert_eq!(c.io.methods.len(), 5);
-    assert!(c.inbox.poll_watermarks.is_empty());
+    assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW);
+}
+
+#[test]
+fn subscription_command_retry_recovers_even_in_a_quiet_channel() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("heartbeat"),
+        jiff::Timestamp::from_millisecond(NOW).unwrap().to_string(),
+    )
+    .unwrap();
+    let mut c = channel(dir.path());
+    c.io.subscribe_error = Some("Subscription command failed".into());
+    c.poll(NOW).unwrap();
+    assert_eq!(c.health(), BridgeStatus::Stale);
+    assert!(!c.command_errors.is_empty());
+    c.io.subscribe_error = None;
+    fs::write(
+        dir.path().join("heartbeat"),
+        jiff::Timestamp::from_millisecond(NOW + 120_000)
+            .unwrap()
+            .to_string(),
+    )
+    .unwrap();
+    c.poll(NOW + 120_000).unwrap();
+    assert!(c.command_errors.is_empty());
+    assert_eq!(c.health(), BridgeStatus::Ok);
+    let mut saved = Inbox::default();
+    saved
+        .subscription_errors
+        .insert("C123".into(), "Subscription command failed".into());
+    let mut restarted = SlackChannel::new(
+        Fake::default(),
+        saved,
+        dir.path().join("restart.json"),
+        dir.path().into(),
+        c.settings.clone(),
+    );
+    restarted.poll(NOW).unwrap();
+    assert_eq!(restarted.health(), BridgeStatus::Ok);
 }

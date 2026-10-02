@@ -19,6 +19,7 @@ pub enum DraftAction {
 pub struct DraftsPanel {
     edits: HashMap<String, String>,
     errors: HashMap<String, String>,
+    last_action_at: Option<f64>,
 }
 
 impl DraftsPanel {
@@ -55,6 +56,12 @@ impl DraftsPanel {
         self.errors
             .retain(|id, _| drafts.iter().any(|d| d.id == *id));
         let mut action = None;
+        let now = ui.input(|i| i.time);
+        let ready = self.last_action_at.is_none_or(|at| now - at >= 0.6);
+        if !ready {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
         ui.heading("Envoy drafts");
         if dry_run {
             ui.label(DRY_RUN_BANNER);
@@ -104,13 +111,15 @@ impl DraftsPanel {
                                     "Approve"
                                 };
                                 // Keyboard activation must never authorize an outbound message.
-                                if ui.button(approve).clicked_by(PointerButton::Primary) {
+                                let response = ui.add_enabled(ready, egui::Button::new(approve));
+                                if deliberate_click(&response) {
                                     action = Some(DraftAction::Approve {
                                         id: draft.id.clone(),
                                         text: text.clone(),
                                     });
                                 }
-                                if ui.button("Reject").clicked_by(PointerButton::Primary) {
+                                let response = ui.add_enabled(ready, egui::Button::new("Reject"));
+                                if deliberate_click(&response) {
                                     action = Some(DraftAction::Reject(draft.id.clone()));
                                 }
                             });
@@ -139,8 +148,17 @@ impl DraftsPanel {
                         }
                     });
             });
+        if action.is_some() {
+            self.last_action_at = Some(now);
+        }
         action
     }
+}
+
+fn deliberate_click(response: &egui::Response) -> bool {
+    response.clicked_by(PointerButton::Primary)
+        && !response.double_clicked_by(PointerButton::Primary)
+        && !response.triple_clicked_by(PointerButton::Primary)
 }
 
 fn destination(ui: &mut Ui, draft: &Draft, inbox: &Inbox) {
@@ -228,6 +246,7 @@ mod tests {
                 text: "Edited final text".into()
             })
         );
+        panel.last_action_at = None;
         assert_eq!(
             click_label("Reject", |ui| panel.show(
                 ui,
@@ -237,6 +256,52 @@ mod tests {
                 None
             )),
             Some(DraftAction::Reject(drafts[0].id.clone()))
+        );
+    }
+
+    #[test]
+    fn double_click_cannot_approve_the_card_that_moves_under_the_pointer() {
+        let ctx = egui::Context::default();
+        let mut drafts = vec![reply(), reply()];
+        drafts[1].id = "envoy-draft-2".into();
+        let mut panel = DraftsPanel::default();
+        let mut frame = |time, events: Vec<egui::Event>| {
+            let mut action = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| action = panel.show(ui, &drafts, &Inbox::default(), true, None),
+            );
+            if let Some(DraftAction::Approve { id, .. }) = &action {
+                drafts.iter_mut().find(|d| d.id == *id).unwrap().status = DraftStatus::DryRunSent;
+            }
+            output.textures_delta.clear();
+            (output, action)
+        };
+        frame(0.0, vec![]);
+        let at = text_center(&frame(0.01, vec![]).0, "Approve").unwrap();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(0.05, vec![egui::Event::PointerMoved(at), button(true)]);
+        assert!(frame(0.06, vec![button(false)]).1.is_some());
+        frame(0.1, vec![]);
+        frame(0.15, vec![button(true)]);
+        assert!(frame(0.16, vec![button(false)]).1.is_none());
+        frame(0.9, vec![]);
+        frame(0.95, vec![button(true)]);
+        assert!(
+            matches!(frame(0.96, vec![button(false)]).1, Some(DraftAction::Approve { id, .. }) if id == "envoy-draft-2")
         );
     }
 

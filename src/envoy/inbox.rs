@@ -25,6 +25,7 @@ pub struct Inbox {
     events: Vec<InboundEvent>,
     floor_us: i64,
     forwarded: BTreeSet<String>,
+    /// Ingestion never backfills messages from before the first activation.
     pub first_enabled_ms: Option<i64>,
     pub subscription_errors: BTreeMap<String, String>,
     pub cursors: BTreeMap<String, Cursor>,

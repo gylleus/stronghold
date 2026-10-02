@@ -298,6 +298,7 @@ pub struct SlackChannel<I: SlackIo> {
     status: BridgeStatus,
     errors: BTreeMap<String, String>,
     poll_errors: BTreeMap<String, String>,
+    command_errors: BTreeMap<String, String>,
     subscribed: Vec<String>,
     next_poll_ms: i64,
     next_subscribe_ms: i64,
@@ -311,7 +312,15 @@ impl<I: SlackIo> SlackChannel<I> {
         bridge: PathBuf,
         settings: EnvoySettings,
     ) -> Self {
-        let errors = inbox.subscription_errors.clone();
+        let errors = inbox
+            .subscription_errors
+            .iter()
+            .filter(|(_, error)| {
+                error.as_str() == "Bridge subscription error; check channel membership"
+                    || error.as_str() == "Cannot read bridge channel feed"
+            })
+            .map(|(c, e)| (c.clone(), e.clone()))
+            .collect();
         Self {
             io,
             inbox,
@@ -321,6 +330,7 @@ impl<I: SlackIo> SlackChannel<I> {
             status: BridgeStatus::Missing,
             errors,
             poll_errors: BTreeMap::new(),
+            command_errors: BTreeMap::new(),
             subscribed: Vec::new(),
             next_poll_ms: 0,
             next_subscribe_ms: 0,
@@ -330,6 +340,8 @@ impl<I: SlackIo> SlackChannel<I> {
     pub fn configure(&mut self, settings: EnvoySettings) {
         self.subscribed.clear();
         self.errors.retain(|c, _| settings.channels.contains(c));
+        self.command_errors
+            .retain(|c, _| settings.channels.contains(c));
         self.settings = settings;
         self.next_poll_ms = 0;
         self.next_subscribe_ms = 0;
@@ -378,7 +390,7 @@ impl<I: SlackIo> SlackChannel<I> {
             .filter(|s| !s.is_empty())
         {
             let parsed = parse_bridge_line(line);
-            if matches!(&parsed, Ok(line) if !matches!(line, BridgeLine::Error(_))) {
+            if matches!(&parsed, Ok(record) if !matches!(record, BridgeLine::Error(_))) {
                 self.errors.remove(channel);
             }
             match parsed {
@@ -469,7 +481,8 @@ impl<I: SlackIo> SlackChannel<I> {
                 return Ok(());
             }
         }
-        Err("Slack search exceeded 5 pages; watermark retained".into())
+        self.inbox.poll_watermarks.insert(key, now_ms);
+        Err("Slack search reached 5 pages; older messages skipped".into())
     }
 
     fn history(&mut self, channel: &str, now_ms: i64, batch: &mut PollBatch) -> Result<(), String> {
@@ -512,7 +525,8 @@ impl<I: SlackIo> SlackChannel<I> {
                 return Ok(());
             }
         }
-        Err("Slack history exceeded 5 pages; watermark retained".into())
+        self.inbox.poll_watermarks.insert(key, now_ms);
+        Err("Slack history reached 5 pages; older messages skipped".into())
     }
 
     pub fn mark_forwarded(&mut self, ids: &[String]) -> Result<(), String> {
@@ -576,9 +590,10 @@ impl<I: SlackIo> Channel for SlackChannel<I> {
                     match self.io.subscribe(&self.bridge, channel) {
                         Ok(()) => {
                             self.subscribed.push(channel.clone());
+                            self.command_errors.remove(channel);
                         }
                         Err(e) => {
-                            self.errors.insert(channel.clone(), e);
+                            self.command_errors.insert(channel.clone(), e);
                         }
                     }
                 }
@@ -589,7 +604,7 @@ impl<I: SlackIo> Channel for SlackChannel<I> {
                 self.errors.insert(channel.clone(), e);
             }
         }
-        if !self.errors.is_empty() {
+        if !self.errors.is_empty() || !self.command_errors.is_empty() {
             self.status = BridgeStatus::Stale;
         }
         if now_ms >= self.next_poll_ms {
@@ -608,7 +623,7 @@ impl<I: SlackIo> Channel for SlackChannel<I> {
                 }
             }
         }
-        for (channel, error) in &self.errors {
+        for (channel, error) in self.errors.iter().chain(&self.command_errors) {
             batch.notices.push(format!("{channel}: {error}"));
         }
         batch.notices.extend(self.poll_errors.values().cloned());
