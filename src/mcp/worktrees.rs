@@ -21,13 +21,19 @@ pub fn definitions() -> Vec<Value> {
         "name": TOOL,
         "title": "Clean up Orca worktrees",
         "description": "Evaluates every linked Orca worktree and plans which to remove. A worktree \
-            is removable only if no Orca terminal, process or active dispatch is in it, it has \
-            no uncommitted changes and no open PR, and its HEAD is merged into the base branch \
-            (or its PR is merged/closed with every commit on a remote); anything unknown keeps \
-            it. dry_run defaults to TRUE and only returns the plan (keep/remove with reasons, \
-            space freed). To remove, show Karl the plan, then call again with dry_run=false and \
-            ids = the plan's removable ids he approved. Removal goes through `orca worktree rm` \
-            (no --force) after a fresh re-check, and is logged.",
+            is removable only if no Orca terminal, process (by working directory) or active \
+            dispatch is in it, it has no uncommitted changes, no untracked files other than \
+            agent notes (*.md) and logs (*.log), and no open PR, and its work is in the base \
+            branch or on GitHub: HEAD merged, every commit patch-equivalent in the base (rebase \
+            merge), its changes already in the base's tree (squash merge), HEAD inside a merged \
+            PR's head commit, or its PR merged/closed with every commit on a remote. Anything \
+            unknown keeps it. A removable worktree with notes saves them to \
+            ~/Documents/agents/notes/<repo>/<worktree>/ and deletes its logs first. Other \
+            untracked files are listed with their size and keep it. dry_run defaults to TRUE \
+            and only returns the plan (keep/remove with reasons, space freed, size of kept \
+            worktrees with their build output). To remove, show Karl the plan, then call again \
+            with dry_run=false and ids = the plan's removable ids he approved. Removal goes \
+            through `orca worktree rm` (no --force) after a fresh re-check, and is logged.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -116,7 +122,13 @@ fn clean(args: &Value) -> Result<ToolOutput, String> {
     let mut lines = vec![worktrees::summary(&removals)];
     for r in &removals {
         lines.push(match &r.outcome {
-            Outcome::Removed => format!("- removed {}/{} ({})", r.repo, r.name, r.reason),
+            Outcome::Removed => match &r.notes_saved_to {
+                Some(dir) => format!(
+                    "- removed {}/{} ({}; notes saved to {dir})",
+                    r.repo, r.name, r.reason
+                ),
+                None => format!("- removed {}/{} ({})", r.repo, r.name, r.reason),
+            },
             Outcome::Skipped { reasons } => {
                 format!("- kept {}/{}: {}", r.repo, r.name, reasons.join("; "))
             }

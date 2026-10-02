@@ -1,8 +1,9 @@
 //! The ant farm on a synthetic fleet of 6 runs, loose terminals and subagents (about 30
 //! agents), one of each state, to check how it looks.
 //!
-//! `cargo run --example ant_farm [--light] [--graph] [--shot out.png]` (`--graph` shows the
-//! same fleet as the graph): every few seconds one worker
+//! `cargo run --example ant_farm [--light] [--graph] [--sweep] [--shot out.png]` (`--graph`
+//! shows the same fleet as the graph, `--sweep` flies the worktree cleanup's broom around the
+//! farm): every few seconds one worker
 //! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
 //! report, N hatches a new worker, M sends a burst of messages between ants and T toggles the
 //! Queen thinking. With `--shot`, it saves a screenshot once settled and another while a worker
@@ -18,6 +19,8 @@ use myrstack::model::{
 use myrstack::traffic::{AgentMessage, MessageKind};
 use myrstack::ui::ant_farm::{AntFarmView, Pulse};
 use myrstack::ui::graph::GraphView;
+use myrstack::ui::worktrees::WorktreePanel;
+use myrstack::worktrees::SweepMarker;
 
 const WINDOW: [f32; 2] = [1280.0, 800.0];
 const FLIP_EVERY: Duration = Duration::from_secs(3);
@@ -30,6 +33,7 @@ fn main() -> eframe::Result {
         .and_then(|i| args.get(i + 1).cloned());
     let light = args.iter().any(|a| a == "--light");
     let show_graph = args.iter().any(|a| a == "--graph");
+    let sweep = args.iter().any(|a| a == "--sweep").then(sweep_marker);
     eframe::run_native(
         "ant farm",
         eframe::NativeOptions {
@@ -53,6 +57,7 @@ fn main() -> eframe::Result {
                 id("run5-w5"),
             ]));
             graph.set_selected(Some(&id("run2-coord")));
+            let sweep = sweep.map(|data| (WorktreePanel::new(&cc.egui_ctx), data));
             Ok(Box::new(Demo {
                 snapshot,
                 graph,
@@ -68,6 +73,7 @@ fn main() -> eframe::Result {
                 flipped_at: Instant::now(),
                 stage: 0,
                 thinking: false,
+                sweep,
             }))
         }),
     )
@@ -84,6 +90,31 @@ struct Demo {
     thinking: bool,
     /// 0 settling, 1 waiting for the settled shot, 2 walking, 3 waiting for the walk shot.
     stage: u8,
+    /// The cleanup panel drawing the broom, and the temporary data dir holding its marker.
+    sweep: Option<(WorktreePanel, tempfile::TempDir)>,
+}
+
+/// A running sweep's marker in a temporary data dir, as when the Queen runs `clean_worktrees`.
+fn sweep_marker() -> tempfile::TempDir {
+    let data = tempfile::tempdir().expect("temp dir");
+    // SAFETY: set before any thread starts.
+    unsafe { std::env::set_var("MYRSTACK_DATA_DIR", data.path()) };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64);
+    let marker = SweepMarker {
+        started_at_ms: now_ms,
+        updated_at_ms: now_ms + 3_600_000,
+        total: 4,
+        done: 1,
+        current: Some("graph-trackpad-pan".into()),
+    };
+    std::fs::write(
+        myrstack::worktrees::default_marker_path(),
+        serde_json::to_vec(&marker).unwrap(),
+    )
+    .unwrap();
+    data
 }
 
 impl Demo {
@@ -162,7 +193,15 @@ impl eframe::App for Demo {
                     self.graph.show(ui);
                     return;
                 }
+                let farm = egui::Rect::from_min_size(ui.cursor().min, ui.available_size());
                 let response = self.farm.show(ui, &self.snapshot, &self.graph);
+                if let Some((panel, _)) = &mut self.sweep {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_millis() as i64);
+                    panel.tick(None, now_ms);
+                    panel.broom_in_farm(ui, farm);
+                }
                 if let Some(id) = &response.clicked {
                     self.graph.click_node(id, false);
                 }
