@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::app::View;
+use crate::ui::dock::NotificationsDock;
 use crate::ui::graph::SavedLayout;
 use crate::ui::sidebar::FleetFilter;
 
@@ -27,6 +28,8 @@ pub struct PersistedState {
     /// The dock's pane arrangement, see [`crate::ui::dock::PaneLayout::encode`]; `None` for
     /// the default.
     pub panes: Option<String>,
+    /// The notifications panel: open or collapsed, its side and width.
+    pub notifications_panel: NotificationsDock,
 }
 
 impl Default for PersistedState {
@@ -39,6 +42,7 @@ impl Default for PersistedState {
             layout: SavedLayout::default(),
             recent_actions: Vec::new(),
             panes: None,
+            notifications_panel: NotificationsDock::default(),
         }
     }
 }
@@ -108,6 +112,11 @@ mod tests {
             },
             recent_actions: vec!["fit_graph".into(), "open_chat".into()],
             panes: crate::ui::dock::PaneLayout::default().encode(),
+            notifications_panel: NotificationsDock {
+                open: false,
+                side: crate::ui::dock::Side::Right,
+                share: 0.3,
+            },
         }
     }
 
@@ -148,6 +157,8 @@ mod tests {
         assert!(!state.chat_hidden);
         assert_eq!(state.filter, FleetFilter::default());
         assert_eq!(state.layout, SavedLayout::default());
+        assert_eq!(state.notifications_panel, NotificationsDock::default());
+        assert!(state.notifications_panel.open, "the panel starts open");
     }
 
     #[test]
