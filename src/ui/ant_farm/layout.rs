@@ -223,10 +223,38 @@ fn chamber_per_row(width: f32, a: f32) -> usize {
     (((width + (SLOT - 2.0) * a) / (SLOT * a)).floor() as usize).max(1)
 }
 
-/// Height of a chamber holding `n` ants, `per_row` to a row.
+/// Height of a chamber holding `n` slots, `per_row` to a row.
 fn chamber_height(n: usize, per_row: usize, a: f32) -> f32 {
-    let rows = n.div_ceil(per_row).max(1) as f32;
-    (rows - 1.0) * ROW * a + (1.4 + TAG) * a
+    rows_height(n.div_ceil(per_row), a)
+}
+
+fn rows_height(rows: usize, a: f32) -> f32 {
+    (rows.max(1) as f32 - 1.0) * ROW * a + (1.4 + TAG) * a
+}
+
+/// Chamber slots an ant takes with `trail` subagents behind it, each `sub` cells wide: its
+/// own, and enough empty ones behind it to hold the trail.
+fn footprint(trail: usize, sub: f32) -> usize {
+    1 + (trail as f32 * sub / SLOT).ceil() as usize
+}
+
+/// `(row, slot)` of each footprint packed into rows of `per_row` slots, in order, and the
+/// number of rows. A footprint that does not fit what is left of a row starts the next.
+fn pack(footprints: &[usize], per_row: usize) -> (Vec<(usize, usize)>, usize) {
+    let (mut row, mut slot) = (0, 0);
+    let places = footprints
+        .iter()
+        .map(|&f| {
+            let f = f.min(per_row);
+            if slot > 0 && slot + f > per_row {
+                (row, slot) = (row + 1, 0);
+            }
+            let at = (row, slot);
+            slot += f;
+            at
+        })
+        .collect();
+    (places, row + 1)
 }
 
 /// Points per texel for a view of `size`: the biggest whole scale that leaves each tunnel
@@ -449,10 +477,28 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
     keys.sort_by_key(run_order);
     let tunnel_of: HashMap<&TunnelKey, usize> =
         keys.iter().enumerate().map(|(i, k)| (k, i)).collect();
+    // The ant each subagent trails: its nearest ancestor not itself trailing.
+    let root_of = |id: &NodeId| -> NodeId {
+        let mut at = id;
+        while homes.get(at) == Some(&Home::Trail) {
+            at = parents[at];
+        }
+        at.clone()
+    };
+    let mut trails: HashMap<NodeId, usize> = HashMap::new();
+    for node in &visible {
+        if homes[&node.id] == Home::Trail {
+            *trails.entry(root_of(&node.id)).or_default() += 1;
+        }
+    }
+    let trail_of = |id: &NodeId| trails.get(id).copied().unwrap_or(0);
+    // Slots per chamber, sized for subagents as big as their parents until the scale is
+    // known.
     let mut chamber_counts = vec![0usize; keys.len()];
     for node in &visible {
         if homes[&node.id] == Home::Chamber {
-            chamber_counts[tunnel_of[&tunnel_key(node, &repos)]] += 1;
+            chamber_counts[tunnel_of[&tunnel_key(node, &repos)]] +=
+                footprint(trail_of(&node.id), 1.0);
         }
     }
     let count = |home: Home| homes.values().filter(|h| **h == home).count();
@@ -464,6 +510,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
     };
     let px = pixel_scale(rect.size(), crowd);
     let a = CELL * px;
+    let sub = (CELL * (px - 1.0).max(1.0)).min(a);
 
     // Surface band: sky, the landing on the surface, chambers just under it. The landing
     // and storage grow a row per row-full of ants.
@@ -503,13 +550,31 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
     } else {
         SLOT * a
     };
+    // Each chamber's ants in rank order, and where they pack.
+    let mut chamber_nodes: Vec<Vec<&Node>> = vec![Vec::new(); keys.len()];
+    for node in &visible {
+        if homes[&node.id] == Home::Chamber {
+            chamber_nodes[tunnel_of[&tunnel_key(node, &repos)]].push(node);
+        }
+    }
+    let packed: Vec<(Vec<(usize, usize)>, usize)> = chamber_nodes
+        .iter_mut()
+        .map(|nodes| {
+            nodes.sort_by_key(|n| chamber_rank(n.state));
+            let footprints: Vec<usize> = nodes
+                .iter()
+                .map(|n| footprint(trail_of(&n.id), sub / a))
+                .collect();
+            pack(&footprints, per_row)
+        })
+        .collect();
     let below = (rect.bottom() - 0.3 * a) - (gallery.bottom() + a);
     let tunnels: Vec<Tunnel> = keys
         .iter()
         .enumerate()
         .map(|(i, key)| {
             let x = rect.left() + column_w * (i as f32 + 0.5);
-            let height = chamber_height(chamber_counts[i], per_row, a);
+            let height = rows_height(packed[i].1, a);
             let tasks = match key {
                 TunnelKey::Run(id) => snapshot
                     .runs
@@ -556,7 +621,6 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
     let mut landing_n = 0;
     let mut storage_n = 0;
     let mut mouth_n = vec![0usize; tunnels.len()];
-    let mut chamber_nodes: Vec<Vec<&Node>> = vec![Vec::new(); tunnels.len()];
     let mut ants: Vec<Ant> = Vec::new();
     let mut pr_ready = 0;
     let mut trailing: Vec<&Node> = Vec::new();
@@ -568,10 +632,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                 trailing.push(node);
                 continue;
             }
-            Home::Chamber => {
-                chamber_nodes[tunnel_of[&tunnel_key(node, &repos)]].push(node);
-                continue;
-            }
+            Home::Chamber => continue,
             Home::Queen => (Spot::Queen, queen_chamber.center() + vec2(0.0, 0.2 * a)),
             Home::Landing => {
                 let k = landing_n;
@@ -618,11 +679,9 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         }
         ants.push(placed);
     }
-    for (t, nodes) in chamber_nodes.iter_mut().enumerate() {
-        nodes.sort_by_key(|n| chamber_rank(n.state));
+    for (t, nodes) in chamber_nodes.iter().enumerate() {
         let chamber = tunnels[t].chamber;
-        for (k, node) in nodes.iter().enumerate() {
-            let (row, col) = (k / per_row, k % per_row);
+        for (k, (node, &(row, col))) in nodes.iter().zip(&packed[t].0).enumerate() {
             let pos = pos2(
                 chamber.right() - a - col as f32 * slot_w,
                 chamber.bottom() - (0.5 + TAG) * a - row as f32 * ROW * a,
@@ -644,37 +703,30 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
             ant.pose = Pose::Build;
         }
     }
-    // Subagents trail their parent, nearest first; nested ones once their parent is placed.
-    let sub = (CELL * (px - 1.0).max(1.0)).min(a);
+    // Subagents, nested ones too, trail the ant they belong to in a line, nearest first.
     let mut behind: HashMap<NodeId, usize> = HashMap::new();
-    while !trailing.is_empty() {
-        let before = trailing.len();
-        trailing.retain(|node| {
-            let parent = parents[&node.id];
-            let Some(at) = ants.iter().find(|x| &x.id == parent) else {
-                return true;
-            };
-            let k = behind.entry(parent.clone()).or_default();
-            let dir = if at.facing_right { -1.0 } else { 1.0 };
-            let step = (at.size + sub) / 2.0 + *k as f32 * sub;
-            let pos = pos2(at.pos.x + dir * step, at.pos.y + (at.size - sub) / 2.0);
-            let mut trail = ant(
-                node,
-                Spot::Trail(parent.clone(), *k),
-                pos,
-                sub,
-                Home::Trail,
-                false,
-                input.now_ms,
-            );
-            trail.facing_right = at.facing_right;
-            *k += 1;
-            ants.push(trail);
-            false
-        });
-        if trailing.len() == before {
-            break;
-        }
+    for node in trailing {
+        let root = root_of(&node.id);
+        let Some(at) = ants.iter().find(|x| x.id == root) else {
+            continue;
+        };
+        let k = behind.entry(root.clone()).or_default();
+        let dir = if at.facing_right { -1.0 } else { 1.0 };
+        let step = (at.size + sub) / 2.0 + *k as f32 * sub;
+        let pos = pos2(at.pos.x + dir * step, at.pos.y + (at.size - sub) / 2.0);
+        let facing_right = at.facing_right;
+        let mut trail = ant(
+            node,
+            Spot::Trail(root, *k),
+            pos,
+            sub,
+            Home::Trail,
+            false,
+            input.now_ms,
+        );
+        trail.facing_right = facing_right;
+        *k += 1;
+        ants.push(trail);
     }
 
     Scene {
