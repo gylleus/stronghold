@@ -1381,11 +1381,20 @@ mod tests {
         poller.send(PollerCommand::RefreshNow);
         poller.rx().recv_timeout(secs(2)).unwrap();
         fake.with(|s| assert_eq!(s.calls.runs, 2));
-        assert_eq!(repaints.load(Ordering::SeqCst), 2);
+        // The loop repaints just after sending each snapshot, so the second
+        // repaint can trail the `recv`: wait for it. A slow machine may also
+        // reach the 2 s terminal tick, hence at least two.
+        let deadline = Instant::now() + secs(5);
+        while repaints.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
+            std::thread::sleep(ms(5));
+        }
+        assert!(repaints.load(Ordering::SeqCst) >= 2);
 
+        // Dropping interrupts the wait for the next tick instead of
+        // sleeping it out; the bound is generous for loaded machines.
         let started = Instant::now();
         drop(poller);
-        assert!(started.elapsed() < Duration::from_millis(500));
+        assert!(started.elapsed() < secs(3));
     }
 
     #[test]

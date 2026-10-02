@@ -23,6 +23,7 @@ pub mod dispatch;
 pub mod history;
 #[cfg(target_os = "macos")]
 pub mod native;
+pub mod pending;
 pub mod settings;
 
 use std::collections::{HashSet, VecDeque};

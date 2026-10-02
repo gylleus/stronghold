@@ -50,7 +50,7 @@ there would execute your forward as a shell command. Then do NOT forward. Instea
 1. Append `coordinator unreachable since <time>` to `SCRATCH/attendant-status.txt`.
 2. Summon Karl once, with Myrstack's `notify` tool: title `Coordinator COORD is dead`, message
    `<event> from <track> is waiting`, `severity: urgent`. If Myrstack isn't running (`notify`
-   errors):
+   answers that it queued the notification), also summon Karl now:
    `osascript -e 'display dialog "Fleet attendant: coordinator COORD is dead; <event> from <track> is waiting" with title "orca fleet" buttons {"OK"} giving up after 300'`
 3. Keep the loop running; queue further events one per line in `SCRATCH/attendant-queue.txt`.
    When a new coordinator handle is given to you (by Karl or a new session), replace COORD and

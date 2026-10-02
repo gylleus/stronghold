@@ -8,6 +8,7 @@ use eframe::egui::{self, Color32, RichText, Ui};
 use serde_json::Value;
 
 use crate::chat::SessionState;
+use crate::chat::context::{ContextGauge, Level};
 use crate::chat::history::HistoryChunk;
 use crate::chat::permissions::{
     DESTRUCTIVE_TOOLS, MYRSTACK_PREFIX, short_tool_name, summarize_input, truncate,
@@ -89,6 +90,8 @@ pub enum ChatAction {
         decision: Decision,
     },
     NewChat,
+    /// Send `/compact` to the Queen's session.
+    Compact,
     Retry,
     SelectNode(NodeId),
     /// Karl flipped the Auto switch.
@@ -324,6 +327,9 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
         if let Some(model) = &view.transcript.model {
             ui.weak(model);
         }
+        if let Some(gauge) = view.transcript.context_gauge() {
+            context_gauge(ui, &gauge);
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .button("New chat")
@@ -355,6 +361,13 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
             }
         });
     });
+    if let Some(gauge) = view
+        .transcript
+        .context_gauge()
+        .filter(ContextGauge::offers_actions)
+    {
+        context_offer(ui, &gauge, can_compact(view), actions);
+    }
     if let SessionState::Unavailable(hint) = view.state {
         ui.colored_label(ui.visuals().error_fg_color, hint);
         if ui.button("Retry").clicked() {
@@ -362,6 +375,79 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
         }
     }
     ui.separator();
+}
+
+/// Color of the context gauge at `level`.
+pub fn context_color(level: Level, visuals: &egui::Visuals) -> Color32 {
+    match level {
+        Level::Normal => visuals.weak_text_color(),
+        Level::Warn => visuals.warn_fg_color,
+        Level::Critical => visuals.error_fg_color,
+    }
+}
+
+/// A short bar and the percent of the context window in use, tokens in the tooltip.
+fn context_gauge(ui: &mut Ui, gauge: &ContextGauge) {
+    let color = context_color(gauge.level(), ui.visuals());
+    let fraction = (gauge.percent() / 100.0).clamp(0.0, 1.0);
+    let response = ui
+        .scope(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let bar_height = ui.text_style_height(&egui::TextStyle::Small);
+            ui.add(
+                egui::ProgressBar::new(fraction)
+                    .desired_width(40.0)
+                    .desired_height(bar_height * 0.5)
+                    .fill(color),
+            );
+            ui.label(
+                RichText::new(format!("{:.0}%", gauge.percent()))
+                    .small()
+                    .color(color),
+            );
+        })
+        .response;
+    response.on_hover_text(gauge.tooltip());
+}
+
+/// Whether Compact can be sent now: the session is ready and no turn runs.
+fn can_compact(view: &ChatView<'_>) -> bool {
+    *view.state == SessionState::Ready && !view.transcript.running
+}
+
+/// The line under the header once the context is nearly full: Compact and New chat.
+fn context_offer(
+    ui: &mut Ui,
+    gauge: &ContextGauge,
+    can_compact: bool,
+    actions: &mut Vec<ChatAction>,
+) {
+    let color = context_color(gauge.level(), ui.visuals());
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            RichText::new(format!(
+                "Context {:.0}% full: compact it or start a new chat.",
+                gauge.percent()
+            ))
+            .color(color),
+        )
+        .on_hover_text(gauge.tooltip());
+        if ui
+            .add_enabled(can_compact, egui::Button::new("Compact"))
+            .on_hover_text("Send /compact: the Queen summarizes the conversation so far")
+            .on_disabled_hover_text("Wait for the Queen to finish this turn")
+            .clicked()
+        {
+            actions.push(ChatAction::Compact);
+        }
+        if ui
+            .button("New chat")
+            .on_hover_text("Start a fresh conversation")
+            .clicked()
+        {
+            actions.push(ChatAction::NewChat);
+        }
+    });
 }
 
 fn auto_badge(ui: &mut Ui) {
@@ -1660,6 +1746,38 @@ mod tests {
         let (_, off) = draw(&Transcript::default(), false, Vec::new());
         assert!(off.contains("Auto"), "the switch is always there: {off}");
         assert!(!off.contains("AUTO") && !off.contains(AUTO_HINT), "{off}");
+    }
+
+    /// The header shows the context percent; past 80% Compact and New chat are offered.
+    #[test]
+    fn context_gauge_shows_percent_and_offers_actions_when_nearly_full() {
+        let with_context = |tokens: u64| {
+            let mut t = Transcript::default();
+            t.context_tokens = Some(tokens);
+            t.context_window = Some(200_000);
+            t
+        };
+        let (_, none) = draw(&Transcript::default(), false, Vec::new());
+        assert!(!none.contains('%'), "{none}");
+
+        let (_, half) = draw(&with_context(100_000), false, Vec::new());
+        assert!(half.contains("50%"), "{half}");
+        assert!(!half.contains("Compact"), "{half}");
+
+        let (_, full) = draw(&with_context(180_000), false, Vec::new());
+        assert!(full.contains("90%"), "{full}");
+        assert!(
+            full.contains("Context 90% full: compact it or start a new chat."),
+            "{full}"
+        );
+        assert!(full.contains("Compact"), "{full}");
+
+        let visuals = egui::Visuals::dark();
+        assert_eq!(context_color(Level::Warn, &visuals), visuals.warn_fg_color);
+        assert_eq!(
+            context_color(Level::Critical, &visuals),
+            visuals.error_fg_color
+        );
     }
 
     /// The say-line shows as a highlighted summary with the speaker icon, tags hidden, above

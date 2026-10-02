@@ -317,7 +317,7 @@ impl<C: Control> McpServer<C> {
             })
             .or_else(|| envoy::call(&mut self.control, &self.review.origin, name, &args))
             .or_else(|| review::call(&mut self.control, &self.review, name, &args))
-            .or_else(|| notify::call(&mut self.control, &self.review.origin, name, &args))
+            .or_else(|| notify::call(&mut self.control, &self.review, name, &args))
             .or_else(|| {
                 let cwd = std::env::current_dir().ok();
                 lifecycle::call(&mut self.control, &self.review.origin, cwd, name, &args)

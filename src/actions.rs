@@ -489,6 +489,12 @@ mod tests {
         assert_eq!(first.outcome, Err("action panicked".into()));
         let second = runner.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(second.outcome, Ok(()));
+        // The runner wakes the UI after sending each result, so the second wake
+        // can land just after `recv_timeout` returns: wait for it.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while *wakes.lock().unwrap() < 2 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         assert_eq!(*wakes.lock().unwrap(), 2);
     }
 
