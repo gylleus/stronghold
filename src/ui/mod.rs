@@ -13,6 +13,7 @@ pub mod dock;
 pub mod envelope;
 pub mod frame_stats;
 pub mod graph;
+pub mod health;
 pub mod history;
 pub mod icons;
 pub mod keys;

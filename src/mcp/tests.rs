@@ -442,6 +442,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "open_whip_settings",
         "alerts",
         "quotas",
+        "health",
         "get_playbook",
         "list_playbook",
         "attendant_brief",
@@ -467,6 +468,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "whip_status",
         "alerts",
         "quotas",
+        "health",
         "get_playbook",
         "list_playbook",
         "attendant_brief",
@@ -654,6 +656,7 @@ fn each_tool_maps_to_its_control_request() {
         ),
         ("alerts", json!({}), vec![("alerts", Value::Null)]),
         ("quotas", json!({}), vec![("quotas", Value::Null)]),
+        ("health", json!({}), vec![("health", Value::Null)]),
     ];
     for (tool, args, expected) in cases {
         let control = FakeControl::default()
@@ -665,6 +668,10 @@ fn each_tool_maps_to_its_control_request() {
             .reply(
                 "quotas",
                 Ok(json!({"fetched_at_ms": 0, "error": null, "providers": []})),
+            )
+            .reply(
+                "health",
+                Ok(serde_json::to_value(crate::health::HealthReport::default()).unwrap()),
             )
             .reply(
                 "agent",
@@ -835,6 +842,31 @@ fn control_errors_map_to_readable_tool_errors() {
 
 // ---------------------------------------------------------------------------
 // Read tools against real control responses
+
+#[test]
+fn health_lists_checks_with_fixes() {
+    use crate::health::{AppFacts, QueenFact, evaluate};
+    let mut view = status_view();
+    let facts = AppFacts {
+        whip_enabled: true,
+        whip_dry_run: true,
+        queen: QueenFact::Running,
+    };
+    view.health = evaluate(&facts, None, NOW);
+    let mut server = McpServer::new(HeadlessControl::from_view(view, Arc::new(Screens)));
+    let r = call(&mut server, "health", json!({}));
+    assert!(!is_error(&r), "{}", text(&r));
+    let t = text(&r);
+    assert!(
+        t.starts_with("Health: WARN — 1 problem (checks still running)."),
+        "{t}"
+    );
+    assert!(t.contains("- [warn] Whip: dry run"), "{t}");
+    assert!(t.contains("— fix: Settings › Whip"), "{t}");
+    assert!(t.contains("- [ok] Queen: chat process running"), "{t}");
+    assert_eq!(r["structuredContent"]["level"], "warn");
+    assert_eq!(r["structuredContent"]["checks"][0]["key"], "whip");
+}
 
 #[test]
 fn fleet_status_summarises_the_fleet() {

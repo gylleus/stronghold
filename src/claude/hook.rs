@@ -121,6 +121,18 @@ fn is_our_hook(hook: &Value) -> bool {
         .is_some_and(|c| c.contains(HOOK_SCRIPT_NAME))
 }
 
+/// Whether `settings` has our `SessionStart` entry.
+pub fn hook_installed(settings: &Value) -> bool {
+    settings
+        .pointer("/hooks/SessionStart")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|group| group.get("hooks").and_then(Value::as_array))
+        .flatten()
+        .any(is_our_hook)
+}
+
 fn settings_object(settings: &mut Value) -> Result<&mut Map<String, Value>> {
     if settings.is_null() {
         *settings = Value::Object(Map::new());
@@ -493,6 +505,17 @@ mod tests {
         assert!(install_hook_entry(&mut json!([]), CMD).is_err());
         assert!(install_hook_entry(&mut json!({"hooks": []}), CMD).is_err());
         assert!(install_hook_entry(&mut json!({"hooks": {"SessionStart": {}}}), CMD).is_err());
+    }
+
+    #[test]
+    fn hook_installed_finds_our_entry_only() {
+        let mut settings = json!({"hooks": {"SessionStart": [
+            {"hooks": [{"type": "command", "command": "other.sh"}]}
+        ]}});
+        assert!(!hook_installed(&settings));
+        assert!(!hook_installed(&Value::Null));
+        install_hook_entry(&mut settings, "\"/x/myrstack-session-hook.sh\"").unwrap();
+        assert!(hook_installed(&settings));
     }
 
     #[test]

@@ -9,6 +9,7 @@ mod chat;
 mod control;
 mod dictation;
 pub mod envoy;
+mod health;
 mod lifecycle;
 mod notifications;
 mod palette;
@@ -156,6 +157,8 @@ pub struct MyrstackApp {
     /// PRs agents marked ready for review, their GitHub state and the poller reading it.
     review: review::AppReview,
     pub envoy_core: envoy::AppEnvoy,
+    /// Health checks for silent misconfigurations, and the badge showing them.
+    health: health::AppHealth,
 }
 
 impl MyrstackApp {
@@ -246,6 +249,7 @@ impl MyrstackApp {
             talk,
             review: review::AppReview::start(ctx),
             envoy_core: envoy::AppEnvoy::start(ctx),
+            health: health::AppHealth::start(ctx),
         };
         app.talk_startup();
         app.restore_state(cc.storage);
@@ -841,6 +845,7 @@ impl MyrstackApp {
         self.whip_window.button(ui);
         self.notifications_bell(ui);
         self.review_badge(ui);
+        self.health_badge(ui, now_ms);
         self.close.log_menu(ui, now_ms);
         if let Some(data) = &self.data
             && let Some(first) = data.errors.first()
@@ -1122,6 +1127,7 @@ impl eframe::App for MyrstackApp {
         self.poll_control(ctx);
         self.poll_review();
         self.poll_envoy();
+        self.poll_health();
         self.poll_whip_now();
         self.poll_spawn();
         self.run_finish_closes();

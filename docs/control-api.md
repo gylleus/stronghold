@@ -218,6 +218,38 @@ Returns the plan quotas from `orca account list`.
    "used_percent":42.0,"resets_at_ms":…,"reset_description":"…","severity":"normal"}]}]}}
 ```
 
+### `health`
+
+Returns the health doctor's report, the list the top bar's health badge shows. The app checks
+whether the whip is live (or off, or in dry run), whether `orca` and `gh` are found from the
+app's `PATH` (with versions) and Orca's runtime is reachable, whether the Queen's chat
+process runs, whether the Claude `SessionStart` hook is installed, whether macOS allows
+notifications (only from `Myrstack.app`), and how old the Slack reply bridge's heartbeat is
+(`off` when `~/.claude/slack-subscriptions/` doesn't exist). The slow checks run at startup and
+every 3 minutes; `checked_at_ms` is `null` until their first run finished, and until then only
+the whip and the Queen are listed.
+
+`level` of each check is `ok`, `off` (not configured or not applicable), `warn` or `error`; the
+report's `level` is the worst of them, with `off` counting as `ok`. `fix` is a one-line fix, or
+`null`.
+
+```json
+{"v":1,"method":"health"}
+→ {"ok":true,"result":{"level":"warn","checked_at_ms":…,"checks":[
+   {"key":"whip","name":"Whip","level":"warn","detail":"dry run: logs nudges but sends none",
+    "fix":"Settings › Whip: turn Dry run off (or palette: Toggle whip dry-run)"},
+   {"key":"orca","name":"orca","level":"ok",
+    "detail":"runtime ready, Orca 1.4.192 (/opt/homebrew/bin/orca)","fix":null},
+   {"key":"gh","name":"gh","level":"ok",
+    "detail":"gh version 2.92.0 (2026-04-28) (/opt/homebrew/bin/gh)","fix":null},
+   {"key":"queen","name":"Queen","level":"ok","detail":"chat process running","fix":null},
+   {"key":"hook","name":"Session hook","level":"ok","detail":"installed in Claude's settings",
+    "fix":null},
+   {"key":"notifications","name":"Notifications","level":"ok","detail":"allowed","fix":null},
+   {"key":"slack_bridge","name":"Slack reply bridge","level":"ok","detail":"heartbeat 12s ago",
+    "fix":null}]}}
+```
+
 ### `alerts`
 
 Returns the notification inbox, newest first: what agents sent with `notify` and what

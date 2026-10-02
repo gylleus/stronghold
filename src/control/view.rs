@@ -49,6 +49,9 @@ pub struct StatusView {
     /// Set by the app after [`StatusView::build`]; read-only for API clients.
     #[serde(default)]
     pub queen_auto: bool,
+    /// The health doctor's checks; set by the app after [`StatusView::build`].
+    #[serde(default)]
+    pub health: crate::health::HealthReport,
     /// The raw poll data the `fleet_data` method serves (for filled playbook templates).
     #[serde(skip)]
     pub fleet_data: Option<Arc<FleetFacts>>,
@@ -513,6 +516,7 @@ impl StatusView {
             },
             playbook: PlaybookView::default(),
             queen_auto: false,
+            health: Default::default(),
             fleet_data: inputs.data.map(|d| Arc::new(FleetFacts::from_fleet(d))),
         }
     }
