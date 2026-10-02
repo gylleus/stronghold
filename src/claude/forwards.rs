@@ -1,13 +1,18 @@
 //! Reads which terminals a Claude session forwarded input to (`orca terminal send --terminal
 //! <handle>`) from its transcript, incrementally: each scan reads only what was appended.
+//!
+//! Two consumers: [`ForwardScanner`] keeps the newest send per target of a few terminals (role
+//! detection, which wants recent history), and [`SendWatch`] turns the sends every Claude
+//! terminal makes from now on into traffic (envelopes), never replaying history.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::fleet::Forward;
 use crate::orca::parse_timestamp_ms;
+use crate::traffic::{AgentMessage, FRESH_MS, MessageKind};
 
 /// On first sight of a transcript only its last this many bytes are read: the newest forwards
 /// are what matters, and attendant transcripts reach tens of MB.
@@ -64,6 +69,99 @@ impl ForwardScanner {
         }
         out
     }
+}
+
+/// Turns the `orca terminal send`s Claude terminals run into [`AgentMessage`]s as they happen.
+/// A transcript is first seen at its end, so history is never replayed; after that each scan
+/// reads only complete lines appended since.
+#[derive(Debug, Default)]
+pub struct SendWatch {
+    /// Byte offset up to which complete lines were read, per transcript.
+    offsets: HashMap<PathBuf, u64>,
+    /// Sends already emitted (sender, target, time), kept while fresh: a send split into
+    /// `--text` and `--enter` commands, or a record written twice, is one envelope.
+    seen: HashSet<(String, String, i64)>,
+}
+
+impl SendWatch {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The sends appended to `transcripts` (sender handle → transcript path) since the last
+    /// call, sent within [`FRESH_MS`] of `now_ms`. Transcripts no longer asked for are
+    /// forgotten.
+    pub fn refresh(
+        &mut self,
+        transcripts: &BTreeMap<String, PathBuf>,
+        now_ms: i64,
+    ) -> Vec<AgentMessage> {
+        self.offsets
+            .retain(|path, _| transcripts.values().any(|p| p == path));
+        self.seen.retain(|(_, _, at)| now_ms - at < FRESH_MS);
+        let mut out = Vec::new();
+        for (handle, path) in transcripts {
+            let lines = match read_appended(path, self.offsets.get(path).copied()) {
+                Ok((lines, offset)) => {
+                    self.offsets.insert(path.clone(), offset);
+                    lines
+                }
+                Err(e) => {
+                    log::debug!("cannot scan {} for sends: {e}", path.display());
+                    continue;
+                }
+            };
+            for line in lines.split(|&b| b == b'\n') {
+                let Ok(line) = std::str::from_utf8(line) else {
+                    continue;
+                };
+                for send in forwards_in_line(line) {
+                    if let Some(at) = send.at_ms {
+                        let key = (handle.clone(), send.target.clone(), at);
+                        if now_ms - at >= FRESH_MS || !self.seen.insert(key) {
+                            continue;
+                        }
+                    }
+                    out.push(AgentMessage::new(
+                        handle.clone(),
+                        send.target,
+                        MessageKind::Message,
+                    ));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// The complete lines appended to `path` after `offset`, and the offset to read from next.
+/// Without an offset (first sight) or after a truncation nothing is read: the file's end is
+/// where reading starts.
+fn read_appended(path: &Path, offset: Option<u64>) -> io::Result<(Vec<u8>, u64)> {
+    let mut file = File::open(path)?;
+    let len = file.metadata()?.len();
+    let start = match offset {
+        Some(offset) if offset <= len => offset,
+        _ => return Ok((Vec::new(), len)),
+    };
+    if start == len {
+        return Ok((Vec::new(), len));
+    }
+    file.seek(SeekFrom::Start(start))?;
+    let mut buf = Vec::new();
+    file.take(MAX_READ_BYTES.min(len - start))
+        .read_to_end(&mut buf)?;
+    let Some(end) = buf.iter().rposition(|&b| b == b'\n') else {
+        // No complete line yet: read it again next time, unless it is too long to ever fit.
+        let next = if buf.len() as u64 == MAX_READ_BYTES {
+            start + MAX_READ_BYTES
+        } else {
+            start
+        };
+        return Ok((Vec::new(), next));
+    };
+    buf.truncate(end);
+    Ok((buf, start + end as u64 + 1))
 }
 
 /// Forward targets of `data`'s declared coordinators, read once from their transcripts under
@@ -328,5 +426,197 @@ mod tests {
         let found = ForwardScanner::new().refresh(&transcripts);
         let names: Vec<&str> = found["h"].iter().map(|f| f.target.as_str()).collect();
         assert_eq!(names, ["term_new"]);
+    }
+
+    /// A transcript `send_watch_*` tests append to, watched as terminal `term_from`.
+    struct Watched {
+        _dir: tempfile::TempDir,
+        path: PathBuf,
+        file: File,
+        transcripts: BTreeMap<String, PathBuf>,
+    }
+
+    impl Watched {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("s.jsonl");
+            let file = File::create(&path).unwrap();
+            let transcripts = [("term_from".to_string(), path.clone())].into();
+            Self {
+                _dir: dir,
+                path,
+                file,
+                transcripts,
+            }
+        }
+
+        fn send(&mut self, command: &str, at: &str) {
+            writeln!(self.file, "{}", tool_use(command, at)).unwrap();
+            self.file.flush().unwrap();
+        }
+    }
+
+    fn ms(at: &str) -> i64 {
+        parse_timestamp_ms(at).unwrap()
+    }
+
+    fn pairs(messages: &[AgentMessage]) -> Vec<(&str, &str)> {
+        messages
+            .iter()
+            .map(|m| {
+                assert_eq!(m.kind, MessageKind::Message);
+                (m.from.as_str(), m.to.as_str())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn send_watch_never_replays_history() {
+        let mut w = Watched::new();
+        let now = ms("2026-09-25T12:00:00Z");
+        // Fresh, but already in the transcript when it is first seen.
+        w.send(
+            "orca terminal send --terminal term_a --text x",
+            "2026-09-25T11:59:59Z",
+        );
+        let mut watch = SendWatch::new();
+        assert!(watch.refresh(&w.transcripts, now).is_empty());
+
+        w.send(
+            "orca terminal send --terminal term_b --text x",
+            "2026-09-25T12:00:01Z",
+        );
+        let sent = watch.refresh(&w.transcripts, now + 2000);
+        assert_eq!(pairs(&sent), [("term_from", "term_b")]);
+        assert!(
+            watch.refresh(&w.transcripts, now + 4000).is_empty(),
+            "read once"
+        );
+    }
+
+    #[test]
+    fn send_watch_emits_one_envelope_per_send_and_drops_stale_ones() {
+        let mut w = Watched::new();
+        let now = ms("2026-09-25T12:00:00Z");
+        let mut watch = SendWatch::new();
+        assert!(watch.refresh(&w.transcripts, now).is_empty());
+
+        // Text then Enter to the same terminal in one tool call is one message; two targets
+        // are two.
+        w.send(
+            "orca terminal send --terminal term_a --text hi\n\
+             orca terminal send --terminal term_a --enter\n\
+             orca terminal send --terminal term_b --text hi --enter",
+            "2026-09-25T12:00:01Z",
+        );
+        // The same record written twice.
+        w.send(
+            "orca terminal send --terminal term_a --text hi",
+            "2026-09-25T12:00:01Z",
+        );
+        // Appended late but sent long ago.
+        w.send(
+            "orca terminal send --terminal term_c --text x",
+            "2026-09-25T11:50:00Z",
+        );
+        // Not a send.
+        w.send(
+            "orca terminal read --terminal term_d",
+            "2026-09-25T12:00:01Z",
+        );
+        let sent = watch.refresh(&w.transcripts, now + 3000);
+        assert_eq!(
+            pairs(&sent),
+            [("term_from", "term_a"), ("term_from", "term_b")]
+        );
+
+        // A later send to the same terminal is a new message.
+        w.send(
+            "orca terminal send --terminal term_a --text again",
+            "2026-09-25T12:00:05Z",
+        );
+        let sent = watch.refresh(&w.transcripts, now + 6000);
+        assert_eq!(pairs(&sent), [("term_from", "term_a")]);
+        assert!(
+            watch
+                .seen
+                .iter()
+                .all(|(_, _, at)| now + 6000 - at < FRESH_MS),
+            "only fresh keys kept"
+        );
+    }
+
+    #[test]
+    fn send_watch_waits_for_complete_lines_and_survives_truncation() {
+        let mut w = Watched::new();
+        let now = ms("2026-09-25T12:00:00Z");
+        let mut watch = SendWatch::new();
+        assert!(watch.refresh(&w.transcripts, now).is_empty());
+
+        let line = tool_use(
+            "orca terminal send --terminal term_a --text x",
+            "2026-09-25T12:00:01Z",
+        );
+        let (head, tail) = line.split_at(30);
+        write!(w.file, "{head}").unwrap();
+        w.file.flush().unwrap();
+        assert!(watch.refresh(&w.transcripts, now + 1000).is_empty());
+        writeln!(w.file, "{tail}").unwrap();
+        w.file.flush().unwrap();
+        let sent = watch.refresh(&w.transcripts, now + 2000);
+        assert_eq!(pairs(&sent), [("term_from", "term_a")]);
+
+        // Replaced by a shorter file: start over at its end, replaying nothing.
+        drop(std::mem::replace(
+            &mut w.file,
+            File::create(&w.path).unwrap(),
+        ));
+        w.send(
+            "orca terminal send --terminal term_b --text x",
+            "2026-09-25T12:00:02Z",
+        );
+        assert!(watch.refresh(&w.transcripts, now + 3000).is_empty());
+        w.send(
+            "orca terminal send --terminal term_c --text x",
+            "2026-09-25T12:00:03Z",
+        );
+        let sent = watch.refresh(&w.transcripts, now + 4000);
+        assert_eq!(pairs(&sent), [("term_from", "term_c")]);
+
+        assert!(watch.refresh(&BTreeMap::new(), now + 5000).is_empty());
+        assert!(watch.offsets.is_empty(), "forgotten");
+    }
+
+    #[test]
+    fn send_watch_leaves_the_role_scanner_alone() {
+        let mut w = Watched::new();
+        w.send(
+            "orca terminal send --terminal term_a --text x",
+            "2026-09-25T10:00:00Z",
+        );
+        let now = ms("2026-09-25T12:00:00Z");
+        let mut watch = SendWatch::new();
+        let mut scanner = ForwardScanner::new();
+        assert!(watch.refresh(&w.transcripts, now).is_empty());
+        w.send(
+            "orca terminal send --terminal term_b --text x",
+            "2026-09-25T12:00:01Z",
+        );
+        w.send(
+            "orca terminal send --terminal term_a --text y",
+            "2026-09-25T12:00:02Z",
+        );
+        assert_eq!(watch.refresh(&w.transcripts, now + 3000).len(), 2);
+        // The scanner still sees the history and keeps the newest send per target.
+        let found = scanner.refresh(&w.transcripts);
+        let names: Vec<&str> = found["term_from"]
+            .iter()
+            .map(|f| f.target.as_str())
+            .collect();
+        assert_eq!(names, ["term_b", "term_a"]);
+        assert_eq!(
+            found["term_from"][1].at_ms,
+            Some(ms("2026-09-25T12:00:02Z"))
+        );
     }
 }

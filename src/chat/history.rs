@@ -52,11 +52,13 @@ pub fn parse_record(record: &Value) -> Vec<HistoryRecord> {
             Incoming::Assistant {
                 message_id,
                 content,
+                usage,
                 ..
             } => vec![HistoryRecord::Message(Incoming::Assistant {
                 parent: None,
                 message_id,
                 content: content.into_iter().map(shrink_block).collect(),
+                usage,
             })],
             _ => Vec::new(),
         },
@@ -226,6 +228,7 @@ impl Transcript {
                 self.items.push(super::ChatItem::VoiceUser(text.clone()));
             }
             HistoryRecord::Message(message) => self.apply(message),
+            HistoryRecord::Notice(text) if text == COMPACTED_NOTICE => self.compacted(),
             HistoryRecord::Notice(text) => self.push_notice(text.clone()),
             HistoryRecord::System(text) => self.push_system(text.clone()),
         }

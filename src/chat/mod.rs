@@ -4,6 +4,7 @@
 
 pub mod auto_mode;
 pub mod config;
+pub mod context;
 pub mod history;
 pub mod permissions;
 pub mod process;
@@ -295,6 +296,18 @@ impl ChatSession {
         }
         self.speech.push(SpeechEvent::TurnStart { voice });
         self.handle.send(ChatCommand::Send(outgoing));
+        true
+    }
+
+    /// Sends `/compact` as is (no notes in front, so the CLI runs it as a slash command);
+    /// false when the session cannot take a message now.
+    pub fn compact(&mut self) -> bool {
+        if !self.can_send() {
+            return false;
+        }
+        self.transcript.push_user(context::COMPACT_COMMAND);
+        self.handle
+            .send(ChatCommand::Send(context::COMPACT_COMMAND.to_owned()));
         true
     }
 

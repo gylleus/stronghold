@@ -143,7 +143,7 @@ task, do what it says and report the change to your coordinator. Don't confuse i
 - **Never self-serve credentials.** No 1Password CLI exists here. Any login, 2FA, passkey or
   secret step: summon Karl and wait ≥10 min, polling. Summon with Myrstack's `notify` tool
   (`severity: warn`, `urgent` if the track is stalled on it; say what you need). If Myrstack
-  isn't running, `notify` errors; then:
+  isn't running, `notify` only queues it for when Myrstack starts; then also:
   ```bash
   osascript -e 'display dialog "Agent <track> needs you: <what>" with title "orca fleet" buttons {"OK"} giving up after 300'
   ```

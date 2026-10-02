@@ -157,8 +157,7 @@ fn existing_worktree_plan_launches_claude_with_the_prompt_as_argv() {
     assert_eq!(
         plan.steps[2],
         Step::Verify {
-            expect: Expect::Prompt(PROMPT.into()),
-            retype: true
+            expect: Expect::Prompt(PROMPT.into())
         }
     );
     assert_eq!(plan.initial.worktree_path.as_deref(), Some(WT_PATH));
@@ -220,7 +219,7 @@ fn new_worktree_without_model_lets_orca_launch_the_agent() {
     );
     assert_eq!(plan.steps[1], Step::DirenvAllow);
     assert!(matches!(plan.steps[2], Step::WaitIdle { .. }));
-    assert!(matches!(plan.steps[3], Step::Verify { retype: true, .. }));
+    assert!(matches!(plan.steps[3], Step::Verify { .. }));
     assert_eq!(plan.steps[4], Step::CloseStartupShell);
     assert_eq!(plan.steps.len(), 5);
 }
@@ -309,8 +308,7 @@ fn worker_plan_creates_the_task_as_the_coordinator_then_starts_it() {
     assert_eq!(
         plan.steps[3],
         Step::Verify {
-            expect: Expect::AnyInput,
-            retype: false
+            expect: Expect::AnyInput
         }
     );
 }
@@ -502,8 +500,7 @@ fn empty_prompt_launches_bare_agent_and_expects_only_readiness() {
     assert_eq!(
         plan.steps[2],
         Step::Verify {
-            expect: Expect::Ready,
-            retype: true
+            expect: Expect::Ready
         }
     );
     let plan = build_plan(&SpawnRequest {
@@ -701,13 +698,13 @@ fn flags_a_codex_session_that_asks_for_approval() {
     assert!(!codex_approvals_on(&screen!("codex_working_synthetic.txt")));
 
     let expect = Expect::Prompt(PROMPT.into());
-    let mut v = Verifier::new(Agent::Codex, &expect, true);
+    let mut v = Verifier::new(Agent::Codex, &expect);
     assert_eq!(
         v.next(&screen!("spawn_codex_approvals_on.txt")),
         VerifyStep::Done
     );
     assert!(v.approvals_on);
-    let mut v = Verifier::new(Agent::Codex, &expect, true);
+    let mut v = Verifier::new(Agent::Codex, &expect);
     assert_eq!(v.next(&screen!("spawn_codex_yolo.txt")), VerifyStep::Done);
     assert!(!v.approvals_on && v.notes.is_empty());
 }
@@ -773,8 +770,8 @@ fn worker_and_bare_launches_use_looser_expectations() {
 }
 
 #[test]
-fn verifier_answers_modals_submits_parked_prompts_and_retypes_once() {
-    let mut v = Verifier::new(Agent::Claude, &Expect::Prompt(PROMPT.into()), true);
+fn verifier_answers_modals_and_submits_parked_prompts() {
+    let mut v = Verifier::new(Agent::Claude, &Expect::Prompt(PROMPT.into()));
     let bypass = screen!("spawn_claude_bypass_modal_synthetic.txt");
     assert_eq!(
         v.next(&bypass),
@@ -792,29 +789,94 @@ fn verifier_answers_modals_submits_parked_prompts_and_retypes_once() {
         v.next(&parked),
         VerifyStep::Send(TerminalInput::enter_key(), "submit the parked prompt")
     );
-    let idle = screen!("spawn_claude_idle_empty_synthetic.txt");
-    assert_eq!(
-        v.next(&idle),
-        VerifyStep::Wait,
-        "one idle read is not enough"
-    );
-    assert_eq!(
-        v.next(&idle),
-        VerifyStep::Send(TerminalInput::line(PROMPT), "retype the prompt")
-    );
-    assert_eq!(v.next(&idle), VerifyStep::Wait, "retypes only once");
     assert_eq!(
         v.next(&screen!("spawn_claude_started_synthetic.txt")),
         VerifyStep::Done
     );
     // The bypass answer is capped.
-    let mut v = Verifier::new(Agent::Claude, &Expect::Prompt(PROMPT.into()), false);
+    let mut v = Verifier::new(Agent::Claude, &Expect::Prompt(PROMPT.into()));
     assert!(matches!(v.next(&bypass), VerifyStep::Send(..)));
     assert!(matches!(v.next(&bypass), VerifyStep::Send(..)));
     assert_eq!(v.next(&bypass), VerifyStep::Wait);
-    // Without retype, a lost prompt only waits.
-    assert_eq!(v.next(&idle), VerifyStep::Wait);
-    assert_eq!(v.next(&idle), VerifyStep::Wait);
+}
+
+/// The prompt went in on the command line: an empty input box means Claude hasn't submitted it
+/// yet (hooks, MCP servers) or its echo scrolled away. Typing it would run it twice.
+#[test]
+fn verifier_never_types_the_prompt_while_the_box_is_empty() {
+    let idle = screen!("spawn_claude_idle_empty_synthetic.txt");
+    let mut v = Verifier::new(Agent::Claude, &Expect::Prompt(PROMPT.into()));
+    for _ in 0..10 {
+        assert_eq!(v.next(&idle), VerifyStep::Wait);
+    }
+    assert_eq!(
+        v.next(&screen!("spawn_claude_started_synthetic.txt")),
+        VerifyStep::Done
+    );
+    assert!(v.notes.is_empty(), "{:?}", v.notes);
+    // Right after a modal is accepted, too.
+    let mut v = Verifier::new(Agent::Claude, &Expect::Prompt(PROMPT.into()));
+    assert!(matches!(
+        v.next(&screen!("spawn_claude_bypass_modal_synthetic.txt")),
+        VerifyStep::Send(..)
+    ));
+    for _ in 0..10 {
+        assert_eq!(v.next(&idle), VerifyStep::Wait);
+    }
+}
+
+#[test]
+fn empty_box_then_started_sends_nothing() {
+    let plan = build_plan(&request(existing())).unwrap();
+    let idle = screen!("spawn_claude_idle_empty_synthetic.txt");
+    let mut fake = Fake::default()
+        .reply(
+            "terminal create",
+            Ok(result(orca_fixture!("terminal_create.json"))),
+        )
+        .reply(
+            "terminal wait",
+            Ok(result(orca_fixture!("terminal_wait_idle.json"))),
+        )
+        .screens(vec![
+            idle.clone(),
+            idle.clone(),
+            idle.clone(),
+            idle,
+            screen!("spawn_claude_started_synthetic.txt"),
+        ]);
+    let (result, _) = run(&plan, &mut fake);
+    let outcome = result.unwrap();
+    assert!(outcome.verified);
+    assert!(fake.sent.is_empty(), "{:?}", fake.sent);
+}
+
+#[test]
+fn idle_after_a_reply_warns_instead_of_typing() {
+    let plan = build_plan(&request(existing())).unwrap();
+    let mut fake = Fake::default()
+        .reply(
+            "terminal create",
+            Ok(result(orca_fixture!("terminal_create.json"))),
+        )
+        .reply(
+            "terminal wait",
+            Ok(result(orca_fixture!("terminal_wait_idle.json"))),
+        )
+        .screens(vec![screen!("spawn_claude_idle_empty_synthetic.txt")]);
+    let (result, progress) = run(&plan, &mut fake);
+    let outcome = result.unwrap();
+    assert!(!outcome.verified);
+    assert!(fake.sent.is_empty(), "{:?}", fake.sent);
+    let verify_end = progress
+        .iter()
+        .map(|Progress::Step { status, .. }| status)
+        .rfind(|s| s.is_finished())
+        .unwrap();
+    assert!(
+        matches!(verify_end, StepStatus::Warned(n) if n.contains("prompt not seen yet")),
+        "{verify_end:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
