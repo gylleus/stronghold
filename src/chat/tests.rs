@@ -110,6 +110,82 @@ fn hello_deltas_stream_into_one_message() {
     assert_eq!(result.output_tokens, Some(21));
     assert!(t.cost_usd > 0.0);
     assert!(!t.items.iter().any(|i| matches!(i, ChatItem::Error(_))));
+    // 2 input + 10,238 cache read + 14,361 cache creation.
+    assert_eq!(t.context_tokens, Some(24_601));
+    let gauge = t.context_gauge().unwrap();
+    assert_eq!(gauge.window, crate::chat::context::DEFAULT_WINDOW);
+}
+
+#[test]
+fn context_usage_tracks_top_level_messages_and_resets_on_compaction() {
+    let mut t = Transcript::default();
+    assert_eq!(t.context_gauge(), None);
+    let assistant = |parent: &str, input: u64, read: u64| {
+        parse_line(&format!(
+            r#"{{"type":"assistant","message":{{"id":"m","content":[],"usage":{{"input_tokens":{input},"cache_read_input_tokens":{read},"cache_creation_input_tokens":0,"output_tokens":9}}}},"parent_tool_use_id":{parent}}}"#
+        ))
+        .unwrap()
+    };
+    let message = assistant("null", 10, 150_000);
+    let Incoming::Assistant { usage, .. } = &message else {
+        panic!("{message:?}");
+    };
+    assert_eq!(
+        *usage,
+        Some(protocol::Usage {
+            input_tokens: 10,
+            cache_read_input_tokens: 150_000,
+            cache_creation_input_tokens: 0,
+            output_tokens: 9,
+        })
+    );
+    t.apply(&message);
+    assert_eq!(t.context_tokens, Some(150_010));
+    // A subagent's calls and a synthetic all-zero message leave it alone.
+    t.apply(&assistant(r#""toolu_1""#, 5, 5));
+    t.apply(&assistant("null", 0, 0));
+    assert_eq!(t.context_tokens, Some(150_010));
+
+    let result = parse_line(
+        r#"{"type":"result","subtype":"success","is_error":false,"modelUsage":{"claude-haiku":{"contextWindow":200000},"claude-opus-5-5[1m]":{"inputTokens":3,"contextWindow":1000000}}}"#,
+    )
+    .unwrap();
+    let Incoming::Result(r) = &result else {
+        panic!("{result:?}");
+    };
+    assert_eq!(r.context_window, Some(1_000_000));
+    t.apply(&result);
+    let gauge = t.context_gauge().unwrap();
+    assert_eq!(gauge.window, 1_000_000);
+    assert!((gauge.percent() - 15.001).abs() < 0.01);
+
+    t.apply(&parse_line(r#"{"type":"system","subtype":"compact_boundary"}"#).unwrap());
+    assert_eq!(t.context_tokens, None);
+    assert_eq!(
+        t.items.last(),
+        Some(&ChatItem::Notice(super::history::COMPACTED_NOTICE.into()))
+    );
+}
+
+#[test]
+fn context_usage_survives_a_reload_from_history() {
+    let line = r#"{"type":"assistant","message":{"id":"m","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":4,"cache_read_input_tokens":90000,"cache_creation_input_tokens":6}}}"#;
+    let mut earlier = Transcript::default();
+    for record in super::history::parse_line(line) {
+        earlier.apply_history(&record);
+    }
+    assert_eq!(earlier.context_tokens, Some(90_010));
+    let mut t = Transcript::default();
+    t.prepend(earlier);
+    assert_eq!(t.context_tokens, Some(90_010));
+
+    let mut compacted = Transcript::default();
+    for line in [line, r#"{"type":"system","subtype":"compact_boundary"}"#] {
+        for record in super::history::parse_line(line) {
+            compacted.apply_history(&record);
+        }
+    }
+    assert_eq!(compacted.context_tokens, None);
 }
 
 #[test]
@@ -285,6 +361,9 @@ while IFS= read -r line; do
       echo '{"type":"control_request","request_id":"perm-3","request":{"subtype":"can_use_tool","tool_name":"WebFetch","input":{"url":"https://example.com"}}}'
       IFS= read -r answer
       case "$answer" in *'"behavior":"allow"'*) result fetched ;; *) result fetch-denied ;; esac ;;
+    *'"content":"/compact"'*)
+      echo '{"type":"system","subtype":"compact_boundary"}'
+      result compacted ;;
     *'"type":"user"'*auto*)
       echo '{"type":"control_request","request_id":"perm-2","request":{"subtype":"can_use_tool","tool_name":"mcp__myrstack__fleet_status","input":{}}}'
       IFS= read -r answer
@@ -473,6 +552,29 @@ fn new_chat_starts_a_fresh_session_and_forgets_allowances() {
     assert_ne!(first.session_id, second.session_id);
     assert!(!second.started);
     assert!(fake.args_log()[1].contains(&format!("--session-id {}", second.session_id)));
+}
+
+#[test]
+fn compact_sends_the_bare_slash_command_even_in_auto_mode() {
+    let fake = Fake::new();
+    let mut chat = ChatSession::spawn(fake.config(&[]), None);
+    wait_until(&mut chat, "ready", |c| c.state == SessionState::Ready);
+    chat.set_auto_mode(true);
+    assert!(chat.compact());
+    assert!(!chat.compact(), "a turn is running");
+    wait_until(&mut chat, "compacted", |c| !c.transcript.running);
+    assert_eq!(last_result(&chat).as_deref(), Some("compacted"));
+    let sent = fake.user_log();
+    assert_eq!(
+        json(sent.last().unwrap())["message"]["content"],
+        crate::chat::context::COMPACT_COMMAND
+    );
+    assert!(
+        chat.transcript
+            .items
+            .iter()
+            .any(|i| matches!(i, ChatItem::Notice(n) if n == super::history::COMPACTED_NOTICE))
+    );
 }
 
 #[test]

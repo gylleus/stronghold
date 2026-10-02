@@ -47,6 +47,9 @@ impl AppChat {
                     decision,
                 } => self.session.decide(&request_id, decision),
                 ChatAction::NewChat => self.session.new_chat(),
+                ChatAction::Compact => {
+                    self.session.compact();
+                }
                 ChatAction::Retry => self.session.retry(),
                 ChatAction::SelectNode(id) => select = Some(id),
                 ChatAction::SetAutoMode(on) => self.session.set_auto_mode(on),
