@@ -23,6 +23,11 @@ use crate::ui::dock::{Pane, Side};
 use crate::ui::graph::UnreadBadge;
 use crate::ui::notifications::{NoticeAction, NotificationsPanel, PanelAction, Toasts};
 
+/// How long queued notifications wait for the first fleet snapshot before they are taken anyway.
+const PENDING_WAIT_MS: i64 = 20_000;
+/// How often the pending-notifications file is checked once the app runs.
+const PENDING_EVERY_MS: i64 = 5_000;
+
 /// The dispatcher and inbox, the toasts on screen and what the badges were built from.
 pub(super) struct AppNotifications {
     center: NotificationCenter,
@@ -42,6 +47,11 @@ pub(super) struct AppNotifications {
     last_selected: Option<NodeId>,
     /// macOS alert sound names, read when the Settings window first needs them.
     system_sounds: Option<Vec<String>>,
+    /// Where agents queue notifications while the app is down; `None` in tests.
+    pending: Option<PathBuf>,
+    /// When the app started and when the pending file was last checked.
+    started_ms: i64,
+    pending_checked_ms: i64,
 }
 
 impl AppNotifications {
@@ -65,6 +75,9 @@ impl AppNotifications {
             badges_from: None,
             last_selected: None,
             system_sounds: None,
+            pending: notify::pending::default_path(),
+            started_ms: now_ms(),
+            pending_checked_ms: i64::MIN,
         }
     }
 
@@ -125,8 +138,14 @@ impl MyrstackApp {
             outcome,
             n.title
         );
+        self.deliver(&n, &outcome, settings);
+        outcome
+    }
+
+    /// Carries out the dispatcher's `outcome` for `n`: toasts, the macOS pop-up and the sound.
+    fn deliver(&mut self, n: &Incoming, outcome: &Outcome, settings: &NotifySettings) {
         let notes = &mut self.notifications;
-        match &outcome {
+        match outcome {
             Outcome::Delivered { id, delivery } => {
                 notes.dirty = true;
                 if delivery.in_app
@@ -134,7 +153,7 @@ impl MyrstackApp {
                 {
                     notes.toasts.push(entry);
                 }
-                if let Some(post) = Post::new(&n, *id, delivery, settings) {
+                if let Some(post) = Post::new(n, *id, delivery, settings) {
                     self.notifier.post(post);
                 }
             }
@@ -149,7 +168,6 @@ impl MyrstackApp {
             }
             Outcome::RateLimited { .. } | Outcome::Cooldown => {}
         }
-        outcome
     }
 
     /// Per frame: dispatches what the whip raised, takes delivery failures and clicks, marks
@@ -161,10 +179,68 @@ impl MyrstackApp {
         if let Some(failure) = self.notifier.failures().pop() {
             self.notifications.last_failure = Some(failure);
         }
+        self.take_pending_notifications();
         self.open_clicked_notifications(ctx);
         self.mark_selected_read();
         self.sync_unread_badges();
         self.notifications.save();
+    }
+
+    /// Takes the notifications agents queued while the app was down into the inbox: the stale
+    /// ones silently, the fresh ones like any other. It waits for the first snapshot (or
+    /// [`PENDING_WAIT_MS`] without one) so they are filed under their agents' nodes, then
+    /// checks again every [`PENDING_EVERY_MS`] for one queued while the app was starting.
+    fn take_pending_notifications(&mut self) {
+        let now = now_ms();
+        let notes = &mut self.notifications;
+        let Some(path) = notes.pending.clone() else {
+            return;
+        };
+        if self.snapshot.is_none() && now - notes.started_ms < PENDING_WAIT_MS {
+            return;
+        }
+        if now.saturating_sub(notes.pending_checked_ms) < PENDING_EVERY_MS {
+            return;
+        }
+        notes.pending_checked_ms = now;
+        let queued = notify::pending::take(&path);
+        if queued.is_empty() {
+            return;
+        }
+        log::info!(
+            "notifications: {} queued while Myrstack was down",
+            queued.len()
+        );
+        let settings = self.whip_window.notifications().clone();
+        for q in queued {
+            let fresh = q.is_fresh(now);
+            let n = self.queued_incoming(&q.notice);
+            let outcome = self.notifications.center.dispatch_queued(
+                n.clone(),
+                q.at_ms,
+                fresh,
+                &settings,
+                now,
+            );
+            self.deliver(&n, &outcome, &settings);
+        }
+    }
+
+    /// The notification a queued `notice` raises, filed under the node it names or its sender.
+    fn queued_incoming(&self, notice: &AgentNotice) -> Incoming {
+        let node = notice
+            .agent
+            .as_deref()
+            .and_then(|agent| self.control_node(agent).ok())
+            .map(|n| (n.id.clone(), n.label.clone()))
+            .or_else(|| {
+                self.review_agent(&notice.origin)
+                    .map(|a| (a.id.clone(), a.label.clone()))
+            });
+        notice.incoming(
+            node.as_ref()
+                .map(|(id, label)| (id.as_str(), label.as_str())),
+        )
     }
 
     /// Raises a notification for each node that just entered NeedsInput, unless the whip's
