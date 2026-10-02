@@ -11,6 +11,9 @@
 
 use serde_json::{Value, json};
 
+/// [`Incoming::Other`] of the `system/compact_boundary` the CLI sends when it compacts.
+pub const COMPACT_BOUNDARY: &str = "system/compact_boundary";
+
 /// One parsed line from the CLI.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Incoming {
@@ -28,6 +31,8 @@ pub enum Incoming {
         parent: Option<String>,
         message_id: String,
         content: Vec<ContentBlock>,
+        /// The API call's token usage; its input side is how full the context is.
+        usage: Option<Usage>,
     },
     /// Tool results and notes such as `[Request interrupted by user]`.
     User {
@@ -99,6 +104,33 @@ pub enum ContentBlock {
     Other,
 }
 
+/// Token usage of one API call (an assistant message's `usage`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Usage {
+    pub input_tokens: u64,
+    pub cache_read_input_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+impl Usage {
+    /// Tokens the request sent: the conversation's current context size.
+    pub fn context_tokens(&self) -> u64 {
+        self.input_tokens + self.cache_read_input_tokens + self.cache_creation_input_tokens
+    }
+
+    fn parse(v: Option<&Value>) -> Option<Self> {
+        let v = v?.as_object()?;
+        let n = |key: &str| v.get(key).and_then(Value::as_u64).unwrap_or_default();
+        Some(Self {
+            input_tokens: n("input_tokens"),
+            cache_read_input_tokens: n("cache_read_input_tokens"),
+            cache_creation_input_tokens: n("cache_creation_input_tokens"),
+            output_tokens: n("output_tokens"),
+        })
+    }
+}
+
 /// `result`: the end of a turn.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TurnResult {
@@ -115,6 +147,8 @@ pub struct TurnResult {
     pub cost_usd: Option<f64>,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    /// The largest `contextWindow` in `modelUsage`, when the CLI reports one.
+    pub context_window: Option<u64>,
 }
 
 impl TurnResult {
@@ -180,6 +214,7 @@ pub fn parse_value(v: &Value) -> Incoming {
                 parent: parent_of(v),
                 message_id: str_of(message, "id").unwrap_or_default(),
                 content: parse_content(message.get("content")),
+                usage: Usage::parse(message.get("usage")),
             }
         }
         "user" => Incoming::User {
@@ -364,6 +399,15 @@ fn parse_result(v: &Value) -> TurnResult {
         cost_usd: v.get("total_cost_usd").and_then(Value::as_f64),
         input_tokens: tokens("input_tokens"),
         output_tokens: tokens("output_tokens"),
+        context_window: v
+            .get("modelUsage")
+            .and_then(Value::as_object)
+            .and_then(|models| {
+                models
+                    .values()
+                    .filter_map(|m| m.get("contextWindow").and_then(Value::as_u64))
+                    .max()
+            }),
     }
 }
 
