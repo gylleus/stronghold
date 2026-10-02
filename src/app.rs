@@ -1054,6 +1054,8 @@ impl eframe::App for MyrstackApp {
             self.graph.sync(&snapshot);
             if let Some(claude) = &self.claude_data {
                 self.graph.set_usage(claude.node_usages(&snapshot.nodes));
+                self.graph
+                    .set_building(claude.building_nodes(&snapshot.nodes));
             }
             if let Some(id) = &self.selected
                 && snapshot.node(id).is_none()

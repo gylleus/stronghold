@@ -84,8 +84,10 @@ impl Spot {
 pub enum Pose {
     /// Standing at its post (a coordinator at work).
     Stand,
-    /// Digging at the chamber's face.
+    /// Digging at the chamber's face (working: reading, searching, thinking).
     Dig,
+    /// Hammering in a hard hat at the chamber's face (editing or building).
+    Build,
     /// Lying still (idle or stalled).
     Sleep,
     /// Waving on the landing for Karl.
@@ -185,6 +187,8 @@ pub struct FarmInput<'a> {
     /// Nodes filtered out; they are not drawn.
     pub hidden: &'a BTreeSet<NodeId>,
     pub pr_ready: &'a HashSet<NodeId>,
+    /// Nodes whose agent is editing or building: their diggers build instead.
+    pub building: &'a HashSet<NodeId>,
     pub now_ms: i64,
 }
 
@@ -610,6 +614,11 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                 is_pr,
                 input.now_ms,
             ));
+        }
+    }
+    for ant in &mut ants {
+        if ant.pose == Pose::Dig && input.building.contains(&ant.id) {
+            ant.pose = Pose::Build;
         }
     }
     // Subagents trail their parent, nearest first; nested ones once their parent is placed.

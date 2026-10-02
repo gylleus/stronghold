@@ -211,6 +211,7 @@ impl AntFarmView {
             snapshot,
             hidden: graph.hidden(),
             pr_ready: graph.pr_ready(),
+            building: graph.building(),
             now_ms: now_ms(),
         };
         let scene = layout(&input, rect);
@@ -274,7 +275,7 @@ impl AntFarmView {
             || !self.births.is_empty()
             || !self.falls.is_empty();
         let stepping = scene.ants.iter().any(|a| {
-            matches!(a.pose, Pose::Dig | Pose::Wait | Pose::Sleep)
+            matches!(a.pose, Pose::Dig | Pose::Build | Pose::Wait | Pose::Sleep)
                 || (a.pose == Pose::Queen && self.queen_busy)
                 || a.mark == Some(layout::Mark::Whip)
         });
@@ -649,14 +650,16 @@ fn paint_ants(
         };
         let frame = match ant.pose {
             _ if walking => walk_frame,
-            Pose::Dig => step,
+            Pose::Dig | Pose::Build => step,
             Pose::Queen if effects.queen_busy => step,
             _ => 0,
         };
         if !walking {
             match ant.pose {
                 Pose::Wait => cell = cell.translate(vec2(0.0, -((step % 2) as f32) * 2.0 * tpx)),
-                Pose::Dig => cell = cell.translate(vec2(0.0, -((step % 2) as f32) * tpx)),
+                Pose::Dig | Pose::Build => {
+                    cell = cell.translate(vec2(0.0, -((step % 2) as f32) * tpx))
+                }
                 // Belly up: the flipped sprite needs lowering to lie on the floor.
                 Pose::Sleep | Pose::Failed => cell = cell.translate(vec2(0.0, 2.0 * tpx)),
                 // A busy Queen hops about; otherwise she sits still.
@@ -725,6 +728,9 @@ fn paint_ants(
             let seed = (ant.pos.x * 0.37 + ant.pos.y * 0.11).rem_euclid(1.0);
             let t = (now_s * 6.0).floor() / 6.0;
             sprites.dirt(painter, cell, facing_right, tpx, t, seed);
+        }
+        if !walking && ant.pose == Pose::Build {
+            sprites.builder(painter, cell, facing_right, tpx, step);
         }
         if !walking && ant.mark == Some(layout::Mark::Whip) {
             sprites.whip(painter, cell, tpx, step);

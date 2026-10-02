@@ -561,7 +561,7 @@ fn xml_field<'a>(block: &'a str, tag: &str) -> Option<&'a str> {
 }
 
 /// Parses `YYYY-MM-DDTHH:MM:SS[.fff]Z` (the transcript format) to epoch ms.
-fn parse_iso_ms(s: &str) -> Option<i64> {
+pub(super) fn parse_iso_ms(s: &str) -> Option<i64> {
     let s = s.strip_suffix('Z')?;
     let (date, time) = s.split_once('T')?;
     let mut d = date.splitn(3, '-').map(|p| p.parse::<i64>().ok());

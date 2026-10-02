@@ -1,5 +1,6 @@
 //! Scanner for Claude transcripts and subagents under `~/.claude/projects`.
 
+pub mod activity;
 pub mod forwards;
 pub mod hook;
 pub mod sessions;

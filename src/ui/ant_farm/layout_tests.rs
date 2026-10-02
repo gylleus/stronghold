@@ -86,6 +86,7 @@ fn scene_with(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>, pr: &[&str]) 
         snapshot,
         hidden,
         pr_ready: &pr_ready,
+        building: &HashSet::new(),
         now_ms: 0,
     };
     layout(&input, RECT)
@@ -643,6 +644,7 @@ fn a_resize_moves_ants_without_walking() {
         snapshot: &s,
         hidden: &hidden,
         pr_ready: &pr_ready,
+        building: &HashSet::new(),
         now_ms: 0,
     };
     let smaller = layout(&input, Rect::from_min_size(Pos2::ZERO, vec2(900.0, 600.0)));
@@ -687,6 +689,7 @@ fn clicking_an_ant_reports_it() {
         snapshot: &s,
         hidden: &hidden,
         pr_ready: &pr_ready,
+        building: &HashSet::new(),
         now_ms: 0,
     };
     let scene = layout(&input, rect);
@@ -743,6 +746,7 @@ fn dragging_a_box_selects_the_ants_in_it() {
         snapshot: &s,
         hidden: &hidden,
         pr_ready: &pr_ready,
+        building: &HashSet::new(),
         now_ms: 0,
     };
     let scene = layout(&input, rect);
@@ -891,6 +895,29 @@ fn scenery_stays_on_the_surface_and_in_the_sky() {
             assert!(scene.rect.contains(star) && star.y < scene.surface_y);
         }
     }
+}
+
+#[test]
+fn building_diggers_build() {
+    let s = snapshot();
+    let building: HashSet<NodeId> = ["working", "idle", "r1-coord"].map(id).into();
+    let input = FarmInput {
+        snapshot: &s,
+        hidden: &BTreeSet::new(),
+        pr_ready: &HashSet::new(),
+        building: &building,
+        now_ms: 0,
+    };
+    let scene = layout(&input, RECT);
+    let pose_of = |name: &str| scene.ant(&id(name)).unwrap().pose;
+    assert_eq!(pose_of("working"), Pose::Build);
+    assert!(scene.ant(&id("working")).unwrap().facing_right);
+    assert_eq!(pose_of("idle"), Pose::Sleep, "only working ants build");
+    assert_eq!(
+        pose_of("r1-coord"),
+        Pose::Stand,
+        "coordinators keep standing"
+    );
 }
 
 /// An ant removed from the fleet falls; one filtered out or changing state does not.
