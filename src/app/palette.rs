@@ -77,6 +77,9 @@ impl MyrstackApp {
                 self.apply_filter();
             }
             Dispatch::NewSession => self.open_spawn_dialog(None),
+            Dispatch::OpenLog => {
+                std::thread::spawn(crate::logfile::open_in_console);
+            }
             Dispatch::ToggleReleased => {
                 self.filter.show_released = !self.filter.show_released;
                 self.apply_filter();

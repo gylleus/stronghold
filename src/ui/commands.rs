@@ -49,6 +49,7 @@ pub enum ActionId {
     OpenInOrca,
     TypeIntoTerminal,
     KeyboardHelp,
+    OpenLog,
 }
 
 /// An action's fixed description.
@@ -355,6 +356,13 @@ pub const ACTIONS: &[Action] = &[
         "shortcuts keys bindings",
         Some("?"),
     ),
+    action(
+        ActionId::OpenLog,
+        "open_log",
+        "Open log",
+        "log file console debug errors warnings diagnostics troubleshoot",
+        None,
+    ),
 ];
 
 impl ActionId {
@@ -508,6 +516,8 @@ pub enum Dispatch {
     ToggleReleased,
     /// Open the "New ant…" dialog.
     NewSession,
+    /// Open the log file in Console.
+    OpenLog,
 }
 
 pub fn dispatch(id: ActionId) -> Dispatch {
@@ -552,6 +562,7 @@ pub fn dispatch(id: ActionId) -> Dispatch {
         A::OpenInOrca => Dispatch::Key(KeyCommand::OpenInOrca),
         A::TypeIntoTerminal => Dispatch::Key(KeyCommand::FocusInput),
         A::KeyboardHelp => Dispatch::Key(KeyCommand::ToggleHelp),
+        A::OpenLog => Dispatch::OpenLog,
     }
 }
 
@@ -702,6 +713,7 @@ mod tests {
             (A::OpenInOrca, Dispatch::Key(KeyCommand::OpenInOrca)),
             (A::TypeIntoTerminal, Dispatch::Key(KeyCommand::FocusInput)),
             (A::KeyboardHelp, Dispatch::Key(KeyCommand::ToggleHelp)),
+            (A::OpenLog, Dispatch::OpenLog),
         ];
         assert_eq!(cases.len(), ACTIONS.len(), "every action is covered");
         for (id, expected) in cases {

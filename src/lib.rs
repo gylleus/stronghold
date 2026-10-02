@@ -17,6 +17,7 @@ pub mod envoy;
 pub mod finish;
 pub mod fleet;
 pub mod hotkey;
+pub mod logfile;
 pub mod mcp;
 pub mod model;
 pub mod notify;

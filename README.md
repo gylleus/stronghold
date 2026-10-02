@@ -13,7 +13,9 @@ starts). The fleet is the colony of ants.
 cargo run
 ```
 
-Requires the `orca` CLI on `PATH`. Set `RUST_LOG=debug` for more logging.
+Requires the `orca` CLI on `PATH`. Set `RUST_LOG=debug` for more logging. The app logs to stderr and to
+`~/Library/Logs/Myrstack/myrstack.log` (rotated at 5 MB, three files kept); "Open log" in the command
+palette opens it in Console.
 
 ## Install as a macOS app
 
