@@ -328,8 +328,9 @@ pub fn definitions() -> Vec<Value> {
              repo and name); \"worker\" adds a task to run_id (as its coordinator) and starts a \
              worker on it (give exactly one of: repo + name for a new worktree, worktree, or \
              terminal to reuse an agent already running there); the prompt is the task spec. \
-             Only when Karl asks for a new session. Returns the new terminal and node id; the \
-             dashboard selects it once it appears.",
+             Use it when Karl asks for a new session, and as a coordinator to start each \
+             worker of its own run (worker mode; the playbook's default way to start one). \
+             Returns the new terminal and node id; the dashboard selects it once it appears.",
             object(
                 json!({
                     "mode": { "type": "string", "enum": ["worktree", "new_worktree", "worker"] },

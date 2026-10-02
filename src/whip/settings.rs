@@ -52,6 +52,9 @@ pub struct WhipSettings {
     pub notify: bool,
     /// A Run with no activity at all for longer than this is abandoned and never nudged.
     pub abandon_after_ms: i64,
+    /// Type each Run's real bus events into its coordinator's terminal; see
+    /// [`crate::whip::forward`]. Replaces the attendant session.
+    pub forward_events: bool,
 }
 
 impl Default for WhipSettings {
@@ -65,6 +68,7 @@ impl Default for WhipSettings {
             tick_ms: MIN,
             notify: true,
             abandon_after_ms: DEFAULT_ABANDON_AFTER_MS,
+            forward_events: true,
         }
     }
 }

@@ -2,6 +2,7 @@
 
 pub mod actions;
 pub mod engine;
+pub mod forward;
 pub mod manual;
 pub mod progress;
 pub mod rules;

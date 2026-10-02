@@ -608,6 +608,12 @@ fn worker_node(
     node.state = derive_state(&StateInputs {
         needs_input: terminal.and_then(|t| data.screen_needs_input(&t.handle)),
         stalled: terminal.is_some_and(|t| stalled.contains(&t.handle)),
+        alive_after_failure: task.is_some_and(|t| {
+            t.dispatch_id
+                .as_deref()
+                .is_none_or(|d| d == worker.dispatch_id)
+                && data.alive_after_failure(t, None).is_some()
+        }),
         ..StateInputs::new(terminal, Some(worker), now_ms)
     });
     node

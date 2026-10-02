@@ -55,6 +55,19 @@ pub enum WhipAction {
     },
     /// A terminal has waited on Karl longer than the threshold. Sent once per wait.
     NotifyNeedsInput { handle: String, since_ms: i64 },
+    /// Real bus events typed into the Runs' coordinator; see [`crate::whip::forward`].
+    Forward {
+        handle: String,
+        run_ids: Vec<String>,
+        events: usize,
+        text: String,
+    },
+    /// A Run's events have waited on an unreachable coordinator: notify Karl. Once per outage.
+    CoordinatorUnreachable {
+        run_id: String,
+        waiting: usize,
+        first: String,
+    },
 }
 
 impl WhipAction {
@@ -66,6 +79,8 @@ impl WhipAction {
             }
             Self::Escalate { .. } => "escalate".into(),
             Self::NotifyNeedsInput { .. } => "notify needs-input".into(),
+            Self::Forward { events, .. } => format!("forward {events} event(s)"),
+            Self::CoordinatorUnreachable { .. } => "notify coordinator unreachable".into(),
         }
     }
 
@@ -79,6 +94,10 @@ impl WhipAction {
                 .join(", "),
             Self::Escalate { target, .. } => target_label(target),
             Self::NotifyNeedsInput { handle, .. } => format!("terminal {handle}"),
+            Self::Forward {
+                handle, run_ids, ..
+            } => format!("coordinator {handle} run {}", run_ids.join(", ")),
+            Self::CoordinatorUnreachable { run_id, .. } => format!("run {run_id}"),
         }
     }
 }
@@ -143,6 +162,22 @@ pub fn worker_nudge_text(tasks: &[TaskRef], idle_ms: i64) -> String {
         "{NUDGE_PREFIX} no progress on {noun} {list} for {}. Send a heartbeat{each} with your \
          current phase and a one-line status, then continue — or worker_done / ask / escalation \
          if that's the truth.",
+        fmt_duration(idle_ms)
+    )
+}
+
+/// Worker nudge, typed into its terminal, for a task Orca marked failed while the worker kept
+/// working. Its dispatch is revoked, so it cannot heartbeat; the coordinator has been told.
+pub fn revoked_worker_nudge_text(tasks: &[TaskRef], idle_ms: i64) -> String {
+    let list = tasks
+        .iter()
+        .map(TaskRef::label)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{NUDGE_PREFIX} no progress on {list} for {}. Orca marked this dispatch failed at launch, \
+         so it rejects your heartbeats and reports; don't send them. Reply here with your current \
+         phase and a one-line status, then continue.",
         fmt_duration(idle_ms)
     )
 }

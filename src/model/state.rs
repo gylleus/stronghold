@@ -22,6 +22,9 @@ pub struct StateInputs<'a> {
     pub needs_input: Option<bool>,
     /// Set by the whip when the node has made no progress for too long.
     pub stalled: bool,
+    /// Orca failed the dispatch but its agent kept working (see
+    /// [`crate::fleet::FleetData::alive_after_failure`]): the terminal decides, not the failure.
+    pub alive_after_failure: bool,
 }
 
 impl<'a> StateInputs<'a> {
@@ -33,6 +36,7 @@ impl<'a> StateInputs<'a> {
             now_ms,
             needs_input: None,
             stalled: false,
+            alive_after_failure: false,
         }
     }
 }
@@ -107,7 +111,8 @@ fn is_live(terminal: &Terminal) -> bool {
 ///
 /// Precedence, first match wins:
 /// 1. **Failed**: the worker's fields report a failure (`workerState` failed/stopped/
-///    stop_unknown, `dispatchStatus` failed/circuit_broken).
+///    stop_unknown, `dispatchStatus` failed/circuit_broken), unless the agent kept working
+///    anyway ([`StateInputs::alive_after_failure`]).
 /// 2. **Done**: the worker's fields report completion (`workerState` succeeded,
 ///    `dispatchStatus` completed, `terminalState` release_pending/release_unknown/released).
 /// 3. Not live (terminal missing, disconnected or orphaned): **Failed** for a worker whose
@@ -120,6 +125,7 @@ fn is_live(terminal: &Terminal) -> bool {
 pub fn derive_state(inputs: &StateInputs<'_>) -> NodeState {
     if let Some(worker) = inputs.worker {
         match worker_verdict(worker) {
+            Verdict::Failed if inputs.alive_after_failure => {}
             Verdict::Failed => return NodeState::Failed,
             Verdict::Done => return NodeState::Done,
             Verdict::Open => {}
@@ -469,5 +475,15 @@ mod tests {
         for p in previews {
             assert!(!preview_needs_input(p), "false positive: {p}");
         }
+    }
+
+    #[test]
+    fn failed_dispatch_whose_agent_kept_working_is_live() {
+        let w = worker(None, Some(DispatchStatus::Failed), None);
+        let t = terminal(Some(RECENT), "working");
+        let mut inputs = StateInputs::new(Some(&t), Some(&w), NOW);
+        assert_eq!(derive_state(&inputs), NodeState::Failed);
+        inputs.alive_after_failure = true;
+        assert_eq!(derive_state(&inputs), NodeState::Working);
     }
 }
