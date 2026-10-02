@@ -29,6 +29,9 @@ pub struct AppEnvoy {
     drafts: Option<DraftQueue>,
     worker: Option<Worker>,
     bridge: BridgeStatus,
+    bridge_seen: bool,
+    error_notified: Option<String>,
+    acknowledged: HashSet<String>,
     relays: RelayLimiter,
     relay_path: PathBuf,
     pending: VecDeque<InboundEvent>,
@@ -77,6 +80,9 @@ impl AppEnvoy {
             drafts: drafts.ok(),
             worker,
             bridge: BridgeStatus::Missing,
+            bridge_seen: false,
+            error_notified: None,
+            acknowledged: HashSet::new(),
             relays: relays.unwrap_or_default(),
             relay_path,
             pending: VecDeque::new(),
@@ -102,7 +108,19 @@ impl AppEnvoy {
         self.worker()?
             .submit(Work::Configure(Some(settings.clone())))?;
         if self.handle.is_none() {
-            self.pending = self.inbox.unforwarded().into();
+            self.bridge_seen = false;
+            self.pending = self
+                .inbox
+                .unforwarded()
+                .into_iter()
+                .filter(|e| {
+                    !self.acknowledged.contains(&e.id())
+                        && self
+                            .forwarding
+                            .as_ref()
+                            .is_none_or(|(_, batch)| !batch.iter().any(|b| b.id() == e.id()))
+                })
+                .collect();
         }
         self.traffic_handle = Some(handle.clone());
         self.handle = Some(handle);
@@ -116,6 +134,15 @@ impl AppEnvoy {
             let _ = worker.submit(Work::Configure(None));
         }
         self.pending.clear();
+    }
+
+    fn observe_bridge(&mut self, bridge: BridgeStatus) -> bool {
+        let notify = self.handle.is_some()
+            && (!self.bridge_seen || self.bridge != bridge)
+            && bridge != BridgeStatus::Ok;
+        self.bridge = bridge;
+        self.bridge_seen = self.handle.is_some();
+        notify
     }
 
     pub fn apply_status(&self, status: &mut EnvoyStatus) {
@@ -174,41 +201,33 @@ impl MyrstackApp {
                 self.envoy_core.worker()?;
             }
         }
-        let draft = self
-            .envoy_core
-            .queue()?
-            .begin_approval(id, edited_text, dry_run, now_ms())?;
-        if draft.status == DraftStatus::DryRunSent {
-            return Ok(());
-        }
-        if proposal {
-            let sent = self.chat.session_mut().send(&draft.queen_request());
-            self.envoy_core.queue()?.finish(
-                id,
-                if sent {
-                    Ok(())
+        let core = &mut self.envoy_core;
+        let queue = core
+            .drafts
+            .as_mut()
+            .ok_or("Envoy draft store unavailable")?;
+        let chat = &mut self.chat;
+        let completed = apply_approval(queue, id, edited_text, dry_run, now_ms(), |draft| {
+            if draft.kind == DraftKind::TaskProposal {
+                if chat.session_mut().send(&draft.queen_request()) {
+                    Ok(true)
                 } else {
                     Err("Queen chat refused the request".into())
-                },
-                now_ms(),
-            )?;
-            if sent {
-                self.open_chat();
+                }
+            } else {
+                let worker = core.worker.as_ref().ok_or("Envoy worker unavailable")?;
+                worker.submit(Work::Send {
+                    id: id.into(),
+                    message: draft.outbound()?,
+                })?;
+                if let Some(from) = &core.traffic_handle {
+                    core.outgoing.insert(id.into(), from.clone());
+                }
+                Ok(false)
             }
-        } else {
-            if let Some(from) = &self.envoy_core.traffic_handle {
-                self.envoy_core.outgoing.insert(id.into(), from.clone());
-            }
-            let result = self.envoy_core.worker()?.submit(Work::Send {
-                id: id.into(),
-                message: draft.outbound()?,
-            });
-            if let Err(e) = result {
-                self.envoy_core
-                    .queue()?
-                    .finish(id, Err(e.clone()), now_ms())?;
-                return Err(e);
-            }
+        })?;
+        if completed && proposal {
+            self.open_chat();
         }
         Ok(())
     }
@@ -256,7 +275,25 @@ impl MyrstackApp {
         if command.method == "envoy_relay" {
             let result = serde_json::from_value::<RelayRequest>(command.args.clone())
                 .map_err(|_| "Relay requires to, summary, slack_link and why".to_owned())
-                .and_then(|request| {
+                .and_then(|mut request| {
+                    if request.to == "coordinators" {
+                        let snapshot =
+                            self.snapshot.as_ref().ok_or("Fleet snapshot unavailable")?;
+                        let selection = crate::broadcast::BroadcastSelection::new(
+                            snapshot.runs.iter().map(|r| r.id.clone()),
+                        );
+                        if crate::broadcast::plan_broadcast(snapshot, &selection, &request.text())
+                            .deliveries
+                            .is_empty()
+                        {
+                            return Err("No live coordinators".into());
+                        }
+                    } else {
+                        let node = self.control_node(&request.to).map_err(|e| e.to_string())?;
+                        request.to = crate::ui::terminal::watch_handle(node)
+                            .ok_or("Relay target has no live terminal")?
+                            .into();
+                    }
                     let mut limiter = self.envoy_core.relays.clone();
                     let record =
                         limiter.reserve(request, self.envoy_core.settings.dry_run, now_ms())?;
@@ -381,17 +418,17 @@ impl MyrstackApp {
                 let draft = if method == "envoy_draft" {
                     let target: ReplyTo = serde_json::from_value(args["in_reply_to"].clone())
                         .map_err(|_| "in_reply_to requires conversation and ts")?;
-                    if self
+                    let event = self
                         .envoy_core
                         .inbox
                         .get(&format!("{}:{}", target.conversation, target.ts))
-                        .is_none()
-                    {
-                        return Err("Draft must reply to a retained inbox event".into());
-                    }
+                        .ok_or("Draft must reply to a retained inbox event")?;
+                    let thread_ts = optional(args, "thread_ts")?
+                        .map(str::to_owned)
+                        .or_else(|| event.thread_ts.clone());
                     Draft::reply(
                         target,
-                        optional(args, "thread_ts")?.map(str::to_owned),
+                        thread_ts,
                         required(args, "text")?.into(),
                         required(args, "rationale")?.into(),
                         now_ms(),
@@ -435,22 +472,38 @@ impl MyrstackApp {
                     bridge,
                     notices,
                 } => {
+                    self.envoy_core
+                        .pending
+                        .retain(|e| inbox.get(&e.id()).is_some());
+                    let mut inbox = inbox;
+                    self.envoy_core
+                        .acknowledged
+                        .retain(|id| inbox.get(id).is_some());
+                    inbox.mark_forwarded(
+                        &self
+                            .envoy_core
+                            .acknowledged
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<_>>(),
+                    );
                     self.envoy_core.inbox = inbox;
+                    self.envoy_core.error = None;
+                    self.envoy_core.error_notified = None;
                     if self.envoy_core.handle.is_some() {
                         self.envoy_core.pending.extend(events);
                         while self.envoy_core.pending.len() > 2000 {
                             self.envoy_core.pending.pop_front();
                         }
-                        if bridge != self.envoy_core.bridge && bridge != BridgeStatus::Ok {
-                            self.raise(Incoming::new(
-                                Source::Envoy,
-                                Severity::Warn,
-                                "Envoy bridge down",
-                                "Slack channel ingestion is falling back to polling.",
-                            ));
-                        }
                     }
-                    self.envoy_core.bridge = bridge;
+                    if self.envoy_core.observe_bridge(bridge) {
+                        self.raise(Incoming::new(
+                            Source::Envoy,
+                            Severity::Warn,
+                            "Envoy bridge down",
+                            "Slack channel ingestion is falling back to polling.",
+                        ));
+                    }
                     let current: HashSet<String> = notices.into_iter().collect();
                     for notice in current
                         .difference(&self.envoy_core.notices)
@@ -485,17 +538,20 @@ impl MyrstackApp {
                     }
                 }
                 Update::Error(error) => {
-                    if self.envoy_core.error.as_ref() != Some(&error) {
-                        self.raise(Incoming::new(
-                            Source::Envoy,
-                            Severity::Warn,
-                            "Envoy storage unavailable",
-                            &error,
-                        ));
-                        self.envoy_core.error = Some(error);
-                    }
+                    self.envoy_core.error = Some(error);
                 }
             }
+        }
+        if self.envoy_core.error != self.envoy_core.error_notified {
+            if let Some(error) = self.envoy_core.error.clone() {
+                self.raise(Incoming::new(
+                    Source::Envoy,
+                    Severity::Warn,
+                    "Envoy storage unavailable",
+                    &error,
+                ));
+            }
+            self.envoy_core.error_notified = self.envoy_core.error.clone();
         }
         self.forward_envoy();
     }
@@ -533,7 +589,7 @@ impl MyrstackApp {
             .iter()
             .map(InboundEvent::summary)
             .collect::<Vec<_>>()
-            .join("\n");
+            .join(" | ");
         let id = self.actions.submit(Action::Send {
             handle: handle.into(),
             input: TerminalInput::line(text),
@@ -565,6 +621,7 @@ impl MyrstackApp {
                 ));
             }
             let ids: Vec<_> = batch.iter().map(InboundEvent::id).collect();
+            self.envoy_core.acknowledged.extend(ids.iter().cloned());
             self.envoy_core.inbox.mark_forwarded(&ids);
             if let Some(worker) = &self.envoy_core.worker {
                 let _ = worker.submit(Work::Forwarded(ids));
@@ -575,6 +632,32 @@ impl MyrstackApp {
                 self.envoy_core.pending.push_front(event);
             }
             self.envoy_core.forward_after_ms = now_ms() + 30_000;
+        }
+    }
+}
+
+/// `deliver` runs only after a durable live approval; false means completion is asynchronous.
+fn apply_approval(
+    queue: &mut DraftQueue,
+    id: &str,
+    edited_text: Option<&str>,
+    dry_run: bool,
+    now: i64,
+    deliver: impl FnOnce(&Draft) -> Result<bool, String>,
+) -> Result<bool, String> {
+    let draft = queue.begin_approval(id, edited_text, dry_run, now)?;
+    if draft.status == DraftStatus::DryRunSent {
+        return Ok(false);
+    }
+    match deliver(&draft) {
+        Ok(true) => {
+            queue.finish(id, Ok(()), now)?;
+            Ok(true)
+        }
+        Ok(false) => Ok(false),
+        Err(error) => {
+            queue.finish(id, Err(error.clone()), now)?;
+            Err(error)
         }
     }
 }
@@ -641,5 +724,79 @@ mod tests {
         assert!(can_forward(&t, true, false));
         t.orphaned = true;
         assert!(!can_forward(&t, true, false));
+    }
+    #[test]
+    fn production_approval_transaction_never_calls_delivery_for_dry_run_or_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut queue = DraftQueue::load(dir.path().join("drafts.json")).unwrap();
+        let reply = Draft::reply(
+            ReplyTo {
+                conversation: "C123".into(),
+                ts: "1.000001".into(),
+            },
+            None,
+            "Sample reply".into(),
+            "Requested".into(),
+            0,
+        );
+        let proposal = Draft::proposal(
+            "Sample task".into(),
+            None,
+            "Requested".into(),
+            "https://example.slack.com".into(),
+            0,
+        );
+        for draft in [reply.clone(), proposal] {
+            let draft = queue.create(draft).unwrap();
+            apply_approval(&mut queue, &draft.id, Some("Edited"), true, 1, |_| {
+                panic!("dry-run invoked live delivery")
+            })
+            .unwrap();
+            assert_eq!(
+                queue.get(&draft.id).unwrap().status,
+                DraftStatus::DryRunSent
+            );
+        }
+        let draft = queue.create(reply.clone()).unwrap();
+        assert!(
+            apply_approval(
+                &mut queue,
+                &draft.id,
+                Some("ghp_123456789012345678901234567890"),
+                false,
+                1,
+                |_| panic!("secret reached live delivery")
+            )
+            .is_err()
+        );
+        assert_eq!(queue.get(&draft.id).unwrap().status, DraftStatus::Pending);
+        apply_approval(&mut queue, &draft.id, None, false, 2, |d| {
+            assert_eq!(d.status, DraftStatus::Approved);
+            Ok(false)
+        })
+        .unwrap();
+        assert_eq!(queue.get(&draft.id).unwrap().status, DraftStatus::Approved);
+        let draft = queue.create(reply).unwrap();
+        assert!(
+            apply_approval(&mut queue, &draft.id, None, false, 3, |_| Err(
+                "offline".into()
+            ))
+            .is_err()
+        );
+        assert_eq!(queue.get(&draft.id).unwrap().status, DraftStatus::Failed);
+    }
+
+    #[test]
+    fn bridge_alerts_on_start_reenable_and_each_down_transition() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = AppEnvoy::at(dir.path().into(), &egui::Context::default());
+        assert!(!core.observe_bridge(BridgeStatus::Missing));
+        core.handle = Some("term_envoy".into());
+        assert!(core.observe_bridge(BridgeStatus::Missing));
+        assert!(!core.observe_bridge(BridgeStatus::Missing));
+        assert!(!core.observe_bridge(BridgeStatus::Ok));
+        assert!(core.observe_bridge(BridgeStatus::Stale));
+        core.bridge_seen = false;
+        assert!(core.observe_bridge(BridgeStatus::Stale));
     }
 }

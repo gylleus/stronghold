@@ -13,13 +13,13 @@ use super::channel::InboundEvent;
 pub const MAX_EVENTS: usize = 2_000;
 pub const INBOX_FILE: &str = "envoy-inbox.json";
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cursor {
     pub inode: u64,
     pub offset: u64,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Inbox {
     events: Vec<InboundEvent>,
@@ -93,10 +93,21 @@ impl Inbox {
 
     pub fn since(&self, since: Option<&str>, limit: usize) -> Vec<InboundEvent> {
         let floor = since.and_then(timestamp_us).unwrap_or_default();
-        self.events
+        let events: Vec<_> = self
+            .events
             .iter()
             .filter(|e| timestamp_us(&e.ts).unwrap_or_default() > floor)
-            .take(limit.min(MAX_EVENTS))
+            .collect();
+        let limit = limit.min(MAX_EVENTS);
+        let start = if since.is_none() {
+            events.len().saturating_sub(limit)
+        } else {
+            0
+        };
+        events
+            .into_iter()
+            .skip(start)
+            .take(limit)
             .cloned()
             .collect()
     }
@@ -184,5 +195,9 @@ mod tests {
         let mut loaded = Inbox::load(&path).unwrap();
         assert!(!loaded.insert(event("1.000001")));
         assert_eq!(loaded.since(Some("1999"), 1).len(), 1);
+        assert_eq!(
+            loaded.since(None, 1)[0].ts,
+            format!("{}.000001", MAX_EVENTS + 1)
+        );
     }
 }

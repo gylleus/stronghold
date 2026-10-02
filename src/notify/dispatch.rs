@@ -29,6 +29,7 @@ pub const DUPLICATE_WINDOW_MS: i64 = 30 * 60_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Source {
+    /// An Envoy draft or channel-health transition.
     Envoy,
     /// An agent's `notify` tool call (or `myrstack notify-karl`, the control API's `notify`).
     Agent,

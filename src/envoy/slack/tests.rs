@@ -112,6 +112,7 @@ fn sanitized_search_filters_dms_and_self() {
         1
     );
     fixture["messages"]["matches"][0]["channel"]["is_im"] = json!(false);
+    fixture["messages"]["matches"][0]["channel"]["is_mpim"] = json!(false);
     assert_eq!(
         parse_search(&fixture, EventKind::Dm, "U111").unwrap().len(),
         1
@@ -211,4 +212,23 @@ fn failed_search_keeps_watermark_and_thread_context_is_paginated() {
     let thread = c.thread(&root).unwrap();
     assert_eq!(thread.len(), 2);
     assert_eq!(thread[1].thread_ts.as_deref(), Some(root.ts.as_str()));
+}
+
+#[test]
+fn quiet_ticks_do_not_rewrite_inbox_and_subscription_retry_clears_error() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("heartbeat"),
+        jiff::Timestamp::from_millisecond(NOW).unwrap().to_string(),
+    )
+    .unwrap();
+    let mut c = channel(dir.path());
+    c.errors
+        .insert("C123".into(), "Subscription command failed".into());
+    c.poll(NOW).unwrap();
+    assert_eq!(c.health(), BridgeStatus::Ok);
+    assert!(c.errors.is_empty());
+    let modified = fs::metadata(&c.path).unwrap().modified().unwrap();
+    c.poll(NOW + 1).unwrap();
+    assert_eq!(fs::metadata(&c.path).unwrap().modified().unwrap(), modified);
 }
