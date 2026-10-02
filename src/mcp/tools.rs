@@ -329,7 +329,9 @@ pub fn definitions() -> Vec<Value> {
              repo and name); \"worker\" adds a task to run_id (as its coordinator) and starts a \
              worker on it (give exactly one of: repo + name for a new worktree, worktree, or \
              terminal to reuse an agent already running there); the prompt is the task spec. \
-             Only when Karl asks for a new session. Returns the new terminal and node id; the \
+             Use it when Karl asks for a new session, and as a coordinator to start each \
+             worker of its own run (worker mode; the playbook's default way to start one). \
+             Returns the new terminal and node id; the \
              dashboard selects it once it appears. A new worktree whose name or branch already \
              exists is refused with the existing worktree and its live agents (send_to_agent \
              them instead); allow_suffix=true lets Orca pick name-2 for a deliberate second \

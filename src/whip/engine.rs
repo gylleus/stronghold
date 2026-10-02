@@ -22,9 +22,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::fleet::FleetData;
 use crate::whip::actions::{
     NUDGE_PREFIX, NudgeVia, TaskRef, WhipAction, WhipExecutor, WhipLogEntry, coordinator_idle_text,
-    nudge_message, quiet_run_text, reason_label, target_label, unanswered_ask_text,
-    worker_nudge_text,
+    nudge_message, quiet_run_text, reason_label, revoked_worker_nudge_text, target_label,
+    unanswered_ask_text, worker_nudge_text,
 };
+use crate::whip::forward::Forwarder;
 use crate::whip::manual::ManualNudge;
 use crate::whip::progress::{ProgressReport, ProgressTracker};
 use crate::whip::rules::{RuleContext, StallFinding, StallReason, StallTarget, evaluate};
@@ -83,6 +84,7 @@ pub struct WhipEngine {
     terminals: BTreeMap<GroupKey, TerminalNudge>,
     needs_input: BTreeMap<String, NeedsInputWait>,
     findings: Vec<StallFinding>,
+    forwarder: Forwarder,
     log: VecDeque<WhipLogEntry>,
     log_capacity: usize,
 }
@@ -105,6 +107,7 @@ impl WhipEngine {
             terminals: BTreeMap::new(),
             needs_input: BTreeMap::new(),
             findings: Vec::new(),
+            forwarder: Forwarder::new(),
             log: VecDeque::new(),
             log_capacity: log_capacity.max(1),
         }
@@ -192,7 +195,10 @@ impl WhipEngine {
                     last_nudge_ms: now_ms,
                 },
             );
-            let via = if attempt > 1 && idle_since(self.tracker.output_ms(&handle), previous) {
+            let revoked = role == Role::Worker && any_failed_but_alive(&group, &report);
+            let via = if revoked
+                || (attempt > 1 && idle_since(self.tracker.output_ms(&handle), previous))
+            {
                 NudgeVia::Terminal {
                     handle: handle.clone(),
                 }
@@ -203,12 +209,15 @@ impl WhipEngine {
                 handle,
                 targets: group.iter().map(|f| f.target.clone()).collect(),
                 attempt,
-                text: nudge_text(role, &group, data),
+                text: nudge_text(role, &group, data, revoked),
                 via,
             });
         }
 
         actions.extend(self.track_needs_input(data, needs_input, settings, now_ms));
+        if settings.forward_events {
+            actions.extend(self.forwarder.tick(data, &report, now_ms));
+        }
         self.findings = findings;
         actions
     }
@@ -423,7 +432,19 @@ fn bus_route(
     }
 }
 
-fn nudge_text(role: Role, group: &[&StallFinding], data: &FleetData) -> String {
+/// A worker in `group` whose task Orca failed while it kept working: its dispatch is revoked,
+/// so a bus nudge to it would be rejected and it cannot heartbeat.
+fn any_failed_but_alive(group: &[&StallFinding], report: &ProgressReport) -> bool {
+    group.iter().any(|f| match &f.target {
+        StallTarget::Worker { task_id, .. } => report
+            .tasks
+            .iter()
+            .any(|t| &t.task_id == task_id && t.failed_but_alive),
+        StallTarget::Coordinator { .. } => false,
+    })
+}
+
+fn nudge_text(role: Role, group: &[&StallFinding], data: &FleetData, revoked: bool) -> String {
     let idle = group.iter().map(|f| f.idle_for_ms).max().unwrap_or(0);
     match role {
         Role::Worker => {
@@ -436,7 +457,11 @@ fn nudge_text(role: Role, group: &[&StallFinding], data: &FleetData) -> String {
                     StallTarget::Coordinator { .. } => None,
                 })
                 .collect();
-            worker_nudge_text(&tasks, idle)
+            if revoked {
+                revoked_worker_nudge_text(&tasks, idle)
+            } else {
+                worker_nudge_text(&tasks, idle)
+            }
         }
         Role::Coordinator => {
             let texts: Vec<String> = group.iter().map(|f| coordinator_text(f)).collect();
@@ -506,6 +531,17 @@ fn perform(action: &WhipAction, executor: &dyn WhipExecutor, settings: &WhipSett
             );
             Ok(())
         }
+        WhipAction::Forward { handle, text, .. } => executor.send_terminal(handle, text),
+        WhipAction::CoordinatorUnreachable { run_id, .. } => {
+            if !settings.notify {
+                return "notifications off".into();
+            }
+            executor.notify(
+                &format!("Myrstack: coordinator of run {run_id} is unreachable"),
+                &action_reason(action),
+            );
+            Ok(())
+        }
     };
     match result {
         Ok(()) => SENT.into(),
@@ -539,6 +575,11 @@ fn action_reason(action: &WhipAction) -> String {
         WhipAction::NotifyNeedsInput { handle, since_ms } => {
             format!("{handle} needs input since {since_ms} (epoch ms)")
         }
+        WhipAction::Forward { text, .. } => text.clone(),
+        WhipAction::CoordinatorUnreachable { waiting, first, .. } => format!(
+            "{waiting} event(s) waiting and no live Claude session to forward them to, \
+             first: {first}"
+        ),
     }
 }
 
@@ -682,6 +723,32 @@ mod tests {
 
     fn kinds(actions: &[(i64, WhipAction)]) -> Vec<(i64, String)> {
         actions.iter().map(|(m, a)| (*m, a.summary())).collect()
+    }
+
+    #[test]
+    fn failed_but_alive_worker_is_nudged_by_terminal() {
+        let mut engine = WhipEngine::new();
+        let mut data = fleet();
+        let task = &mut data.tasks.get_mut(RUN).unwrap()[0];
+        task.status = crate::orca::TaskStatus::Failed;
+        task.completed_at = Some(Timestamp::Millis(T0 - 30 * MIN));
+        data.workers[0].dispatch_status = Some(crate::orca::DispatchStatus::Failed);
+        let actions = run_minutes(&mut engine, &data, &BTreeSet::new(), 0, 20);
+        let nudges: Vec<&WhipAction> = actions
+            .iter()
+            .map(|(_, a)| a)
+            .filter(|a| matches!(a, WhipAction::Nudge { handle, .. } if handle == WORKER))
+            .collect();
+        let [WhipAction::Nudge { via, text, .. }] = nudges.as_slice() else {
+            panic!("expected one nudge, got {actions:?}");
+        };
+        assert_eq!(
+            via,
+            &NudgeVia::Terminal {
+                handle: WORKER.into()
+            }
+        );
+        assert!(text.contains("Orca marked this dispatch failed"), "{text}");
     }
 
     #[test]
@@ -954,7 +1021,7 @@ mod tests {
             handle: COORD.into(),
             run_id: "run_2".into(),
         };
-        let folded = nudge_text(Role::Coordinator, &[&a, &b], &FleetData::default());
+        let folded = nudge_text(Role::Coordinator, &[&a, &b], &FleetData::default(), false);
         assert_eq!(folded.matches(NUDGE_PREFIX).count(), 1, "{folded}");
         assert!(folded.contains("run run_2"));
     }

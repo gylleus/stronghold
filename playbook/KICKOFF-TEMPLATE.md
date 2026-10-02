@@ -15,6 +15,9 @@ below is only what is specific to this track.
 - **Repo:** <repo> (`orca repo list` → `id:<repoId>`)
 - **Ticket:** <VROOM-###> — <one-line title>
 - **Port range:** <track-number>00–<track-number>99
+- **Risk:** <standard | gated>. `gated` (auth/security, write paths, live merchant data, or
+  Karl flagged it) means the coordinator approves the plan before you implement; `standard`
+  proceeds on your reviewers' APPROVED.
 
 ## Scope
 
@@ -23,12 +26,18 @@ below is only what is specific to this track.
 **Explicitly out of scope:** <the adjacent thing another track owns, or the follow-up that is
 deliberately not this PR.>
 
+**Open decisions:** <none>. The coordinator dispatches only when this says none: product
+questions are settled with Karl before the track starts.
+
 ## Blockers and dependencies
 
 - Blocked by: <task/PR, or "none">
 - Blocks: <task, or "none">
 - Shares state with: <migrations, tables, stacked PRs — name the other track and the
   coordination rule, or "nothing">
+- **Owns files:** <globs this track may edit>. **Must not touch:** <globs other live tracks
+  own, or "nothing">
+- **Merge order:** <independent | after #N, rebase on it once it merges>
 
 ## Load-bearing facts to verify (do not trust this list)
 
@@ -40,16 +49,12 @@ code, not to accept them. If one is wrong, say so before implementing anything.>
 
 ## Definition of done
 
-- Plan posted and `APPROVED — <one line>` on the ticket
-- Repo gate green (<`just check`, or this repo's actual gate>)
-- PR open, every Ankra thread answered with a fix or reasoned pushback, verdict SHA = head
-- PR description leads with `## Why` (each design decision + what forced it), then
-  what-changed, then evidence
-- `/simplify` deletion pass done over the diff
+The protocol's lifecycle (plan APPROVED, repo gate <`just check`, or this repo's actual gate>
+green, PR with `## Why`, every Ankra thread answered on the current head, `/simplify`, old
+paths deleted, `merge_ready`), plus:
+
 - Verification evidence in the PR body: <what a working end-to-end path looks like here —
   the real request, the real data, the real page. Name it concretely.>
-- Old path / scaffolding / flags deleted in this track
-- `orca orchestration send --type merge_ready ...` sent, then idle
 
 ## Notes
 
