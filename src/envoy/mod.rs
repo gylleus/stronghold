@@ -2,7 +2,30 @@
 //! protocols later). The app ingests channel events, keeps the drafts Karl approves and sends
 //! only on his approval; the Envoy session reads, triages and drafts.
 
+pub mod channel;
+pub mod control;
+pub mod drafts;
+pub mod inbox;
+pub mod relay;
+pub mod secrets;
 pub mod settings;
+pub mod slack;
+pub mod worker;
+
+/// Persisted session identity supplied by the app lifecycle owner.
+pub trait EnvoyIdentity {
+    fn envoy_handle(&self) -> Option<&str>;
+}
+
+pub fn authorize(
+    identity: &dyn EnvoyIdentity,
+    origin: &crate::review::mark::Origin,
+) -> Result<(), String> {
+    match (identity.envoy_handle(), origin.terminal_handle.as_deref()) {
+        (Some(expected), Some(actual)) if !expected.is_empty() && expected == actual => Ok(()),
+        _ => Err("Only the persisted Envoy terminal may call Envoy tools".into()),
+    }
+}
 
 /// Whether the Envoy's session is running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,5 +119,29 @@ mod tests {
             EnvoyHealth::AwaitingApproval
         );
         assert_eq!(status(Running, Ok, 0).health(), EnvoyHealth::Listening);
+    }
+}
+
+#[cfg(test)]
+mod authorization_tests {
+    use super::*;
+    use crate::review::mark::Origin;
+    struct Identity(Option<String>);
+    impl EnvoyIdentity for Identity {
+        fn envoy_handle(&self) -> Option<&str> {
+            self.0.as_deref()
+        }
+    }
+    #[test]
+    fn only_the_persisted_handle_is_accepted() {
+        let envoy = Identity(Some("term_envoy".into()));
+        let caller = |handle: &str| Origin {
+            terminal_handle: Some(handle.into()),
+            ..Origin::default()
+        };
+        assert!(authorize(&envoy, &caller("term_envoy")).is_ok());
+        assert!(authorize(&envoy, &caller("term_other")).is_err());
+        assert!(authorize(&envoy, &Origin::default()).is_err());
+        assert!(authorize(&Identity(None), &caller("term_envoy")).is_err());
     }
 }

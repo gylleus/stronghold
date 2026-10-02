@@ -49,6 +49,12 @@ pub const READ_METHODS: &[&str] = &[
 ];
 /// Action methods, in the order `ping` lists them.
 pub const ACTION_METHODS: &[&str] = &[
+    "envoy_inbox",
+    "envoy_event",
+    "envoy_draft",
+    "envoy_drafts",
+    "envoy_relay",
+    "envoy_propose_task",
     "send",
     "enter",
     "esc",

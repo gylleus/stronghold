@@ -1,0 +1,5 @@
+{"type":"message","channel":"C123","ts":"1790000000.000001","user":"U123","user_name":"Avery","text":"The build is ready.","subtype":null,"received":"2026-09-21T12:00:00Z"}
+{"type":"catchup","channel":"C123","ts":"1790000000.000002","thread_ts":"1790000000.000001","user":"U456","user_name":"Casey","text":"I will check it.","subtype":null,"received":"2026-09-21T12:00:01Z"}
+{"type":"reply","channel":"C123","ts":"1790000000.000002","thread_ts":"1790000000.000001","user":"U456","user_name":"Casey","text":"I will check it.","subtype":null,"received":"2026-09-21T12:00:01Z"}
+{"type":"reaction","event":"added","reaction":"eyes","channel":"C123","ts":"1790000000.000001","item_ts":"1790000000.000001","user":"U456","user_name":"Casey"}
+{"type":"error","reason":"not_in_channel"}

@@ -42,3 +42,5 @@ fn run_stdio() -> Result<()> {
     server.serve(io::BufReader::new(io::stdin()), io::stdout().lock())?;
     Ok(())
 }
+
+pub mod envoy;

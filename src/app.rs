@@ -8,6 +8,7 @@ use eframe::egui;
 mod chat;
 mod control;
 mod dictation;
+pub mod envoy;
 mod lifecycle;
 mod notifications;
 mod palette;
@@ -152,6 +153,7 @@ pub struct MyrstackApp {
     talk: talk::AppTalk,
     /// PRs agents marked ready for review, their GitHub state and the poller reading it.
     review: review::AppReview,
+    pub envoy_core: envoy::AppEnvoy,
 }
 
 impl MyrstackApp {
@@ -240,6 +242,7 @@ impl MyrstackApp {
             dictation: dictation::AppDictation::new(ctx),
             talk,
             review: review::AppReview::start(ctx),
+            envoy_core: envoy::AppEnvoy::start(ctx),
         };
         app.talk_startup();
         app.restore_state(cc.storage);
@@ -1113,11 +1116,13 @@ impl eframe::App for MyrstackApp {
         self.talk_logic(ctx);
         self.poll_control(ctx);
         self.poll_review();
+        self.poll_envoy();
         self.poll_whip_now();
         self.poll_spawn();
         self.run_finish_closes();
         for result in self.actions.poll() {
             self.control_action_done(&result);
+            self.envoy_action_done(&result);
             if self.input.on_result(&result, now_ms()) {
                 self.poller.send(PollerCommand::RefreshScreen);
             }
