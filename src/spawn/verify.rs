@@ -55,6 +55,18 @@ const WORKING_MARKERS: &[&str] = &["esc to interrupt"];
 /// Lower-cased starts of an input box's placeholder text.
 const PLACEHOLDERS: &[&str] = &["try \"", "ask codex", "find and fix", "type your message"];
 
+/// Lower-cased row of Codex's startup header box.
+const CODEX_HEADER: &str = ">_ openai codex";
+/// Lower-cased header row Codex draws only when it runs with approvals and sandbox off.
+const CODEX_YOLO: &str = "permissions: yolo mode";
+
+/// Whether `lines` show Codex's startup header without "permissions: YOLO mode": the session
+/// asks for approval. `false` when the header isn't on screen, as nothing can be told then.
+pub fn codex_approvals_on(lines: &[String]) -> bool {
+    let lower: Vec<String> = lines.iter().map(|l| l.to_lowercase()).collect();
+    lower.iter().any(|l| l.contains(CODEX_HEADER)) && !lower.iter().any(|l| l.contains(CODEX_YOLO))
+}
+
 /// Classifies `lines` (a rendered screen, top to bottom) for a launch of `agent`.
 pub fn classify_screen(lines: &[String], agent: Agent, expect: &Expect) -> ScreenVerdict {
     let rows: Vec<&str> = lines.iter().map(|l| l.trim_end()).collect();
