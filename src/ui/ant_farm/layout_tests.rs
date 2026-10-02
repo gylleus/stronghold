@@ -1074,3 +1074,56 @@ fn a_crowded_chamber_packs_side_by_side() {
         );
     }
 }
+
+/// A chamber ant's subagents, nested ones too, line up behind it in room it reserves:
+/// they never cover another ant or each other.
+#[test]
+fn subagent_trails_take_room_in_the_chamber() {
+    let mut s = FleetSnapshot::default();
+    s.runs = vec![run("r1", 1, 4)];
+    for name in ["a", "b", "c", "d"] {
+        s.nodes
+            .push(node(name, NodeKind::Worker, Some("r1"), NodeState::Working));
+    }
+    for (sub, parent) in [
+        ("s1", "a"),
+        ("s2", "a"),
+        ("s3", "a"),
+        ("s4", "s1"),
+        ("s5", "b"),
+    ] {
+        s.nodes
+            .push(node(sub, NodeKind::Subagent, None, NodeState::Working));
+        s.edges.push(Edge {
+            from: id(parent),
+            to: id(sub),
+            kind: EdgeKind::Subagent,
+        });
+    }
+    let scene = scene(&s);
+    let nested = ant(&scene, "s4");
+    assert!(matches!(&nested.spot, Spot::Trail(root, _) if *root == id("a")));
+    let boxes: Vec<(&str, Rect)> = scene
+        .ants
+        .iter()
+        .map(|a| {
+            (
+                a.id.0.as_str(),
+                Rect::from_center_size(a.pos, Vec2::splat(a.size)),
+            )
+        })
+        .collect();
+    for (i, (x, rx)) in boxes.iter().enumerate() {
+        for (y, ry) in &boxes[i + 1..] {
+            let overlap = rx.intersect(*ry);
+            assert!(
+                overlap.width() <= 0.5 || overlap.height() <= 0.5,
+                "{x} overlaps {y}"
+            );
+        }
+    }
+    let chamber = scene.tunnels[0].chamber;
+    for a in &scene.ants {
+        assert!(chamber.expand(1.0).contains(a.pos), "{} outside", a.id.0);
+    }
+}
