@@ -116,6 +116,7 @@ fn finished(at_ms: i64) -> FinishedSession {
         handle: Some("t1".into()),
         label: "ant".into(),
         outcome: FinishOutcome::Done,
+        approval: Approval::Karl,
         summary: "did it".into(),
         pr_url: None,
         forced: Vec::new(),
@@ -247,6 +248,7 @@ mod fleet {
         let request = FinishRequest {
             summary: "done".into(),
             outcome: FinishOutcome::HandedOver,
+            approval: Some(Approval::Karl),
             pr_url: Some("https://github.com/o/r/pull/3".into()),
             force: true,
             forced: vec!["dirty".into()],
@@ -260,8 +262,12 @@ mod fleet {
             FinishRequest::from_params(&request.to_params()).unwrap(),
             request
         );
-        let empty = serde_json::json!({"summary": "  "});
+        let empty = serde_json::json!({"summary": "  ", "approval": "karl"});
         assert!(FinishRequest::from_params(&empty).is_err());
+        // Leaving needs an approval; a check doesn't.
+        let unapproved = serde_json::json!({"summary": "done"});
+        let e = FinishRequest::from_params(&unapproved).unwrap_err();
+        assert!(e.message.contains("ask Karl first"), "{}", e.message);
         let check = serde_json::json!({"dry_run": true});
         assert!(FinishRequest::from_params(&check).unwrap().dry_run);
     }

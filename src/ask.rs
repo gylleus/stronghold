@@ -58,13 +58,11 @@ impl AskRequest {
         }
         let severity = match p.str("severity")?.map(str::trim).filter(|s| !s.is_empty()) {
             None => Severity::Warn,
-            Some(s) => Severity::parse(s)
-                .filter(|s| *s != Severity::Info)
-                .ok_or_else(|| {
-                    ControlError::invalid_params(format!(
-                        "severity {s:?} doesn't fit a question Karl must answer; use warn or urgent"
-                    ))
-                })?,
+            Some(s) => Severity::parse(s).ok_or_else(|| {
+                ControlError::invalid_params(format!(
+                    "unknown severity {s:?}; use info, warn or urgent"
+                ))
+            })?,
         };
         let url = p.str("url")?.map(str::trim).filter(|u| !u.is_empty());
         if let Some(u) = url
