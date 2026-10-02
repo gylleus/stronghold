@@ -372,3 +372,31 @@ fn subscription_command_retry_recovers_even_in_a_quiet_channel() {
     restarted.poll(NOW + 120_000).unwrap();
     assert_eq!(restarted.health(), BridgeStatus::Ok);
 }
+
+#[test]
+fn recovered_feed_read_does_not_need_a_message_or_clear_a_bridge_error() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("heartbeat"),
+        jiff::Timestamp::from_millisecond(NOW).unwrap().to_string(),
+    )
+    .unwrap();
+    let feed = dir.path().join("channels/C123.jsonl");
+    fs::create_dir_all(&feed).unwrap();
+    let mut c = channel(dir.path());
+    c.poll(NOW).unwrap();
+    assert!(!c.read_errors.is_empty());
+    assert_eq!(c.health(), BridgeStatus::Stale);
+    fs::remove_dir(&feed).unwrap();
+    fs::write(&feed, "").unwrap();
+    c.poll(NOW + 1).unwrap();
+    assert!(c.read_errors.is_empty());
+    assert_eq!(c.health(), BridgeStatus::Ok);
+    c.errors.insert(
+        "C123".into(),
+        "Bridge subscription error; check channel membership".into(),
+    );
+    c.poll(NOW + 2).unwrap();
+    assert_eq!(c.health(), BridgeStatus::Stale);
+    assert!(c.errors.contains_key("C123"));
+}

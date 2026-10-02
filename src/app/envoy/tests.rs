@@ -296,7 +296,7 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
                 }
             );
             assert!(
-                core.approve(&id, None, true, |_| true).is_err(),
+                core.envoy_approve(&id, None, true, |_| true).is_err(),
                 "no second send"
             );
         }

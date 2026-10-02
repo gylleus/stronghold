@@ -294,7 +294,7 @@ impl AppEnvoy {
         }
     }
 
-    fn approve(
+    fn envoy_approve(
         &mut self,
         id: &str,
         edited_text: Option<&str>,
@@ -458,7 +458,7 @@ impl AppEnvoy {
         Ok(record)
     }
 
-    fn edit(&mut self, id: &str, text: &str) -> Result<(), String> {
+    fn envoy_edit(&mut self, id: &str, text: &str) -> Result<(), String> {
         self.queue()?.edit(id, text, now_ms())
     }
 
@@ -471,8 +471,8 @@ impl AppEnvoy {
         match action {
             crate::ui::envoy::DraftAction::Approve { id, text } => {
                 let result = self
-                    .edit(&id, &text)
-                    .and_then(|()| self.approve(&id, None, queen_ready, queen));
+                    .envoy_edit(&id, &text)
+                    .and_then(|()| self.envoy_approve(&id, None, queen_ready, queen));
                 (id, result)
             }
             crate::ui::envoy::DraftAction::Reject(id) => {
@@ -512,28 +512,6 @@ impl MyrstackApp {
             }
             self.envoy_panel.result(&id, result.map(|_| ()));
         }
-    }
-
-    pub fn envoy_approve(&mut self, id: &str, edited_text: Option<&str>) -> Result<(), String> {
-        let ready = self.chat_ready();
-        let chat = &mut self.chat;
-        let completed = self
-            .envoy_core
-            .approve(id, edited_text, ready, |text| chat.session_mut().send(text))?;
-        if completed {
-            self.open_chat();
-        }
-        Ok(())
-    }
-
-    pub fn envoy_reject(&mut self, id: &str) -> Result<(), String> {
-        self.envoy_core.queue()?.reject(id, now_ms())
-    }
-    pub fn envoy_edit(&mut self, id: &str, text: &str) -> Result<(), String> {
-        self.envoy_core.edit(id, text)
-    }
-    pub fn envoy_drafts(&self) -> &[Draft] {
-        self.envoy_core.drafts()
     }
 
     pub(super) fn control_envoy(

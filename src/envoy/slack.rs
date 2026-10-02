@@ -299,6 +299,7 @@ pub struct SlackChannel<I: SlackIo> {
     errors: BTreeMap<String, String>,
     poll_errors: BTreeMap<String, String>,
     command_errors: BTreeMap<String, String>,
+    read_errors: BTreeMap<String, String>,
     subscribed: Vec<String>,
     next_poll_ms: i64,
     next_subscribe_ms: i64,
@@ -317,7 +318,6 @@ impl<I: SlackIo> SlackChannel<I> {
             .iter()
             .filter(|(_, error)| {
                 error.as_str() == "Bridge subscription error; check channel membership"
-                    || error.as_str() == "Cannot read bridge channel feed"
             })
             .map(|(c, e)| (c.clone(), e.clone()))
             .collect();
@@ -331,6 +331,7 @@ impl<I: SlackIo> SlackChannel<I> {
             errors,
             poll_errors: BTreeMap::new(),
             command_errors: BTreeMap::new(),
+            read_errors: BTreeMap::new(),
             subscribed: Vec::new(),
             next_poll_ms: 0,
             next_subscribe_ms: 0,
@@ -341,6 +342,8 @@ impl<I: SlackIo> SlackChannel<I> {
         self.subscribed.clear();
         self.errors.retain(|c, _| settings.channels.contains(c));
         self.command_errors
+            .retain(|c, _| settings.channels.contains(c));
+        self.read_errors
             .retain(|c, _| settings.channels.contains(c));
         self.settings = settings;
         self.next_poll_ms = 0;
@@ -482,7 +485,10 @@ impl<I: SlackIo> SlackChannel<I> {
             }
         }
         self.inbox.poll_watermarks.insert(key, now_ms);
-        Err("Slack search reached 5 pages; older messages skipped".into())
+        Err(format!(
+            "Slack {} search reached 5 pages; older messages skipped",
+            kind.name()
+        ))
     }
 
     fn history(&mut self, channel: &str, now_ms: i64, batch: &mut PollBatch) -> Result<(), String> {
@@ -526,7 +532,9 @@ impl<I: SlackIo> SlackChannel<I> {
             }
         }
         self.inbox.poll_watermarks.insert(key, now_ms);
-        Err("Slack history reached 5 pages; older messages skipped".into())
+        Err(format!(
+            "Slack history for {channel} reached 5 pages; older messages skipped"
+        ))
     }
 
     pub fn mark_forwarded(&mut self, ids: &[String]) -> Result<(), String> {
@@ -600,11 +608,19 @@ impl<I: SlackIo> Channel for SlackChannel<I> {
             }
         }
         for channel in &channels {
-            if let Err(e) = self.tail(channel, &mut batch) {
-                self.errors.insert(channel.clone(), e);
+            match self.tail(channel, &mut batch) {
+                Ok(()) => {
+                    self.read_errors.remove(channel);
+                }
+                Err(error) => {
+                    self.read_errors.insert(channel.clone(), error);
+                }
             }
         }
-        if !self.errors.is_empty() || !self.command_errors.is_empty() {
+        if !self.errors.is_empty()
+            || !self.command_errors.is_empty()
+            || !self.read_errors.is_empty()
+        {
             self.status = BridgeStatus::Stale;
         }
         if now_ms >= self.next_poll_ms {
@@ -623,7 +639,12 @@ impl<I: SlackIo> Channel for SlackChannel<I> {
                 }
             }
         }
-        for (channel, error) in self.errors.iter().chain(&self.command_errors) {
+        for (channel, error) in self
+            .errors
+            .iter()
+            .chain(&self.command_errors)
+            .chain(&self.read_errors)
+        {
             batch.notices.push(format!("{channel}: {error}"));
         }
         batch.notices.extend(self.poll_errors.values().cloned());
