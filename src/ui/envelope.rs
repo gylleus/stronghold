@@ -25,6 +25,8 @@ pub const STAGGER_S: f64 = 0.15;
 /// dropped.
 pub const STALE_S: f64 = 3.0;
 pub const MAX_FLIGHTS: usize = 6;
+/// Opacity of the line between sender and receiver.
+const RAIL_ALPHA: f32 = 0.45;
 
 /// How a kind of message looks.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -181,6 +183,8 @@ pub fn paint(painter: &Painter, f: &InFlight, path: &[Pos2], size: f32, now_s: f
             badge(painter, end, size, look, alpha, f.count);
         }
         Phase::Travel(t) => {
+            // The line fades in over the first stretch, so it doesn't pop.
+            rail(painter, path, look, size, RAIL_ALPHA * (t / 0.15).min(1.0));
             trail(painter, path, (t - 0.25).max(0.0), t, look, size, 0.6);
             let (at, _) = motion::along(path, t);
             badge(painter, at, size, look, 1.0, f.count);
@@ -188,6 +192,7 @@ pub fn paint(painter: &Painter, f: &InFlight, path: &[Pos2], size: f32, now_s: f
         Phase::Arrive(t) => {
             let r = size * (0.4 + 0.9 * t);
             let fade = 1.0 - t;
+            rail(painter, path, look, size, RAIL_ALPHA * fade);
             painter.circle_stroke(
                 end,
                 r,
@@ -195,6 +200,29 @@ pub fn paint(painter: &Painter, f: &InFlight, path: &[Pos2], size: f32, now_s: f
             );
             painter.circle_filled(end, size * 0.25 * fade, look.color.gamma_multiply(fade));
         }
+    }
+}
+
+/// The whole path from sender to receiver, the line the envelope rides: faint, dotted for
+/// relays, with a dot at each end.
+fn rail(painter: &Painter, path: &[Pos2], look: Look, size: f32, alpha: f32) {
+    let (Some(&start), Some(&end)) = (path.first(), path.last()) else {
+        return;
+    };
+    let color = look.color.gamma_multiply(alpha);
+    let width = (size * 0.08).max(1.0);
+    if look.dotted {
+        let gap = size * 0.4;
+        let steps = (motion::path_length(path) / gap).ceil().max(1.0) as usize;
+        for i in 0..=steps {
+            let (p, _) = motion::along(path, i as f32 / steps as f32);
+            painter.circle_filled(p, width * 0.8, color);
+        }
+    } else {
+        painter.add(egui::Shape::line(path.to_vec(), Stroke::new(width, color)));
+    }
+    for p in [start, end] {
+        painter.circle_filled(p, width * 1.8, color);
     }
 }
 
