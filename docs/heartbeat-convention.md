@@ -147,13 +147,18 @@ Fleet event: worker_done from fix-login: PR open — msg msg_1. Read in full wit
 
 - Heartbeats, `status` messages, rejected messages and the coordinator's own
   messages are never forwarded.
-- Each event is forwarded once. After a restart only the last 10 min replay.
+- Each event counts as forwarded once its line was typed. A failed send is
+  retried (next tick, then backing off to every 10 min); after 3 failures in
+  a row Karl gets one notification naming the Run and the error.
+- The forwarded set is saved in `forwarded.json` next to `settings.json`, so
+  events that arrived while Myrstack was down (up to 6 h old) are forwarded
+  on start. Without that file only the last 10 min replay.
 - It types only into a live Claude session. If the coordinator's terminal
   shows a shell (the session exited), events wait, and after 5 min Karl gets
   one notification for that Run.
 - Runs that still have an attendant are left to it.
-- `whip.forward_events` (default on) switches it off; dry-run logs instead
-  of typing.
+- `whip.forward_events` (default on) switches it off. Forwarding stays live
+  when the whip is in dry run: it delivers facts and nudges nobody.
 
 ## Myrstack senders
 

@@ -3,7 +3,9 @@
 //! [`WhipRunner::spawn`] starts a thread that keeps the newest [`FleetData`] the app sends it
 //! and, every `tick_ms` once the first data has arrived, runs [`WhipEngine::tick`] and
 //! [`WhipEngine::execute`]. After each tick it publishes a [`WhipStatus`] for the UI. In dry-run
-//! the executor is a [`DryRunExecutor`] and the live executor factory is never called.
+//! the executor is a [`DryRunExecutor`] and the live executor factory is called only for ticks
+//! with event forwarding to do, which is always live ([`WhipAction::live_in_dry_run`]). The
+//! forwarded set is saved after each tick that changed it, when a store path is given.
 //!
 //! Log entries are delivered once: each status carries only the entries logged since the
 //! previous one, numbered with a sequence number, and the UI keeps the history.
@@ -12,6 +14,7 @@
 //! clock and executor.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -20,6 +23,7 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
 use crate::fleet::FleetData;
 use crate::whip::actions::{DryRunExecutor, WhipAction, WhipExecutor, WhipLogEntry};
 use crate::whip::engine::WhipEngine;
+use crate::whip::forward;
 use crate::whip::manual::ManualNudge;
 use crate::whip::rules::StallTarget;
 use crate::whip::settings::WhipSettings;
@@ -76,7 +80,8 @@ impl WhipLogItem {
                     task_id: None,
                 };
             }
-            WhipAction::CoordinatorUnreachable { run_id, .. } => {
+            WhipAction::CoordinatorUnreachable { run_id, .. }
+            | WhipAction::ForwardFailing { run_id, .. } => {
                 return Self {
                     seq,
                     entry,
@@ -145,6 +150,8 @@ pub struct WhipLoop {
     last_tick_ms: Option<i64>,
     /// Entries not yet handed out by [`WhipLoop::take_status`].
     pending: Vec<WhipLogItem>,
+    /// Where the forwarded set is saved; see [`crate::whip::forward::save_forwarded`].
+    forwarded_path: Option<PathBuf>,
 }
 
 impl WhipLoop {
@@ -156,7 +163,18 @@ impl WhipLoop {
             actions_logged: 0,
             last_tick_ms: None,
             pending: Vec::new(),
+            forwarded_path: None,
         }
+    }
+
+    /// Keeps the forwarded set in `path` across restarts: starts from the one saved there, if
+    /// any, and saves it after each tick that changed it.
+    pub fn with_forwarded_store(mut self, path: PathBuf) -> Self {
+        if let Some(sent) = forward::load_forwarded(&path) {
+            self.engine.restore_forwarded(sent);
+        }
+        self.forwarded_path = Some(path);
+        self
     }
 
     pub fn settings(&self) -> &WhipSettings {
@@ -177,7 +195,8 @@ impl WhipLoop {
     }
 
     /// Runs one tick on the newest input. `None` (and nothing done) before the first input.
-    /// `live` is called only when the settings are not dry-run.
+    /// `live` is called only when the settings are not dry-run or an action is
+    /// [`WhipAction::live_in_dry_run`].
     pub fn tick(
         &mut self,
         now_ms: i64,
@@ -188,7 +207,8 @@ impl WhipLoop {
             .engine
             .tick(&input.data, &input.needs_input, &self.settings, now_ms);
         if !actions.is_empty() {
-            let executor: Box<dyn WhipExecutor> = if self.settings.dry_run {
+            let needs_live = actions.iter().any(WhipAction::live_in_dry_run);
+            let executor: Box<dyn WhipExecutor> = if self.settings.dry_run && !needs_live {
                 Box::new(DryRunExecutor::new())
             } else {
                 live()
@@ -197,6 +217,7 @@ impl WhipLoop {
                 .execute(&actions, executor.as_ref(), &self.settings, now_ms);
             self.record(&actions);
         }
+        self.save_forwarded();
         self.last_tick_ms = Some(now_ms);
         Some(self.take_status())
     }
@@ -236,6 +257,17 @@ impl WhipLoop {
             self.pending.drain(..excess);
         }
         self.take_status()
+    }
+
+    fn save_forwarded(&mut self) {
+        let Some(path) = &self.forwarded_path else {
+            return;
+        };
+        if let Some(sent) = self.engine.take_forwarded_changes()
+            && let Err(e) = forward::save_forwarded(path, &sent)
+        {
+            log::warn!("whip: cannot save {}: {e}", path.display());
+        }
     }
 
     /// Queues the log entries `execute` just appended for `actions`, one per action.
@@ -289,20 +321,28 @@ pub struct WhipRunner {
 
 impl WhipRunner {
     /// Starts the thread. `live` builds the sending executor; it is only called for ticks with
-    /// `dry_run` off.
+    /// `dry_run` off or event forwarding to do.
     pub fn spawn(settings: WhipSettings, live: ExecutorFactory, repaint: Option<Repaint>) -> Self {
+        Self::spawn_with_store(settings, live, repaint, None)
+    }
+
+    /// [`WhipRunner::spawn`], keeping the forwarded set in `forwarded_path` across restarts.
+    pub fn spawn_with_store(
+        settings: WhipSettings,
+        live: ExecutorFactory,
+        repaint: Option<Repaint>,
+        forwarded_path: Option<PathBuf>,
+    ) -> Self {
         let (commands, command_rx) = unbounded();
         let (status_tx, statuses) = unbounded();
         let thread = thread::Builder::new()
             .name("whip".into())
             .spawn(move || {
-                run(
-                    WhipLoop::new(settings),
-                    &command_rx,
-                    &status_tx,
-                    &live,
-                    repaint,
-                )
+                let mut whip = WhipLoop::new(settings);
+                if let Some(path) = forwarded_path {
+                    whip = whip.with_forwarded_store(path);
+                }
+                run(whip, &command_rx, &status_tx, &live, repaint)
             })
             .expect("spawn whip thread");
         Self {
@@ -528,6 +568,63 @@ mod tests {
         let mut whip = WhipLoop::new(WhipSettings::default());
         assert_eq!(whip.tick(1_000, &|| factory()), None);
         assert_eq!(whip.take_status().last_tick_ms, None);
+    }
+
+    /// A Run whose live Claude coordinator has one fresh `worker_done` to hear about.
+    fn report_input(now_ms: i64) -> WhipInput {
+        use serde_json::json;
+        let data = FleetData {
+            polled_at_ms: now_ms,
+            terminals: vec![Terminal {
+                handle: "term_coord".into(),
+                agent_identity: Some(crate::orca::AgentIdentity::Claude),
+                preview: Some("⏺ Dispatched.\nnew task? /clear to save 120k".into()),
+                last_output_at: Some(Timestamp::Millis(now_ms)),
+                ..Default::default()
+            }],
+            runs: vec![
+                serde_json::from_value(json!({
+                    "id": "run_1", "coordinator_handle": "term_coord",
+                    "created_at": now_ms - 60 * MIN, "updated_at": now_ms,
+                }))
+                .unwrap(),
+            ],
+            inbox: vec![
+                serde_json::from_value(json!({
+                    "id": "done1", "run_id": "run_1", "from_handle": "term_worker",
+                    "to_handle": "run:run_1", "type": "worker_done", "subject": "PR open",
+                    "created_at": now_ms - MIN,
+                }))
+                .unwrap(),
+            ],
+            ..Default::default()
+        };
+        WhipInput {
+            data,
+            needs_input: BTreeSet::new(),
+        }
+    }
+
+    #[test]
+    fn dry_run_loop_forwards_live_and_persists_the_forwarded_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(forward::FORWARDED_FILE);
+        let rec = Recorder::default();
+        let factory = rec.factory();
+        let now = 1_790_000_000_000;
+        let mut whip = WhipLoop::new(WhipSettings::default()).with_forwarded_store(path.clone());
+        whip.set_input(report_input(now));
+        let status = whip.tick(now, &|| factory()).unwrap();
+        assert!(status.dry_run);
+        assert_eq!(rec.built(), 1);
+        assert_eq!(rec.calls(), vec!["terminal term_coord".to_string()]);
+        assert!(forward::load_forwarded(&path).is_some_and(|s| s.contains_key("done1")));
+
+        // After a restart the saved set keeps the event from being typed again.
+        let mut again = WhipLoop::new(WhipSettings::default()).with_forwarded_store(path);
+        again.set_input(report_input(now + MIN));
+        again.tick(now + MIN, &|| factory()).unwrap();
+        assert_eq!(rec.calls().len(), 1);
     }
 
     #[test]

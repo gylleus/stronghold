@@ -86,7 +86,7 @@ fn each_section_renders_headless() {
         (
             Section::Whip,
             &[
-                "Dry run (log only, send nothing)",
+                "Dry run (log nudges, send none)",
                 "Stall threshold",
                 "Whip all stalled now",
             ],

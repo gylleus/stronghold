@@ -55,11 +55,13 @@ pub enum WhipAction {
     },
     /// A terminal has waited on Karl longer than the threshold. Sent once per wait.
     NotifyNeedsInput { handle: String, since_ms: i64 },
-    /// Real bus events typed into the Runs' coordinator; see [`crate::whip::forward`].
+    /// Real bus events typed into the Runs' coordinator; see [`crate::whip::forward`]. Live
+    /// even in dry run.
     Forward {
         handle: String,
         run_ids: Vec<String>,
-        events: usize,
+        /// The forwarder's keys of the events in `text`, one per event.
+        keys: Vec<String>,
         text: String,
     },
     /// A Run's events have waited on an unreachable coordinator: notify Karl. Once per outage.
@@ -67,6 +69,14 @@ pub enum WhipAction {
         run_id: String,
         waiting: usize,
         first: String,
+    },
+    /// Forwarding a Run's events has failed [`crate::whip::forward::ALERT_AFTER_FAILURES`]
+    /// times in a row: notify Karl. Once per failure streak.
+    ForwardFailing {
+        run_id: String,
+        handle: String,
+        failures: u32,
+        error: String,
     },
 }
 
@@ -79,8 +89,9 @@ impl WhipAction {
             }
             Self::Escalate { .. } => "escalate".into(),
             Self::NotifyNeedsInput { .. } => "notify needs-input".into(),
-            Self::Forward { events, .. } => format!("forward {events} event(s)"),
+            Self::Forward { keys, .. } => format!("forward {} event(s)", keys.len()),
             Self::CoordinatorUnreachable { .. } => "notify coordinator unreachable".into(),
+            Self::ForwardFailing { .. } => "notify forward failing".into(),
         }
     }
 
@@ -97,8 +108,21 @@ impl WhipAction {
             Self::Forward {
                 handle, run_ids, ..
             } => format!("coordinator {handle} run {}", run_ids.join(", ")),
-            Self::CoordinatorUnreachable { run_id, .. } => format!("run {run_id}"),
+            Self::CoordinatorUnreachable { run_id, .. } | Self::ForwardFailing { run_id, .. } => {
+                format!("run {run_id}")
+            }
         }
+    }
+
+    /// Carried out even when the whip is in dry run: event forwarding and its alerts only
+    /// deliver facts, they nudge nobody.
+    pub fn live_in_dry_run(&self) -> bool {
+        matches!(
+            self,
+            Self::Forward { .. }
+                | Self::CoordinatorUnreachable { .. }
+                | Self::ForwardFailing { .. }
+        )
     }
 }
 
