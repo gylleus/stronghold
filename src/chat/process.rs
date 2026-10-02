@@ -464,6 +464,7 @@ impl Supervisor {
                 }
                 return;
             }
+            Incoming::Other(kind) if kind == protocol::COMPACT_BOUNDARY => {}
             Incoming::Other(_) | Incoming::ControlResponse { .. } => return,
             _ => {}
         }

@@ -1526,6 +1526,7 @@ fn agent_server<C: Control>(control: C) -> McpServer<C> {
         origin: agent_origin(),
         pending: None,
         queue_file: None,
+        notify_pending: None,
     })
 }
 
@@ -1548,7 +1549,7 @@ fn notify_is_listed_with_when_to_call_it() {
         "Handover",
         "one notification per event",
         "standalone session with no coordinator",
-        "fall back to the existing channels",
+        "Karl sees it in his inbox when Myrstack starts",
         "quiet mode",
     ] {
         assert!(
@@ -1671,12 +1672,40 @@ fn notify_refuses_bad_arguments_before_calling_the_app() {
 }
 
 #[test]
-fn notify_says_when_myrstack_is_down() {
+fn notify_queues_when_myrstack_is_down() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(crate::notify::pending::PENDING_FILE);
+    let control = FakeControl::default().reply("notify", Err(CallError::NotRunning));
+    let mut server = McpServer::new(control).with_review_env(review::ReviewEnv {
+        origin: agent_origin(),
+        notify_pending: Some(path.clone()),
+        ..review::ReviewEnv::default()
+    });
+    let args = json!({
+        "title": "Blocked: need prod access",
+        "message": "for cp-12",
+        "severity": "warn",
+        "url": "https://github.com/o/r/pull/7",
+    });
+    let r = call(&mut server, "notify", args);
+    assert!(!is_error(&r), "{}", text(&r));
+    assert!(text(&r).contains("queued"), "{}", text(&r));
+    assert!(text(&r).contains("when Myrstack starts"), "{}", text(&r));
+    assert_eq!(r["structuredContent"]["outcome"], "queued");
+
+    let taken = crate::notify::pending::take(&path);
+    assert_eq!(taken.len(), 1);
+    let notice = &taken[0].notice;
+    assert_eq!(notice.title, "Blocked: need prod access");
+    assert_eq!(notice.url.as_deref(), Some("https://github.com/o/r/pull/7"));
+    assert_eq!(notice.origin, agent_origin());
+
+    // Without a data dir to queue in, it still says so.
     let mut server =
         agent_server(FakeControl::default().reply("notify", Err(CallError::NotRunning)));
     let r = call(&mut server, "notify", json!({"title": "t"}));
     assert!(is_error(&r));
-    assert!(text(&r).starts_with("Myrstack isn't running, so Karl can't be notified"));
+    assert!(text(&r).starts_with("Myrstack isn't running and there is no data dir"));
 }
 
 /// Answers `notify` like the app: through a real dispatcher.

@@ -1179,6 +1179,9 @@ impl eframe::App for MyrstackApp {
             self.spawn_select_pending();
         }
         self.poll_notifications(ctx);
+        for message in self.claude.terminal_sends() {
+            self.traffic.push(message);
+        }
         self.poll_traffic(ctx);
         self.poll_chat();
         self.talk_logic(ctx);

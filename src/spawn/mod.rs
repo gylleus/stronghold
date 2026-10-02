@@ -142,11 +142,9 @@ pub enum Step {
     WaitIdle { timeout_ms: u64 },
     /// Read the screen until the agent visibly took its prompt, answering the Bypass
     /// Permissions and folder trust modals and submitting a parked prompt on the way.
-    Verify {
-        expect: Expect,
-        /// Type the prompt again when the agent sits idle with an empty input box.
-        retype: bool,
-    },
+    /// Never types the prompt: the launch already handed it over, so typing it could run it
+    /// twice.
+    Verify { expect: Expect },
     /// Close the plain shell Orca opens in a new worktree next to the agent's terminal, so no
     /// empty terminal is left behind.
     CloseStartupShell,
@@ -254,17 +252,13 @@ impl Step {
                     .as_deref()
                     .map_or_else(|| NEW_WORKTREE.to_string(), shell_quote)
             ),
-            Step::Verify { retype, .. } => {
+            Step::Verify { .. } => {
                 let handle = ctx.handle.as_deref().unwrap_or(NEW_TERMINAL);
-                let mut text = format!(
+                format!(
                     "orca terminal read --terminal={handle} --screen until the prompt shows as \
                      submitted; accept Bypass Permissions (2) / folder trust (1), submit a \
                      parked prompt (Enter)"
-                );
-                if *retype {
-                    text.push_str(", retype a lost prompt");
-                }
-                text
+                )
             }
             Step::CloseStartupShell => format!(
                 "orca terminal close --terminal=<startup shell> --tab  (the plain shell Orca \
@@ -349,13 +343,12 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
     };
     let agent = request.agent;
     let launch = || launch_command(agent, model.as_deref(), &prompt);
-    let verify = |retype: bool| Step::Verify {
+    let verify = || Step::Verify {
         expect: if prompt.is_empty() {
             Expect::Ready
         } else {
             Expect::Prompt(prompt.clone())
         },
-        retype,
     };
     let wait = Step::WaitIdle {
         timeout_ms: WAIT_IDLE_MS,
@@ -380,7 +373,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
                     command: launch(),
                 },
                 wait,
-                verify(true),
+                verify(),
             ]
         }
         SpawnTarget::NewWorktree {
@@ -412,7 +405,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
                     create,
                     Step::DirenvAllow,
                     wait,
-                    verify(true),
+                    verify(),
                     Step::CloseStartupShell,
                 ]
             } else {
@@ -424,7 +417,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
                         command: launch(),
                     },
                     wait,
-                    verify(true),
+                    verify(),
                     Step::CloseStartupShell,
                 ]
             }
@@ -512,7 +505,6 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
             // Orca already waited for the agent and typed its preamble (with the spec).
             steps.push(Step::Verify {
                 expect: Expect::AnyInput,
-                retype: false,
             });
             if new_worktree {
                 steps.push(Step::CloseStartupShell);

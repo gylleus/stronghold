@@ -6,6 +6,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::Value;
 
+use super::context::ContextGauge;
+use super::history::COMPACTED_NOTICE;
 use super::protocol::{
     BlockKind, ContentBlock, Incoming, Init, PermissionRequest, StreamEvent, TurnResult,
 };
@@ -81,6 +83,11 @@ pub struct Transcript {
     pub last_result: Option<TurnResult>,
     /// Summed cost of the turns seen in this pane.
     pub cost_usd: f64,
+    /// Input tokens of the newest top-level API call: the context in use. `None` until one
+    /// is seen, and again after a compaction.
+    pub context_tokens: Option<u64>,
+    /// The context window the CLI reported with the newest turn result.
+    pub context_window: Option<u64>,
     /// Message id of the message being streamed.
     current_message: Option<String>,
     /// Stream block index → item index, for the message being streamed.
@@ -129,6 +136,22 @@ impl Transcript {
         if self.model.is_none() {
             self.model = earlier.model;
         }
+        if self.context_tokens.is_none() {
+            self.context_tokens = earlier.context_tokens;
+        }
+    }
+
+    /// The context gauge, once a message reported its usage.
+    pub fn context_gauge(&self) -> Option<ContextGauge> {
+        self.context_tokens
+            .map(|tokens| ContextGauge::new(tokens, self.context_window, self.model.as_deref()))
+    }
+
+    /// The CLI compacted the conversation: a notice, and the context size is unknown until
+    /// the next message.
+    pub fn compacted(&mut self) {
+        self.push_notice(COMPACTED_NOTICE);
+        self.context_tokens = None;
     }
 
     pub fn push_notice(&mut self, text: impl Into<String>) {
@@ -227,10 +250,18 @@ impl Transcript {
             Incoming::Assistant {
                 message_id,
                 content,
+                usage,
                 ..
-            } => self.apply_assistant(message_id, content),
+            } => {
+                // Synthetic messages (an interrupt note) carry all-zero usage.
+                if let Some(tokens) = usage.map(|u| u.context_tokens()).filter(|&t| t > 0) {
+                    self.context_tokens = Some(tokens);
+                }
+                self.apply_assistant(message_id, content);
+            }
             Incoming::User { content, .. } => self.apply_user(content),
             Incoming::Result(result) => self.apply_result(result),
+            Incoming::Other(kind) if kind == super::protocol::COMPACT_BOUNDARY => self.compacted(),
             Incoming::Status(_)
             | Incoming::ControlRequest { .. }
             | Incoming::ControlResponse { .. }
@@ -380,6 +411,9 @@ impl Transcript {
             self.push_error(format!("Turn failed: {detail}"));
         }
         self.cost_usd += result.cost_usd.unwrap_or_default();
+        if result.context_window.is_some() {
+            self.context_window = result.context_window;
+        }
         self.last_result = Some(result.clone());
         self.running = false;
     }

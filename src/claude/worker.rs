@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError};
 
-use super::forwards::ForwardScanner;
+use super::forwards::{ForwardScanner, SendWatch};
 use super::hook::{default_session_map_path, load_hook_mappings};
 use super::sessions::default_projects_root;
 use super::sessions::{HookMappings, SessionInfo, SessionLocator, SessionMatch};
@@ -21,6 +21,7 @@ use crate::codex::{CodexSession, CodexTracker, default_sessions_root};
 use crate::fleet::Forward;
 use crate::orca::Terminal;
 use crate::poller::Repaint;
+use crate::traffic::AgentMessage;
 
 /// Outputs buffered for the UI; when full, new ones are dropped until the UI catches up.
 const OUTPUT_BUFFER: usize = 4;
@@ -99,6 +100,7 @@ enum Command {
 pub struct ClaudeWorker {
     data: Receiver<ClaudeData>,
     history: Receiver<HistoryChunk>,
+    sends: Receiver<AgentMessage>,
     commands: Sender<Command>,
     thread: Option<JoinHandle<()>>,
 }
@@ -112,6 +114,8 @@ impl ClaudeWorker {
         let (data_tx, data_rx) = crossbeam_channel::bounded(OUTPUT_BUFFER);
         // Unbounded: each chunk carries records the UI has not seen, none may be dropped.
         let (history_tx, history_rx) = crossbeam_channel::unbounded();
+        // Unbounded too: each send is drawn once, unlike a scan a newer one replaces.
+        let (sends_tx, sends_rx) = crossbeam_channel::unbounded();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
         let thread = std::thread::Builder::new()
             .name("claude-worker".into())
@@ -119,6 +123,7 @@ impl ClaudeWorker {
                 let outputs = Outputs {
                     data: data_tx,
                     history: history_tx,
+                    sends: sends_tx,
                     repaint,
                 };
                 run_loop(config, &outputs, &cmd_rx);
@@ -127,6 +132,7 @@ impl ClaudeWorker {
         Self {
             data: data_rx,
             history: history_rx,
+            sends: sends_rx,
             commands: cmd_tx,
             thread: Some(thread),
         }
@@ -152,6 +158,12 @@ impl ClaudeWorker {
     /// The newest pending scan, discarding older ones.
     pub fn latest(&self) -> Option<ClaudeData> {
         self.data.try_iter().last()
+    }
+
+    /// The `orca terminal send`s Claude terminals ran since the last call, as traffic (see
+    /// [`SendWatch`]).
+    pub fn terminal_sends(&self) -> Vec<AgentMessage> {
+        self.sends.try_iter().collect()
     }
 
     /// The pending transcript chunks, oldest first.
@@ -206,6 +218,7 @@ pub fn collect(
 struct Outputs {
     data: Sender<ClaudeData>,
     history: Sender<HistoryChunk>,
+    sends: Sender<AgentMessage>,
     repaint: Option<Repaint>,
 }
 
@@ -241,6 +254,7 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
     let mut turns = TurnTracker::new();
     let mut codex = CodexTracker::new(&config.codex_sessions_root);
     let mut forwards = ForwardScanner::new();
+    let mut send_watch = SendWatch::new();
     let mut forward_handles: BTreeSet<String> = BTreeSet::new();
     let mut terminals: Option<Vec<Terminal>> = None;
     let mut handles: BTreeSet<String> = BTreeSet::new();
@@ -266,10 +280,16 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
                 );
                 data.codex = codex.refresh(terms, now_ms);
                 data.forwards = forwards.refresh(&forward_transcripts(&data, &forward_handles));
-                data
+                let sends = send_watch.refresh(&sender_transcripts(&data), now_ms);
+                (data, sends)
             }));
             match result {
-                Ok(data) => {
+                Ok((data, sends)) => {
+                    for send in sends {
+                        if outputs.sends.send(send).is_err() {
+                            return;
+                        }
+                    }
                     log::debug!(
                         "claude scan: {} sessions, {} subagents ({} running), {} codex rollouts",
                         data.subagents.len(),
@@ -345,6 +365,38 @@ fn forward_transcripts(data: &ClaudeData, handles: &BTreeSet<String>) -> BTreeMa
         .filter_map(|h| {
             let session = data.session_by_handle.get(h)?.session()?;
             Some((h.clone(), session.transcript_path.clone()))
+        })
+        .collect()
+}
+
+/// Transcript paths of every Claude terminal mapped to a session, for [`SendWatch`]. A
+/// transcript several terminals are mapped to goes to the one mapped exactly, and to none when
+/// all are guesses: an envelope from the wrong terminal is worse than none.
+fn sender_transcripts(data: &ClaudeData) -> BTreeMap<String, PathBuf> {
+    let mut by_path: BTreeMap<&PathBuf, Vec<(&String, bool)>> = BTreeMap::new();
+    for (handle, m) in &data.session_by_handle {
+        if let Some(session) = m.session() {
+            let exact = matches!(m, SessionMatch::Unique(_));
+            by_path
+                .entry(&session.transcript_path)
+                .or_default()
+                .push((handle, exact));
+        }
+    }
+    by_path
+        .into_iter()
+        .filter_map(|(path, handles)| {
+            let handle = match handles.as_slice() {
+                [(h, _)] => *h,
+                _ => {
+                    let mut exact = handles.iter().filter(|(_, e)| *e);
+                    match (exact.next(), exact.next()) {
+                        (Some((h, _)), None) => *h,
+                        _ => return None,
+                    }
+                }
+            };
+            Some((handle.clone(), path.clone()))
         })
         .collect()
 }
@@ -566,5 +618,82 @@ mod tests {
         drop(f);
         std::thread::sleep(Duration::from_millis(150));
         assert!(worker.history_chunks().is_empty(), "unwatched");
+    }
+
+    fn info(path: &str) -> SessionInfo {
+        SessionInfo {
+            session_id: path.into(),
+            transcript_path: path.into(),
+            dir: None,
+            modified_ms: 0,
+            cwd_from_transcript: None,
+        }
+    }
+
+    #[test]
+    fn sends_are_read_from_transcripts_owned_by_one_terminal() {
+        let ambiguous = |path: &str| SessionMatch::Ambiguous {
+            candidates: vec![info(path)],
+            chosen: Some(info(path)),
+        };
+        let data = ClaudeData {
+            session_by_handle: [
+                ("term_unique".to_string(), SessionMatch::Unique(info("/a"))),
+                ("term_guess".into(), ambiguous("/b")),
+                ("term_exact".into(), SessionMatch::Unique(info("/c"))),
+                ("term_guess_c".into(), ambiguous("/c")),
+                ("term_guess_d1".into(), ambiguous("/d")),
+                ("term_guess_d2".into(), ambiguous("/d")),
+                ("term_none".into(), SessionMatch::None),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        let found = sender_transcripts(&data);
+        let expected: BTreeMap<String, PathBuf> = [
+            ("term_unique".to_string(), PathBuf::from("/a")),
+            ("term_guess".into(), "/b".into()),
+            ("term_exact".into(), "/c".into()),
+        ]
+        .into();
+        assert_eq!(found, expected);
+    }
+
+    #[test]
+    fn worker_reports_terminal_sends_made_after_it_started() {
+        let tree = Tree::new();
+        let transcript = tree
+            .root()
+            .join(encode_project_dir(Path::new(CWD)))
+            .join(format!("{SESSION}.jsonl"));
+        let send = |target: &str| {
+            let at = jiff::Timestamp::now().to_string();
+            json!({"type": "assistant", "timestamp": at, "message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {"command":
+                    format!("orca terminal send --terminal {target} --text hi --enter")}}]}})
+        };
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        writeln!(f, "{}", send("term_old")).unwrap();
+        f.flush().unwrap();
+
+        let worker = ClaudeWorker::spawn_with(config(&tree), None);
+        worker.send_terminals(vec![claude_terminal("term_a")]);
+        wait_for(|| worker.latest());
+        assert!(worker.terminal_sends().is_empty(), "history is not traffic");
+
+        writeln!(f, "{}", send("term_b")).unwrap();
+        f.flush().unwrap();
+        let sent = wait_for(|| Some(worker.terminal_sends()).filter(|s| !s.is_empty()));
+        assert_eq!(
+            sent,
+            [AgentMessage::new(
+                "term_a",
+                "term_b",
+                crate::traffic::MessageKind::Message
+            )]
+        );
     }
 }

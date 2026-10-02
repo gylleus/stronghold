@@ -29,7 +29,8 @@ pub enum ScreenVerdict {
     BypassModal,
     /// A "do you trust this folder" question: choose "1. Yes".
     TrustPrompt,
-    /// The input box is empty and nothing is running: the prompt got lost.
+    /// The input box is empty and nothing is running: the prompt isn't submitted yet, or its
+    /// echo scrolled away after a quick reply.
     IdleEmpty,
     /// No agent UI yet (the shell, or the agent still drawing).
     Booting,

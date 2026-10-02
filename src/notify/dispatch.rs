@@ -251,6 +251,55 @@ impl NotificationCenter {
         Outcome::Delivered { id, delivery }
     }
 
+    /// Records an agent notification that was queued at `sent_at_ms` while the app was down.
+    /// A `fresh` one goes through [`Self::dispatch`] and may pop up. An older one, or one the
+    /// per-agent limit would drop (it was sent long before the limit's window), goes into the
+    /// inbox silently, dated when it was sent; an identical recent entry still absorbs it.
+    pub fn dispatch_queued(
+        &mut self,
+        n: Incoming,
+        sent_at_ms: i64,
+        fresh: bool,
+        settings: &NotifySettings,
+        now_ms: i64,
+    ) -> Outcome {
+        if fresh {
+            match self.dispatch(n.clone(), settings, now_ms) {
+                Outcome::RateLimited { .. } => {}
+                outcome => return outcome,
+            }
+        }
+        if let Some(id) = self.duplicate_of(&n, now_ms) {
+            let entry = self.history.get_mut(id).expect("just found");
+            entry.count += 1;
+            entry.at_ms = entry.at_ms.max(sent_at_ms);
+            entry.read = false;
+            return Outcome::Collapsed {
+                id,
+                count: entry.count,
+            };
+        }
+        let id = self.history.push(Entry {
+            id: 0,
+            at_ms: sent_at_ms,
+            first_at_ms: sent_at_ms,
+            source: n.source,
+            severity: n.severity,
+            title: n.title,
+            message: n.message,
+            url: n.url,
+            target: n.target,
+            sender: n.sender,
+            agent_label: n.agent_label,
+            count: 1,
+            read: false,
+        });
+        Outcome::Delivered {
+            id,
+            delivery: Delivery::default(),
+        }
+    }
+
     /// Starts the cooldown of `target` as if Myrstack had just notified it, so the
     /// needs-input notification that follows an agent's own question doesn't repeat it.
     pub fn hold_cooldown(&mut self, target: &str, now_ms: i64) {
@@ -316,6 +365,41 @@ mod tests {
             Outcome::Delivered { delivery, .. } => delivery,
             other => panic!("not delivered: {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_stale_queued_notification_is_recorded_silently_and_a_fresh_one_pops() {
+        let mut c = NotificationCenter::default();
+        let settings = NotifySettings::default();
+        let now = 100 * MIN;
+        let mut stale = agent("term_a", "Blocked: need prod access", Severity::Urgent);
+        stale.url = Some("https://example.com/doc".into());
+        let out = c.dispatch_queued(stale.clone(), now - 60 * MIN, false, &settings, now);
+        assert!(delivered(&out).is_silent());
+        let e = c.history.get(out.id().unwrap()).unwrap();
+        assert_eq!((e.at_ms, e.first_at_ms), (now - 60 * MIN, now - 60 * MIN));
+        assert_eq!(e.source, Source::Agent);
+        assert_eq!(e.sender.as_deref(), Some("term_a"));
+        assert_eq!(e.agent_label.as_deref(), Some("agent term_a"));
+        assert_eq!(e.url.as_deref(), Some("https://example.com/doc"));
+        assert!(!e.read);
+
+        let fresh = agent("term_a", "Done: PR ready", Severity::Warn);
+        let out = c.dispatch_queued(fresh, now - MIN, true, &settings, now);
+        assert!(delivered(&out).native);
+        assert_eq!(c.history.get(out.id().unwrap()).unwrap().at_ms, now);
+    }
+
+    #[test]
+    fn queued_notifications_are_never_rate_limited() {
+        let mut c = NotificationCenter::default();
+        let settings = NotifySettings::default();
+        for i in 0..AGENT_MAX + 3 {
+            let n = agent("term_a", &format!("note {i}"), Severity::Info);
+            let out = c.dispatch_queued(n, i as i64, true, &settings, 1_000);
+            assert!(out.id().is_some(), "{i}: {out:?}");
+        }
+        assert_eq!(c.history.entries().len(), AGENT_MAX + 3);
     }
 
     #[test]
