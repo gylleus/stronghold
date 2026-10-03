@@ -12,7 +12,7 @@ use crate::orca::{DispatchStatus, WorkerState, WorkerTerminalState};
 
 const RECT: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1280.0, 800.0));
 
-fn id(s: &str) -> NodeId {
+pub(super) fn id(s: &str) -> NodeId {
     NodeId(s.to_string())
 }
 
@@ -53,7 +53,7 @@ fn run(name: &str, completed: usize, total: usize) -> RunSummary {
 }
 
 /// The Queen, run "r1" with a coordinator and one worker per state, a loose terminal.
-fn snapshot() -> FleetSnapshot {
+pub(super) fn snapshot() -> FleetSnapshot {
     let mut s = FleetSnapshot::default();
     s.runs = vec![run("r1", 1, 4)];
     s.nodes
@@ -92,11 +92,11 @@ fn scene_with(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>, pr: &[&str]) 
     layout(&input, RECT)
 }
 
-fn scene(snapshot: &FleetSnapshot) -> Scene {
+pub(super) fn scene(snapshot: &FleetSnapshot) -> Scene {
     scene_with(snapshot, &BTreeSet::new(), &[])
 }
 
-fn ant<'a>(scene: &'a Scene, name: &str) -> &'a Ant {
+pub(super) fn ant<'a>(scene: &'a Scene, name: &str) -> &'a Ant {
     scene
         .ant(&id(name))
         .unwrap_or_else(|| panic!("{name} is drawn"))
