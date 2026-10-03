@@ -333,8 +333,9 @@ pub fn definitions() -> Vec<Value> {
              terminal to reuse an agent already running there); the prompt is the task spec. \
              Use it when Karl asks for a new session, and as a coordinator to start each \
              worker of its own run (worker mode; the playbook's default way to start one). \
-             Returns the new terminal and node id; the \
-             dashboard selects it once it appears. A new worktree whose name or branch already \
+             Returns the new terminal and node id; the dashboard leaves Karl's selection \
+             alone (it selects the new node only with \"Focus new ants\" on in Settings; use \
+             focus_agent to show it). A new worktree whose name or branch already \
              exists is refused with the existing worktree and its live agents (send_to_agent \
              them instead); allow_suffix=true lets Orca pick name-2 for a deliberate second \
              copy. The plain shell Orca opens in a new worktree is closed once the agent runs. \

@@ -117,6 +117,7 @@ fn each_section_renders_headless() {
         (
             Section::General,
             &[
+                general::FOCUS_NEW_LABEL,
                 "/data/myrstack",
                 "/data/myrstack/control.sock",
                 "● listening",
@@ -497,4 +498,30 @@ fn notification_settings_save_and_quiet_toggles_at_once() {
         .settings
         .notifications;
     assert_eq!(loaded, quiet);
+}
+
+#[test]
+fn focus_new_ants_is_off_by_default_and_saves_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    std::fs::write(&path, r#"{"whip":{"dry_run":false}}"#).unwrap();
+    let mut pane = SettingsPane::load(Some(path.clone()));
+    assert!(
+        !pane.spawn().focus_new,
+        "a file without `spawn` loads it off"
+    );
+
+    pane.open_section(Section::General);
+    let status = WhipStatus::default();
+    let info = general();
+    click_label(general::FOCUS_NEW_LABEL, |ui| {
+        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+    });
+    assert!(pane.spawn().focus_new);
+    let reloaded = SettingsPane::load(Some(path.clone()));
+    assert!(reloaded.spawn().focus_new);
+    assert!(!reloaded.whip().dry_run, "other sections kept");
+
+    assert!(!pane.set_focus_new(false).focus_new);
+    assert!(!SettingsPane::load(Some(path)).spawn().focus_new);
 }
