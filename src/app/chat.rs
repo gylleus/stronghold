@@ -170,6 +170,7 @@ impl MyrstackApp {
         use crate::ui::commands::{self, ActionId};
         use crate::ui::queen::{QueenQuickAction, quick_actions};
         self.envoy_quick_actions(ui);
+        self.envoy_drafts_button(ui);
         let cx = self.palette_context();
         let status_disabled = commands::disabled_reason(ActionId::StatusReport, &cx);
         let action = match quick_actions(ui, status_disabled) {

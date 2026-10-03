@@ -4,7 +4,7 @@ use super::BridgeStatus;
 use super::channel::{Channel, InboundEvent, OutboundMessage};
 use super::inbox::Inbox;
 use super::settings::EnvoySettings;
-use super::slack::{SlackChannel, SlackCli};
+use super::slack::{SlackChannel, SlackIo};
 use crate::control::{ControlError, ErrorCode, Reply};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use serde_json::json;
@@ -44,17 +44,17 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn spawn(path: PathBuf, inbox: Inbox, wake: impl Fn() + Send + 'static) -> Self {
+    pub fn spawn(
+        path: PathBuf,
+        inbox: Inbox,
+        io: impl SlackIo + 'static,
+        bridge: PathBuf,
+        wake: impl Fn() + Send + 'static,
+    ) -> Self {
         let (tx, commands) = unbounded();
         let (results, rx) = unbounded();
         std::thread::spawn(move || {
-            let mut slack = SlackChannel::new(
-                SlackCli,
-                inbox,
-                path,
-                super::slack::bridge_dir(),
-                EnvoySettings::default(),
-            );
+            let mut slack = SlackChannel::new(io, inbox, path, bridge, EnvoySettings::default());
             let mut active = false;
             let mut published: Option<(Inbox, BridgeStatus, Vec<String>)> = None;
             let mut last_error: Option<String> = None;
@@ -129,6 +129,13 @@ impl Worker {
             }
         });
         Self { tx, rx }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_pair() -> (Self, Receiver<Work>, Sender<Update>) {
+        let (tx, commands) = unbounded();
+        let (results, rx) = unbounded();
+        (Self { tx, rx }, commands, results)
     }
 
     pub fn submit(&self, work: Work) -> Result<(), String> {

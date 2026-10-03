@@ -159,6 +159,7 @@ pub struct MyrstackApp {
     review: review::AppReview,
     envoy_session: crate::envoy::session::Session,
     pub envoy_core: envoy::AppEnvoy,
+    envoy_panel: ui::envoy::DraftsPanel,
     /// Health checks for silent misconfigurations, and the badge showing them.
     health: health::AppHealth,
 }
@@ -257,6 +258,7 @@ impl MyrstackApp {
             talk,
             review: review::AppReview::start(ctx),
             envoy_core: envoy::AppEnvoy::start(ctx),
+            envoy_panel: ui::envoy::DraftsPanel::default(),
             health: health::AppHealth::start(ctx),
         };
         app.talk_startup();
@@ -447,6 +449,12 @@ impl MyrstackApp {
     }
 
     fn details_contents(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+        if self
+            .selected_node()
+            .is_some_and(|node| node.kind == NodeKind::Envoy)
+        {
+            self.envoy_drafts_button(ui);
+        }
         if self.queen_selected() {
             self.queen_details(ui, now_ms);
             return;

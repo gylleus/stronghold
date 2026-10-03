@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use super::channel::OutboundMessage;
-use super::slack::SlackSender;
 use super::{inbox, secrets};
 
 pub const DRAFTS_FILE: &str = "envoy-drafts.json";
@@ -272,28 +271,6 @@ impl DraftQueue {
         self.commit(old)
     }
 
-    pub fn approve(
-        &mut self,
-        id: &str,
-        edited_text: Option<&str>,
-        dry_run: bool,
-        sender: &mut dyn SlackSender,
-        now: i64,
-    ) -> Result<Draft, String> {
-        if self
-            .get(id)
-            .is_some_and(|d| d.kind == DraftKind::TaskProposal)
-        {
-            return Err("Task proposals must be handed to the Queen by the app".into());
-        }
-        let draft = self.begin_approval(id, edited_text, dry_run, now)?;
-        if draft.status == DraftStatus::Approved {
-            let result = sender.send(&draft.outbound()?);
-            self.finish(id, result, now)?;
-        }
-        Ok(self.get(id).expect("approved draft").clone())
-    }
-
     fn pending_mut(&mut self, id: &str) -> Result<&mut Draft, String> {
         let d = self
             .saved
@@ -321,21 +298,6 @@ impl DraftQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[derive(Default)]
-    struct Sender {
-        calls: Vec<OutboundMessage>,
-        fail: bool,
-    }
-    impl SlackSender for Sender {
-        fn send(&mut self, m: &OutboundMessage) -> Result<(), String> {
-            self.calls.push(m.clone());
-            if self.fail {
-                Err("delivery failed".into())
-            } else {
-                Ok(())
-            }
-        }
-    }
     fn reply() -> Draft {
         Draft::reply(
             ReplyTo {
@@ -352,27 +314,19 @@ mod tests {
     fn dry_run_scan_edit_reject_and_one_shot_approval() {
         let dir = tempfile::tempdir().unwrap();
         let mut q = DraftQueue::load(dir.path().join(DRAFTS_FILE)).unwrap();
-        let mut sender = Sender::default();
         let d = q.create(reply()).unwrap();
         assert!(
-            q.approve(
-                &d.id,
-                Some("ghp_123456789012345678901234567890"),
-                true,
-                &mut sender,
-                2
-            )
-            .is_err()
+            q.begin_approval(&d.id, Some("ghp_123456789012345678901234567890"), true, 2)
+                .is_err()
         );
         assert_eq!(q.get(&d.id).unwrap().text, "Ready");
         q.edit(&d.id, "Edited", 2).unwrap();
-        let approved = q.approve(&d.id, None, true, &mut sender, 3).unwrap();
+        let approved = q.begin_approval(&d.id, None, true, 3).unwrap();
         assert_eq!(approved.status, DraftStatus::DryRunSent);
-        assert!(sender.calls.is_empty());
-        assert!(q.approve(&d.id, None, false, &mut sender, 4).is_err());
+        assert!(q.begin_approval(&d.id, None, false, 4).is_err());
         let d = q.create(reply()).unwrap();
         q.reject(&d.id, 4).unwrap();
-        assert!(q.approve(&d.id, None, false, &mut sender, 5).is_err());
+        assert!(q.begin_approval(&d.id, None, false, 5).is_err());
         let mut bad = reply();
         bad.text = "sk-ant-api03-12345678901234567890".into();
         assert!(q.create(bad).is_err());
@@ -382,24 +336,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(DRAFTS_FILE);
         let mut q = DraftQueue::load(&path).unwrap();
-        let mut sender = Sender::default();
         let d = q.create(reply()).unwrap();
-        assert_eq!(
-            q.approve(&d.id, Some("New"), false, &mut sender, 2)
-                .unwrap()
-                .status,
-            DraftStatus::Sent
-        );
-        assert!(sender.calls[0].text.ends_with(ATTRIBUTION));
-        assert_eq!(sender.calls[0].thread_ts.as_deref(), Some("1.000001"));
+        let approved = q.begin_approval(&d.id, Some("New"), false, 2).unwrap();
+        let outbound = approved.outbound().unwrap();
+        assert!(outbound.text.ends_with(ATTRIBUTION));
+        assert_eq!(outbound.thread_ts.as_deref(), Some("1.000001"));
+        q.finish(&d.id, Ok(()), 2).unwrap();
+        assert_eq!(q.get(&d.id).unwrap().status, DraftStatus::Sent);
         let d = q.create(reply()).unwrap();
-        sender.fail = true;
-        assert_eq!(
-            q.approve(&d.id, None, false, &mut sender, 3)
-                .unwrap()
-                .status,
-            DraftStatus::Failed
-        );
+        q.begin_approval(&d.id, None, false, 3).unwrap();
+        q.finish(&d.id, Err("delivery failed".into()), 3).unwrap();
+        assert_eq!(q.get(&d.id).unwrap().status, DraftStatus::Failed);
         let d = q.create(reply()).unwrap();
         q.begin_approval(&d.id, None, false, 4).unwrap();
         let loaded = DraftQueue::load(&path).unwrap();
