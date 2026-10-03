@@ -13,6 +13,9 @@ pub mod motion;
 pub mod nature;
 pub mod scenery;
 pub mod sprites;
+pub mod zoom;
+#[cfg(test)]
+mod zoom_tests;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::Duration;
@@ -22,10 +25,12 @@ use eframe::egui::{self, Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, 
 use crate::model::{FleetSnapshot, NodeId};
 use crate::ui::daylight;
 use crate::ui::graph::GraphView;
+use crate::ui::graph::nav::{self, ScrollAction, ScrollSource, route_scroll};
 use death::{Body, Fall};
 use layout::{FarmInput, Pose, Scene, Spot, layout};
 use motion::{Walk, route};
 use sprites::{AntLook, Item, Palette, Sprites};
+use zoom::Camera;
 
 /// Redraw interval while an ant walks.
 const WALK_FRAME: Duration = Duration::from_millis(33);
@@ -177,6 +182,10 @@ pub struct AntFarmView {
     queen_focused: bool,
     /// Messages carried between ants; see [`mail`].
     mail: crate::ui::envelope::Flights,
+    /// The part of the farm on screen; see [`zoom`].
+    camera: Camera,
+    /// Device of the latest scroll over the farm; see [`ScrollSource`].
+    scroll_source: ScrollSource,
 }
 
 impl AntFarmView {
@@ -216,6 +225,7 @@ impl AntFarmView {
         graph: &GraphView,
     ) -> AntFarmResponse {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        self.navigate(ui, &response);
         let now_s = ui.input(|i| i.time);
         let input = FarmInput {
             snapshot,
@@ -250,13 +260,17 @@ impl AntFarmView {
         };
         let sprites = self.sprites.get_or_insert_with(|| Sprites::load(ui.ctx()));
         let painter = ui.painter_at(rect);
+        let first_shape = ui
+            .ctx()
+            .graphics(|g| g.get(painter.layer_id()).map(|list| list.next_idx()))
+            .unwrap_or(egui::layers::ShapeIdx(0));
         let daylight = daylight::daylight();
         let palette = Palette::new(daylight);
         let selection = graph.selection();
 
         paint_ground(&painter, sprites, &scene, palette, now_s, daylight);
         paint_calls(&painter, sprites, &scene, &effects, now_s, true);
-        let pointer = response.hover_pos();
+        let pointer = response.hover_pos().map(|p| self.camera.to_farm(rect, p));
         let hovered = pointer.and_then(|p| hit(&scene, &placed, p));
         paint_ants(
             &painter,
@@ -272,6 +286,16 @@ impl AntFarmView {
         paint_falls(&painter, sprites, &scene, &self.falls, now_s);
         mail::paint(&painter, &scene, &placed, self.mail.tick(now_s), now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
+        zoom::apply(
+            ui.ctx(),
+            painter.layer_id(),
+            first_shape,
+            self.camera.transform(rect),
+            painter.clip_rect(),
+        );
+        if response.double_clicked() && hovered.is_none() {
+            self.camera = Camera::default();
+        }
 
         // Smooth while ants walk or a call ripples; stepped while anyone digs, waves, sleeps
         // or is whipped (the Queen always breathes).
@@ -327,7 +351,8 @@ impl AntFarmView {
         let pointer = ui.input(|i| i.pointer.latest_pos());
         if response.drag_started_by(egui::PointerButton::Primary) {
             let origin = ui.input(|i| i.pointer.press_origin()).or(pointer);
-            self.box_origin = origin.filter(|o| hit(scene, placed, *o).is_none());
+            self.box_origin = origin
+                .filter(|o| hit(scene, placed, self.camera.to_farm(scene.rect, *o)).is_none());
         }
         let origin = self.box_origin?;
         let current = pointer.unwrap_or(origin);
@@ -337,7 +362,11 @@ impl AntFarmView {
         if released {
             self.box_origin = None;
             let additive = ui.input(|i| crate::ui::graph::is_additive(i.modifiers));
-            return Some((boxed_ants(scene, placed, rect), additive));
+            let farm = Rect::from_two_pos(
+                self.camera.to_farm(scene.rect, rect.min),
+                self.camera.to_farm(scene.rect, rect.max),
+            );
+            return Some((boxed_ants(scene, placed, farm), additive));
         }
         let stroke = ui.visuals().selection.stroke;
         let fill = ui.visuals().selection.bg_fill.gamma_multiply(0.2);
@@ -345,6 +374,45 @@ impl AntFarmView {
             .rect(rect, 2.0, fill, stroke, StrokeKind::Inside);
         ui.ctx().request_repaint();
         None
+    }
+
+    /// Zooms and pans on the wheel, pinch, trackpad swipes, right- or middle-drags and arrow
+    /// keys, per [`zoom`].
+    fn navigate(&mut self, ui: &Ui, response: &egui::Response) {
+        let rect = response.rect;
+        let (source, scroll, zoom_delta, ctrl) = ui.input(|i| {
+            (
+                ScrollSource::from_events(&i.events),
+                i.smooth_scroll_delta(),
+                i.zoom_delta(),
+                i.modifiers.ctrl,
+            )
+        });
+        if let Some(source) = source {
+            self.scroll_source = source;
+        }
+        if let Some(pointer) = response.hover_pos() {
+            if zoom_delta != 1.0 {
+                self.camera.zoom_at(rect, pointer, zoom_delta);
+            } else {
+                match route_scroll(self.scroll_source, scroll, ctrl) {
+                    Some(ScrollAction::Zoom(factor)) => self.camera.zoom_at(rect, pointer, factor),
+                    Some(ScrollAction::Pan(delta)) => self.camera.pan(rect, delta),
+                    None => {}
+                }
+            }
+        }
+        if response.dragged_by(egui::PointerButton::Secondary)
+            || response.dragged_by(egui::PointerButton::Middle)
+        {
+            self.camera.pan(rect, response.drag_delta());
+        }
+        if !self.camera.is_fit()
+            && let Some(delta) = nav::arrow_pan(ui.ctx())
+        {
+            self.camera.pan(rect, delta);
+            ui.ctx().request_repaint();
+        }
     }
 
     /// Starts a fall for every ant drawn last frame that has left the fleet: gone from

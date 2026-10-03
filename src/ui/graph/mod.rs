@@ -6,7 +6,7 @@ mod fit;
 mod fit_tests;
 mod layout;
 mod mail;
-mod nav;
+pub mod nav;
 mod regions;
 mod saved;
 #[cfg(test)]
