@@ -16,6 +16,7 @@ use eframe::egui::{self, RichText};
 
 use crate::chat::settings::QueenSettings;
 use crate::notify::{NotifySettings, Severity, Sound};
+use crate::spawn::SpawnSettings;
 use crate::voice::settings::VoiceSettings;
 use crate::whip::{Settings, WhipSettings, WhipStatus};
 
@@ -151,6 +152,10 @@ impl SettingsPane {
         &self.applied.voice
     }
 
+    pub fn spawn(&self) -> &SpawnSettings {
+        &self.applied.spawn
+    }
+
     pub fn path(&self) -> Option<&std::path::Path> {
         self.path.as_deref()
     }
@@ -278,7 +283,13 @@ impl SettingsPane {
                     self.voice_draft = self.applied.voice.clone();
                 }
             }
-            Section::General => general::section(ui, cx.general, self.path.as_deref()),
+            Section::General => {
+                let focus_new = self.applied.spawn.focus_new;
+                if let Some(on) = general::section(ui, cx.general, self.path.as_deref(), focus_new)
+                {
+                    self.set_focus_new(on);
+                }
+            }
         }
         self.message_ui(ui);
     }
@@ -343,6 +354,14 @@ impl SettingsPane {
         self.commit(next);
         self.voice_draft.speak_replies = on;
         self.applied.voice.clone()
+    }
+
+    /// Saves "Focus new ants when they're spawned" at once.
+    pub fn set_focus_new(&mut self, on: bool) -> SpawnSettings {
+        let mut next = self.applied.clone();
+        next.spawn.focus_new = on;
+        self.commit(next);
+        self.applied.spawn.clone()
     }
 
     fn save_voice(&mut self) -> Option<VoiceSettings> {
