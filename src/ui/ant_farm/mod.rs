@@ -733,6 +733,16 @@ fn paint_ants(
             );
             sprites.item(painter, crumb, Item::Crumb, ant.alpha);
         }
+        if ant.kind == crate::model::NodeKind::Envoy {
+            let envelope =
+                Rect::from_center_size(cell.center(), vec2(ant.size * 0.55, ant.size * 0.35));
+            let color =
+                crate::ui::graph::envoy_color(painter.ctx().global_style().visuals.dark_mode);
+            painter.rect_filled(envelope, 0.0, color);
+            let ink = egui::Stroke::new(tpx, egui::Color32::from_rgb(20, 45, 50));
+            painter.line_segment([envelope.left_top(), envelope.center()], ink);
+            painter.line_segment([envelope.right_top(), envelope.center()], ink);
+        }
         if !walking && ant.pose == Pose::Dig {
             let seed = (ant.pos.x * 0.37 + ant.pos.y * 0.11).rem_euclid(1.0);
             let t = (now_s * 6.0).floor() / 6.0;

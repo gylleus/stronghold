@@ -606,8 +606,8 @@ the terminal after `closing_in_ms` with the `plan` returned.
 `{"from", "to", "kind"?}`. Draws a message between agents, which happened elsewhere, as an
 envelope flying from `from` to `to` in the graph and the ant farm; nothing is sent. Each end
 is a node id, a terminal handle, `run:<id>` (its coordinator), `dispatch:<id>`, `queen`,
-`karl` or `slack` (the outside world: the landing mound in the ant farm, the Queen in the
-graph). `kind` picks the look: `instruction`, `message` (default), `ask` (or `question`,
+`envoy` (the live Envoy session), `karl` or `slack` (the outside world: the landing mound
+in the ant farm, the Queen in the graph). `kind` picks the look: `instruction`, `message` (default), `ask` (or `question`,
 `escalation`), `merge_ready`, `relay` (or `slack`, `envoy`), `nudge` or `status`. Unknown ends
 are ignored. Bus messages, `send`, `notify`, `ask`, whip nudges and Karl's typing are drawn
 already; this is for traffic the app can't see, such as the Envoy's relays.

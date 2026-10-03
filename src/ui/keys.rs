@@ -317,7 +317,8 @@ pub fn nav_groups(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<Na
         .nodes
         .iter()
         .filter(|n| n.kind != NodeKind::Subagent);
-    let (loose, others): (Vec<_>, Vec<_>) = others.partition(|n| n.kind == NodeKind::Terminal);
+    let (loose, others): (Vec<_>, Vec<_>) =
+        others.partition(|n| matches!(n.kind, NodeKind::Terminal | NodeKind::Envoy));
     for node in others.into_iter().chain(loose) {
         visit(&node.id, &mut rest);
     }

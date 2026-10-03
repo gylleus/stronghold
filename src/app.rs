@@ -9,6 +9,7 @@ mod chat;
 mod control;
 mod dictation;
 pub mod envoy;
+mod envoy_session;
 mod health;
 mod lifecycle;
 mod notifications;
@@ -156,6 +157,7 @@ pub struct MyrstackApp {
     talk: talk::AppTalk,
     /// PRs agents marked ready for review, their GitHub state and the poller reading it.
     review: review::AppReview,
+    envoy_session: crate::envoy::session::Session,
     pub envoy_core: envoy::AppEnvoy,
     /// Health checks for silent misconfigurations, and the badge showing them.
     health: health::AppHealth,
@@ -193,7 +195,12 @@ impl MyrstackApp {
         );
         let chat = chat::AppChat::start(ctx, whip_window.queen());
         let talk = talk::AppTalk::new(ctx, whip_window.voice());
+        let envoy_session = crate::envoy::session::Session::load(
+            crate::claude::hook::data_dir().join("envoy-session.json"),
+            whip_window.envoy(),
+        );
         let mut app = Self {
+            envoy_session,
             control: control::AppControl::start(ctx),
             quota,
             quotas: Quotas::default(),
@@ -1084,7 +1091,7 @@ impl eframe::App for MyrstackApp {
         if let Some(hotkey) = &mut self.hotkey {
             hotkey.poll(ctx);
         }
-        let mut rebuild = false;
+        let mut rebuild = self.envoy_session.poll();
         if let Some(data) = self.poller.latest() {
             log::debug!(
                 "snapshot: {} terminals, {} runs, {} workers, {} errors",
@@ -1106,6 +1113,7 @@ impl eframe::App for MyrstackApp {
                 data.needs_input
                     .insert(screen.handle.clone(), verdict.clone());
             }
+            self.envoy_session.reconcile(&data);
             for message in self.traffic.inbox.update(&data.inbox, now_ms()) {
                 self.traffic.push(message);
             }
@@ -1142,6 +1150,7 @@ impl eframe::App for MyrstackApp {
             }
             self.screen = Some(update);
         }
+        self.sync_envoy_core();
         rebuild |= self.poll_whip();
         rebuild |= std::mem::take(&mut self.overlays_changed);
         self.poll_quota();
@@ -1158,6 +1167,7 @@ impl eframe::App for MyrstackApp {
             snapshot.mark_waiting(&self.asks.waiting(data, self.claude_data.as_ref()));
             self.finished.prune(now, crate::model::RELEASED_FADE_MS);
             snapshot.add_finished(self.finished.recent(now, crate::model::RELEASED_FADE_MS));
+            snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_status());
             self.graph.set_hidden(&self.filter.hidden(&snapshot));
             self.graph.sync(&snapshot);
             if let Some(claude) = &self.claude_data {
@@ -1186,10 +1196,12 @@ impl eframe::App for MyrstackApp {
         self.poll_traffic(ctx);
         self.poll_chat();
         self.talk_logic(ctx);
+        let envoy_before = self.envoy_status();
         self.poll_control(ctx);
         self.poll_review();
         self.poll_envoy();
         self.poll_health();
+        self.overlays_changed |= envoy_before != self.envoy_status();
         self.poll_whip_now();
         self.poll_spawn();
         self.run_finish_closes();

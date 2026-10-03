@@ -71,7 +71,7 @@ fn each_section_renders_headless() {
         running_model: Some("claude-fable-5"),
         env_model: None,
     };
-    let cases: [(Section, &[&str]); 5] = [
+    let cases: [(Section, &[&str]); 6] = [
         (
             Section::Queen,
             &[
@@ -81,6 +81,17 @@ fn each_section_renders_headless() {
                 "claude-fable-5",
                 "Save and restart the Queen",
                 "Speak replies",
+            ],
+        ),
+        (
+            Section::Envoy,
+            &[
+                "Agent",
+                "Model",
+                "Poll interval (seconds)",
+                "Channels (IDs, one per line)",
+                "Save Envoy settings",
+                "Dry run ON applies immediately when saved. Other changes apply on the next Start.",
             ],
         ),
         (
@@ -497,4 +508,27 @@ fn notification_settings_save_and_quiet_toggles_at_once() {
         .settings
         .notifications;
     assert_eq!(loaded, quiet);
+}
+
+#[test]
+fn envoy_save_reports_safety_on_and_explains_codex_restriction() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    let mut settings = Settings::default();
+    settings.envoy.dry_run = false;
+    settings.envoy.agent = "codex".into();
+    settings.save_to(&path).unwrap();
+    let mut pane = SettingsPane::load(Some(path.clone()));
+    pane.open_section(Section::Envoy);
+    let status = WhipStatus::default();
+    let info = general();
+    let context = cx(&status, &info, QueenStatus::default());
+    let warning = "Codex Envoy starts are unavailable: its MCP tool restrictions are not supported. Choose Claude.";
+    assert_eq!(drawn(&mut pane, &context, &[warning]), [warning]);
+    let mut safe = pane.envoy().clone();
+    safe.dry_run = true;
+    pane.envoy_draft = envoy::EnvoyDraft::new(&safe);
+    let out = click_label("Save Envoy settings", |ui| pane.show(ui.ctx(), &context));
+    assert!(out.envoy.expect("save must reach the app").dry_run);
+    assert!(Settings::load_from(&path).settings.envoy.dry_run);
 }

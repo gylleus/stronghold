@@ -152,7 +152,14 @@ const STATES: [&str; 6] = [
     "done",
     "failed",
 ];
-const KINDS: [&str; 5] = ["coordinator", "attendant", "worker", "terminal", "subagent"];
+const KINDS: [&str; 6] = [
+    "coordinator",
+    "attendant",
+    "worker",
+    "terminal",
+    "subagent",
+    "envoy",
+];
 
 fn one_or_many(values: &[&str], description: &str) -> Value {
     json!({
