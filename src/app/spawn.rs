@@ -1,5 +1,6 @@
 //! The app side of starting sessions: the "New ant…" dialog, spawns requested through the
-//! control API (the Queen's `spawn_session`), and selecting the new node once it appears.
+//! control API (the Queen's `spawn_session`), and selecting the new node once it appears (only
+//! with "Focus new ants when they're spawned" on).
 
 use std::collections::HashMap;
 
@@ -52,7 +53,8 @@ impl MyrstackApp {
         }
     }
 
-    /// Takes the runner's events: dialog progress, API replies, refresh and pending select.
+    /// Takes the runner's events: dialog progress, API replies, refresh and, when the setting
+    /// asks for it, the pending select.
     pub(super) fn poll_spawn(&mut self) {
         for event in self.spawn.runner.poll() {
             self.spawn.dialog.on_event(&event);
@@ -66,7 +68,7 @@ impl MyrstackApp {
             if let Some(context) = context {
                 self.poller.send(PollerCommand::RefreshNow);
                 if let Some(handle) = &context.handle {
-                    self.spawn.pending = Some(PendingSelect::new(handle.clone(), now_ms()));
+                    self.spawn.pending = self.whip_window.spawn().pending_select(handle, now_ms());
                 }
             }
             if let Some(reply) = self.spawn.replies.remove(&job) {

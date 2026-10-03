@@ -1456,6 +1456,19 @@ fn pending_select_waits_for_the_node_then_expires() {
     assert!(pending.is_none(), "gave up");
 }
 
+#[test]
+fn a_spawn_selects_its_node_only_with_focus_new() {
+    let off = SpawnSettings::default();
+    assert!(!off.focus_new, "off by default");
+    assert_eq!(off.pending_select("term_new", 1_000), None);
+
+    let on = SpawnSettings { focus_new: true };
+    assert_eq!(
+        on.pending_select("term_new", 1_000),
+        Some(PendingSelect::new("term_new", 1_000))
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Taken names, startup shells
 

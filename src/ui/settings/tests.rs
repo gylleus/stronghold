@@ -128,6 +128,7 @@ fn each_section_renders_headless() {
         (
             Section::General,
             &[
+                general::FOCUS_NEW_LABEL,
                 "/data/myrstack",
                 "/data/myrstack/control.sock",
                 "● listening",
@@ -531,4 +532,30 @@ fn envoy_save_reports_safety_on_and_explains_codex_restriction() {
     let out = click_label("Save Envoy settings", |ui| pane.show(ui.ctx(), &context));
     assert!(out.envoy.expect("save must reach the app").dry_run);
     assert!(Settings::load_from(&path).settings.envoy.dry_run);
+}
+
+#[test]
+fn focus_new_ants_is_off_by_default_and_saves_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    std::fs::write(&path, r#"{"whip":{"dry_run":false}}"#).unwrap();
+    let mut pane = SettingsPane::load(Some(path.clone()));
+    assert!(
+        !pane.spawn().focus_new,
+        "a file without `spawn` loads it off"
+    );
+
+    pane.open_section(Section::General);
+    let status = WhipStatus::default();
+    let info = general();
+    click_label(general::FOCUS_NEW_LABEL, |ui| {
+        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+    });
+    assert!(pane.spawn().focus_new);
+    let reloaded = SettingsPane::load(Some(path.clone()));
+    assert!(reloaded.spawn().focus_new);
+    assert!(!reloaded.whip().dry_run, "other sections kept");
+
+    assert!(!pane.set_focus_new(false).focus_new);
+    assert!(!SettingsPane::load(Some(path)).spawn().focus_new);
 }

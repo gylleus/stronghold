@@ -11,6 +11,7 @@ pub mod exec;
 pub mod interrupted;
 pub mod pending;
 pub mod resolve;
+pub mod settings;
 pub mod verify;
 
 #[cfg(test)]
@@ -25,6 +26,7 @@ use crate::orca::spawn::{
 pub use catalog::Catalog;
 pub use exec::{SpawnEvent, SpawnOutcome, SpawnRunner, StepStatus};
 pub use resolve::{LiveAgent, ModeName, NameConflict, SpawnArgs, name_conflict, new_worktree_of};
+pub use settings::SpawnSettings;
 pub use verify::{Expect, ScreenVerdict, classify_screen, codex_approvals_on};
 
 /// How long `terminal wait --for tui-idle` waits after launch. An agent that took its prompt
