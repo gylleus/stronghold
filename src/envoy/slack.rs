@@ -533,6 +533,43 @@ impl<I: SlackIo> SlackChannel<I> {
         ))
     }
 
+    /// New pins, found by searching `has:pin`; the first poll only records what is pinned.
+    fn pins(&mut self, batch: &mut PollBatch) -> Result<(), String> {
+        let mut found = Vec::new();
+        for page in 1..=3 {
+            let value = self.io.api(
+                "search.messages",
+                &[
+                    ("query", "has:pin".into()),
+                    ("sort", "timestamp".into()),
+                    ("sort_dir", "desc".into()),
+                    ("count", "100".into()),
+                    ("page", page.to_string()),
+                ],
+            )?;
+            found.extend(parse_search(
+                &value,
+                EventKind::Pin,
+                &self.settings.karl_user_id,
+            )?);
+            let pages = value["messages"]["paging"]["pages"].as_u64().unwrap_or(0);
+            if page >= pages {
+                break;
+            }
+        }
+        let Some(seen) = self.inbox.pins_seen.as_mut() else {
+            self.inbox.pins_seen = Some(found.iter().map(InboundEvent::id).collect());
+            return Ok(());
+        };
+        let fresh: Vec<_> = found.into_iter().filter(|e| seen.insert(e.id())).collect();
+        for e in fresh {
+            if self.inbox.get(&e.id()).is_some() || self.inbox.insert(e.clone()) {
+                batch.events.push(e);
+            }
+        }
+        Ok(())
+    }
+
     fn history(&mut self, channel: &str, now_ms: i64, batch: &mut PollBatch) -> Result<(), String> {
         let key = format!("history:{channel}");
         let start = self.inbox.first_enabled_ms.unwrap_or(now_ms);
@@ -672,6 +709,9 @@ impl<I: SlackIo> Channel for SlackChannel<I> {
                 if let Err(e) = self.search(kind, now_ms, &mut batch) {
                     self.poll_errors.insert(kind.name().into(), e);
                 }
+            }
+            if let Err(e) = self.pins(&mut batch) {
+                self.poll_errors.insert("pin".into(), e);
             }
             if self.status != BridgeStatus::Ok {
                 for channel in &channels {

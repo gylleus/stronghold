@@ -85,6 +85,12 @@ impl AppReview {
     }
 }
 
+impl AppReview {
+    pub(super) fn entries(&self) -> impl Iterator<Item = &crate::review::Entry> {
+        self.queue.entries()
+    }
+}
+
 impl MyrstackApp {
     /// The node of the agent with identity `origin`, in the current snapshot.
     pub(super) fn review_agent(&self, origin: &Origin) -> Option<AgentRef> {
