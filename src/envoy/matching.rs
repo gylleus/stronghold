@@ -33,9 +33,11 @@ const MAX_CANDIDATES: usize = 3;
 
 /// Words too common in this fleet's labels and Slack to identify an ant on their own.
 const COMMON: &[&str] = &[
-    "about", "after", "agent", "agents", "envoy", "fix", "fixes", "from", "gylleus", "into",
-    "karl", "main", "merge", "rework", "review", "run", "task", "test", "tests", "that", "the",
-    "this", "with", "work", "worker",
+    "about", "after", "agent", "agents", "card", "cards", "check", "config", "data", "deploy",
+    "envoy", "finish", "first", "fix", "fixes", "from", "gylleus", "into", "issue", "issues",
+    "karl", "kickoff", "live", "main", "merge", "page", "plan", "prod", "product", "products",
+    "recs", "release", "rework", "review", "run", "save", "search", "staging", "task", "test",
+    "tests", "that", "the", "theme", "this", "update", "with", "work", "worker",
 ];
 
 /// Ants `event` likely concerns, best first. `thread` holds the other inbox events in its
@@ -113,14 +115,13 @@ fn score(
         .filter(|w| ant.repo.as_deref() != Some(w))
         .collect();
     let hits: Vec<&String> = keys.intersection(words).collect();
-    let repo = ant.repo.as_deref().is_some_and(|r| words.contains(r));
-    if hits.len() >= 2 || (hits.len() == 1 && repo) {
+    if hits.len() >= 2 {
         let why = hits
             .iter()
             .map(|s| s.as_str())
             .collect::<Vec<_>>()
             .join("+");
-        return Some((10 * hits.len() as u32 + u32::from(repo), why));
+        return Some((10 * hits.len() as u32, why));
     }
     None
 }

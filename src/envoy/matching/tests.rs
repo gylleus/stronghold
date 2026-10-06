@@ -90,13 +90,23 @@ fn pr_and_ticket_refs_match_including_from_the_thread() {
 }
 
 #[test]
-fn keywords_need_two_distinctive_hits_or_one_plus_the_repo() {
+fn keywords_need_two_distinctive_hits() {
     let e = event("400.1", None, "the wheat search preload is slow");
     assert_eq!(ids(&candidates(&e, &[], &fleet())), ["term:wheat"]);
     let e = event("400.2", None, "can someone review this config?");
     assert!(candidates(&e, &[], &fleet()).is_empty());
     let e = event("400.3", None, "realtime redis is flapping");
+    assert!(
+        candidates(&e, &[], &fleet()).is_empty(),
+        "the repo name adds nothing"
+    );
+    let e = event("400.4", None, "redis replicas are lagging");
     assert_eq!(ids(&candidates(&e, &[], &fleet())), ["term:redis"]);
+    let e = event("400.5", None, "search is slow on the first page");
+    assert!(
+        candidates(&e, &[], &fleet()).is_empty(),
+        "generic words don't count"
+    );
 }
 
 #[test]
