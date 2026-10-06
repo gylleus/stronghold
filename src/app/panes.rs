@@ -202,6 +202,11 @@ impl MyrstackApp {
                 )
                 .show(ui, ui::graph::legend);
         }
+        let receipt = ui::envoy_receipt::ReceiptCue::at(
+            self.envoy_core.shake_started_ms,
+            now_ms,
+            self.worktrees.reduced_motion(),
+        );
         let canvas = egui::CentralPanel::default().show(ui, |ui| match &self.data {
             None => {
                 ui.vertical_centered(|ui| {
@@ -216,6 +221,7 @@ impl MyrstackApp {
             }
             Some(data) => match self.view {
                 View::Graph => {
+                    self.graph.set_envoy_receipt(receipt);
                     let response = self.graph.show(ui);
                     // A node selected while filtered out is not in the graph; keep it.
                     let hidden_selected = self
@@ -236,6 +242,7 @@ impl MyrstackApp {
                 }
                 View::Table => ui::table::terminal_table(ui, data, now_ms),
                 View::AntFarm => {
+                    self.ant_farm.set_envoy_receipt(receipt);
                     let Some(snapshot) = &self.snapshot else {
                         return;
                     };

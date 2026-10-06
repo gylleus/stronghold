@@ -457,6 +457,7 @@ fn paint_swatch(painter: &Painter, rect: Rect, state: NodeState, dark: bool) {
 
 #[derive(Debug, Clone)]
 pub struct FleetNodeShape {
+    pub(super) receipt: crate::ui::envoy_receipt::ReceiptCue,
     pos: Pos2,
     kind: NodeKind,
     state: NodeState,
@@ -477,6 +478,7 @@ pub struct FleetNodeShape {
 impl From<NodeProps<NodePayload>> for FleetNodeShape {
     fn from(props: NodeProps<NodePayload>) -> Self {
         let mut shape = Self {
+            receipt: Default::default(),
             pos: props.location(),
             kind: props.payload.kind,
             state: props.payload.state,
@@ -786,7 +788,13 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
         }
         let style = ctx.ctx.global_style();
         let visuals = &style.visuals;
-        let center = ctx.meta.canvas_to_screen_pos(self.pos);
+        let receipt = if self.kind == NodeKind::Envoy {
+            self.receipt
+        } else {
+            Default::default()
+        };
+        receipt.repaint(ctx.ctx);
+        let center = ctx.meta.canvas_to_screen_pos(self.pos) + Vec2::new(receipt.offset, 0.0);
         let radius = ctx.meta.canvas_to_screen_size(self.radius());
         let alpha = fade_alpha(self.released_at_ms, super::now_ms());
         let alpha = if self.parked {
@@ -815,6 +823,13 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
         };
 
         let mut shapes = Vec::with_capacity(8);
+        if receipt.highlight > 0.0 {
+            shapes.push(Shape::circle_stroke(
+                center,
+                outer + 4.0,
+                Stroke::new(3.0, visuals.text_color().gamma_multiply(receipt.highlight)),
+            ));
+        }
         if self.released_at_ms.is_none() && !self.parked {
             shapes.extend(self.pulse_ring(waiting_s, center, outer, fill));
         }

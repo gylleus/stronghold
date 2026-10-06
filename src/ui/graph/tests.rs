@@ -410,3 +410,63 @@ fn show_runs_layout_headless() {
     frame(&mut view);
     assert_eq!(view.node_count(), 6);
 }
+
+#[test]
+fn receipt_moves_envoy_shape_and_label_in_screen_points_without_moving_layout() {
+    use crate::ui::envoy_receipt::ReceiptCue;
+    use egui_graphs::{DisplayNode, DrawContext};
+    type Display = FleetNodeShape;
+    let mut view = GraphView::new();
+    let mut snapshot = FleetSnapshot::default();
+    snapshot.nodes.push(node("envoy", NodeKind::Envoy, None));
+    view.sync(&snapshot);
+    view.set_node_position(&id("envoy"), Pos2::new(100.0, 100.0));
+    let idx = view.node_index(&id("envoy")).unwrap();
+    let ctx = egui::Context::default();
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        for zoom in [0.5, 1.0, 2.0] {
+            let mut meta = MetadataFrame::default();
+            meta.zoom = zoom;
+            let style = SettingsStyle::new();
+            let draw = DrawContext {
+                ctx: &ctx,
+                painter: ui.painter(),
+                style: &style,
+                is_directed: true,
+                meta: &meta,
+            };
+            let mut shapes = |cue| {
+                view.set_envoy_receipt(cue);
+                let n = view.graph.node_mut(idx).unwrap();
+                let props = n.props().clone();
+                let display = n.display_mut();
+                <Display as DisplayNode<NodePayload, EdgeKind, Directed, DefaultIx>>::update(
+                    display, &props,
+                );
+                <Display as DisplayNode<NodePayload, EdgeKind, Directed, DefaultIx>>::shapes(
+                    display, &draw,
+                )
+            };
+            let still = shapes(ReceiptCue::default());
+            let cue = ReceiptCue::at(Some(0), 31, false);
+            let shaking = shapes(cue);
+            assert_eq!(still.len(), shaking.len());
+            assert!(still.iter().any(|s| matches!(s, egui::Shape::Text(_))));
+            for (before, after) in still.iter().zip(&shaking) {
+                let delta =
+                    after.visual_bounding_rect().center() - before.visual_bounding_rect().center();
+                assert!((delta - Vec2::new(cue.offset, 0.0)).length() < 0.001);
+            }
+            let reduced = shapes(ReceiptCue::at(Some(0), 31, true));
+            assert_eq!(reduced.len(), still.len() + 1, "highlight ring");
+            for (before, after) in still.iter().zip(&reduced[1..]) {
+                assert_eq!(before.visual_bounding_rect(), after.visual_bounding_rect());
+            }
+            assert_eq!(
+                view.node_position(&id("envoy")),
+                Some(Pos2::new(100.0, 100.0))
+            );
+        }
+    });
+    output.textures_delta.clear();
+}

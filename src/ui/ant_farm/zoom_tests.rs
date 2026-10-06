@@ -304,8 +304,14 @@ impl Harness {
 
 #[test]
 fn tray_click_opens_without_selecting_or_clearing_at_fit_and_zoomed() {
-    for zoomed in [false, true] {
+    for (zoomed, receipt_ms) in [(false, 500), (true, 500), (false, 31), (true, 31)] {
         let mut h = Harness::with_envoy();
+        h.farm
+            .set_envoy_receipt(crate::ui::envoy_receipt::ReceiptCue::at(
+                Some(0),
+                receipt_ms,
+                false,
+            ));
         if zoomed {
             let target = h.tray_center();
             h.farm.camera.zoom_at(FULL, target, 2.0);

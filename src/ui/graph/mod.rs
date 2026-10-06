@@ -254,6 +254,16 @@ impl GraphView {
         self.pr_ready = nodes;
     }
 
+    pub fn set_envoy_receipt(&mut self, receipt: crate::ui::envoy_receipt::ReceiptCue) {
+        for &idx in self.index.values() {
+            if let Some(node) = self.graph.node_mut(idx)
+                && node.payload().kind == NodeKind::Envoy
+            {
+                node.display_mut().receipt = receipt;
+            }
+        }
+    }
+
     /// The nodes with a PR ready for review.
     pub fn pr_ready(&self) -> &HashSet<NodeId> {
         &self.pr_ready
