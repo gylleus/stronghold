@@ -1,19 +1,18 @@
 //! The room plan: which cell of the grid under the gallery each tunnel's chamber holds and
 //! how many rows of ants it is dug for, carried from frame to frame (and across launches) so
-//! the farm grows in place instead of being laid out afresh each frame.
+//! an ant joining a room moves nothing else.
 //!
-//! The ground under the gallery is a grid of `cols` columns on `levels` levels. A room takes
-//! one cell, or several side by side once it has grown; it is dug for a few more ants than it
-//! holds. Each frame [`RoomPlan::update`] changes as little as it can:
+//! The ground under the gallery is a grid of columns on `levels` levels, a room to a cell.
+//! The plan is fitted to the view: the biggest scale (up to [`MAX_PX`], in half steps) at
+//! which every room is dug for its ants and [`SPARE_SLOTS`] more, columns as wide as their
+//! rooms need and stretched to fill the width. Each frame [`RoomPlan::update`] changes as
+//! little as it can:
 //!
-//! - a new room is dug in the first free cell, the others stay put;
-//! - an ant that fits the room's rows moves no room;
-//! - a full room digs deeper (more rows) while its level has the height, then wider into a
-//!   free cell beside it, its neighbours untouched;
+//! - an ant that fits its room's rows moves nothing;
+//! - a full room digs deeper while its level has the height, nothing else moving;
 //! - an emptied room stays for [`GRACE_MS`] in case its ants come back;
-//! - only when a new room finds no free cell, a full room can grow nowhere, or more than half
-//!   the cells stand empty, the plan is rearranged: rooms in their usual order, the scale
-//!   picked afresh, spare cells and rows added.
+//! - a new room, a room filled in, a room that can grow no deeper, a resize, or a surface
+//!   band that needs more height lays the plan out afresh (the view glides to it).
 //!
 //! The plan is a function of the history of demands, view sizes and times it was given.
 
@@ -21,30 +20,30 @@ use eframe::egui::Vec2;
 use serde::{Deserialize, Serialize};
 
 use super::layout::{
-    CELL, Crowd, SHAFT_GAP, SLOT, TunnelKey, band, chamber_per_row, pack, pixel_scale, rows_height,
+    CELL, Crowd, SHAFT_GAP, SLOT, TunnelKey, band, chamber_per_row, pack, rows_height,
 };
 
-/// Ant slots a room is dug for beyond its ants, when its level has the height.
+/// Ant slots a room is dug for beyond its ants, when the view has the room.
 pub const SPARE_SLOTS: usize = 2;
 /// How long a room stands empty before it is filled in.
 pub const GRACE_MS: i64 = 120_000;
-/// Scales tried, biggest first.
-const SCALES: [f32; 4] = [4.0, 3.0, 2.0, 1.0];
-
-/// Free cells a rearranged grid keeps for new rooms: one per four rooms, at least one.
-pub fn spare_cells(rooms: usize) -> usize {
-    (rooms / 4).max(1)
-}
+/// Biggest points per texel: a near-empty farm draws no giant ants.
+pub const MAX_PX: f32 = 4.5;
+/// Smallest points per texel, which a farm too big for the view still gets.
+const MIN_PX: f32 = 1.0;
+/// Steps between scales: halves are whole pixels on a Retina screen.
+const PX_STEP: f32 = 0.5;
+/// Most levels of rooms stacked under the gallery.
+const MAX_LEVELS: usize = 3;
+/// Height over each level of rooms for their labels and progress bars, in cells.
+pub const LABEL_GAP: f32 = 1.6;
 
 /// One room in the grid.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Room {
     pub key: TunnelKey,
     pub level: usize,
-    /// Its leftmost column.
     pub col: usize,
-    /// Columns it spans.
-    pub span: usize,
     /// Rows of ants it is dug for.
     pub rows: usize,
     /// Since when it has had no ants (ms since the epoch).
@@ -52,12 +51,15 @@ pub struct Room {
 }
 
 /// The grid's scale and shape.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Grid {
     /// Screen points per sprite texel.
     pub px: f32,
     pub levels: usize,
-    pub cols: usize,
+    /// Width of each column in points; they add up to the view's width.
+    pub widths: Vec<f32>,
+    /// Rooms stacked in each column.
+    pub depths: Vec<usize>,
 }
 
 /// What the plan was last fitted to: the view's size and the surface band's crowds.
@@ -93,7 +95,7 @@ impl Demand {
 pub enum Change {
     /// Every room kept its cell and size.
     Kept,
-    /// Rooms were dug, grew or were filled in; the others kept their cells.
+    /// A room dug deeper or emptied; the others kept their cells.
     Grew,
     /// The grid was laid out afresh.
     Rearranged,
@@ -102,7 +104,8 @@ pub enum Change {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RoomPlan {
-    grid: Option<Grid>,
+    /// Named apart from the earlier plans' `grid`, so a plan saved by them is laid out afresh.
+    fitted: Option<Grid>,
     pub rooms: Vec<Room>,
     /// Ants the surface band is sized for: it grows with them and shrinks on a rearrange.
     pub landing: usize,
@@ -113,66 +116,102 @@ pub struct RoomPlan {
     pub rearranges: u64,
 }
 
-/// The grid in a view at one scale: sizes of its cells.
-#[derive(Debug, Clone, Copy)]
+/// The grid in a view: sizes of its cells.
+#[derive(Debug, Clone)]
 pub struct Ground {
     pub a: f32,
     pub px: f32,
     pub levels: usize,
-    pub column_w: f32,
+    /// Left edge of each column, from the view's left.
+    lefts: Vec<f32>,
+    widths: Vec<f32>,
+    depths: Vec<usize>,
     /// Height of each level's band under the gallery.
     pub band_h: f32,
     /// From the view's top to the top of the first level's band.
     pub below_top: f32,
-    fits: bool,
 }
 
 impl Ground {
-    pub fn new(size: Vec2, grid: Grid, crowd: Crowd) -> Self {
+    pub fn new(size: Vec2, grid: &Grid, crowd: Crowd) -> Self {
         let a = CELL * grid.px;
-        let gallery_bottom = band(size, a, crowd).gallery_top(a) + 1.2 * a;
-        let below_top = gallery_bottom + a;
-        let below = (size.y - 0.3 * a) - below_top;
-        let band_h = (below - (grid.levels - 1) as f32 * a) / grid.levels as f32;
-        let column_w = size.x / grid.cols.max(1) as f32;
-        let gap = if grid.levels > 1 { SHAFT_GAP * a } else { 0.0 };
-        let fits = column_w >= (SLOT + 0.6) * a + gap
-            && band_h >= rows_height(1, a)
-            && (!crowd.envoy || grid.px <= (size.x / (18.0 * CELL)).floor().max(1.0));
+        let below_top = band(size, a, crowd).gallery_top(a) + (1.2 + LABEL_GAP) * a;
+        let band_h = band_height(size.y, below_top, a, grid.levels);
+        let lefts = grid
+            .widths
+            .iter()
+            .scan(0.0, |x, w| {
+                let left = *x;
+                *x += w;
+                Some(left)
+            })
+            .collect();
         Self {
             a,
             px: grid.px,
             levels: grid.levels,
-            column_w,
+            lefts,
+            widths: grid.widths.clone(),
+            depths: grid.depths.clone(),
             band_h,
             below_top,
-            fits,
         }
     }
 
-    /// Width of a chamber spanning `span` columns on `level`. An upper level's chambers
-    /// leave room on their right for the shaft down to the chamber under them.
-    pub fn chamber_w(&self, level: usize, span: usize) -> f32 {
-        let gap = if level + 1 < self.levels {
-            SHAFT_GAP * self.a
-        } else {
-            0.0
-        };
-        (span as f32 * self.column_w - 0.6 * self.a - gap).max(SLOT * self.a)
+    /// Shafts to deeper rooms passing on the right of the room at `(level, col)`.
+    fn gaps(&self, level: usize, col: usize) -> usize {
+        self.depths
+            .get(col)
+            .map_or(0, |d| d.saturating_sub(level + 1))
     }
 
-    pub fn per_row(&self, level: usize, span: usize) -> usize {
-        chamber_per_row(self.chamber_w(level, span), self.a)
+    /// Left edge of the chambers in column `col`, from the view's left.
+    pub fn chamber_left(&self, col: usize) -> f32 {
+        self.lefts.get(col).copied().unwrap_or_default() + 0.3 * self.a
+    }
+
+    /// Width of the chamber at `(level, col)`: its column less a margin and room on its right
+    /// for the shafts down to the chambers under it.
+    pub fn chamber_w(&self, level: usize, col: usize) -> f32 {
+        let width = self.widths.get(col).copied().unwrap_or_default();
+        let gaps = self.gaps(level, col) as f32 * SHAFT_GAP * self.a;
+        (width - 0.6 * self.a - gaps).max(SLOT * self.a)
+    }
+
+    /// Where the shaft down to the chamber at `(level, col)` runs, from the view's left: an
+    /// upper chamber's middle, else beside the chambers over it.
+    pub fn shaft_x(&self, level: usize, col: usize) -> f32 {
+        let left = self.chamber_left(col);
+        let width = self.chamber_w(level, col);
+        if level == 0 {
+            left + width / 2.0
+        } else {
+            left + width - SHAFT_GAP * self.a / 2.0
+        }
+    }
+
+    pub fn per_row(&self, level: usize, col: usize) -> usize {
+        chamber_per_row(self.chamber_w(level, col), self.a)
     }
 
     /// The most rows a level's band has the height for.
     pub fn max_rows(&self) -> usize {
-        let mut rows = 0;
-        while rows_height(rows + 1, self.a) <= self.band_h {
-            rows += 1;
-        }
-        rows
+        max_rows(self.band_h, self.a)
     }
+}
+
+/// Height of each of `levels` bands of rooms between `below_top` and the view's bottom.
+fn band_height(height: f32, below_top: f32, a: f32, levels: usize) -> f32 {
+    let below = (height - 0.3 * a) - below_top;
+    (below - (levels - 1) as f32 * LABEL_GAP * a) / levels as f32
+}
+
+fn max_rows(band_h: f32, a: f32) -> usize {
+    let mut rows = 0;
+    while rows_height(rows + 1, a) <= band_h {
+        rows += 1;
+    }
+    rows
 }
 
 /// Rows `footprints` and `spare` more single slots take, `per_row` to a row.
@@ -184,17 +223,74 @@ fn rows_for(footprints: &[usize], spare: usize, per_row: usize) -> usize {
 
 /// Rows to dig for `footprints`: with spare slots where the band has the height.
 fn target_rows(footprints: &[usize], per_row: usize, max_rows: usize) -> usize {
-    let spare = rows_for(footprints, SPARE_SLOTS, per_row);
-    if spare <= max_rows {
-        spare
-    } else {
-        rows_for(footprints, 0, per_row)
+    (0..=SPARE_SLOTS)
+        .rev()
+        .map(|spare| rows_for(footprints, spare, per_row))
+        .find(|rows| *rows <= max_rows)
+        .unwrap_or_else(|| rows_for(footprints, 0, per_row))
+}
+
+/// Width of a chamber holding `per_row` ants side by side.
+fn chamber_width(per_row: usize, a: f32) -> f32 {
+    ((per_row - 1) as f32 * SLOT + 2.0).max(SLOT) * a
+}
+
+/// The grid fitted to `size` at `px` for `rooms` (each room's footprints), if every room
+/// holds its ants and `spare` more in at most as many rows as its level has the height for,
+/// and when `packed` side by side (rows outnumbering the ants to a row by one at most);
+/// fewest levels first.
+/// Columns are as wide as their widest room needs, the width left over shared out in
+/// proportion.
+fn fit(
+    size: Vec2,
+    crowd: Crowd,
+    rooms: &[&[usize]],
+    (px, spare, packed): (f32, usize, bool),
+) -> Option<Grid> {
+    let a = CELL * px;
+    if crowd.envoy && px > (size.x / (18.0 * CELL) / PX_STEP).floor().max(1.0) * PX_STEP {
+        return None;
     }
+    let below_top = band(size, a, crowd).gallery_top(a) + (1.2 + LABEL_GAP) * a;
+    let n = rooms.len().max(1);
+    (1..=MAX_LEVELS.min(n)).find_map(|levels| {
+        let max_rows = max_rows(band_height(size.y, below_top, a, levels), a);
+        if max_rows == 0 {
+            return None;
+        }
+        let cols = n.div_ceil(levels);
+        let depths: Vec<usize> = (0..cols).map(|c| (n - c * levels).min(levels)).collect();
+        let mut widths = vec![0.0f32; cols];
+        for (i, footprints) in rooms.iter().enumerate() {
+            let (level, col) = (i % levels, i / levels);
+            let slots = (footprints.iter().sum::<usize>() + spare).max(1);
+            let per_row = (1..=slots).find(|&p| {
+                let rows = rows_for(footprints, spare, p);
+                rows <= max_rows && (!packed || rows <= p + 1)
+            })?;
+            let gaps = depths[col] - level - 1;
+            let width = chamber_width(per_row, a) + 0.6 * a + gaps as f32 * SHAFT_GAP * a;
+            widths[col] = widths[col].max(width);
+        }
+        let total: f32 = widths.iter().sum();
+        (total <= size.x).then(|| Grid {
+            px,
+            levels,
+            widths: widths.iter().map(|w| w * size.x / total).collect(),
+            depths,
+        })
+    })
+}
+
+/// Scales tried, biggest first.
+fn scales() -> impl Iterator<Item = f32> {
+    let steps = ((MAX_PX - MIN_PX) / PX_STEP).round() as usize;
+    (0..=steps).map(|i| MAX_PX - i as f32 * PX_STEP)
 }
 
 impl RoomPlan {
-    pub fn grid(&self) -> Option<Grid> {
-        self.grid
+    pub fn grid(&self) -> Option<&Grid> {
+        self.fitted.as_ref()
     }
 
     pub fn room(&self, key: &TunnelKey) -> Option<&Room> {
@@ -207,12 +303,12 @@ impl RoomPlan {
             landing: self.landing,
             storage: self.storage,
             envoy,
-            ..Crowd::default()
         }
     }
 
-    fn ground(&self, size: Vec2, grid: Grid, envoy: bool) -> Ground {
-        Ground::new(size, grid, self.crowd(envoy))
+    pub fn ground(&self, size: Vec2, envoy: bool) -> Option<Ground> {
+        let grid = self.fitted.as_ref()?;
+        Some(Ground::new(size, grid, self.crowd(envoy)))
     }
 
     /// Brings the plan up to `demand` in a view of `size` at `now_ms`.
@@ -221,188 +317,64 @@ impl RoomPlan {
         for room in &mut self.rooms {
             if demand.footprints(&room.key).is_some() {
                 room.empty_since_ms = None;
-            } else {
-                room.empty_since_ms.get_or_insert(now_ms);
+            } else if room.empty_since_ms.is_none() {
+                room.empty_since_ms = Some(now_ms);
+                change = Change::Grew;
             }
         }
         let before = self.rooms.len();
         self.rooms
             .retain(|r| r.empty_since_ms.is_none_or(|t| now_ms - t < GRACE_MS));
-        if self.rooms.len() != before {
-            change = Change::Grew;
-        }
-        self.landing = self.landing.max(demand.landing);
-        self.storage = self.storage.max(demand.storage);
-        let fit = Fit {
-            size: [size.x, size.y],
-            landing: self.landing,
-            storage: self.storage,
-            envoy: demand.envoy,
-        };
-        let Some(grid) = self.grid else {
+        let filled_in = self.rooms.len() != before;
+        let Some(grid) = self.fitted.clone() else {
             return self.rearrange(demand, size);
         };
-        if fit != self.fit {
-            let resized = fit.size != self.fit.size;
-            self.fit = fit;
-            if !self.refit(demand, size, grid, resized) {
+        let new_room = demand.rooms.iter().any(|(k, _)| self.room(k).is_none());
+        let resized = self.fit.size != [size.x, size.y] || self.fit.envoy != demand.envoy;
+        let consistent = grid.widths.len() == grid.depths.len()
+            && self.rooms.iter().all(|r| r.col < grid.widths.len());
+        if filled_in || new_room || resized || !consistent {
+            return self.rearrange(demand, size);
+        }
+        // More ants on the landing or in storage: fine while the band keeps its height.
+        let landing = self.landing.max(demand.landing);
+        let storage = self.storage.max(demand.storage);
+        if (landing, storage) != (self.landing, self.storage) {
+            let a = CELL * grid.px;
+            let crowd = Crowd {
+                landing,
+                storage,
+                envoy: demand.envoy,
+            };
+            let height = |crowd: Crowd| band(size, a, crowd).gallery_top(a);
+            if height(crowd) > height(self.crowd(demand.envoy)) {
                 return self.rearrange(demand, size);
             }
-            change = Change::Grew;
+            (self.landing, self.storage) = (landing, storage);
+            self.fit.landing = landing;
+            self.fit.storage = storage;
         }
-        let grid = self.grid.expect("fitted");
-        let ground = self.ground(size, grid, demand.envoy);
-        for (key, footprints) in &demand.rooms {
-            if self.room(key).is_some() {
+        let ground = Ground::new(size, &grid, self.crowd(demand.envoy));
+        let max_rows = ground.max_rows();
+        for room in &mut self.rooms {
+            let footprints = demand.footprints(&room.key).unwrap_or_default();
+            let per_row = ground.per_row(room.level, room.col);
+            let need = rows_for(footprints, 0, per_row);
+            if need <= room.rows {
                 continue;
             }
-            let Some((level, col)) = self.free_cell(grid) else {
+            if need > max_rows {
                 return self.rearrange(demand, size);
-            };
-            let rows = target_rows(footprints, ground.per_row(level, 1), ground.max_rows());
-            self.rooms.push(Room {
-                key: key.clone(),
-                level,
-                col,
-                span: 1,
-                rows,
-                empty_since_ms: None,
-            });
-            change = Change::Grew;
-        }
-        for (key, footprints) in &demand.rooms {
-            let i = self.rooms.iter().position(|r| &r.key == key).expect("dug");
-            match self.grow(i, footprints, &ground, grid) {
-                Some(true) => change = Change::Grew,
-                Some(false) => {}
-                None => return self.rearrange(demand, size),
             }
-        }
-        let used: usize = self.rooms.iter().map(|r| r.span).sum();
-        let cells = grid.cols * grid.levels;
-        if cells > 2 && used * 2 < cells {
-            return self.rearrange(demand, size);
+            room.rows = target_rows(footprints, per_row, max_rows);
+            change = Change::Grew;
         }
         change
     }
 
-    /// Makes room `i` hold `footprints`: deeper first, then wider into a free cell beside
-    /// it. Whether it grew, or `None` when it cannot.
-    fn grow(
-        &mut self,
-        i: usize,
-        footprints: &[usize],
-        ground: &Ground,
-        grid: Grid,
-    ) -> Option<bool> {
-        let max_rows = ground.max_rows();
-        let room = &self.rooms[i];
-        let need = rows_for(footprints, 0, ground.per_row(room.level, room.span));
-        if need <= room.rows {
-            return Some(false);
-        }
-        if need <= max_rows {
-            let per_row = ground.per_row(room.level, room.span);
-            self.rooms[i].rows = target_rows(footprints, per_row, max_rows);
-            return Some(true);
-        }
-        loop {
-            let (col, span) = self.widen(i, grid)?;
-            let level = self.rooms[i].level;
-            let per_row = ground.per_row(level, span);
-            let room = &mut self.rooms[i];
-            (room.col, room.span) = (col, span);
-            if rows_for(footprints, 0, per_row) <= max_rows {
-                room.rows = target_rows(footprints, per_row, max_rows);
-                return Some(true);
-            }
-        }
-    }
-
-    /// Room `i` one column wider, to the right if free, else to the left: its new
-    /// `(col, span)`. On an upper level a room may only cover a column's right edge, where the
-    /// shaft to the chamber under it passes, while that chamber's cell is free; it then stays
-    /// free.
-    fn widen(&self, i: usize, grid: Grid) -> Option<(usize, usize)> {
-        let room = &self.rooms[i];
-        // A lower level's chambers do not widen: their shafts come down at their right edge.
-        if room.level > 0 {
-            return None;
-        }
-        let upper = grid.levels > 1;
-        let open = |col: usize| self.occupant(room.level, col).is_none();
-        let under_free = |col: usize| !upper || self.occupant(1, col).is_none();
-        let right = room.col + room.span;
-        if right < grid.cols && open(right) && under_free(right - 1) {
-            return Some((room.col, room.span + 1));
-        }
-        if room.col > 0 && open(room.col - 1) && under_free(room.col - 1) {
-            return Some((room.col - 1, room.span + 1));
-        }
-        None
-    }
-
-    /// The room covering `(level, col)`.
-    fn occupant(&self, level: usize, col: usize) -> Option<&Room> {
-        self.rooms
-            .iter()
-            .find(|r| r.level == level && (r.col..r.col + r.span).contains(&col))
-    }
-
-    /// Whether a lower cell's shaft would cut through a widened upper room.
-    fn blocked(&self, level: usize, col: usize) -> bool {
-        level > 0
-            && self
-                .rooms
-                .iter()
-                .any(|r| r.level == 0 && r.col <= col && col + 1 < r.col + r.span)
-    }
-
-    /// The first free cell: column by column from the left, upper level first.
-    fn free_cell(&self, grid: Grid) -> Option<(usize, usize)> {
-        (0..grid.cols)
-            .flat_map(|col| (0..grid.levels).map(move |level| (level, col)))
-            .find(|&(level, col)| self.occupant(level, col).is_none() && !self.blocked(level, col))
-    }
-
-    /// Fits the same grid to a new view size or surface band: the biggest scale (or, when only
-    /// the band changed, the current or a smaller one) at which every room still holds its
-    /// ants. Whether one was found.
-    fn refit(&mut self, demand: &Demand, size: Vec2, grid: Grid, resized: bool) -> bool {
-        let scales = SCALES.into_iter().filter(|px| resized || *px <= grid.px);
-        for px in scales {
-            let grid = Grid { px, ..grid };
-            let ground = self.ground(size, grid, demand.envoy);
-            if !ground.fits {
-                continue;
-            }
-            let max_rows = ground.max_rows();
-            let rows: Option<Vec<usize>> = self
-                .rooms
-                .iter()
-                .map(|r| {
-                    let footprints = demand.footprints(&r.key).unwrap_or_default();
-                    let per_row = ground.per_row(r.level, r.span);
-                    (rows_for(footprints, 0, per_row) <= max_rows)
-                        .then(|| target_rows(footprints, per_row, max_rows))
-                })
-                .collect();
-            let Some(rows) = rows else {
-                continue;
-            };
-            // Rooms keep the rows they were dug for where the band still has the height.
-            for (room, rows) in self.rooms.iter_mut().zip(rows) {
-                room.rows = rows.max(room.rows.min(max_rows));
-            }
-            self.grid = Some(grid);
-            return true;
-        }
-        false
-    }
-
     /// Lays the grid out afresh: the demanded rooms in their order, then rooms still in their
-    /// grace period, with spare cells, the scale picked for them and the band shrunk to its
-    /// crowds.
+    /// grace period, at the biggest scale that holds them with a spare slot or two (or, failing
+    /// that, none), the band shrunk to its crowds.
     fn rearrange(&mut self, demand: &Demand, size: Vec2) -> Change {
         self.rearranges += 1;
         self.landing = demand.landing;
@@ -417,39 +389,36 @@ impl RoomPlan {
                 keys.push((room.key.clone(), &[], room.empty_since_ms));
             }
         }
-        let fullest = keys
-            .iter()
-            .map(|(_, f, _)| f.iter().sum::<usize>())
-            .max()
-            .unwrap_or(0);
-        // Spare cells and rows, as long as they cost at most a step of scale and never
-        // shrink the ants below scale 2.
-        let scale = |cells: usize, slots: usize| {
-            let crowd = Crowd {
-                tunnels: cells,
-                chamber: fullest + slots,
-                ..self.crowd(demand.envoy)
-            };
-            (pixel_scale(size, crowd), cells)
+        let crowd = self.crowd(demand.envoy);
+        let footprints: Vec<&[usize]> = keys.iter().map(|(_, f, _)| *f).collect();
+        // The biggest scale with a spare slot at least, chambers packed side by side if it
+        // costs no scale, a second spare slot if that costs nothing either.
+        let tries = |spares: &'static [usize]| {
+            scales().flat_map(move |px| {
+                [true, false]
+                    .into_iter()
+                    .flat_map(move |packed| spares.iter().map(move |&spare| (px, spare, packed)))
+            })
         };
-        let (rooms, spare) = (keys.len().max(1), keys.len() + spare_cells(keys.len()));
-        let tight = scale(rooms, 0);
-        let floor = (tight.0.0 - 1.0).max(tight.0.0.min(2.0));
-        let ((px, levels), cells) = [
-            scale(spare, SPARE_SLOTS),
-            scale(rooms, SPARE_SLOTS),
-            scale(spare, 0),
-        ]
-        .into_iter()
-        .find(|((px, _), _)| *px >= floor)
-        .unwrap_or(tight);
-        let grid = Grid {
-            px,
-            levels,
-            cols: cells.div_ceil(levels),
-        };
-        let ground = self.ground(size, grid, demand.envoy);
+        let grid = tries(&[2, 1])
+            .chain(tries(&[0]))
+            .find_map(|t| fit(size, crowd, &footprints, t))
+            .unwrap_or_else(|| {
+                // Too many rooms for the view: the smallest scale, rooms squeezed in.
+                let levels = MAX_LEVELS.min(keys.len().max(1));
+                let cols = keys.len().max(1).div_ceil(levels);
+                Grid {
+                    px: MIN_PX,
+                    levels,
+                    widths: vec![size.x / cols as f32; cols],
+                    depths: (0..cols)
+                        .map(|c| (keys.len().max(1) - c * levels).min(levels))
+                        .collect(),
+                }
+            });
+        let ground = Ground::new(size, &grid, crowd);
         let max_rows = ground.max_rows();
+        let levels = grid.levels;
         self.rooms = keys
             .into_iter()
             .enumerate()
@@ -459,13 +428,12 @@ impl RoomPlan {
                     key,
                     level,
                     col,
-                    span: 1,
-                    rows: target_rows(footprints, ground.per_row(level, 1), max_rows),
+                    rows: target_rows(footprints, ground.per_row(level, col), max_rows),
                     empty_since_ms,
                 }
             })
             .collect();
-        self.grid = Some(grid);
+        self.fitted = Some(grid);
         self.fit = Fit {
             size: [size.x, size.y],
             landing: self.landing,

@@ -4,7 +4,7 @@ use eframe::egui::{Pos2, Rect, vec2};
 
 use super::layout::*;
 use super::layout_tests::{id, node, run};
-use super::rooms::{Change, Demand, GRACE_MS, RoomPlan, spare_cells};
+use super::rooms::{GRACE_MS, RoomPlan};
 use super::{AntFarmView, GLIDE_S};
 use crate::model::{FleetSnapshot, NodeKind, NodeState};
 
@@ -83,25 +83,106 @@ fn assert_kept(before: &Scene, after: &Scene) {
     assert_eq!(before.px, after.px, "the scale is kept");
 }
 
+/// Every chamber in `scene` is in its view, clear of the others and their shafts, and holds
+/// its ants.
+fn assert_laid_out(scene: &Scene) {
+    let tunnels = &scene.tunnels;
+    for (i, t) in tunnels.iter().enumerate() {
+        assert!(
+            scene.rect.contains_rect(t.chamber),
+            "{:?} in the view",
+            t.key
+        );
+        for u in tunnels.iter().skip(i + 1) {
+            assert!(!t.chamber.intersects(u.chamber), "{:?}, {:?}", t.key, u.key);
+            assert!(
+                !t.shaft.intersects(u.chamber),
+                "{:?} crosses {:?}",
+                t.key,
+                u.key
+            );
+            assert!(
+                !u.shaft.intersects(t.chamber),
+                "{:?} crosses {:?}",
+                u.key,
+                t.key
+            );
+        }
+    }
+    for a in scene.ants.iter().filter(|a| a.kind == NodeKind::Worker) {
+        let Spot::Chamber(key, _) = &a.spot else {
+            continue;
+        };
+        let t = tunnels.iter().find(|t| &t.key == key).unwrap();
+        assert!(t.chamber.contains(a.pos), "{} in its chamber", a.id);
+    }
+}
+
+/// A new room lays the farm out afresh, once, with no spare cells kept for it.
 #[test]
-fn a_new_room_is_dug_beside_the_others_and_moves_none() {
+fn a_new_room_lays_the_farm_out_again() {
+    let mut s = fleet(3, 2);
+    let mut plan = RoomPlan::default();
+    frame(&s, &mut plan, 0);
+    assert_eq!(plan.rearranges, 1, "the first frame lays the plan out");
+    let cells = |plan: &RoomPlan| plan.grid().unwrap().depths.iter().sum::<usize>();
+    assert_eq!(cells(&plan), 3, "no spare cells");
+    add_run(&mut s, 3, 2);
+    let after = frame(&s, &mut plan, 1_000);
+    assert_eq!(plan.rearranges, 2, "laid out again");
+    assert_eq!(cells(&plan), 4);
+    assert_laid_out(&after);
+    frame(&s, &mut plan, 2_000);
+    assert_eq!(plan.rearranges, 2, "once");
+}
+
+/// Ants joining a room within its spare slots move nothing: no room, no other ant, no
+/// change of scale. The ant after that lays the farm out again, once, with spare slots
+/// anew.
+#[test]
+fn growth_within_the_margin_moves_nothing() {
     let mut s = fleet(3, 2);
     let mut plan = RoomPlan::default();
     let before = frame(&s, &mut plan, 0);
-    assert_eq!(plan.rearranges, 1, "the first frame lays the plan out");
-    add_run(&mut s, 3, 2);
+    let mut w = 2;
+    while plan.rearranges == 1 {
+        add_worker(&mut s, 1, w);
+        w += 1;
+        let after = frame(&s, &mut plan, w as i64);
+        if plan.rearranges > 1 {
+            break;
+        }
+        assert_eq!(after.px, before.px, "the scale is kept with {w} ants");
+        for t in before
+            .tunnels
+            .iter()
+            .filter(|t| t.key != TunnelKey::Run("r1".into()))
+        {
+            let u = after.tunnels.iter().find(|u| u.key == t.key).unwrap();
+            assert_eq!(
+                (t.chamber, t.shaft),
+                (u.chamber, u.shaft),
+                "{:?} moved",
+                t.key
+            );
+        }
+        for a in before
+            .ants
+            .iter()
+            .filter(|a| !a.id.as_str().starts_with("r1-"))
+        {
+            assert_eq!(after.ant(&a.id).unwrap().pos, a.pos, "{} moved", a.id);
+        }
+        assert_laid_out(&after);
+    }
+    // The last ant added is the one that did not fit.
+    let joined = w - 3;
+    assert!(joined >= 1, "a spare slot at least");
+    assert_eq!(plan.rearranges, 2);
+    add_worker(&mut s, 1, w);
     let after = frame(&s, &mut plan, 1_000);
-    assert_eq!(plan.rearranges, 1, "dug into a spare cell");
-    assert_kept(&before, &after);
-    let new = tunnel(&after, 3);
-    for t in &before.tunnels {
-        assert!(!new.chamber.intersects(t.chamber), "{:?}", t.key);
-        assert!(!new.shaft.intersects(t.chamber), "{:?}", t.key);
-    }
-    for w in 0..2 {
-        let a = after.ant(&id(&format!("r3-w{w}"))).expect("drawn");
-        assert!(new.chamber.contains(a.pos));
-    }
+    assert_eq!(plan.rearranges, 2, "spare slots again");
+    assert_laid_out(&after);
 }
 
 #[test]
@@ -119,78 +200,6 @@ fn an_ant_within_the_room_s_capacity_moves_no_room() {
     for a in before.ants.iter().filter(|a| a.kind == NodeKind::Worker) {
         assert_eq!(after.ant(&a.id).unwrap().pos, a.pos, "{}", a.id);
     }
-}
-
-#[test]
-fn a_full_room_grows_without_moving_its_neighbours() {
-    let mut s = fleet(3, 1);
-    let mut plan = RoomPlan::default();
-    let before = frame(&s, &mut plan, 0);
-    let grid = plan.grid().unwrap();
-    assert_eq!(grid.levels, 1, "{grid:?}");
-    // The last room has a free cell on its right.
-    let key = TunnelKey::Run("r2".into());
-    let start = plan.room(&key).unwrap().clone();
-    let mut w = 1;
-    let mut deeper = false;
-    while plan.room(&key).unwrap().span == start.span {
-        add_worker(&mut s, 2, w);
-        w += 1;
-        let scene = frame(&s, &mut plan, w as i64);
-        assert_eq!(plan.rearranges, 1, "no rearrange with {w} ants in r2");
-        deeper |= plan.room(&key).unwrap().rows > start.rows;
-        for t in before.tunnels.iter().filter(|t| t.key != key) {
-            let u = scene.tunnels.iter().find(|u| u.key == t.key).unwrap();
-            assert_eq!(
-                t.chamber, u.chamber,
-                "{:?} moved with {w} ants in r2",
-                t.key
-            );
-        }
-        let grown = tunnel(&scene, 2);
-        for a in scene
-            .ants
-            .iter()
-            .filter(|a| a.id.as_str().starts_with("r2-"))
-        {
-            assert!(grown.chamber.contains(a.pos), "{} in r2", a.id);
-        }
-    }
-    assert!(deeper, "dug deeper first");
-    assert_eq!(plan.room(&key).unwrap().span, 2, "then wider");
-}
-
-#[test]
-fn rearranges_only_when_no_cell_is_free() {
-    let mut s = fleet(1, 1);
-    let mut plan = RoomPlan::default();
-    frame(&s, &mut plan, 0);
-    let grid = plan.grid().unwrap();
-    let free = grid.cols * grid.levels - plan.rooms.len();
-    assert!(free >= 1, "spare cells");
-    let mut r = 1;
-    for _ in 0..free {
-        add_run(&mut s, r, 1);
-        r += 1;
-        frame(&s, &mut plan, r as i64);
-    }
-    assert_eq!(plan.rearranges, 1, "the spare cells took the new rooms");
-    add_run(&mut s, r, 1);
-    let mut probe = plan.clone();
-    let demand = Demand {
-        rooms: (0..=r)
-            .map(|i| (TunnelKey::Run(format!("r{i}")), vec![1]))
-            .collect(),
-        ..Demand::default()
-    };
-    assert_eq!(probe.update(&demand, RECT.size(), 100), Change::Rearranged);
-    frame(&s, &mut plan, 100);
-    assert_eq!(plan.rearranges, 2, "no room left: one rearrange");
-    let grid = plan.grid().unwrap();
-    assert!(
-        grid.cols * grid.levels - plan.rooms.len() >= spare_cells(plan.rooms.len()).min(1),
-        "with spare cells again"
-    );
 }
 
 #[test]
@@ -220,14 +229,12 @@ fn an_emptied_room_waits_out_its_grace() {
             .iter()
             .any(|t| t.key == TunnelKey::Run("r1".into()))
     );
-    for r in [0, 2] {
-        assert_eq!(tunnel(&gone, r).chamber, tunnel(&before, r).chamber);
-    }
-    assert_eq!(plan.rearranges, 1);
+    assert_eq!(plan.rearranges, 2, "its ground is given back");
+    assert_laid_out(&gone);
 }
 
 #[test]
-fn a_mostly_empty_grid_is_compacted() {
+fn filled_in_rooms_give_their_ground_back() {
     let mut s = fleet(8, 1);
     let mut plan = RoomPlan::default();
     frame(&s, &mut plan, 0);
@@ -239,6 +246,7 @@ fn a_mostly_empty_grid_is_compacted() {
     let after = frame(&s, &mut plan, 1_000 + GRACE_MS);
     assert_eq!(plan.rearranges, 2, "then the grid is laid out again");
     assert_eq!(after.tunnels.len(), 2);
+    assert_eq!(plan.grid().unwrap().depths.iter().sum::<usize>(), 2);
 }
 
 #[test]
@@ -270,21 +278,24 @@ fn the_same_history_lays_out_the_same() {
     );
 }
 
+/// A resize fits the farm to the new view, the rooms in the same order.
 #[test]
-fn a_resize_keeps_the_rooms_in_their_cells() {
+fn a_resize_fits_the_farm_to_the_view() {
     let s = fleet(4, 2);
     let mut plan = RoomPlan::default();
     frame(&s, &mut plan, 0);
-    let cells: Vec<_> = plan.rooms.iter().map(|r| (r.level, r.col)).collect();
-    frame_in(
-        &s,
-        &mut plan,
-        0,
-        Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0)),
+    let keys: Vec<_> = plan.rooms.iter().map(|r| r.key.clone()).collect();
+    let small = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+    let scene = frame_in(&s, &mut plan, 0, small);
+    let after: Vec<_> = plan.rooms.iter().map(|r| r.key.clone()).collect();
+    assert_eq!(keys, after);
+    assert_eq!(plan.rearranges, 2);
+    assert_laid_out(&scene);
+    let widths = &plan.grid().unwrap().widths;
+    assert!(
+        (widths.iter().sum::<f32>() - 1000.0).abs() < 0.01,
+        "{widths:?}"
     );
-    let after: Vec<_> = plan.rooms.iter().map(|r| (r.level, r.col)).collect();
-    assert_eq!(cells, after);
-    assert_eq!(plan.rearranges, 1);
 }
 
 /// Rooms and ants glide to a rearranged plan's places; with Reduce motion they snap.
@@ -325,6 +336,37 @@ fn a_rearrange_glides_unless_motion_is_reduced() {
             let mut end = after.clone();
             farm.glide_rooms(&mut end, GLIDE_S * 2.0);
             assert_eq!(tunnel(&end, 0).chamber, target);
+        }
+    }
+}
+
+/// A re-layout that draws the ants smaller zooms out smoothly: the scale, the gallery and
+/// the ants' size pass through the sizes between. With Reduce motion it snaps.
+#[test]
+fn a_new_scale_is_a_smooth_camera_move() {
+    for still in [false, true] {
+        let mut farm = AntFarmView::new();
+        farm.set_reduce_motion(still);
+        let mut plan = RoomPlan::default();
+        let mut before = frame(&fleet(1, 1), &mut plan, 0);
+        farm.glide_rooms(&mut before, 0.0);
+        let after = frame(&fleet(8, 4), &mut plan, 1);
+        assert!(after.px < before.px, "{} then {}", before.px, after.px);
+        farm.glide_rooms(&mut after.clone(), 0.0);
+        let mut mid = after.clone();
+        farm.glide_rooms(&mut mid, GLIDE_S / 2.0);
+        let ant = |scene: &Scene| scene.ant(&id("r0-w0")).unwrap().size;
+        if still {
+            assert_eq!(mid, after, "snaps");
+        } else {
+            assert!(after.px < mid.px && mid.px < before.px, "{}", mid.px);
+            let (from, to) = (before.gallery.top(), after.gallery.top());
+            let shown = mid.gallery.top();
+            assert!(shown < from.max(to) && shown > from.min(to), "{shown}");
+            assert!(ant(&after) < ant(&mid) && ant(&mid) < ant(&before));
+            let mut end = after.clone();
+            farm.glide_rooms(&mut end, GLIDE_S * 2.0);
+            assert_eq!(end, after, "there at the end");
         }
     }
 }

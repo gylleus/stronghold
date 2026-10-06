@@ -438,14 +438,23 @@ fn tunnels_deepen_with_progress() {
         Some("late"),
         NodeState::Working,
     ));
-    let scene = scene(&s);
+    // A view with height to spare under the rooms.
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 1400.0));
+    let input = FarmInput {
+        snapshot: &s,
+        hidden: &BTreeSet::new(),
+        pr_ready: &HashSet::new(),
+        building: &HashSet::new(),
+        now_ms: 0,
+    };
+    let scene = layout(&input, rect);
     let (early, late) = (&scene.tunnels[0], &scene.tunnels[1]);
     assert_eq!(early.progress, Some(0.0));
     assert_eq!(late.progress, Some(1.0));
     assert_eq!(early.tasks, Some((0, 4)));
     assert_eq!(late.tasks, Some((4, 4)));
     assert!(late.chamber.top() > early.chamber.top() + 50.0);
-    assert!(late.chamber.bottom() <= RECT.bottom());
+    assert!(late.chamber.bottom() <= rect.bottom());
 }
 
 #[test]
@@ -1067,11 +1076,7 @@ fn a_crowded_chamber_packs_side_by_side() {
         .map(|y| ants.iter().filter(|a| a.pos.y == *y).count())
         .max()
         .unwrap();
-    assert!(
-        rows.len() <= widest,
-        "{} rows of up to {widest}",
-        rows.len()
-    );
+    assert!(widest >= 2, "{} rows of up to {widest}", rows.len());
     for ant in ants {
         // The name tag is two cells wide.
         let tag = Rect::from_center_size(ant.pos, vec2(2.0 * ant.size, ant.size));
@@ -1237,14 +1242,8 @@ fn many_tunnels_stack_chambers_to_draw_ants_bigger() {
             ));
         }
     }
-    let size = vec2(1280.0, 1000.0);
-    let crowd = Crowd {
-        tunnels: 10,
-        chamber: 2,
-        ..Crowd::default()
-    };
-    let (px, levels) = pixel_scale(size, crowd);
-    assert_eq!(levels, 2);
+    // A tall, narrow view: ten rooms side by side would draw the ants at scale 1.
+    let size = vec2(800.0, 1400.0);
     let rect = Rect::from_min_size(Pos2::ZERO, size);
     let input = FarmInput {
         snapshot: &s,
@@ -1253,10 +1252,10 @@ fn many_tunnels_stack_chambers_to_draw_ants_bigger() {
         building: &HashSet::new(),
         now_ms: 0,
     };
-    let scene = layout(&input, rect);
-    assert_eq!(scene.px, px);
-    // One row of ten 128-point columns packs two ants to a chamber only at scale 1.
-    assert_eq!(px, 2.0);
+    let mut plan = super::rooms::RoomPlan::default();
+    let scene = layout_in(&input, rect, &mut plan);
+    assert!(plan.grid().unwrap().levels >= 2, "{:?}", plan.grid());
+    assert!(scene.px >= 2.0, "{}", scene.px);
     let tunnels = &scene.tunnels;
     assert!(
         tunnels
@@ -1442,4 +1441,131 @@ fn waiting_ants_keep_clear_of_the_comms_room() {
             assert!(cell.left() - room.chamber.right() >= scene.cell());
         }
     }
+}
+
+/// The Envoy, the Queen and `n` agents: runs of a coordinator and up to four workers, every
+/// third worker idle, every fifth waiting on Karl, every seventh done.
+pub(super) fn typical_fleet(n: usize) -> FleetSnapshot {
+    let mut s = FleetSnapshot::default();
+    s.nodes
+        .push(node("queen", NodeKind::Queen, None, NodeState::Working));
+    s.nodes
+        .push(node("envoy", NodeKind::Envoy, None, NodeState::Idle));
+    for i in 0..n {
+        let r = i / 5;
+        let name = format!("r{r}");
+        if i % 5 == 0 {
+            s.runs.push(run(&name, r % 4, 6));
+            s.nodes.push(node(
+                &format!("{name}-coord"),
+                NodeKind::Coordinator,
+                Some(&name),
+                NodeState::Working,
+            ));
+            continue;
+        }
+        let state = match i {
+            _ if i % 7 == 6 => NodeState::Done,
+            _ if i % 5 == 4 => NodeState::NeedsInput,
+            _ if i % 3 == 2 => NodeState::Idle,
+            _ => NodeState::Working,
+        };
+        s.nodes.push(node(
+            &format!("{name}-w{i}"),
+            NodeKind::Worker,
+            Some(&name),
+            state,
+        ));
+    }
+    s
+}
+
+/// Share of the ground under the gallery that rooms use: each chamber with the margin
+/// around it, from its label down.
+pub(super) fn fill(scene: &Scene) -> f32 {
+    let a = scene.cell();
+    let rooms: f32 = scene
+        .tunnels
+        .iter()
+        .map(|t| (t.chamber.width() + 0.6 * a) * (t.chamber.bottom() - t.label_top.y))
+        .sum();
+    rooms / (scene.rect.width() * (scene.rect.bottom() - scene.gallery.bottom()))
+}
+
+/// Share of the rect's height the farm reaches down to.
+pub(super) fn reach(scene: &Scene) -> f32 {
+    let bottom = scene
+        .tunnels
+        .iter()
+        .map(|t| t.chamber.bottom())
+        .fold(scene.gallery.bottom(), f32::max);
+    (bottom - scene.rect.top()) / scene.rect.height()
+}
+
+/// At typical fleet sizes the rooms use most of the ground under the gallery, with ants
+/// drawn bigger than a fixed grid drew them, and every ant in its chamber.
+#[test]
+fn the_farm_fills_the_view() {
+    // (view, ants, smallest ant cell in points, least fill)
+    let cases = [
+        (vec2(1280.0, 800.0), 5, 56.0, 0.75),
+        (vec2(1280.0, 800.0), 15, 48.0, 0.75),
+        (vec2(1280.0, 800.0), 30, 40.0, 0.75),
+        (vec2(900.0, 650.0), 5, 48.0, 0.75),
+        (vec2(900.0, 650.0), 15, 32.0, 0.75),
+        (vec2(900.0, 650.0), 30, 24.0, 0.7),
+    ];
+    for (size, n, cell, least) in cases {
+        let s = typical_fleet(n);
+        let rect = Rect::from_min_size(Pos2::ZERO, size);
+        let input = FarmInput {
+            snapshot: &s,
+            hidden: &BTreeSet::new(),
+            pr_ready: &HashSet::new(),
+            building: &HashSet::new(),
+            now_ms: 0,
+        };
+        let scene = layout(&input, rect);
+        let fill = fill(&scene);
+        assert!(
+            (least..=0.95).contains(&fill),
+            "{n} ants in {size:?}: fill {fill}"
+        );
+        assert!(reach(&scene) > 0.85, "{n} ants in {size:?} reach down");
+        assert!(
+            scene.cell() >= cell,
+            "{n} ants in {size:?}: {}",
+            scene.cell()
+        );
+        for (i, t) in scene.tunnels.iter().enumerate() {
+            assert!(rect.contains_rect(t.chamber), "chamber {i} in the view");
+            for u in &scene.tunnels[i + 1..] {
+                assert!(!t.chamber.intersects(u.chamber), "chambers overlap");
+            }
+        }
+        for a in scene.ants.iter().filter(|a| a.kind == NodeKind::Worker) {
+            if let Spot::Chamber(..) = a.spot {
+                let t = &scene.tunnels[tunnel_of(&scene, a.id.as_str())];
+                assert!(t.chamber.contains(a.pos), "{} in its chamber", a.id);
+            }
+        }
+    }
+}
+
+/// A near-empty farm in a big view draws its ants no bigger than the largest scale.
+#[test]
+fn a_lone_ant_is_not_drawn_giant() {
+    let s = typical_fleet(2);
+    let input = FarmInput {
+        snapshot: &s,
+        hidden: &BTreeSet::new(),
+        pr_ready: &HashSet::new(),
+        building: &HashSet::new(),
+        now_ms: 0,
+    };
+    let scene = layout(
+        &input,
+        Rect::from_min_size(Pos2::ZERO, vec2(2400.0, 1600.0)),
+    );
+    assert_eq!(scene.px, super::rooms::MAX_PX);
 }

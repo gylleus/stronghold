@@ -5,10 +5,10 @@
 //! left, the Queen's chamber under the surface in the middle, the storage chamber at the
 //! right, a gallery running under them and one tunnel per run (or per repo for loose
 //! terminals) dropping from the gallery. A coordinator stands at its tunnel's mouth, its
-//! workers in the chamber at the tunnel's end. The room plan keeps each chamber in its cell
-//! of a grid under the gallery as the fleet changes; when the ants can be drawn bigger that
-//! way, the grid has two levels: a chamber over another in one column, the lower one's shaft
-//! passing beside the upper chamber. Parked agents sleep in beds in the resting area's
+//! workers in the chamber at the tunnel's end. The room plan fits a grid of chambers under the
+//! gallery to the view, as big as their ants allow, and keeps each chamber in its cell while
+//! its ants come and go; when the ants can be drawn bigger that way, the grid has more levels:
+//! chambers stacked in a column, the lower ones' shafts passing beside the upper chambers. Parked agents sleep in beds in the resting area's
 //! chamber, there only while someone is parked (and for the grace an emptied room gets).
 
 use std::borrow::Cow;
@@ -22,7 +22,7 @@ use crate::model::{
 };
 use crate::orca::AgentIdentity;
 
-use super::rooms::{Demand, Ground, RoomPlan};
+use super::rooms::{Demand, LABEL_GAP, RoomPlan};
 
 /// Side of a sprite cell in texels.
 pub const CELL: f32 = 16.0;
@@ -288,12 +288,9 @@ pub struct FarmInput<'a> {
     pub now_ms: i64,
 }
 
-/// How many ants the farm's places hold, which decides how big they can be drawn.
+/// How many ants the surface band holds, which decides its height.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Crowd {
-    pub tunnels: usize,
-    /// Ants in the fullest chamber.
-    pub chamber: usize,
     pub landing: usize,
     pub storage: usize,
     pub envoy: bool,
@@ -305,6 +302,7 @@ pub(super) struct Band {
     landing_right: f32,
     landing_per_row: usize,
     storage_per_row: usize,
+    storage_w: f32,
     storage_h: f32,
     comms_px: f32,
     comms_h: f32,
@@ -345,11 +343,12 @@ pub(super) fn band(size: Vec2, a: f32, crowd: Crowd) -> Band {
     };
     let landing_per_row = (((landing_right - landing_left) / (SLOT * a)).floor() as usize).max(1);
     let landing_h = (rows(crowd.landing, landing_per_row) - 1.0) * ROW * a + 1.4 * a;
-    let surface = (2.4 * a)
-        .max(size.y * 0.16)
-        .max(landing_h + 0.8 * a)
-        .max(58.0 * comms_px);
-    let storage_w = (size.x * 0.26).max(3.0 * a);
+    let surface = (2.4 * a).max(landing_h + 0.8 * a).max(58.0 * comms_px);
+    // Storage widens towards the Queen's chamber to keep its pile low.
+    let pile = crowd.storage as f32 * SLOT * a + a;
+    let storage_w = (size.x * 0.26)
+        .max(pile.min(size.x * 0.5 - 3.5 * a))
+        .max(3.0 * a);
     let storage_per_row = ((storage_w / (SLOT * a)).floor() as usize).max(1);
     let storage_h =
         ((rows(crowd.storage, storage_per_row) - 1.0) * ROW * a + (2.2 + TAG) * a).max(2.4 * a);
@@ -366,6 +365,7 @@ pub(super) fn band(size: Vec2, a: f32, crowd: Crowd) -> Band {
         landing_right,
         landing_per_row,
         storage_per_row,
+        storage_w,
         storage_h,
         comms_px,
         comms_h,
@@ -377,11 +377,6 @@ pub(super) fn band(size: Vec2, a: f32, crowd: Crowd) -> Band {
 /// them.
 pub(super) fn chamber_per_row(width: f32, a: f32) -> usize {
     (((width + (SLOT - 2.0) * a) / (SLOT * a)).floor() as usize).max(1)
-}
-
-/// Height of a chamber holding `n` slots, `per_row` to a row.
-fn chamber_height(n: usize, per_row: usize, a: f32) -> f32 {
-    rows_height(n.div_ceil(per_row), a)
 }
 
 pub(super) fn rows_height(rows: usize, a: f32) -> f32 {
@@ -411,56 +406,6 @@ pub(super) fn pack(footprints: &[usize], per_row: usize) -> (Vec<(usize, usize)>
         })
         .collect();
     (places, row + 1)
-}
-
-/// Points per texel for a view of `size` and the levels of chambers: the biggest whole
-/// scale that leaves each tunnel room for an ant and its name tag, fits the crowds on the
-/// landing, in storage and in the fullest chamber, and packs that chamber side by side: no
-/// more rows than ants to a row. When no scale packs it, the smallest that fits, which packs
-/// it best. Chambers stack two to a column only when that draws the ants bigger or packs
-/// them where one level cannot.
-pub fn pixel_scale(size: Vec2, crowd: Crowd) -> (f32, usize) {
-    // The scale for `levels` and whether the fullest chamber is packed at it.
-    let best = |levels: usize| {
-        let column = size.x / crowd.tunnels.div_ceil(levels).max(1) as f32;
-        let fits = |px: f32| {
-            let a = CELL * px;
-            let gap = if levels > 1 { SHAFT_GAP * a } else { 0.0 };
-            let per_row = chamber_per_row(column - 0.6 * a - gap, a);
-            let band = band(size, a, crowd);
-            let gallery_bottom = band.gallery_top(a) + 1.2 * a;
-            let chambers = levels as f32 * (a + chamber_height(crowd.chamber, per_row, a));
-            let bottom = gallery_bottom + chambers + 0.3 * a;
-            let fits = column >= (SLOT + 0.6) * a + gap
-                && bottom <= size.y
-                && (!crowd.envoy || px <= (size.x / (18.0 * CELL)).floor().max(1.0));
-            (fits, crowd.chamber.div_ceil(per_row) <= per_row)
-        };
-        let fitting: Vec<(f32, bool)> = [4.0, 3.0, 2.0, 1.0]
-            .into_iter()
-            .filter_map(|px| match fits(px) {
-                (true, packed) => Some((px, packed)),
-                (false, _) => None,
-            })
-            .collect();
-        fitting
-            .iter()
-            .find(|(_, packed)| *packed)
-            .or(fitting.last())
-            .copied()
-    };
-    let one = best(1);
-    let two = (crowd.tunnels > 1).then(|| best(2)).flatten();
-    match (one, two) {
-        (Some((px1, packed1)), Some((px2, packed2)))
-            if px2 > px1 || (px2 == px1 && packed2 && !packed1) =>
-        {
-            (px2, 2)
-        }
-        (None, Some((px2, _))) => (px2, 2),
-        (Some((px1, _)), _) => (px1, 1),
-        (None, None) => (1.0, 1),
-    }
 }
 
 /// Where an ant of `kind` in `state` belongs, before slots are assigned.
@@ -712,10 +657,11 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         envoy,
     };
     plan.update(&demand, rect.size(), input.now_ms);
-    let grid = plan.grid().expect("an updated plan has a grid");
     let crowd = plan.crowd(envoy);
-    let ground = Ground::new(rect.size(), grid, crowd);
-    let px = grid.px;
+    let ground = plan
+        .ground(rect.size(), envoy)
+        .expect("an updated plan has a grid");
+    let px = ground.px;
     let a = CELL * px;
     let sub = (CELL * (px - 1.0).max(1.0)).min(a);
 
@@ -745,10 +691,9 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         ),
         vec2(4.0 * a, chamber_h),
     );
-    let storage_w = (rect.width() * 0.26).max(3.0 * a);
     let storage = Rect::from_min_size(
-        pos2(rect.right() - 0.5 * a - storage_w, surface_y + 0.4 * a),
-        vec2(storage_w, storage_h),
+        pos2(rect.right() - 0.5 * a - band.storage_w, surface_y + 0.4 * a),
+        vec2(band.storage_w, storage_h),
     );
     let gallery_top = rect.top() + band.gallery_top(a);
     let gallery = Rect::from_min_max(
@@ -780,13 +725,13 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     });
 
     // The plan's rooms, emptied ones too while they wait out their grace. A room's chamber
-    // fills its cells; a lower room's shaft comes down at the right of its last column,
-    // beside the upper chamber.
+    // fills its cell; a lower room's shaft comes down at the right of its column, beside the
+    // chambers over it.
     let ants_of: HashMap<&TunnelKey, &Vec<&Node>> = keys.iter().zip(&chamber_nodes).collect();
     let none = Vec::new();
-    let column_left = |col: usize| rect.left() + ground.column_w * col as f32;
-    let band_top =
-        |level: usize| rect.top() + ground.below_top + level as f32 * (ground.band_h + a);
+    let band_top = |level: usize| {
+        rect.top() + ground.below_top + level as f32 * (ground.band_h + LABEL_GAP * a)
+    };
     let mut room_nodes: Vec<&Vec<&Node>> = Vec::new();
     let mut packed: Vec<(Vec<(usize, usize)>, usize)> = Vec::new();
     let mut slot_ws: Vec<f32> = Vec::new();
@@ -797,8 +742,8 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         .map(|room| {
             let key = &room.key;
             let nodes = ants_of.get(key).copied().unwrap_or(&none);
-            let chamber_w = ground.chamber_w(room.level, room.span);
-            let per_row = ground.per_row(room.level, room.span);
+            let chamber_w = ground.chamber_w(room.level, room.col);
+            let per_row = ground.per_row(room.level, room.col);
             let footprints: Vec<usize> = nodes
                 .iter()
                 .map(|n| footprint(trail_of(&n.id), sub / a))
@@ -813,12 +758,8 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             room_nodes.push(nodes);
             per_rows.push(per_row);
             packed.push((places, rows));
-            let left = column_left(room.col) + 0.3 * a;
-            let shaft_x = if room.level > 0 {
-                column_left(room.col + room.span) - 0.3 * a - SHAFT_GAP * a / 2.0
-            } else {
-                left + chamber_w / 2.0
-            };
+            let left = rect.left() + ground.chamber_left(room.col);
+            let shaft_x = rect.left() + ground.shaft_x(room.level, room.col);
             let height = rows_height(room.rows.max(rows), a);
             let tasks = match key {
                 TunnelKey::Run(id) => snapshot
@@ -844,7 +785,10 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             let label_top = if room.level == 0 {
                 pos2(shaft_x, gallery.bottom() + 3.0 * px)
             } else {
-                pos2(chamber.center().x, band_top(room.level) - a + 3.0 * px)
+                pos2(
+                    chamber.center().x,
+                    band_top(room.level) - LABEL_GAP * a + 3.0 * px,
+                )
             };
             let label = match key {
                 TunnelKey::Run(id) => snapshot
