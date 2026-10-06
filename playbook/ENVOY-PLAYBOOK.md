@@ -88,8 +88,9 @@ Ants reach people only through `reach_out`; each request arrives as
 
 1. **Read** it: `envoy_request {id}` gives `to`, the ask, `why`, urgency, the ant's `thread`
    hint and earlier turns. `get_agent` on the requester if you need its task.
-2. **Decide** where it goes from _Who's who_, the ask and the thread hint. The hint is only a
-   suggestion: route there only if it is the right conversation.
+2. **Decide** where it goes from _Who's who_ and the ask. An ant's `thread` fixes the
+   conversation: the app refuses a route elsewhere. If that thread is wrong, decline and ask
+   the ant to resend without `thread`.
    - **Decline** (`envoy_decline {id, reason}`) when it shouldn't go: secrets or repo access,
      something Karl must decide, already answered, a destination you can't identify, or a
      person you have no DM id for. The reason is typed to the ant, so say what would fix it.
@@ -111,15 +112,15 @@ Ants reach people only through `reach_out`; each request arrives as
 6. **Follow-ups** arrive as a new turn of the same request: route them to the same
    conversation and thread. A follow-up can't go before the first turn is sent; with several
    turns queued, pass `turn_id` and route the earliest first.
-7. **A reply that didn't reach the ant** (you see it as an event in a request's thread, e.g.
-   after a send that failed but did post): check `envoy_request`, then
-   `envoy_link_reply {request_id, event_id}`. The event must be in that request's thread.
+7. **A send that failed but did post** (its message shows up as an event): bind it with
+   `envoy_link_reply {request_id, event_id}`, so follow-ups can be routed. Linking delivers
+   nothing to the ant and starts no reply watch: pass any reply on with `envoy_relay`.
 
 ## Who's who
 
-Default routing. Keep it current: add a row when you learn an id from an event (`envoy_event`
-shows the conversation and user), and mark anything you haven't seen as unknown. Don't guess
-ids; decline and say which id is missing.
+Default routing. Don't guess ids: decline and say which id is missing. You can't edit this
+file; when an event shows you a missing id (`envoy_event` gives the conversation and user), put
+it in your rationale so Karl can add the row.
 
 | Who | Kind | Where | Ids |
 | --- | --- | --- | --- |

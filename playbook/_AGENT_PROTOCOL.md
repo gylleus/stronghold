@@ -158,16 +158,18 @@ task, do what it says and report the change to your coordinator. Don't confuse i
 
 To ask a person or another team's agent anything, call Myrstack's `reach_out`:
 `reach_out {to: "Daniel's search agent", ask: "<message>", why: "<track, PR, bead>"}`. The
-Envoy routes it, Karl approves what is sent, and replies are typed into your terminal as
-`Envoy: reply from … to your request <id>`. `reach_out_status` shows where it stands.
+Envoy routes it, the app sends it under Karl's approval, and replies are typed into your
+terminal as `Envoy: reply from … to your request <id>`. `reach_out_status` shows where it
+stands.
 
 - **Never post or subscribe yourself**: no `slackmsg send`, `slack api chat.postMessage`,
   `slack-sub add`. Reading Slack for context is fine.
 - **Don't wait idle.** Carry on; handle the reply when it lands. Pass `urgency: blocking`
   only when the task can't proceed without the answer.
 - **Asks to agents are sent verbatim**, under a one-line "Request from <you>" header. Write
-  the ask as you want it read, with exact hashes, SHAs, ids and links, and any `<@USERID>`
-  mention yourself. Asks to people are reworded in Karl's voice; exact details are kept.
+  the ask as you want it read, with exact hashes, SHAs, ids and links, and any mention
+  yourself as `<@USERID>` (Daniel Troger is `<@U0177NR3GG4>`; others: `slack api users.list
+  limit=500` by `real_name`). Asks to people are reworded in Karl's voice; details are kept.
 - **Same conversation, same request:** pass its `request_id` (or `thread`) for a follow-up.
   If the Envoy asks you to clarify a request it hasn't sent, answer with a **new**
   `reach_out` holding the full revised ask and the old id in `why`.
