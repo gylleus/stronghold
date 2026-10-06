@@ -719,7 +719,7 @@ impl AppEnvoy {
                     let dry_run = self.settings.dry_run;
                     self.requests_mut()?.change(&id, |r| {
                         r.close_requested = r.thread.is_some();
-                        if !dry_run {
+                        if !dry_run || r.thread.is_none() {
                             r.settled = true;
                         }
                         Ok(())
@@ -843,19 +843,7 @@ impl MyrstackApp {
                     terminal_handle: Some(handle),
                     ..Default::default()
                 })?;
-                self.envoy_core.requests_mut()?.change(
-                    required(&command.args, "request_id")?,
-                    |r| {
-                        if r.requester.is_some() {
-                            return Err("Only unknown adopted requests can be bound".into());
-                        }
-                        r.requester = Some(who);
-                        for d in &mut r.deliveries {
-                            d.inbox = false;
-                        }
-                        Ok(())
-                    },
-                )
+                self.envoy_core.bind_requester(&command.args, who)
             })();
             if let Err(e) = result {
                 reply.send(Err(ControlError::invalid_params(e)));

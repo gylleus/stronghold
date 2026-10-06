@@ -415,6 +415,13 @@ fn deliberate_click(response: &egui::Response) -> bool {
 fn destination(ui: &mut Ui, draft: &Draft, inbox: &Inbox) {
     if let Some(conversation) = &draft.conversation {
         ui.strong(format!("To {conversation}"));
+        ui.label(
+            draft
+                .thread_ts
+                .as_ref()
+                .map_or_else(|| "New message".into(), |ts| format!("Thread {ts}")),
+        );
+        slack_link(ui, draft.slack_link.as_deref());
         return;
     }
 
@@ -724,7 +731,7 @@ mod tests {
         };
         let mut draft = Draft::outgoing(
             "C123".into(),
-            None,
+            Some("1.000001".into()),
             link.verbatim(),
             "Avery owns review".into(),
             link,
@@ -735,6 +742,7 @@ mod tests {
         draft.auto_at_ms = Some(crate::control::server::now_ms() + 120_000);
         let mut h = Harness::new(vec![draft]);
         assert!(h.visible("Asked by Build ant"));
+        assert!(h.visible("Thread 1.000001"));
         assert!(h.visible("Original ask"));
         assert!(h.visible("Review abc012def at 12:34"));
         assert!(h.visible("Why: Unblock review"));

@@ -194,19 +194,12 @@ impl AppEnvoy {
             "envoy_link_reply" => {
                 let id = required(args, "request_id")?;
                 if let Some(event_id) = optional(args, "event_id")? {
-                    let event = self
-                        .inbox
-                        .get(event_id)
-                        .cloned()
-                        .ok_or("Unknown retained event")?;
+                    let event = self.reply_to_link(id, event_id)?;
                     self.requests_mut()?.change(id, |r| {
                         let thread = Thread {
                             conversation: event.conversation.clone(),
                             ts: event.thread_ts.clone().unwrap_or_else(|| event.ts.clone()),
                         };
-                        if r.thread.as_ref().is_some_and(|t| *t != thread) {
-                            return Err("Reply conflicts with request thread".into());
-                        }
                         r.thread = Some(thread);
                         Ok(())
                     })?;
@@ -238,6 +231,39 @@ impl AppEnvoy {
             }
             _ => Err("Unknown gateway method".into()),
         }
+    }
+
+    pub(super) fn bind_requester(&mut self, args: &Value, who: Requester) -> Result<(), String> {
+        let id = required(args, "request_id")?;
+        if let Some(event_id) = optional(args, "event_id")? {
+            self.reply_to_link(id, event_id)?;
+        }
+        self.requests_mut()?.change(id, |r| {
+            if r.requester.is_some() {
+                return Err("Only unknown adopted requests can be bound".into());
+            }
+            r.requester = Some(who);
+            for d in &mut r.deliveries {
+                d.inbox = false;
+            }
+            Ok(())
+        })
+    }
+
+    fn reply_to_link(&mut self, id: &str, event_id: &str) -> Result<InboundEvent, String> {
+        let event = self
+            .inbox
+            .get(event_id)
+            .cloned()
+            .ok_or("Unknown retained event")?;
+        let request = self.requests_mut()?.get(id)?;
+        if request.thread.as_ref().is_some_and(|t| {
+            t.conversation != event.conversation
+                || t.ts != *event.thread_ts.as_ref().unwrap_or(&event.ts)
+        }) {
+            return Err("Reply conflicts with request thread".into());
+        }
+        Ok(event)
     }
 
     pub(super) fn reconcile_requests(&mut self) -> Result<(), String> {

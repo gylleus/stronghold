@@ -706,3 +706,58 @@ fn adopted_close_is_dry_run_safe_and_retries_failed_cleanup() {
     core.poll_updates();
     assert!(!core.requests()[0].close_requested);
 }
+
+#[test]
+fn completed_dry_run_without_a_thread_can_settle_locally() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "local simulation");
+    let draft = route(&mut core, &id);
+    core.envoy_approve(&draft.id, None, false, |_| false)
+        .unwrap();
+    core.reconcile_requests().unwrap();
+    assert!(core.requests()[0].thread.is_none());
+    core.panel_action(crate::ui::envoy::DraftAction::Settle(id), false, |_| false)
+        .1
+        .unwrap();
+    assert!(core.requests()[0].settled);
+    assert!(!core.requests()[0].close_requested);
+}
+
+#[test]
+fn invalid_adoption_reply_does_not_bind_owner_before_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let fake = fixture(dir.path());
+    core.requests_mut()
+        .unwrap()
+        .adopt(
+            crate::envoy::requests::Thread {
+                conversation: fake.event.conversation.clone(),
+                ts: fake.event.thread_ts.clone().unwrap(),
+            },
+            "Orphan".into(),
+            0,
+        )
+        .unwrap();
+    let id = core.requests()[0].id.clone();
+    let who = Requester::from_origin(origin("ant")).unwrap();
+    assert!(
+        core.bind_requester(&json!({"request_id":id,"event_id":"missing"}), who.clone())
+            .is_err()
+    );
+    assert!(core.requests()[0].requester.is_none());
+    let mut wrong = fake.event.clone();
+    wrong.conversation = "D456".into();
+    core.inbox.insert(wrong.clone());
+    assert!(
+        core.bind_requester(&json!({"request_id":id,"event_id":wrong.id()}), who.clone())
+            .is_err()
+    );
+    assert!(core.requests()[0].requester.is_none());
+    core.inbox.insert(fake.event.clone());
+    core.bind_requester(&json!({"request_id":id,"event_id":fake.event.id()}), who)
+        .unwrap();
+    assert!(core.requests()[0].requester.is_some());
+}
