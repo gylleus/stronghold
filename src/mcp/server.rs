@@ -43,7 +43,7 @@ is Karl's colony of ants.
 
 States: working, idle, needs_input (waiting on Karl at a permission, choice or question \
 prompt), stalled (the whip escalated it), done, failed. Karl can park an agent he wants to keep \
-for later (park_agents): it sleeps in the sleeping room, out of the live fleet, the whip and the \
+for later (park_agents): it sleeps in the resting area, out of the live fleet, the whip and the \
 counts, its session and worktree kept; send_to_agent or park_agents wake=true wakes it.
 
 Start with fleet_status. Agent ids (term:…, dispatch:…, sub:…) come from list_agents or \

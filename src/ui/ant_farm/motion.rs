@@ -70,6 +70,15 @@ impl Walk {
         }
     }
 
+    /// A straight walk from `from` to `to` taking `duration_s`, as when its room moved.
+    pub fn glide(from: Pos2, to: Pos2, rect: Rect, now_s: f64, duration_s: f64) -> Self {
+        Self {
+            path: vec![to_unit(from, rect), to_unit(to, rect)],
+            start_s: now_s,
+            duration_s,
+        }
+    }
+
     pub fn done(&self, now_s: f64) -> bool {
         now_s >= self.start_s + self.duration_s
     }

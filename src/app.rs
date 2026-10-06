@@ -123,7 +123,7 @@ pub struct MyrstackApp {
     asks: crate::ask::Asks,
     /// Sessions that ended themselves with `finish_session`, shown done while they fade.
     finished: crate::finish::FinishLog,
-    /// Agents Karl parked in the sleeping room ([`crate::park`]).
+    /// Agents Karl parked in the resting area ([`crate::park`]).
     parking: crate::park::Parking,
     /// Self-finished terminals waiting to be closed, once the agent got its reply.
     finish_closes: Vec<lifecycle::PendingClose>,
@@ -1069,6 +1069,7 @@ impl MyrstackApp {
         self.filter = state.filter;
         self.selected = state.layout.selected.clone();
         self.graph.import_layout(state.layout);
+        self.ant_farm.set_rooms(state.farm_rooms);
         self.search
             .set_recents(ui::commands::Recents::from_keys(&state.recent_actions));
     }
@@ -1082,6 +1083,7 @@ impl MyrstackApp {
             recent_actions: self.search.recents().keys(),
             panes: self.panes.encode(),
             notifications_panel: self.panes.notifications,
+            farm_rooms: self.ant_farm.rooms().clone(),
             ..PersistedState::default()
         }
     }

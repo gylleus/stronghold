@@ -469,7 +469,7 @@ A plan that is refused (for a subagent, the Queen, or a node with nothing to clo
 
 ### `park`
 
-Parks agents in the sleeping room, or wakes them (see [the MCP docs](mcp.md#parked-agents)).
+Parks agents in the resting area, or wakes them (see [the MCP docs](mcp.md#parked-agents)).
 A message sent with `send` to a parked agent wakes it first (`"woke": true` in its result).
 
 | param | type | default |

@@ -314,7 +314,7 @@ impl Sprites {
         tiled(painter, self.tunnel.id(), rect, px);
     }
 
-    /// A wooden bed in the sleeping room filling `rect` (see [`super::layout::BED_W`]): a
+    /// A wooden bed in the resting area filling `rect` (see [`super::layout::BED_W`]): a
     /// headboard on the left, where a sleeper's head lies, a mattress and a pillow.
     pub fn bed(&self, painter: &Painter, rect: Rect, px: f32) {
         let wood = Color32::from_rgb(0x8a, 0x4b, 0x1c);

@@ -72,7 +72,7 @@ pub struct FleetSummary {
     pub needs_input: Vec<String>,
     /// Ids of stalled nodes (escalated by the whip).
     pub stalled: Vec<String>,
-    /// Ids of agents Karl parked in the sleeping room ([`crate::park`]). They count in
+    /// Ids of agents Karl parked in the resting area ([`crate::park`]). They count in
     /// `agents`, `live` and `by_kind` but not in `by_state`, `needs_input` or `stalled`.
     #[serde(default)]
     pub parked: Vec<String>,

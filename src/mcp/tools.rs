@@ -196,7 +196,7 @@ pub fn definitions() -> Vec<Value> {
                     "repo": { "type": "string", "description": "Repo name." },
                     "needs_input": { "type": "boolean", "description": "Waiting on Karl (or not)." },
                     "live": { "type": "boolean", "description": "Terminal still open (or not)." },
-                    "parked": { "type": "boolean", "description": "Parked in the sleeping room (or not)." },
+                    "parked": { "type": "boolean", "description": "Parked in the resting area (or not)." },
                     "text": { "type": "string", "description": "Case-insensitive substring of the label, branch or run objective." },
                     "limit": { "type": "integer", "minimum": 1, "maximum": MAX_LIST_LIMIT, "default": DEFAULT_LIST_LIMIT },
                 }),
@@ -269,7 +269,7 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "park_agents",
             "Park or wake agents",
-            "Parks agents in the sleeping room: an ant that finished but that Karl wants to \
+            "Parks agents in the resting area: an ant that finished but that Karl wants to \
              keep for later. A parked agent leaves the live fleet (its own place in the graph \
              and the ant farm, out of fleet state, stalled and needs-input counts), the whip \
              never nudges it, and no cleanup closes it or removes its worktree unless named \
@@ -1072,7 +1072,7 @@ fn get_agent(control: &mut dyn Control, p: &Params) -> ToolResult {
     }
     if a.parked {
         out.push(format!(
-            "Parked in the sleeping room{} (the whip leaves it alone; sending it text wakes it)",
+            "Parked in the resting area{} (the whip leaves it alone; sending it text wakes it)",
             a.parked_at_ms
                 .map(|t| format!(" {}", since(now, t)))
                 .unwrap_or_default()
@@ -1263,7 +1263,7 @@ fn park_agents(control: &mut dyn Control, p: &Params) -> ToolResult {
             (Some(true), Some(true)) if wake => {
                 format!("- {who}{id}: woke, back in the live fleet")
             }
-            (Some(true), Some(true)) => format!("- {who}{id}: parked in the sleeping room"),
+            (Some(true), Some(true)) => format!("- {who}{id}: parked in the resting area"),
             (Some(true), _) if wake => format!("- {who}{id}: wasn't parked"),
             (Some(true), _) => format!("- {who}{id}: already parked"),
             _ => format!(

@@ -16,7 +16,7 @@ pub(super) fn id(s: &str) -> NodeId {
     NodeId(s.to_string())
 }
 
-fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState) -> Node {
+pub(super) fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState) -> Node {
     Node {
         id: id(name),
         kind,
@@ -40,7 +40,7 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState) -> Node
     }
 }
 
-fn run(name: &str, completed: usize, total: usize) -> RunSummary {
+pub(super) fn run(name: &str, completed: usize, total: usize) -> RunSummary {
     RunSummary {
         id: name.into(),
         objective: Some(format!("Objective {name}")),
@@ -105,7 +105,11 @@ pub(super) fn ant<'a>(scene: &'a Scene, name: &str) -> &'a Ant {
 
 fn tunnel_of(scene: &Scene, name: &str) -> usize {
     match ant(scene, name).spot {
-        Spot::Mouth(t, _) | Spot::Chamber(t, _) => t,
+        Spot::Mouth(ref t, _) | Spot::Chamber(ref t, _) => scene
+            .tunnels
+            .iter()
+            .position(|u| &u.key == t)
+            .expect("its tunnel is drawn"),
         ref other => panic!("{name} is not in a tunnel: {other:?}"),
     }
 }
@@ -201,15 +205,17 @@ fn ants_go_where_their_state_says() {
 
     for name in ["working", "idle", "stalled", "failed"] {
         let a = ant(&scene, name);
-        assert!(matches!(a.spot, Spot::Chamber(tt, _) if tt == t), "{name}");
+        assert!(matches!(a.spot, Spot::Chamber(..)), "{name}");
+        assert_eq!(tunnel_of(&scene, name), t, "{name}");
         assert!(tunnel.chamber.contains(a.pos), "{name} in the chamber");
     }
     assert!(
         ant(&scene, "working").facing_right,
         "diggers face the dig face"
     );
+    let (working, idle) = (ant(&scene, "working").pos, ant(&scene, "idle").pos);
     assert!(
-        ant(&scene, "working").pos.x > ant(&scene, "idle").pos.x,
+        working.x > ant(&scene, "stalled").pos.x && working.x >= idle.x,
         "diggers at the face, sleepers behind them"
     );
 
@@ -412,7 +418,7 @@ fn a_finished_run_without_workers_has_no_tunnel() {
         "a finished run's coordinator digs in its repo's tunnel; one with a worker keeps its own"
     );
     let c = ant(&scene, "over-coord");
-    assert!(matches!(c.spot, Spot::Chamber(1, _)));
+    assert!(matches!(c.spot, Spot::Chamber(TunnelKey::Repo(ref r), _) if r == "alpha"));
     assert_eq!(c.tag.as_deref(), Some("Other work"));
 }
 
@@ -1131,13 +1137,13 @@ fn subagent_trails_take_room_in_the_chamber() {
 }
 
 #[test]
-fn parked_ants_sleep_in_the_sleeping_room() {
+fn parked_ants_sleep_in_the_resting_area() {
     let mut s = snapshot();
     let room = |scene: &Scene| {
         scene
             .tunnels
             .iter()
-            .position(|t| t.key == TunnelKey::SleepingRoom)
+            .position(|t| t.key == TunnelKey::RestingArea)
     };
     assert_eq!(room(&scene(&s)), None, "no room while nobody is parked");
     for i in 0..9 {
@@ -1159,15 +1165,19 @@ fn parked_ants_sleep_in_the_sleeping_room() {
     waiting.parked_at_ms = Some(1);
     s.nodes.push(waiting);
     let scene = assert_fits(&s);
-    let t = room(&scene).expect("a sleeping room");
+    let t = room(&scene).expect("a resting area");
     assert_eq!(t, scene.tunnels.len() - 1, "the last tunnel");
-    assert_eq!(scene.tunnels[t].label, crate::park::SLEEPING_ROOM);
+    assert_eq!(scene.tunnels[t].label, crate::park::RESTING_AREA);
     for a in scene
         .ants
         .iter()
         .filter(|a| a.id.as_str().starts_with("parked"))
     {
-        assert!(matches!(a.spot, Spot::Chamber(i, _) if i == t), "{}", a.id);
+        assert!(
+            matches!(a.spot, Spot::Chamber(TunnelKey::RestingArea, _)),
+            "{}",
+            a.id
+        );
         assert_eq!(a.pose, Pose::Sleep);
         assert_eq!(a.mark, Some(Mark::Sleep));
     }
@@ -1204,7 +1214,7 @@ fn parked_ants_sleep_in_the_sleeping_room() {
 }
 
 #[test]
-fn only_the_sleeping_room_has_beds() {
+fn only_the_resting_area_has_beds() {
     assert!(scene(&snapshot()).beds.is_empty());
 }
 

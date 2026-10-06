@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use eframe::egui::{self, RichText, Sense, Ui};
 
 use crate::model::{FleetSnapshot, Node, NodeId, NodeKind, NodeState, RepoIndex, TaskCounts};
-use crate::park::SLEEPING_ROOM;
+use crate::park::RESTING_AREA;
 use crate::ui::graph::{kind_label, state_color, state_label};
 
 pub use crate::model::{NO_REPO, node_repo, repo_of};
@@ -255,9 +255,9 @@ pub fn repo_groups(snapshot: &FleetSnapshot) -> Vec<RepoGroup> {
         // Parked agents sleep in their own group, last, without state counts.
         if node.is_parked() {
             let group = out
-                .entry((true, SLEEPING_ROOM.to_string()))
+                .entry((true, RESTING_AREA.to_string()))
                 .or_insert_with(|| RepoGroup {
-                    repo: SLEEPING_ROOM.to_string(),
+                    repo: RESTING_AREA.to_string(),
                     runs: Vec::new(),
                     loose: Vec::new(),
                     states: BTreeMap::new(),
@@ -512,7 +512,7 @@ fn repos_section(
 
 /// The repo header's "+": opens "New ant…" with the repo picked.
 fn new_session_button(ui: &mut Ui, group: &RepoView, response: &mut SidebarResponse) {
-    if group.repo == NO_REPO || group.repo == SLEEPING_ROOM {
+    if group.repo == NO_REPO || group.repo == RESTING_AREA {
         return;
     }
     let button = ui

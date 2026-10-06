@@ -100,7 +100,7 @@ pub fn node_tooltip(
         ));
         ui.label(RichText::new("Right-click → Wake, or send it a message, to continue").weak());
     }
-    // A parked node's region is the sleeping room; name its own repo.
+    // A parked node's region is the resting area; name its own repo.
     let own_repo = node
         .is_parked()
         .then(|| {
