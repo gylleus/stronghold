@@ -43,7 +43,7 @@ pub fn pipe_stretch(air: &[InFlight], now_s: f64) -> f32 {
 
 /// Where `end` is this frame and whether it is on the surface; `None` when its ant is not
 /// drawn (filtered out or gone).
-fn locate(scene: &Scene, placed: &[Placed], end: &Endpoint) -> Option<(Pos2, bool)> {
+pub(super) fn locate(scene: &Scene, placed: &[Placed], end: &Endpoint) -> Option<(Pos2, bool)> {
     let a = scene.cell();
     match end {
         Endpoint::Node(id) => scene

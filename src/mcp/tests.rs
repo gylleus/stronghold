@@ -36,6 +36,7 @@ struct FakeControl {
     replies: BTreeMap<String, Result<Value, CallError>>,
     fallback: Option<HeadlessControl>,
     fallback_used: bool,
+    emitted: Vec<(String, Value)>,
 }
 
 impl FakeControl {
@@ -52,6 +53,10 @@ impl Control for FakeControl {
             .get(method)
             .cloned()
             .unwrap_or_else(|| Ok(json!({ "ok": method })))
+    }
+
+    fn emit(&mut self, method: &str, params: Value) {
+        self.emitted.push((method.into(), params));
     }
 
     fn fallback(&mut self) -> Result<&mut dyn Control, String> {
@@ -2453,4 +2458,34 @@ fn sending_to_a_parked_agent_says_it_woke() {
         "{}",
         text(&r)
     );
+}
+
+// ---------------------------------------------------------------------------
+// Tool-call beams
+
+#[test]
+fn tool_calls_on_agents_emit_one_beam_each() {
+    let agent = app().call("agent", json!({"id": CODEX})).unwrap();
+    let id = agent["agent"]["id"].clone();
+    let control = FakeControl::default()
+        .reply("agent", Ok(agent))
+        .reply(
+            "close",
+            Ok(json!({"dry_run": true, "plan": {"targets": [{"id": "term:b"}]}})),
+        )
+        .reply("enter", Err(CallError::NotRunning));
+    let mut server = McpServer::new(control);
+    call(&mut server, "get_agent", json!({"id": "a"}));
+    call(&mut server, "close_agents", json!({"ids": ["b"]}));
+    call(&mut server, "fit_graph", json!({}));
+    // A failed call draws nothing.
+    call(&mut server, "press_key", json!({"id": "a", "key": "enter"}));
+    let emitted = &server.control().emitted;
+    assert_eq!(emitted.len(), 2, "{emitted:?}");
+    assert!(emitted.iter().all(|(m, _)| m == "tool_call"));
+    assert_eq!(emitted[0].1["kind"], "read");
+    assert_eq!(emitted[0].1["targets"], json!([id]));
+    assert_eq!(emitted[1].1["kind"], "dry_kill");
+    // Emitting is not a call: the app's replies are untouched.
+    assert!(!server.control().calls.iter().any(|(m, _)| m == "tool_call"));
 }

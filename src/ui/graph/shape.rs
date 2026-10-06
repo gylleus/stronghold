@@ -17,7 +17,7 @@ use petgraph::stable_graph::IndexType;
 use crate::model::{NodeId, NodeKind, NodeState, RELEASED_FADE_MS};
 use crate::notify::Severity;
 use crate::orca::AgentIdentity;
-use crate::ui::{art, icons};
+use crate::ui::{art, beam, icons};
 
 use super::tooltip::state_label;
 
@@ -455,6 +455,24 @@ pub fn legend(ui: &mut Ui) {
                     .weak(),
             );
         });
+        ui.add_space(6.0);
+        for (color, name) in [
+            (beam::READ, "read"),
+            (beam::KILL, "close"),
+            (beam::SPAWN, "spawn"),
+        ] {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let size = Vec2::new(text_height * 1.4, text_height);
+                let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                ui.painter().line_segment(
+                    [rect.left_center(), rect.right_center()],
+                    Stroke::new(2.0, color),
+                );
+                ui.label(egui::RichText::new(name).small().weak());
+            });
+        }
+        ui.label(egui::RichText::new("(tool-call beams)").small().weak());
     });
 }
 

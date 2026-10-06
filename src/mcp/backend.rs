@@ -55,6 +55,10 @@ pub trait Control {
     fn fallback(&mut self) -> Result<&mut dyn Control, String> {
         Err("no fallback".into())
     }
+
+    /// Calls `method` without waiting for it or its outcome, for what only the app's drawing
+    /// needs (a tool call's beam). Does nothing where there is no app to draw.
+    fn emit(&mut self, _method: &str, _params: Value) {}
 }
 
 /// The running app's control socket. Every call opens a fresh connection: they are cheap, and a
@@ -83,6 +87,23 @@ impl Control for SocketControl {
             .call(&Request::new(method, params))
             .map_err(|e| CallError::Transport(e.to_string()))?;
         response.into_result().map_err(CallError::Control)
+    }
+
+    fn emit(&mut self, method: &str, params: Value) {
+        let path = self.path.clone();
+        let method = method.to_owned();
+        let sent = std::thread::Builder::new()
+            .name("mcp-emit".into())
+            .spawn(move || {
+                let result = ControlClient::connect(&path)
+                    .and_then(|mut c| c.call(&Request::new(&method, params)));
+                if let Err(e) = result {
+                    log::debug!("myrstack mcp: {method} not drawn: {e}");
+                }
+            });
+        if let Err(e) = sent {
+            log::debug!("myrstack mcp: cannot start emit thread: {e}");
+        }
     }
 
     fn fallback(&mut self) -> Result<&mut dyn Control, String> {

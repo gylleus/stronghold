@@ -642,6 +642,22 @@ already; this is for traffic the app can't see, such as the Envoy's relays.
 
 In the app's own code, push a `traffic::AgentMessage` through `Traffic::sender()` instead.
 
+### `tool_call`
+
+`{"tool", "kind", "targets"?, "origin"?}`. Draws an MCP tool call as a beam from its caller
+(`origin`'s agent; the Queen when empty) to the agents it acted on; nothing else happens. The
+MCP server sends one after each call that touches agents, without waiting for the reply.
+`kind`: `read` (a thin blue line pulling from each target), `sweep` (a blue sweep over the
+targets, or the whole fleet when there are none), `write` (drawn as a message), `kill` (a red
+laser and a burst), `dry_kill` (a faint dashed red line) or `spawn` (a green burst on the new
+agent, drawn once it shows up). Targets are agent ids, terminal handles or labels; unknown ones
+are ignored.
+
+```json
+{"v":1,"method":"tool_call","params":{"tool":"get_agent","kind":"read","targets":["term:term_a"]}}
+→ {"ok":true,"result":{"drawn":true}}
+```
+
 ## Notifications
 
 Every notification goes through one dispatcher in the app: agents' `notify`, nodes entering
