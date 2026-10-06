@@ -1,5 +1,5 @@
 //! Parking agents: Karl shelves an ant that finished its task but that he wants to keep for
-//! later. A parked agent sleeps in the sleeping room, out of the live fleet: the whip leaves it
+//! later. A parked agent sleeps in the resting area, out of the live fleet: the whip leaves it
 //! alone, it counts in no stalled or needs-input total, and no cleanup closes its terminal or
 //! removes its worktree unless it is named explicitly. Its terminal, session and worktree stay
 //! as they are, so waking it (unparking, or sending it a message) continues the conversation.
@@ -25,7 +25,7 @@ use crate::model::{Node, NodeId, NodeKind};
 
 /// Where parked agents are shown: the graph region and sidebar group they gather in, in place
 /// of their repo's, and the ant farm's chamber.
-pub const SLEEPING_ROOM: &str = "Sleeping room";
+pub const RESTING_AREA: &str = "Resting area";
 
 /// The parked set's file in the data dir.
 pub const FILE: &str = "parked.json";

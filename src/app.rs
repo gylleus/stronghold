@@ -123,7 +123,7 @@ pub struct MyrstackApp {
     asks: crate::ask::Asks,
     /// Sessions that ended themselves with `finish_session`, shown done while they fade.
     finished: crate::finish::FinishLog,
-    /// Agents Karl parked in the sleeping room ([`crate::park`]).
+    /// Agents Karl parked in the resting area ([`crate::park`]).
     parking: crate::park::Parking,
     /// Self-finished terminals waiting to be closed, once the agent got its reply.
     finish_closes: Vec<lifecycle::PendingClose>,

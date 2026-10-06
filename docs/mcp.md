@@ -153,7 +153,7 @@ works.
 ### Parked agents
 
 Karl parks an agent he is done with for now but wants to keep (`park_agents`, or Park in a
-node's or ant's context menu). A parked agent sleeps in the sleeping room: its own region in
+node's or ant's context menu). A parked agent sleeps in the resting area: its own region in
 the graph and its own chamber in the ant farm. Its terminal, session and worktree are kept. It
 is out of the Queen's state, `by_state`, `needs_input` and `stalled` (`fleet.parked` lists
 it), the whip never nudges, escalates or notifies about it, "Close shown…" skips it and the

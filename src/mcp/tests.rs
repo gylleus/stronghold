@@ -2430,7 +2430,7 @@ fn park_agents_parks_or_wakes_and_reports_each() {
     );
     let t = text(&r);
     assert!(
-        t.contains("Ant A `term:a`: parked in the sleeping room"),
+        t.contains("Ant A `term:a`: parked in the resting area"),
         "{t}"
     );
     assert!(t.contains("Queen `queen`: not parked: the Queen"), "{t}");

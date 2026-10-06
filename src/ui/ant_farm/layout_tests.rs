@@ -1131,13 +1131,13 @@ fn subagent_trails_take_room_in_the_chamber() {
 }
 
 #[test]
-fn parked_ants_sleep_in_the_sleeping_room() {
+fn parked_ants_sleep_in_the_resting_area() {
     let mut s = snapshot();
     let room = |scene: &Scene| {
         scene
             .tunnels
             .iter()
-            .position(|t| t.key == TunnelKey::SleepingRoom)
+            .position(|t| t.key == TunnelKey::RestingArea)
     };
     assert_eq!(room(&scene(&s)), None, "no room while nobody is parked");
     for i in 0..9 {
@@ -1159,9 +1159,9 @@ fn parked_ants_sleep_in_the_sleeping_room() {
     waiting.parked_at_ms = Some(1);
     s.nodes.push(waiting);
     let scene = assert_fits(&s);
-    let t = room(&scene).expect("a sleeping room");
+    let t = room(&scene).expect("a resting area");
     assert_eq!(t, scene.tunnels.len() - 1, "the last tunnel");
-    assert_eq!(scene.tunnels[t].label, crate::park::SLEEPING_ROOM);
+    assert_eq!(scene.tunnels[t].label, crate::park::RESTING_AREA);
     for a in scene
         .ants
         .iter()
@@ -1204,7 +1204,7 @@ fn parked_ants_sleep_in_the_sleeping_room() {
 }
 
 #[test]
-fn only_the_sleeping_room_has_beds() {
+fn only_the_resting_area_has_beds() {
     assert!(scene(&snapshot()).beds.is_empty());
 }
 

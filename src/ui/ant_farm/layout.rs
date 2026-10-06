@@ -8,7 +8,7 @@
 //! workers in the chamber at the tunnel's end. When the ants can be drawn bigger that way,
 //! tunnels pair up: a chamber over another in one column, the lower one's shaft passing
 //! beside the upper chamber. Parked agents sleep in beds in the last tunnel's chamber, the
-//! sleeping room, there only while someone is parked.
+//! resting area, there only while someone is parked.
 
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -54,7 +54,7 @@ pub enum TunnelKey {
     /// Loose terminals of a repo (see [`crate::model::node_repo`]).
     Repo(String),
     /// Parked agents, asleep ([`crate::park`]).
-    SleepingRoom,
+    RestingArea,
 }
 
 /// A logical place an ant occupies. An ant walks when its spot changes; a spot keeping its
@@ -174,7 +174,7 @@ pub struct Tunnel {
     pub label_top: Pos2,
 }
 
-/// A bed in the sleeping room, with the parked ant lying on it, if any.
+/// A bed in the resting area, with the parked ant lying on it, if any.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bed {
     pub rect: Rect,
@@ -528,7 +528,7 @@ pub fn mark(state: NodeState, pr_ready: bool) -> Option<Mark> {
 /// The tunnel a node digs in: its run's, else its repo's.
 fn tunnel_key(node: &Node, repos: &HashMap<NodeId, String>) -> TunnelKey {
     match &node.run_id {
-        _ if node.is_parked() => TunnelKey::SleepingRoom,
+        _ if node.is_parked() => TunnelKey::RestingArea,
         Some(run) => TunnelKey::Run(run.clone()),
         None => TunnelKey::Repo(repos.get(&node.id).cloned().unwrap_or_default()),
     }
@@ -633,7 +633,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         .collect();
 
     // Tunnels: runs in run-list order, then runs the list lacks, then repos by name, then
-    // the sleeping room.
+    // the resting area.
     let mut keys: Vec<TunnelKey> = Vec::new();
     for n in &visible {
         if matches!(homes[&n.id], Home::Queen | Home::Comms | Home::Trail) {
@@ -655,7 +655,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
             String::new(),
         ),
         TunnelKey::Repo(repo) => (1, 0, repo.clone()),
-        TunnelKey::SleepingRoom => (2, 0, String::new()),
+        TunnelKey::RestingArea => (2, 0, String::new()),
     };
     keys.sort_by_key(run_order);
     let tunnel_of: HashMap<&TunnelKey, usize> =
@@ -825,7 +825,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                     .and_then(|r| r.task_counts)
                     .filter(|c| c.total() > 0)
                     .map(|c| (c.completed, c.total())),
-                TunnelKey::Repo(_) | TunnelKey::SleepingRoom => None,
+                TunnelKey::Repo(_) | TunnelKey::RestingArea => None,
             };
             let progress = tasks.map(|(done, total)| done as f32 / total as f32);
             let depth = progress.map_or(UNKNOWN_PROGRESS_DEPTH, |p| {
@@ -851,7 +851,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                     .and_then(|r| r.objective.as_deref())
                     .unwrap_or(id),
                 TunnelKey::Repo(repo) => repo,
-                TunnelKey::SleepingRoom => crate::park::SLEEPING_ROOM,
+                TunnelKey::RestingArea => crate::park::RESTING_AREA,
             };
             Tunnel {
                 key: key.clone(),
@@ -942,7 +942,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                 chamber.bottom() - (0.5 + TAG) * a - row as f32 * ROW * a,
             )
         };
-        if tunnels[t].key == TunnelKey::SleepingRoom {
+        if tunnels[t].key == TunnelKey::RestingArea {
             // A bed under each sleeper, and a spare one where the last row has room.
             let (places, rows) = &packed[t];
             let used = places

@@ -32,7 +32,7 @@ pub struct NodePayload {
     pub faded: bool,
     /// When the worker was released; drives the fade-out (see [`fade_alpha`]).
     pub released_at_ms: Option<i64>,
-    /// Parked ([`crate::park`]): drawn dimmed and asleep, in the sleeping room.
+    /// Parked ([`crate::park`]): drawn dimmed and asleep, in the resting area.
     pub parked: bool,
     /// Badge letter of the agent running in the node's terminal (see [`agent_marker`]).
     pub agent_marker: Option<char>,
@@ -714,7 +714,7 @@ impl FleetNodeShape {
     }
 }
 
-/// "z Z" rising from a parked node's top left, the sleeping room's mark.
+/// "z Z" rising from a parked node's top left, the resting area's mark.
 fn snores(ctx: &DrawContext, center: Pos2, radius: f32, color: Color32) -> Vec<Shape> {
     [(0.55, 0.9, "z"), (0.85, 1.25, "Z")]
         .into_iter()

@@ -4,7 +4,7 @@
 //! `cargo run --example ant_farm [--light] [--graph] [--sweep] [--shot out.png]`.
 //! `--receipt-at-ms 31` freezes a receipt mid-shake; `--reduced-motion` shows its flash.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
-//! terminals in the sleeping room. `--graph`
+//! terminals in the resting area. `--graph`
 //! shows the same fleet as the graph; `--sweep` flies the worktree cleanup's broom around the
 //! farm. Every few seconds one worker
 //! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status

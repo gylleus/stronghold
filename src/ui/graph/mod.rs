@@ -93,7 +93,7 @@ pub struct GraphResponse {
     /// Nodes to whip now: "Whip" (one node) or "Whip N selected" was picked in a node's
     /// context menu. Empty if neither was.
     pub whip_requested: Vec<NodeId>,
-    /// Nodes to park in the sleeping room, picked in a node's context menu.
+    /// Nodes to park in the resting area, picked in a node's context menu.
     pub park_requested: Vec<NodeId>,
     /// Parked nodes to wake, picked in a node's context menu.
     pub wake_requested: Vec<NodeId>,
@@ -101,7 +101,7 @@ pub struct GraphResponse {
 
 type EdgeKey = (NodeId, NodeId, EdgeKind);
 
-const PARK_HINT: &str = "Put this agent to sleep in the sleeping room: out of the live fleet \
+const PARK_HINT: &str = "Put this agent to sleep in the resting area: out of the live fleet \
      and the whip, its terminal, session and worktree kept to continue later";
 const WAKE_HINT: &str = "Bring it back to the live fleet (sending it a message wakes it too)";
 
@@ -321,7 +321,7 @@ impl GraphView {
 
         let mut repos = RepoIndex::new(snapshot).by_node;
         for node in snapshot.parked_nodes() {
-            repos.insert(node.id.clone(), crate::park::SLEEPING_ROOM.to_owned());
+            repos.insert(node.id.clone(), crate::park::RESTING_AREA.to_owned());
         }
         if repos != self.repos {
             self.repos = repos;
@@ -774,7 +774,7 @@ impl GraphView {
                     .collect();
                 if !parkable.is_empty()
                     && ui
-                        .button(format!("Park {} in the sleeping room", parkable.len()))
+                        .button(format!("Park {} in the resting area", parkable.len()))
                         .on_hover_text(PARK_HINT)
                         .clicked()
                 {
@@ -1060,7 +1060,7 @@ impl GraphView {
             .iter()
             .filter_map(|(id, idx)| {
                 let node = self.nodes.get(id)?;
-                // A parked node leaves its run's cluster for the sleeping room's group.
+                // A parked node leaves its run's cluster for the resting area's group.
                 let parked = node.is_parked();
                 Some(ClusterNode {
                     index: idx.index(),

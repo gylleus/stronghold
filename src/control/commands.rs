@@ -128,7 +128,7 @@ pub enum ControlCommand {
         whole_tab: bool,
         dry_run: bool,
     },
-    /// Park `agents` in the sleeping room ([`crate::park`]), or with `park` false wake them.
+    /// Park `agents` in the resting area ([`crate::park`]), or with `park` false wake them.
     Park {
         agents: Vec<String>,
         park: bool,
