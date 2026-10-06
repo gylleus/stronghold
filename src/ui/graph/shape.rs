@@ -492,6 +492,8 @@ fn paint_swatch(painter: &Painter, rect: Rect, state: NodeState, dark: bool) {
 #[derive(Debug, Clone)]
 pub struct FleetNodeShape {
     pub(super) receipt: crate::ui::envoy_receipt::ReceiptCue,
+    /// This frame of a pop for a state change; see [`super::pops`].
+    pub(super) pop: Option<crate::ui::state_pop::PopFrame>,
     pos: Pos2,
     kind: NodeKind,
     state: NodeState,
@@ -513,6 +515,7 @@ impl From<NodeProps<NodePayload>> for FleetNodeShape {
     fn from(props: NodeProps<NodePayload>) -> Self {
         let mut shape = Self {
             receipt: Default::default(),
+            pop: None,
             pos: props.location(),
             kind: props.payload.kind,
             state: props.payload.state,
@@ -829,8 +832,12 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
             Default::default()
         };
         receipt.repaint(ctx.ctx);
-        let center = ctx.meta.canvas_to_screen_pos(self.pos) + Vec2::new(receipt.offset, 0.0);
         let radius = ctx.meta.canvas_to_screen_size(self.radius());
+        let center = ctx.meta.canvas_to_screen_pos(self.pos)
+            + Vec2::new(
+                receipt.offset,
+                -super::pops::lift(self.pop.as_ref(), radius),
+            );
         let alpha = fade_alpha(self.released_at_ms, super::now_ms());
         let alpha = if self.parked {
             alpha.min(PARKED_ALPHA)
@@ -864,6 +871,9 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
                 outer + 4.0,
                 Stroke::new(3.0, visuals.text_color().gamma_multiply(receipt.highlight)),
             ));
+        }
+        if let Some(pop) = &self.pop {
+            shapes.extend(super::pops::shapes(pop, center, outer, true));
         }
         if self.released_at_ms.is_none() && !self.parked {
             shapes.extend(self.pulse_ring(waiting_s, center, outer, fill));
@@ -923,6 +933,9 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
                     .into(),
                 );
             }
+        }
+        if let Some(pop) = &self.pop {
+            shapes.extend(super::pops::shapes(pop, center, outer, false));
         }
         if self.selected {
             let ring = outer + (radius * 0.25).clamp(3.0, 6.0);

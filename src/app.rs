@@ -131,6 +131,8 @@ pub struct MyrstackApp {
     overlays_changed: bool,
     /// Messages between agents, for the graph and the ant farm to draw.
     traffic: crate::traffic::Traffic,
+    /// Agents' state changes, for the graph and the ant farm to pop.
+    state_changes: crate::ui::state_pop::Transitions,
     /// Every notification's dispatcher, the saved inbox, toasts and node badges.
     notifications: notifications::AppNotifications,
     /// Debug-logged frames per second and repaint causes.
@@ -247,6 +249,7 @@ impl MyrstackApp {
             finish_closes: Vec::new(),
             overlays_changed: true,
             traffic: Default::default(),
+            state_changes: Default::default(),
             notifications: notifications::AppNotifications::load(),
             search: ui::search::SearchPalette::default(),
             help_open: false,
@@ -1219,6 +1222,7 @@ impl eframe::App for MyrstackApp {
             self.traffic.push(message);
         }
         self.poll_traffic(ctx);
+        self.poll_state_pops(ctx);
         self.poll_chat();
         self.talk_logic(ctx);
         let envoy_before = self.envoy_status();

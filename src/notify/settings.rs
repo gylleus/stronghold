@@ -167,6 +167,8 @@ pub struct NotifySettings {
     /// Do not disturb: only urgent notifications pop up or play a sound. Everything is still
     /// recorded in the inbox.
     pub quiet: bool,
+    /// A soft sound with the pop of an agent that is done or starts waiting for input.
+    pub pop_sounds: bool,
 }
 
 impl Default for NotifySettings {
@@ -179,6 +181,7 @@ impl Default for NotifySettings {
             sounds: SeveritySounds::default(),
             volume_percent: 70,
             quiet: false,
+            pop_sounds: false,
         }
     }
 }
