@@ -10,7 +10,7 @@ use eframe::egui::{
     self, Color32, ColorImage, Painter, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2,
 };
 
-use super::layout::Mark;
+use super::layout::{Mark, PIPE_H, PIPE_LIP_W};
 use super::nature::Deco;
 
 const ANT_GREY: &[u8] = include_bytes!("../../../assets/art/farm/ant_grey.png");
@@ -308,36 +308,72 @@ impl Sprites {
         );
     }
 
-    /// A wooden sign on the surface at `foot` (the post's base) reading `text`.
-    pub fn sign(
+    /// Karl's green warp pipe standing on the surface at `foot` (the middle of its base),
+    /// `stretch` texels taller while it pops a message out, with `text` on its body.
+    pub fn pipe(
         &self,
         painter: &Painter,
         foot: Pos2,
         px: f32,
+        stretch: f32,
         text: &str,
         font: egui::FontId,
-        palette: Palette,
     ) {
-        let wood = Color32::from_rgb(0x9c, 0x6a, 0x3a);
-        let dark = Color32::from_rgb(0x4a, 0x2c, 0x14);
-        let galley = painter.layout_no_wrap(text.to_string(), font, palette.label_shadow);
-        let board = Rect::from_min_size(
-            foot + vec2(2.0 * px, -14.0 * px - galley.size().y),
-            galley.size() + vec2(6.0 * px, 4.0 * px),
+        let outline = Color32::from_rgb(0x10, 0x3a, 0x12);
+        let green = Color32::from_rgb(0x3c, 0xb0, 0x3c);
+        let light = Color32::from_rgb(0x9a, 0xe8, 0x6a);
+        let shade = Color32::from_rgb(0x24, 0x7c, 0x28);
+        let lip_w = PIPE_LIP_W * px;
+        let body_w = lip_w - 4.0 * px;
+        let lip_h = 7.0 * px;
+        let top = foot.y - (PIPE_H + stretch) * px;
+        let lip = Rect::from_min_size(pos2(foot.x - lip_w / 2.0, top), vec2(lip_w, lip_h));
+        let body = Rect::from_min_max(
+            pos2(foot.x - body_w / 2.0, lip.bottom()),
+            pos2(foot.x + body_w / 2.0, foot.y + px),
         );
-        let post = Rect::from_min_max(
-            pos2(board.center().x - px, board.bottom()),
-            pos2(board.center().x + px, foot.y),
+        // Each piece: outline, green, a highlight down the left, shade down the right.
+        for part in [body, lip] {
+            painter.rect_filled(part.expand(px), 0.0, outline);
+            painter.rect_filled(part, 0.0, green);
+            let stripe = |x: f32, w: f32| {
+                Rect::from_min_size(
+                    pos2(part.left() + x * px, part.top()),
+                    vec2(w * px, part.height()),
+                )
+            };
+            painter.rect_filled(stripe(2.0, 2.0), 0.0, light);
+            painter.rect_filled(stripe(5.0, 1.0), 0.0, light);
+            let right = part.width() / px;
+            painter.rect_filled(stripe(right - 4.0, 2.0), 0.0, shade);
+        }
+        // The dark opening on top and the seam under the lip.
+        painter.rect_filled(
+            Rect::from_min_size(lip.min + vec2(2.0 * px, 0.0), vec2(lip_w - 4.0 * px, px)),
+            0.0,
+            outline,
         );
-        painter.rect_filled(post.expand(px / 2.0), 0.0, dark);
-        painter.rect_filled(post, 0.0, wood);
-        painter.rect_filled(board.expand(px), 0.0, dark);
-        painter.rect_filled(board, 0.0, wood);
-        painter.galley(
-            board.min + vec2(3.0 * px, 2.0 * px),
-            galley,
-            palette.label_shadow,
+        painter.rect_filled(
+            Rect::from_min_size(pos2(body.left(), lip.bottom()), vec2(body_w, px)),
+            0.0,
+            outline,
         );
+        // The name across the body, shrunk to fit it.
+        let room = body_w - 4.0 * px;
+        let mut galley = painter.layout_no_wrap(text.to_string(), font.clone(), outline);
+        if galley.size().x > room {
+            let size = (font.size * room / galley.size().x).max(6.0);
+            galley = painter.layout_no_wrap(
+                text.to_string(),
+                egui::FontId::new(size, font.family),
+                outline,
+            );
+        }
+        let at = pos2(
+            foot.x - galley.size().x / 2.0,
+            (lip.bottom() + foot.y) / 2.0 - galley.size().y / 2.0,
+        );
+        painter.galley(at, galley, outline);
     }
 
     /// The whip's lash poking a stalled ant at `cell`: a pixel line from above and behind.

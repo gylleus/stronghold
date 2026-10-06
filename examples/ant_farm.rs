@@ -158,6 +158,7 @@ impl Demo {
             ("run2-w2", "run2-coord", MessageKind::Ask),
             ("run2-w2", "run2-coord", MessageKind::Ask),
             ("queen", "run1-coord", MessageKind::Instruction),
+            ("karl", "queen", MessageKind::Instruction),
             ("slack", "shop-1", MessageKind::Relay),
             ("slack", "envoy", MessageKind::Relay),
             ("envoy", "slack", MessageKind::Message),
