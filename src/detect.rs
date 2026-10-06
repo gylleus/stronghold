@@ -287,6 +287,9 @@ const CLAUDE_SCREEN_MARKERS: &[&str] = &[
     "plan mode",
 ];
 
+/// Glyphs Claude Code puts in front of its terminal title: idle, then the working spinner.
+const CLAUDE_TITLE_GLYPHS: &[char] = &['✳', '◐', '◓', '◑', '◒'];
+
 /// Spinner glyphs Claude Code draws in front of its status word while it works.
 const CLAUDE_SPINNERS: &[char] = &['✻', '✢', '✳', '✶', '✽', '·', '*'];
 
@@ -308,14 +311,27 @@ pub fn claude_session_live(terminal: &crate::orca::Terminal) -> bool {
     let Some(last) = rows.last() else {
         return false;
     };
+    // A bare `❯` is also Claude's empty composer, which is often all an idle session's preview
+    // keeps; the title settles it.
     if looks_like_shell_prompt(last) {
-        return false;
+        return last.trim() == "❯" && claude_titled(terminal);
     }
     let tail = &rows[rows.len().saturating_sub(TAIL_ROWS)..];
-    tail.iter().any(|row| {
-        let lower = row.to_lowercase();
-        is_spinner_row(row) || CLAUDE_SCREEN_MARKERS.iter().any(|m| lower.contains(m))
-    })
+    claude_titled(terminal)
+        || tail.iter().any(|row| {
+            let lower = row.to_lowercase();
+            is_spinner_row(row) || CLAUDE_SCREEN_MARKERS.iter().any(|m| lower.contains(m))
+        })
+}
+
+/// Claude Code titles its terminal `✳ <topic>` when idle and with a spinner glyph while it
+/// works; the shell retitles the terminal at its first prompt once Claude exits.
+fn claude_titled(terminal: &crate::orca::Terminal) -> bool {
+    terminal
+        .title
+        .as_deref()
+        .and_then(|t| t.trim_start().chars().next())
+        .is_some_and(|c| CLAUDE_TITLE_GLYPHS.contains(&c) || ('\u{2800}'..='\u{28ff}').contains(&c))
 }
 
 /// Claude's working line: an optional spinner glyph, then one capitalised verb ending in `…`

@@ -201,6 +201,32 @@ impl FleetData {
 }
 
 /// A failed task whose result says why: the coordinator retired it on purpose.
+impl FleetData {
+    /// Whether `m` is the report of a worker whose start Orca misreported: one Orca refused on
+    /// a revoked dispatch ([`InboxMessage::is_revoked_report`]) that is still its task's
+    /// dispatch, the task failed with no recorded result. A dispatch a coordinator superseded or
+    /// retired doesn't count.
+    pub fn is_misreported_launch_report(&self, m: &InboxMessage) -> bool {
+        if !m.is_revoked_report() {
+            return false;
+        }
+        let (Some(run_id), Some(payload)) = (m.run_id.as_deref(), m.parsed_payload()) else {
+            return false;
+        };
+        let Some(task_id) = payload.task_id else {
+            return false;
+        };
+        self.tasks
+            .get(run_id)
+            .and_then(|ts| ts.iter().find(|t| t.id == task_id))
+            .is_some_and(|t| {
+                t.status == TaskStatus::Failed
+                    && !task_has_result(t)
+                    && (t.dispatch_id.is_none() || t.dispatch_id == payload.dispatch_id)
+            })
+    }
+}
+
 fn task_has_result(task: &Task) -> bool {
     task.result
         .as_deref()

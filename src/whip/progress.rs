@@ -10,11 +10,11 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
 use crate::fleet::FleetData;
-use crate::orca::{DispatchStatus, InboxMessage, MessageType, Task, TaskStatus, Worker};
+use crate::orca::{
+    DispatchStatus, InboxMessage, MessageType, REJECTION_KEY, Task, TaskStatus, Worker,
+};
 use crate::whip::rules::effective_coordinator;
 
-/// Payload key Orca adds to a message it rejected (e.g. a heartbeat after `worker_done`).
-const REJECTION_KEY: &str = "_orcaLifecycleRejection";
 /// Prefix of a coordinator's deliberate-idle `status` message.
 const HOLDING_PREFIX: &str = "holding:";
 /// Terminal output this soon after our own nudge to that terminal is taken to be the nudge's
@@ -399,7 +399,9 @@ impl<'a> Bus<'a> {
     fn new(data: &'a FleetData) -> Self {
         let mut by_task: HashMap<String, Vec<_>> = HashMap::new();
         let mut done_at: HashMap<String, i64> = HashMap::new();
-        for msg in data.inbox.iter().filter(|m| !is_rejected(m)) {
+        // A report Orca refused on a revoked dispatch still is the worker's report.
+        let accepted = |m: &&InboxMessage| !is_rejected(m) || data.is_misreported_launch_report(m);
+        for msg in data.inbox.iter().filter(accepted) {
             let Some(payload) = msg.parsed_payload() else {
                 continue;
             };
@@ -843,6 +845,26 @@ mod tests {
         rejected.payload =
             Some(json!({"taskId": "t1", "dispatchId": "ctx_1", REJECTION_KEY: "x"}).to_string());
         assert!(!reported(vec![rejected]));
+    }
+
+    #[test]
+    fn a_report_refused_after_a_misreported_start_counts() {
+        let reported = |status: &str, result: Option<&str>, dispatch: &str| {
+            let mut revoked = msg("m1", WORKER, "worker_done", T0 + MIN, json!({}));
+            revoked.payload = Some(
+                json!({"taskId": "t1", "dispatchId": dispatch,
+                       REJECTION_KEY: {"code": "dispatch_capability_invalid"}})
+                .to_string(),
+            );
+            let mut t = task("t1", status);
+            t.result = result.map(Into::into);
+            let data = fleet(vec![t], vec![revoked]);
+            only_task(&ProgressTracker::new().update(&data, T0 + 20 * MIN)).reported
+        };
+        assert!(reported("failed", None, "ctx_1"));
+        // Retired by its coordinator, or a superseded dispatch.
+        assert!(!reported("failed", Some("superseded by ctx_2"), "ctx_1"));
+        assert!(!reported("failed", None, "ctx_old"));
     }
 
     #[test]

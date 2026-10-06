@@ -671,7 +671,34 @@ impl InboxMessage {
     pub fn parsed_payload(&self) -> Option<MessagePayload> {
         serde_json::from_str(self.payload.as_deref()?).ok()
     }
+
+    /// A `worker_done` or `merge_ready` Orca refused only because it had revoked the dispatch's
+    /// capability, as it does after reporting the launch failed even when the agent took its
+    /// brief and worked. The worker did report: the body keeps the original text.
+    pub fn is_revoked_report(&self) -> bool {
+        let report = matches!(
+            self.message_type,
+            Some(MessageType::WorkerDone | MessageType::MergeReady)
+        );
+        report
+            && self
+                .payload
+                .as_deref()
+                .and_then(|p| serde_json::from_str::<Value>(p).ok())
+                .and_then(|v| {
+                    v.get(REJECTION_KEY)?
+                        .get("code")?
+                        .as_str()
+                        .map(|c| c == REVOKED_CODE)
+                })
+                .unwrap_or(false)
+    }
 }
+
+/// Payload key Orca adds to a message it rejected (e.g. a heartbeat after `worker_done`).
+pub const REJECTION_KEY: &str = "_orcaLifecycleRejection";
+/// Rejection code for a message sent on a dispatch whose capability Orca revoked.
+const REVOKED_CODE: &str = "dispatch_capability_invalid";
 
 /// `--from` of whip nudges. Orca's runtime takes any string as the sender; without `--from` or
 /// `ORCA_TERMINAL_HANDLE` the CLI would attribute the message to the focused terminal. See

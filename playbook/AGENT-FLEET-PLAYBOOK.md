@@ -111,8 +111,15 @@ sits unsubmitted at the `❯` prompt or behind the Bypass Permissions modal. `te
 - **Codex launches can fail while the agent starts anyway** (`agent_prompt_blocked` /
   `agent_prompt_stalled`). Orca marks the task failed and rejects the worker's heartbeats and
   reports. Myrstack shows such a worker as live and sends you `Fleet event: task … is marked
-  failed in Orca but … is still working`. Don't relaunch it: read its terminal for the result,
-  and when it finishes record that with a new task or in your report to Karl.
+  failed in Orca but … is still working`; `spawn_session` checks the screen and reports the
+  start as succeeded when the agent took its brief. Its `worker_done`/`merge_ready` reach you as
+  forwarded "Rejected …" messages: they are its real report. Don't relaunch it: read its
+  terminal for the result, and when it finishes record that with a new task or in your report
+  to Karl.
+- **`agent_prompt_stalled` with Homebrew or "Update available" text in the tail: retry once.**
+  Codex's update screen swallowed the brief. The retry starts on a current Codex. Startup
+  update checks are off (`check_for_update_on_startup = false` in `~/.codex/config.toml`); Karl
+  upgrades by hand (`brew upgrade --cask codex`) while no workers are starting.
 - Failed start: inspect `stage`, `effects`, `residualResources`; don't blind-retry.
 - `--repo id:<repoId>` comes from `orca repo list`; a worktree id is `<repoId>::<path>`.
 - Same-checkout work: `orca terminal create --worktree active --command "claude --model claude-opus-5-5"`.

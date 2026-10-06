@@ -260,6 +260,13 @@ impl WorkerStarted {
             .and_then(|e| e.id.as_deref())
     }
 
+    /// Failed while typing the brief into an agent that was up: Orca judged the prompt stalled
+    /// or blocked, which it often does while the agent takes the brief anyway.
+    pub fn input_unconfirmed(&self) -> bool {
+        let stage = self.failed_stage.as_deref().or(self.stage.as_deref());
+        !self.is_ready() && stage == Some("dispatch_input")
+    }
+
     /// Why the start failed, in the words of Orca's CLI.
     pub fn failure(&self) -> String {
         let state = self.state.as_deref().unwrap_or("failed");
