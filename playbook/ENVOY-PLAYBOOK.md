@@ -189,8 +189,8 @@ joined by ` | `.
 
 | Tool | Arguments | Does |
 | --- | --- | --- |
-| `envoy_inbox` | `since?`, `limit?` | Recent events, newest first. |
-| `envoy_event` | `id` | One event with its full thread context. |
+| `envoy_inbox` | `since?`, `limit?` | Recent events, newest first (20 unless `limit`). Not for polling: new events are typed to you. |
+| `envoy_event` | `id` | One event with its thread: the root and the latest 15 messages, each cut to 1,500 characters (`omitted` counts the rest). |
 | `envoy_draft` | `in_reply_to` (conversation, ts), `thread_ts?`, `text`, `rationale` | A reply, sent per Karl's approval policy for that destination. |
 | `envoy_drafts` | `status?` | Your drafts and what Karl did with them. |
 | `envoy_relay` | `to` (agent id or `coordinators`), `summary`, `slack_link`, `why` | Feedback or a question to an ant. At most 1 per target per 10 min and 6 per hour; duplicates are dropped. Replies to requests don't count. |

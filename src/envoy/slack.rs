@@ -1,6 +1,6 @@
 //! Bridge ingestion and Slack CLI I/O. Called only on the Envoy worker thread.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
@@ -13,6 +13,9 @@ use super::channel::{Channel, EventKind, InboundEvent, OutboundMessage, PollBatc
 use super::inbox::{Cursor, Inbox, timestamp_us};
 use super::settings::EnvoySettings;
 use serde_json::Value;
+
+/// `gh` lookups per poll, so a burst of refs can't stall ingestion.
+const MAX_PR_LOOKUPS: usize = 4;
 
 pub trait SlackSender: Send {
     fn send(&mut self, message: &OutboundMessage) -> Result<SendReceipt, String>;
@@ -31,6 +34,11 @@ pub trait SlackIo: SlackSender {
     fn subscriptions(&mut self, bridge: &Path) -> Result<String, String> {
         let _ = bridge;
         Err("Subscription listing unavailable".into())
+    }
+    /// The head branch of PR `repo#number`; `Ok(None)` when there is no such PR.
+    fn pr_head(&mut self, repo: &str, number: u64) -> Result<Option<String>, String> {
+        let _ = (repo, number);
+        Err("PR lookup unavailable".into())
     }
     fn api(&mut self, method: &str, params: &[(&str, String)]) -> Result<Value, String>;
     fn subscribe(&mut self, bridge_dir: &Path, conversation: &str) -> Result<(), String>;
@@ -107,6 +115,14 @@ fn run(name: &str, args: &[String], bridge: Option<&Path>) -> Result<String, Str
 }
 
 impl SlackIo for SlackCli {
+    fn pr_head(&mut self, repo: &str, number: u64) -> Result<Option<String>, String> {
+        use crate::review::github::{GhCli, GhError};
+        match GhCli::default().head_branch(super::settings::GITHUB_OWNER, repo, number) {
+            Ok(branch) => Ok(Some(branch)),
+            Err(GhError::Failed(_)) => Ok(None),
+            Err(GhError::Unavailable(e)) => Err(e),
+        }
+    }
     fn thread_subscription(
         &mut self,
         bridge: &Path,
@@ -533,6 +549,26 @@ impl<I: SlackIo> SlackChannel<I> {
         ))
     }
 
+    /// Caches the head branches of PRs new events name, a few per poll, so ants match by branch.
+    fn resolve_prs(&mut self, events: &[InboundEvent]) {
+        let refs: BTreeSet<String> = events
+            .iter()
+            .flat_map(|e| super::matching::refs(&e.text))
+            .filter(|r| !r.starts_with('#') && r.contains('#'))
+            .filter(|r| !self.inbox.pr_heads.contains_key(r))
+            .collect();
+        for r in refs.into_iter().take(MAX_PR_LOOKUPS) {
+            let (repo, number) = r.split_once('#').expect("repo#N");
+            let Ok(number) = number.parse() else { continue };
+            match self.io.pr_head(repo, number) {
+                Ok(head) => {
+                    self.inbox.pr_heads.insert(r, head.unwrap_or_default());
+                }
+                Err(_) => return,
+            }
+        }
+    }
+
     /// New pins, found by searching `has:pin`; the first poll only records what is pinned.
     fn pins(&mut self, batch: &mut PollBatch) -> Result<(), String> {
         let mut found = Vec::new();
@@ -724,6 +760,7 @@ impl<I: SlackIo> Channel for SlackChannel<I> {
         if let Err(error) = self.poll_threads(now_ms, &mut batch) {
             batch.notices.push(error);
         }
+        self.resolve_prs(&batch.events);
         for (channel, error) in self
             .errors
             .iter()

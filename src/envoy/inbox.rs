@@ -34,6 +34,8 @@ pub struct Inbox {
     pub pending_replies: Vec<super::slack::threads::MatchedReply>,
     /// Pinned messages already seen (`conversation:ts`); `None` until the first pin poll.
     pub pins_seen: Option<BTreeSet<String>>,
+    /// Head branches of PRs events named (`repo#N` → branch; empty when there is no such PR).
+    pub pr_heads: BTreeMap<String, String>,
 }
 
 pub fn timestamp_us(ts: &str) -> Option<i64> {

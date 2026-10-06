@@ -1,7 +1,7 @@
 //! Which of Karl's ants an inbound event concerns: thread ownership first, then shared refs
 //! (`VROOM-123`, `repo#45`, PR links, branch names), then distinctive label keywords.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::channel::InboundEvent;
 
@@ -33,16 +33,83 @@ const MAX_CANDIDATES: usize = 3;
 
 /// Words too common in this fleet's labels and Slack to identify an ant on their own.
 const COMMON: &[&str] = &[
-    "about", "after", "agent", "agents", "card", "cards", "check", "config", "data", "deploy",
-    "envoy", "finish", "first", "fix", "fixes", "from", "gylleus", "into", "issue", "issues",
-    "karl", "kickoff", "live", "main", "merge", "page", "plan", "prod", "product", "products",
-    "recs", "release", "rework", "review", "run", "save", "search", "staging", "task", "test",
-    "tests", "that", "the", "theme", "this", "update", "with", "work", "worker",
+    "about",
+    "after",
+    "agent",
+    "agents",
+    "card",
+    "cards",
+    "check",
+    "config",
+    "customer",
+    "data",
+    "deploy",
+    "envoy",
+    "finish",
+    "first",
+    "fix",
+    "fixes",
+    "from",
+    "gylleus",
+    "headless",
+    "index",
+    "ingestion",
+    "into",
+    "issue",
+    "issues",
+    "karl",
+    "kickoff",
+    "live",
+    "main",
+    "merchant",
+    "merge",
+    "page",
+    "plan",
+    "pr",
+    "prod",
+    "product",
+    "products",
+    "prs",
+    "read",
+    "recommendation",
+    "recommendations",
+    "recs",
+    "release",
+    "review",
+    "rework",
+    "run",
+    "save",
+    "search",
+    "shop",
+    "slack",
+    "staging",
+    "store",
+    "storefront",
+    "task",
+    "test",
+    "tests",
+    "that",
+    "the",
+    "theme",
+    "this",
+    "thread",
+    "ticket",
+    "update",
+    "with",
+    "work",
+    "worker",
+    "write",
 ];
 
 /// Ants `event` likely concerns, best first. `thread` holds the other inbox events in its
-/// thread, whose refs count too (a reply rarely repeats the PR number).
-pub fn candidates(event: &InboundEvent, thread: &[&InboundEvent], ants: &[Ant]) -> Vec<Candidate> {
+/// thread, whose refs count too (a reply rarely repeats the PR number). `heads` maps `repo#N`
+/// to the PR's head branch.
+pub fn candidates(
+    event: &InboundEvent,
+    thread: &[&InboundEvent],
+    ants: &[Ant],
+    heads: &BTreeMap<String, String>,
+) -> Vec<Candidate> {
     let root = format!(
         "{}:{}",
         event.conversation,
@@ -59,7 +126,7 @@ pub fn candidates(event: &InboundEvent, thread: &[&InboundEvent], ants: &[Ant]) 
     let mut out: Vec<Candidate> = ants
         .iter()
         .filter_map(|ant| {
-            let (score, why) = score(ant, &root, &refs, &words, &text)?;
+            let (score, why) = score(ant, &root, &refs, &words, &text, heads)?;
             Some(Candidate {
                 id: ant.id.clone(),
                 label: ant.label.clone(),
@@ -79,6 +146,7 @@ fn score(
     refs: &BTreeSet<String>,
     words: &BTreeSet<String>,
     text: &str,
+    heads: &BTreeMap<String, String>,
 ) -> Option<(u32, String)> {
     if ant.threads.iter().any(|t| t == root) {
         return Some((100, "its thread".into()));
@@ -97,6 +165,13 @@ fn score(
         .collect();
     if let Some(r) = refs.iter().find(|r| own.contains(*r)) {
         return Some((50, r.clone()));
+    }
+    if let Some(branch) = ant.branch.as_deref()
+        && let Some(r) = refs
+            .iter()
+            .find(|r| heads.get(*r).is_some_and(|h| h == branch))
+    {
+        return Some((50, format!("{r} is its branch")));
     }
     if let Some(r) = refs
         .iter()
@@ -178,8 +253,16 @@ fn words(lower: &str) -> BTreeSet<String> {
     lower
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| w.len() >= 3)
-        .map(str::to_owned)
+        .map(singular)
         .collect()
+}
+
+/// `replicas` → `replica`, so a plural and its singular are one word.
+fn singular(w: &str) -> String {
+    match w.strip_suffix('s') {
+        Some(stem) if stem.len() >= 4 && !stem.ends_with('s') => stem.into(),
+        _ => w.into(),
+    }
 }
 
 /// Distinctive words of a label or branch.

@@ -17,6 +17,10 @@ impl SlackSender for Fake {
     }
 }
 impl SlackIo for Fake {
+    fn pr_head(&mut self, repo: &str, number: u64) -> Result<Option<String>, String> {
+        self.methods.push(format!("pr_head {repo}#{number}"));
+        Ok((number != 404).then(|| format!("gylleus/{repo}-{number}")))
+    }
     fn api(&mut self, method: &str, params: &[(&str, String)]) -> Result<Value, String> {
         self.methods.push(method.into());
         let pins = params.iter().any(|(k, v)| *k == "query" && v == "has:pin");
@@ -438,4 +442,31 @@ fn only_pins_added_after_the_first_poll_become_events() {
         c.poll(NOW + 30).unwrap().events.is_empty(),
         "a pin is reported once"
     );
+}
+
+#[test]
+fn pr_refs_resolve_to_head_branches_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    let mut e = parse_search(
+        &serde_json::from_str(include_str!("../../../tests/fixtures/envoy/search.json")).unwrap(),
+        EventKind::Mention,
+        "U111",
+    )
+    .unwrap()
+    .remove(0);
+    e.text = "realtime#694 and realtime#404, also #12 and VROOM-1".into();
+    c.resolve_prs(std::slice::from_ref(&e));
+    assert_eq!(c.inbox.pr_heads["realtime#694"], "gylleus/realtime-694");
+    assert_eq!(
+        c.inbox.pr_heads["realtime#404"], "",
+        "a missing PR is cached too"
+    );
+    assert_eq!(
+        c.inbox.pr_heads.len(),
+        2,
+        "bare #N and tickets need no lookup"
+    );
+    c.resolve_prs(std::slice::from_ref(&e));
+    assert_eq!(c.io.methods.len(), 2, "cached refs are not looked up again");
 }

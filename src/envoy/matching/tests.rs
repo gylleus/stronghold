@@ -72,7 +72,7 @@ fn refs_cover_tickets_repo_numbers_and_pr_links() {
 #[test]
 fn thread_owner_wins_over_everything() {
     let e = event("100.000500", Some("100.000001"), "VROOM-1716 too");
-    let c = candidates(&e, &[], &fleet());
+    let c = candidates(&e, &[], &fleet(), &BTreeMap::new());
     assert_eq!(ids(&c), ["term:wheat", "term:redis"]);
     assert_eq!(c[0].why, "its thread");
 }
@@ -80,11 +80,14 @@ fn thread_owner_wins_over_everything() {
 #[test]
 fn pr_and_ticket_refs_match_including_from_the_thread() {
     let e = event("200.1", None, "realtime#649 is merged");
-    assert_eq!(ids(&candidates(&e, &[], &fleet())), ["term:redis"]);
+    assert_eq!(
+        ids(&candidates(&e, &[], &fleet(), &BTreeMap::new())),
+        ["term:redis"]
+    );
 
     let root = event("300.1", None, "Heads up on vroom-1716");
     let reply = event("300.2", Some("300.1"), "done, deploying now");
-    let c = candidates(&reply, &[&root], &fleet());
+    let c = candidates(&reply, &[&root], &fleet(), &BTreeMap::new());
     assert_eq!(ids(&c), ["term:redis"]);
     assert_eq!(c[0].why, "vroom-1716");
 }
@@ -92,21 +95,43 @@ fn pr_and_ticket_refs_match_including_from_the_thread() {
 #[test]
 fn keywords_need_two_distinctive_hits() {
     let e = event("400.1", None, "the wheat search preload is slow");
-    assert_eq!(ids(&candidates(&e, &[], &fleet())), ["term:wheat"]);
+    assert_eq!(
+        ids(&candidates(&e, &[], &fleet(), &BTreeMap::new())),
+        ["term:wheat"]
+    );
     let e = event("400.2", None, "can someone review this config?");
-    assert!(candidates(&e, &[], &fleet()).is_empty());
+    assert!(candidates(&e, &[], &fleet(), &BTreeMap::new()).is_empty());
     let e = event("400.3", None, "realtime redis is flapping");
     assert!(
-        candidates(&e, &[], &fleet()).is_empty(),
+        candidates(&e, &[], &fleet(), &BTreeMap::new()).is_empty(),
         "the repo name adds nothing"
     );
     let e = event("400.4", None, "redis replicas are lagging");
-    assert_eq!(ids(&candidates(&e, &[], &fleet())), ["term:redis"]);
+    assert_eq!(
+        ids(&candidates(&e, &[], &fleet(), &BTreeMap::new())),
+        ["term:redis"]
+    );
     let e = event("400.5", None, "search is slow on the first page");
     assert!(
-        candidates(&e, &[], &fleet()).is_empty(),
+        candidates(&e, &[], &fleet(), &BTreeMap::new()).is_empty(),
         "generic words don't count"
     );
+}
+
+#[test]
+fn a_pr_ref_matches_the_ant_on_its_head_branch() {
+    let heads = BTreeMap::from([(
+        "depict#8765".to_owned(),
+        "gylleus/wheat-search-preload".to_owned(),
+    )]);
+    let e = event(
+        "500.1",
+        None,
+        "depict#8765 is NOT APPROVED yet, one blocker",
+    );
+    let c = candidates(&e, &[], &fleet(), &heads);
+    assert_eq!(ids(&c), ["term:wheat"]);
+    assert_eq!(c[0].why, "depict#8765 is its branch");
 }
 
 #[test]
@@ -114,7 +139,7 @@ fn annotation_lists_candidates_or_says_none() {
     assert_eq!(annotation(&[]), " — no ant match");
     let e = event("200.1", None, "realtime#649");
     assert_eq!(
-        annotation(&candidates(&e, &[], &fleet())),
+        annotation(&candidates(&e, &[], &fleet(), &BTreeMap::new())),
         " — ants: Fable Redis review (term:redis, realtime#649)"
     );
 }

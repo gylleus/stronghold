@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub const AGENT_COMMS: &str = "C0BHZLG3X63";
 /// Karl's Slack member id; mentions of it are pings to Karl.
 pub const KARL_USER_ID: &str = "U0AMMLGSFL0";
+/// Owner of the repos Slack names as `repo#N`.
+pub const GITHUB_OWNER: &str = "depict-org";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

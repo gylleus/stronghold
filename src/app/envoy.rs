@@ -352,7 +352,7 @@ impl AppEnvoy {
                     crate::envoy::slack::validate_ts(ts)?;
                 }
                 let limit = match args.get("limit") {
-                    None => 100,
+                    None => 20,
                     Some(v) => v
                         .as_u64()
                         .filter(|n| (1..=2000).contains(n))
@@ -699,7 +699,13 @@ impl AppEnvoy {
                     })
                     .collect();
                 let thread = &thread[thread.len().saturating_sub(20)..];
-                e.summary() + &matching::annotation(&matching::candidates(e, thread, ants))
+                e.summary()
+                    + &matching::annotation(&matching::candidates(
+                        e,
+                        thread,
+                        ants,
+                        &self.inbox.pr_heads,
+                    ))
             })
             .collect();
         if !old.is_empty() {
@@ -1198,13 +1204,16 @@ impl MyrstackApp {
                 let mut context = Vec::new();
                 if let Some(run) = n.run_id.as_deref() {
                     context.extend(snapshot.run(run).and_then(|r| r.objective.clone()));
-                    let task = self.data.as_ref().and_then(|d| {
-                        d.tasks
-                            .get(run)?
-                            .iter()
-                            .find(|t| Some(&t.id) == n.task_id.as_ref())
-                    });
-                    context.extend(task.and_then(|t| t.task_title.clone()));
+                    // A coordinator answers for every task in its run, a worker for its own.
+                    let lead = matches!(n.kind, NodeKind::Coordinator | NodeKind::Attendant);
+                    let tasks = self.data.as_ref().and_then(|d| d.tasks.get(run));
+                    context.extend(
+                        tasks
+                            .into_iter()
+                            .flatten()
+                            .filter(|t| lead || Some(&t.id) == n.task_id.as_ref())
+                            .filter_map(|t| t.task_title.clone()),
+                    );
                 }
                 let mut prs = Vec::new();
                 for entry in self.review.entries().filter(|e| mine(&e.origin)) {

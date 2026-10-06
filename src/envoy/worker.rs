@@ -166,8 +166,14 @@ impl Worker {
                         let cached = slack.inbox.thread(&event);
                         let result = slack.thread(&event);
                         reply.send(Ok(match result {
-                            Ok(thread) => json!({"event": event, "thread": thread, "complete": true}),
-                            Err(error) => json!({"event": event, "thread": cached, "complete": false, "error": error}),
+                            Ok(thread) => {
+                                let (thread, omitted) = trim_thread(thread);
+                                json!({"event": event, "thread": thread, "omitted": omitted, "complete": true})
+                            }
+                            Err(error) => {
+                                let (thread, omitted) = trim_thread(cached);
+                                json!({"event": event, "thread": thread, "omitted": omitted, "complete": false, "error": error})
+                            }
                         }));
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
@@ -233,5 +239,52 @@ impl Worker {
     }
     pub fn updates(&self) -> Vec<Update> {
         self.rx.try_iter().collect()
+    }
+}
+
+/// Thread messages `envoy_event` returns: the root and the latest ones.
+const THREAD_KEEP: usize = 15;
+/// Characters kept of each thread message.
+const THREAD_TEXT: usize = 1_500;
+
+/// The root and the last [`THREAD_KEEP`] messages, each cut to [`THREAD_TEXT`] characters, and
+/// how many were left out: agent threads run to hundreds of long messages.
+pub fn trim_thread(mut thread: Vec<InboundEvent>) -> (Vec<InboundEvent>, usize) {
+    let omitted = thread.len().saturating_sub(THREAD_KEEP + 1);
+    if omitted > 0 {
+        thread.drain(1..=omitted);
+    }
+    for e in &mut thread {
+        if e.text.chars().count() > THREAD_TEXT {
+            e.text = e.text.chars().take(THREAD_TEXT).collect::<String>() + "…";
+        }
+    }
+    (thread, omitted)
+}
+
+#[cfg(test)]
+mod trim_tests {
+    use super::*;
+
+    #[test]
+    fn long_threads_keep_the_root_and_the_latest_messages_cut_short() {
+        let thread: Vec<InboundEvent> = (0..40)
+            .map(|i| {
+                let mut e: InboundEvent = serde_json::from_value(json!({
+                    "channel_kind":"slack","conversation":"C1","ts":format!("{i}.000001"),
+                    "thread_ts":"0.000001","user":"U1","user_name":"a","text":"x".repeat(i * 100),
+                    "kind":"thread_reply","permalink":null
+                }))
+                .unwrap();
+                e.ts = format!("{i}.000001");
+                e
+            })
+            .collect();
+        let (kept, omitted) = trim_thread(thread);
+        assert_eq!(omitted, 24);
+        assert_eq!(kept.len(), 16);
+        assert_eq!(kept[0].ts, "0.000001");
+        assert_eq!(kept[1].ts, "25.000001");
+        assert_eq!(kept[15].text.chars().count(), THREAD_TEXT + 1);
     }
 }
