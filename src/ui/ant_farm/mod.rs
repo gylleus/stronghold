@@ -283,7 +283,16 @@ impl AntFarmView {
         let palette = Palette::new(daylight);
         let selection = graph.selection();
 
-        paint_ground(&painter, sprites, &scene, palette, now_s, daylight);
+        let pipe_stretch = mail::pipe_stretch(self.mail.tick(now_s), now_s);
+        paint_ground(
+            &painter,
+            sprites,
+            &scene,
+            palette,
+            now_s,
+            daylight,
+            pipe_stretch,
+        );
         comms::paint(
             &painter,
             sprites,
@@ -616,6 +625,7 @@ fn paint_ground(
     palette: Palette,
     now_s: f64,
     daylight: f32,
+    pipe_stretch: f32,
 ) {
     let px = scene.px;
     let a = scene.cell();
@@ -710,13 +720,13 @@ fn paint_ground(
             );
         }
     }
-    sprites.sign(
+    sprites.pipe(
         painter,
-        scene.karl_sign(),
+        scene.karl_pipe(),
         px,
+        pipe_stretch,
         "Karl",
         FontId::monospace(10.0 + 2.0 * px),
-        palette,
     );
     label(
         painter,

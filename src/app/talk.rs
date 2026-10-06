@@ -471,6 +471,7 @@ impl MyrstackApp {
             TalkEvent::Sent(text) => {
                 log::info!("talk: sent a voice message ({} chars)", text.len());
                 self.talk.sent_at = Some(Instant::now());
+                self.traffic.push(super::chat::karl_to_queen());
                 // Her panel shows the conversation when Karl looks; no focus is taken.
                 if self.selected.as_ref() != Some(&crate::model::NodeId::queen()) {
                     self.select_queen();

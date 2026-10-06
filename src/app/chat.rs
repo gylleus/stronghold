@@ -6,7 +6,13 @@ use super::{MyrstackApp, repaint_once};
 use crate::chat::settings::{QueenSettings, resolve_model_from_env};
 use crate::chat::{ChatConfig, ChatSession, STATUS_REPORT_PROMPT};
 use crate::model::{FleetSnapshot, NodeId};
+use crate::traffic::{AgentMessage, MessageKind, Traffic};
 use crate::ui::chat::{ChatAction, ChatPanelState, ChatView, chat_ui};
+
+/// Karl writing (or speaking) to the Queen in her chat.
+pub(super) fn karl_to_queen() -> AgentMessage {
+    AgentMessage::new("karl", "queen", MessageKind::Instruction)
+}
 
 pub(super) struct AppChat {
     session: ChatSession,
@@ -22,11 +28,13 @@ impl AppChat {
         }
     }
 
-    /// Draws the chat and runs what the user did; returns a node whose link was clicked.
+    /// Draws the chat and runs what the user did; returns a node whose link was clicked. What
+    /// Karl sends flies to the Queen on `traffic`.
     pub(super) fn ui(
         &mut self,
         ui: &mut egui::Ui,
         snapshot: Option<&FleetSnapshot>,
+        traffic: &Traffic,
     ) -> Option<NodeId> {
         let is_node = |id: &NodeId| snapshot.is_some_and(|s| s.node(id).is_some());
         let view = ChatView {
@@ -39,7 +47,9 @@ impl AppChat {
         for action in chat_ui(ui, &mut self.panel, view) {
             match action {
                 ChatAction::Send(text) => {
-                    self.session.send(&text);
+                    if self.session.send(&text) {
+                        traffic.push(karl_to_queen());
+                    }
                 }
                 ChatAction::Interrupt => self.session.interrupt(),
                 ChatAction::Decide {

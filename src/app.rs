@@ -403,7 +403,7 @@ impl MyrstackApp {
         if self.graph.selection().len() > 1 {
             self.selection_contents(ui);
         } else if self.shows_chat() {
-            if let Some(id) = self.chat.ui(ui, self.snapshot.as_ref()) {
+            if let Some(id) = self.chat.ui(ui, self.snapshot.as_ref(), &self.traffic) {
                 self.select_and_focus(id);
             }
         } else if let Some((node, info)) = self.selected_subagent() {
