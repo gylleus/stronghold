@@ -32,6 +32,8 @@ pub struct NodePayload {
     pub faded: bool,
     /// When the worker was released; drives the fade-out (see [`fade_alpha`]).
     pub released_at_ms: Option<i64>,
+    /// Parked ([`crate::park`]): drawn dimmed and asleep, in the sleeping room.
+    pub parked: bool,
     /// Badge letter of the agent running in the node's terminal (see [`agent_marker`]).
     pub agent_marker: Option<char>,
     /// An attendant whose run has no live coordinator: drawn with a dashed warning ring.
@@ -57,6 +59,8 @@ const LABEL_MAX_PX: f32 = 16.0;
 pub const FADE_START_ALPHA: f32 = 0.6;
 /// Opacity of a released worker [`RELEASED_FADE_MS`] after release.
 pub const FADE_END_ALPHA: f32 = 0.1;
+/// Opacity of a parked node: asleep, out of the live fleet.
+pub const PARKED_ALPHA: f32 = 0.5;
 /// Screen scale of a hovered node.
 const HOVER_SCALE: f32 = 1.15;
 /// Pulse period of nodes waiting for input.
@@ -457,6 +461,7 @@ pub struct FleetNodeShape {
     kind: NodeKind,
     state: NodeState,
     released_at_ms: Option<i64>,
+    parked: bool,
     agent_marker: Option<char>,
     coordinator_gone: bool,
     pr_ready: bool,
@@ -476,6 +481,7 @@ impl From<NodeProps<NodePayload>> for FleetNodeShape {
             kind: props.payload.kind,
             state: props.payload.state,
             released_at_ms: None,
+            parked: false,
             agent_marker: None,
             coordinator_gone: false,
             pr_ready: false,
@@ -503,6 +509,7 @@ impl FleetNodeShape {
         self.kind = props.payload.kind;
         self.state = props.payload.state;
         self.released_at_ms = props.payload.released_at_ms;
+        self.parked = props.payload.parked;
         self.agent_marker = props.payload.agent_marker;
         self.coordinator_gone = props.payload.coordinator_gone;
         self.pr_ready = props.payload.pr_ready;
@@ -670,6 +677,25 @@ impl FleetNodeShape {
     }
 }
 
+/// "z Z" rising from a parked node's top left, the sleeping room's mark.
+fn snores(ctx: &DrawContext, center: Pos2, radius: f32, color: Color32) -> Vec<Shape> {
+    [(0.55, 0.9, "z"), (0.85, 1.25, "Z")]
+        .into_iter()
+        .map(|(size, rise, text)| {
+            let px = (radius * size).clamp(6.0, 16.0);
+            let galley = ctx.ctx.fonts_mut(|f| {
+                f.layout_no_wrap(
+                    text.to_owned(),
+                    FontId::new(px, FontFamily::Proportional),
+                    color,
+                )
+            });
+            let pos = center + Vec2::new(-radius * rise, -radius * rise) - galley.size() / 2.0;
+            TextShape::new(pos, galley, color).into()
+        })
+        .collect()
+}
+
 /// GitHub's pull request purple, for the "PR" badge.
 pub fn pr_color(dark: bool) -> Color32 {
     if dark {
@@ -763,6 +789,11 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
         let center = ctx.meta.canvas_to_screen_pos(self.pos);
         let radius = ctx.meta.canvas_to_screen_size(self.radius());
         let alpha = fade_alpha(self.released_at_ms, super::now_ms());
+        let alpha = if self.parked {
+            alpha.min(PARKED_ALPHA)
+        } else {
+            alpha
+        };
         let fill = if self.kind == NodeKind::Envoy {
             envoy_color(visuals.dark_mode)
         } else {
@@ -784,7 +815,7 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
         };
 
         let mut shapes = Vec::with_capacity(8);
-        if self.released_at_ms.is_none() {
+        if self.released_at_ms.is_none() && !self.parked {
             shapes.extend(self.pulse_ring(waiting_s, center, outer, fill));
         }
         match self.kind {
@@ -857,13 +888,21 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
             } else {
                 state_color(self.state, visuals.dark_mode)
             };
+            let glyph = if self.parked {
+                StateGlyph(icons::MOON)
+            } else {
+                state_glyph(self.state)
+            };
             shapes.push(glyph_shape(
                 ctx.ctx,
-                state_glyph(self.state),
+                glyph,
                 center,
                 radius,
                 glyph_color(opaque).gamma_multiply(alpha),
             ));
+            if self.parked {
+                shapes.extend(snores(ctx, center, outer, visuals.text_color()));
+            }
             shapes.extend(self.agent_badge(ctx, center, radius, alpha));
             if self.pr_ready {
                 shapes.extend(pr_badge(ctx, center, radius, alpha));

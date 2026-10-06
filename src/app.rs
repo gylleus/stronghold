@@ -15,6 +15,7 @@ mod lifecycle;
 mod notifications;
 mod palette;
 mod panes;
+mod park;
 mod playbook;
 mod review;
 mod settings;
@@ -122,6 +123,8 @@ pub struct MyrstackApp {
     asks: crate::ask::Asks,
     /// Sessions that ended themselves with `finish_session`, shown done while they fade.
     finished: crate::finish::FinishLog,
+    /// Agents Karl parked in the sleeping room ([`crate::park`]).
+    parking: crate::park::Parking,
     /// Self-finished terminals waiting to be closed, once the agent got its reply.
     finish_closes: Vec<lifecycle::PendingClose>,
     /// Asks or finished sessions changed: rebuild the snapshot.
@@ -240,6 +243,7 @@ impl MyrstackApp {
                 crate::finish::FinishLog::default_path(),
                 now_ms() - crate::model::RELEASED_FADE_MS,
             ),
+            parking: crate::park::Parking::load(crate::park::Parking::default_path()),
             finish_closes: Vec::new(),
             overlays_changed: true,
             traffic: Default::default(),
@@ -316,6 +320,7 @@ impl MyrstackApp {
         self.whip.send_input(WhipInput {
             data: data.clone(),
             needs_input,
+            parked: self.parking.handles(),
         });
     }
 
@@ -492,6 +497,8 @@ impl MyrstackApp {
             if let (crate::actions::Action::Send { handle, .. }, ui::terminal::InputKind::Text) =
                 (&request.action, request.kind)
             {
+                // Typing to a parked agent wakes it.
+                self.wake_for_message(&id.0);
                 self.traffic.push(crate::traffic::AgentMessage::new(
                     "karl",
                     handle.clone(),
@@ -1175,6 +1182,14 @@ impl eframe::App for MyrstackApp {
             snapshot.mark_waiting(&self.asks.waiting(data, self.claude_data.as_ref()));
             self.finished.prune(now, crate::model::RELEASED_FADE_MS);
             snapshot.add_finished(self.finished.recent(now, crate::model::RELEASED_FADE_MS));
+            for gone in self.parking.prune_gone(data) {
+                log::info!(
+                    "parked {} ({}) is gone: its terminal closed",
+                    gone.label,
+                    gone.handle
+                );
+            }
+            snapshot.mark_parked(self.parking.entries());
             snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_status());
             self.graph.set_hidden(&self.filter.hidden(&snapshot));
             self.graph.sync(&snapshot);

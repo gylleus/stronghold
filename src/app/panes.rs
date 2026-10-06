@@ -231,6 +231,7 @@ impl MyrstackApp {
                     if !response.whip_requested.is_empty() {
                         self.request_whip(response.whip_requested);
                     }
+                    self.park_from_menu(response.park_requested, response.wake_requested);
                 }
                 View::Table => ui::table::terminal_table(ui, data, now_ms),
                 View::AntFarm => {
@@ -276,6 +277,7 @@ impl MyrstackApp {
                     if !response.whip_requested.is_empty() {
                         self.request_whip(response.whip_requested);
                     }
+                    self.park_from_menu(response.park_requested, response.wake_requested);
                 }
             },
         });

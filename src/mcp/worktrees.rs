@@ -21,8 +21,8 @@ pub fn definitions() -> Vec<Value> {
         "name": TOOL,
         "title": "Clean up Orca worktrees",
         "description": "Evaluates every linked Orca worktree and plans which to remove. A worktree \
-            is removable only if no Orca terminal, process (by working directory) or active \
-            dispatch is in it, it has no uncommitted changes, no untracked files other than \
+            is removable only if no Orca terminal, process (by working directory), active \
+            dispatch or parked agent is in it, it has no uncommitted changes, no untracked files other than \
             agent notes (*.md) and logs (*.log), and no open PR, and its work is in the base \
             branch or on GitHub: HEAD merged, every commit patch-equivalent in the base (rebase \
             merge), its changes already in the base's tree (squash merge), HEAD inside a merged \

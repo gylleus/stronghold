@@ -41,11 +41,13 @@ An ant is one dedicated agent session working on one task (what spawn_session st
 is Karl's colony of ants.
 
 States: working, idle, needs_input (waiting on Karl at a permission, choice or question \
-prompt), stalled (the whip escalated it), done, failed.
+prompt), stalled (the whip escalated it), done, failed. Karl can park an agent he wants to keep \
+for later (park_agents): it sleeps in the sleeping room, out of the live fleet, the whip and the \
+counts, its session and worktree kept; send_to_agent or park_agents wake=true wakes it.
 
 Start with fleet_status. Agent ids (term:…, dispatch:…, sub:…) come from list_agents or \
 fleet_status; a terminal handle or an exact label also works. send_to_agent, press_key, \
-close_agents, broadcast_to_coordinators, set_whip and spawn_session act on real agents, so confirm \
+close_agents, park_agents, broadcast_to_coordinators, set_whip and spawn_session act on real agents, so confirm \
 with Karl first (the Queen in auto mode needn't: Karl approved her actions up front; nor does a \
 coordinator starting workers on its own run with spawn_session). close_agents \
 only shows the plan unless dry_run=false is passed. spawn_session \

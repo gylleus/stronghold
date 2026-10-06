@@ -274,7 +274,9 @@ impl NeedsInputDetector {
         let waiting: HashSet<NodeId> = snapshot
             .nodes
             .iter()
-            .filter(|n| n.state == NodeState::NeedsInput && n.kind != NodeKind::Queen)
+            .filter(|n| {
+                n.state == NodeState::NeedsInput && n.kind != NodeKind::Queen && !n.is_parked()
+            })
             .map(|n| n.id.clone())
             .collect();
         let requests = match &self.previous {

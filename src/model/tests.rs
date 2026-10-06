@@ -945,6 +945,53 @@ fn a_finished_session_shows_done_then_fades_once_closed() {
     assert!(snap.edges.iter().any(|e| e.to.0 == "term:term_closed"));
 }
 
+fn parked(node_id: &NodeId, at_ms: i64) -> crate::park::ParkedAgent {
+    crate::park::ParkedAgent {
+        node_id: node_id.to_string(),
+        handle: node_id.as_str().trim_start_matches("term:").into(),
+        label: "parked".into(),
+        worktree_path: None,
+        branch: None,
+        at_ms,
+    }
+}
+
+#[test]
+fn a_parked_agent_leaves_the_queens_spokes_and_state() {
+    let mut snap = FleetSnapshot::build(&scenario(), NOW);
+    let loose = term(LOOSE);
+    snap.mark_waiting(&[(LOOSE.to_string(), "Ship it?".to_string())].into());
+    assert_eq!(snap.node(&loose).unwrap().state, NodeState::NeedsInput);
+    let spoke = |s: &FleetSnapshot| {
+        s.edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::Queen && e.to == loose)
+    };
+    assert!(spoke(&snap));
+
+    let mut sleepers: Vec<_> = snap
+        .agent_nodes()
+        .filter(|n| n.state == NodeState::NeedsInput && n.id != loose)
+        .map(|n| parked(&n.id, NOW))
+        .collect();
+    sleepers.extend([parked(&loose, NOW - MINUTE), parked(&term("gone"), NOW)]);
+    snap.mark_parked(&sleepers);
+    let node = snap.node(&loose).unwrap();
+    assert_eq!(node.parked_at_ms, Some(NOW - MINUTE));
+    assert_eq!(node.state, NodeState::NeedsInput, "parking keeps the state");
+    assert!(!spoke(&snap));
+    assert_ne!(snap.queen().unwrap().state, NodeState::NeedsInput);
+    assert!(
+        snap.queen()
+            .unwrap()
+            .preview
+            .as_deref()
+            .unwrap()
+            .ends_with(&format!("· {} parked", sleepers.len() - 1))
+    );
+    assert_eq!(snap.parked_nodes().count(), sleepers.len() - 1);
+}
+
 #[test]
 fn envoy_overlay_uses_handle_not_title_and_keeps_queen_edge() {
     let data = scenario();

@@ -244,6 +244,7 @@ fn agents(view: &StatusView, params: &Value, now: i64) -> Result<Value, ControlE
     let repo = p.str("repo")?;
     let needs_input = p.bool("needs_input")?;
     let live = p.bool("live")?;
+    let parked = p.bool("parked")?;
     let text = p.str("text")?.map(str::to_lowercase);
     let matches = |a: &&AgentView| {
         states
@@ -254,6 +255,7 @@ fn agents(view: &StatusView, params: &Value, now: i64) -> Result<Value, ControlE
             && repo.is_none_or(|r| a.repo == r)
             && needs_input.is_none_or(|n| a.needs_input.is_some() == n)
             && live.is_none_or(|l| a.live == l)
+            && parked.is_none_or(|v| a.parked == v)
             && text.as_deref().is_none_or(|t| {
                 [
                     Some(a.label.as_str()),

@@ -45,12 +45,13 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 
 | Tool | Arguments | Control method | Hints |
 |---|---|---|---|
-| `fleet_status` | – | `status`, `agents` ×3, `quotas` | read-only |
-| `list_agents` | `state`, `kind` (string or list), `run`, `repo`, `needs_input`, `live`, `text`, `limit` (default 50, max 500) | `agents` | read-only |
+| `fleet_status` | – | `status`, `agents` ×4, `quotas` | read-only |
+| `list_agents` | `state`, `kind` (string or list), `run`, `repo`, `needs_input`, `live`, `parked`, `text`, `limit` (default 50, max 500) | `agents` | read-only |
 | `get_agent` | `id`, `lines` (default 40) | `agent` | read-only |
 | `send_to_agent` | `id`, `text`, `submit` (default true) | `send` | destructive |
 | `press_key` | `id`, `key`: `enter` \| `esc` \| `interrupt` | `enter` / `esc` / `interrupt` | destructive |
 | `close_agents` | `ids`, `whole_tab` (default false), `dry_run` (**default true**) | `close` | destructive |
+| `park_agents` | `ids`, `wake` (default false) | `park` | destructive |
 | `broadcast_to_coordinators` | `text`, plus `runs` or `all: true` | `broadcast` | destructive |
 | `whip_status` | `limit` (log entries, default 10) | `whip` | read-only |
 | `set_whip` | `enabled`, `dry_run`, `notify` (at least one) | `whip_settings` | destructive, idempotent |
@@ -148,6 +149,21 @@ that Orca doesn't list are reported, never touched.
 All tools set `openWorldHint: false`. Agent ids are node ids from `list_agents` or
 `fleet_status` (`term:…`, `dispatch:…`, `sub:…`). A terminal handle or an exact label also
 works.
+
+### Parked agents
+
+Karl parks an agent he is done with for now but wants to keep (`park_agents`, or Park in a
+node's or ant's context menu). A parked agent sleeps in the sleeping room: its own region in
+the graph and its own chamber in the ant farm. Its terminal, session and worktree are kept. It
+is out of the Queen's state, `by_state`, `needs_input` and `stalled` (`fleet.parked` lists
+it), the whip never nudges, escalates or notifies about it, "Close shown…" skips it and the
+worktree cleanup keeps its worktree. `close_agents` closes it only when it is named, with a
+warning in the plan. `send_to_agent` wakes it before typing (`woke: true` in the result);
+`park_agents` with `wake: true`, Wake in the context menu, or typing to it in its panel do
+too. The parked set is saved in `<data dir>/parked.json` (by `term:<handle>`), so it survives
+restarts; an agent whose terminal closes is dropped from it. Parking is separate from
+`released` (Orca released the worker's terminal; the node fades out) and from `done` (what
+the agent's output says): a parked agent keeps whatever state Orca reports.
 
 ### Safety
 

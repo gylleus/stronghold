@@ -134,6 +134,9 @@ pub struct AntFarmResponse {
     /// Nodes to close or whip, picked in an ant's context menu.
     pub close_requested: Vec<NodeId>,
     pub whip_requested: Vec<NodeId>,
+    /// Nodes to park or wake, picked in an ant's context menu.
+    pub park_requested: Vec<NodeId>,
+    pub wake_requested: Vec<NodeId>,
 }
 
 /// An ant's place and its walk there, if it is still walking.
@@ -349,6 +352,8 @@ impl AntFarmView {
             hovered,
             close_requested: menu.close,
             whip_requested: menu.whip,
+            park_requested: menu.park,
+            wake_requested: menu.wake,
             boxed,
         }
     }

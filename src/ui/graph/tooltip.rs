@@ -93,7 +93,23 @@ pub fn node_tooltip(
         TextStyle::Body,
         None,
     ));
-    if let Some(repo) = repo {
+    if let Some(at) = node.parked_at_ms {
+        ui.label(format!(
+            "Parked {}: asleep, session and worktree kept",
+            format_ago(now_ms, at)
+        ));
+        ui.label(RichText::new("Right-click → Wake, or send it a message, to continue").weak());
+    }
+    // A parked node's region is the sleeping room; name its own repo.
+    let own_repo = node
+        .is_parked()
+        .then(|| {
+            node.worktree_path
+                .as_deref()
+                .and_then(crate::model::repo_of)
+        })
+        .flatten();
+    if let Some(repo) = own_repo.as_deref().or(repo) {
         ui.label(format!("Repo: {repo}"));
     }
     if let Some(run_id) = &node.run_id {

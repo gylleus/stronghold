@@ -92,15 +92,25 @@ pub struct GraphResponse {
     /// Nodes to whip now: "Whip" (one node) or "Whip N selected" was picked in a node's
     /// context menu. Empty if neither was.
     pub whip_requested: Vec<NodeId>,
+    /// Nodes to park in the sleeping room, picked in a node's context menu.
+    pub park_requested: Vec<NodeId>,
+    /// Parked nodes to wake, picked in a node's context menu.
+    pub wake_requested: Vec<NodeId>,
 }
 
 type EdgeKey = (NodeId, NodeId, EdgeKind);
+
+const PARK_HINT: &str = "Put this agent to sleep in the sleeping room: out of the live fleet \
+     and the whip, its terminal, session and worktree kept to continue later";
+const WAKE_HINT: &str = "Bring it back to the live fleet (sending it a message wakes it too)";
 
 /// What a node's context menu asked for this frame.
 #[derive(Debug, Default)]
 pub struct MenuPick {
     pub close: Vec<NodeId>,
     pub whip: Vec<NodeId>,
+    pub park: Vec<NodeId>,
+    pub wake: Vec<NodeId>,
 }
 
 /// Interactive force-directed view of a [`FleetSnapshot`].
@@ -295,7 +305,10 @@ impl GraphView {
             self.index.contains_key(from) && self.index.contains_key(to)
         });
 
-        let repos = RepoIndex::new(snapshot).by_node;
+        let mut repos = RepoIndex::new(snapshot).by_node;
+        for node in snapshot.parked_nodes() {
+            repos.insert(node.id.clone(), crate::park::SLEEPING_ROOM.to_owned());
+        }
         if repos != self.repos {
             self.repos = repos;
             topology_changed = true;
@@ -353,10 +366,16 @@ impl GraphView {
             topology_changed = true;
         }
 
+        // A parked node sleeps apart: only its subagents stay linked to it.
+        let parked: HashSet<&NodeId> = snapshot.parked_nodes().map(|n| &n.id).collect();
         let wanted_edges: HashSet<EdgeKey> = snapshot
             .edges
             .iter()
             .filter(|e| self.index.contains_key(&e.from) && self.index.contains_key(&e.to))
+            .filter(|e| {
+                e.kind == EdgeKind::Subagent
+                    || !(parked.contains(&e.from) || parked.contains(&e.to))
+            })
             .map(|e| (e.from.clone(), e.to.clone(), e.kind))
             .collect();
         let stale: Vec<EdgeKey> = self
@@ -664,6 +683,8 @@ impl GraphView {
             clicked,
             close_requested: menu.close,
             whip_requested: menu.whip,
+            park_requested: menu.park,
+            wake_requested: menu.wake,
         }
     }
 
@@ -715,11 +736,45 @@ impl GraphView {
         let selection = self.selection();
         let mut picked = Vec::new();
         let mut whip = Vec::new();
+        let mut park = Vec::new();
+        let mut wake = Vec::new();
         if selection.len() > 1 && selection.contains(&node.id) {
             response.context_menu(|ui| {
                 let title = format!("{} selected", selection.len());
                 ui.label(egui::RichText::new(title).strong());
                 ui.separator();
+                let nodes: Vec<&Node> = selection
+                    .iter()
+                    .filter_map(|id| self.nodes.get(id))
+                    .collect();
+                let parkable: Vec<NodeId> = nodes
+                    .iter()
+                    .filter(|n| !n.is_parked() && crate::park::refusal(n).is_none())
+                    .map(|n| n.id.clone())
+                    .collect();
+                let parked: Vec<NodeId> = nodes
+                    .iter()
+                    .filter(|n| n.is_parked())
+                    .map(|n| n.id.clone())
+                    .collect();
+                if !parkable.is_empty()
+                    && ui
+                        .button(format!("Park {} in the sleeping room", parkable.len()))
+                        .on_hover_text(PARK_HINT)
+                        .clicked()
+                {
+                    park = parkable;
+                    ui.close();
+                }
+                if !parked.is_empty()
+                    && ui
+                        .button(format!("Wake {} parked", parked.len()))
+                        .on_hover_text(WAKE_HINT)
+                        .clicked()
+                {
+                    wake = parked;
+                    ui.close();
+                }
                 if ui
                     .button(format!("Whip {} selected", selection.len()))
                     .on_hover_text(
@@ -745,6 +800,8 @@ impl GraphView {
             return MenuPick {
                 close: picked,
                 whip,
+                park,
+                wake,
             };
         }
         response.context_menu(|ui| {
@@ -777,6 +834,23 @@ impl GraphView {
                 whip = vec![node.id.clone()];
                 ui.close();
             }
+            if node.is_parked() {
+                if ui.button("Wake").on_hover_text(WAKE_HINT).clicked() {
+                    wake = vec![node.id.clone()];
+                    ui.close();
+                }
+            } else {
+                let refusal = crate::park::refusal(node);
+                if ui
+                    .add_enabled(refusal.is_none(), egui::Button::new("Park"))
+                    .on_hover_text(PARK_HINT)
+                    .on_disabled_hover_text(refusal.unwrap_or_default())
+                    .clicked()
+                {
+                    park = vec![node.id.clone()];
+                    ui.close();
+                }
+            }
             let close = ui
                 .add_enabled(refusal.is_none(), egui::Button::new("Close session…"))
                 .on_hover_text("Kill this session in Orca (asks first)")
@@ -789,6 +863,8 @@ impl GraphView {
         MenuPick {
             close: picked,
             whip,
+            park,
+            wake,
         }
     }
 
@@ -969,10 +1045,16 @@ impl GraphView {
             .iter()
             .filter_map(|(id, idx)| {
                 let node = self.nodes.get(id)?;
+                // A parked node leaves its run's cluster for the sleeping room's group.
+                let parked = node.is_parked();
                 Some(ClusterNode {
                     index: idx.index(),
-                    run: node.run_id.as_deref(),
-                    kind: node.kind,
+                    run: node.run_id.as_deref().filter(|_| !parked),
+                    kind: if parked {
+                        NodeKind::Terminal
+                    } else {
+                        node.kind
+                    },
                     parent: parents.get(id).copied(),
                     repo: (node.kind != NodeKind::Queen)
                         .then(|| self.repos.get(id).map(String::as_str))
@@ -1087,6 +1169,7 @@ fn payload(node: &Node, snapshot: &FleetSnapshot) -> NodePayload {
         state: node.state,
         faded: node.released_at_ms.is_some(),
         released_at_ms: node.released_at_ms,
+        parked: node.is_parked(),
         agent_marker: node
             .terminal_handle
             .as_ref()

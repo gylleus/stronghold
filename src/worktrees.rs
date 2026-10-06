@@ -16,7 +16,7 @@
 //! don't keep a worktree: the notes are saved under `~/Documents/agents/notes/` and the logs
 //! deleted right before removal. Any other untracked file keeps it.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -302,6 +302,8 @@ pub struct GitFacts {
 pub struct Facts {
     pub is_main: bool,
     pub pinned: bool,
+    /// An agent Karl parked ([`crate::park`]) lives in it.
+    pub parked: bool,
     pub exists: bool,
     /// Milliseconds since Orca created it, when known.
     pub age_ms: Option<i64>,
@@ -351,6 +353,9 @@ pub fn decide(facts: &Facts) -> Verdict {
     }
     if facts.pinned {
         keep.push("pinned in Orca".to_owned());
+    }
+    if facts.parked {
+        keep.push("a parked agent sleeps in it (kept for later)".to_owned());
     }
     if !facts.exists {
         keep.push("directory is missing; nothing to free, left for Orca".to_owned());
@@ -871,6 +876,8 @@ struct Context {
     terminals: Vec<Terminal>,
     workers: Vec<Worker>,
     processes: Vec<ProcessCwd>,
+    /// Worktree paths of parked agents.
+    parked: BTreeSet<String>,
     /// PRs per repo id.
     prs: HashMap<String, Result<Vec<PrRow>, String>>,
     now_ms: i64,
@@ -892,6 +899,7 @@ impl Context {
             terminals,
             workers,
             processes,
+            parked: crate::park::parked_worktrees(&crate::park::Parking::default_path()),
             prs: HashMap::new(),
             now_ms,
         })
@@ -916,6 +924,7 @@ impl Context {
         Facts {
             is_main: w.is_main_worktree,
             pinned: w.is_pinned,
+            parked: self.parked.contains(w.path.trim_end_matches('/')),
             exists,
             age_ms: w.created_at.map(|c| self.now_ms - c),
             terminals: terminals_in(w, &self.terminals),

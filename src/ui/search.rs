@@ -70,7 +70,7 @@ impl Field {
 pub enum Activity {
     NeedsInput,
     Active,
-    /// Done, failed, released, or its terminal is gone.
+    /// Done, failed, released, parked, or its terminal is gone.
     Finished,
 }
 
@@ -78,6 +78,7 @@ impl Activity {
     pub fn of(node: &Node) -> Self {
         let finished = matches!(node.state, NodeState::Done | NodeState::Failed)
             || node.released_at_ms.is_some()
+            || node.is_parked()
             || !node.live;
         match node.state {
             _ if finished => Activity::Finished,
@@ -838,6 +839,7 @@ mod tests {
             dispatch_status: None,
             worker_terminal_state: None,
             released_at_ms: None,
+            parked_at_ms: None,
         }
     }
 

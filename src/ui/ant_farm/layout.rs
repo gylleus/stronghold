@@ -5,7 +5,8 @@
 //! left, the Queen's chamber under the surface in the middle, the storage chamber at the
 //! right, a gallery running under them and one tunnel per run (or per repo for loose
 //! terminals) dropping from the gallery. A coordinator stands at its tunnel's mouth, its
-//! workers in the chamber at the tunnel's end.
+//! workers in the chamber at the tunnel's end. Parked agents sleep in the last tunnel's
+//! chamber, the sleeping room, there only while someone is parked.
 
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -38,6 +39,8 @@ pub enum TunnelKey {
     Run(String),
     /// Loose terminals of a repo (see [`crate::model::node_repo`]).
     Repo(String),
+    /// Parked agents, asleep ([`crate::park`]).
+    SleepingRoom,
 }
 
 /// A logical place an ant occupies. An ant walks when its spot changes; a spot keeping its
@@ -465,6 +468,7 @@ pub fn mark(state: NodeState, pr_ready: bool) -> Option<Mark> {
 /// The tunnel a node digs in: its run's, else its repo's.
 fn tunnel_key(node: &Node, repos: &HashMap<NodeId, String>) -> TunnelKey {
     match &node.run_id {
+        _ if node.is_parked() => TunnelKey::SleepingRoom,
         Some(run) => TunnelKey::Run(run.clone()),
         None => TunnelKey::Repo(repos.get(&node.id).cloned().unwrap_or_default()),
     }
@@ -558,6 +562,9 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         .iter()
         .map(|n| {
             let mut home = home(n.kind, n.state, input.pr_ready.contains(&n.id));
+            if n.is_parked() && !matches!(home, Home::Queen | Home::Comms | Home::Trail) {
+                home = Home::Chamber;
+            }
             if home == Home::Trail && !parents.get(&n.id).is_some_and(|p| shown.contains(p)) {
                 home = Home::Chamber;
             }
@@ -565,7 +572,8 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         })
         .collect();
 
-    // Tunnels: runs in run-list order, then runs the list lacks, then repos by name.
+    // Tunnels: runs in run-list order, then runs the list lacks, then repos by name, then
+    // the sleeping room.
     let mut keys: Vec<TunnelKey> = Vec::new();
     for n in &visible {
         if matches!(homes[&n.id], Home::Queen | Home::Comms | Home::Trail) {
@@ -587,6 +595,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
             String::new(),
         ),
         TunnelKey::Repo(repo) => (1, 0, repo.clone()),
+        TunnelKey::SleepingRoom => (2, 0, String::new()),
     };
     keys.sort_by_key(run_order);
     let tunnel_of: HashMap<&TunnelKey, usize> =
@@ -731,7 +740,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                     .and_then(|r| r.task_counts)
                     .filter(|c| c.total() > 0)
                     .map(|c| (c.completed, c.total())),
-                TunnelKey::Repo(_) => None,
+                TunnelKey::Repo(_) | TunnelKey::SleepingRoom => None,
             };
             let progress = tasks.map(|(done, total)| done as f32 / total as f32);
             let depth = progress.map_or(UNKNOWN_PROGRESS_DEPTH, |p| {
@@ -753,6 +762,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                     .and_then(|r| r.objective.as_deref())
                     .unwrap_or(id),
                 TunnelKey::Repo(repo) => repo,
+                TunnelKey::SleepingRoom => crate::park::SLEEPING_ROOM,
             };
             Tunnel {
                 key: key.clone(),
@@ -852,8 +862,17 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
             ));
         }
     }
+    let parked: HashSet<&NodeId> = visible
+        .iter()
+        .filter(|n| n.is_parked())
+        .map(|n| &n.id)
+        .collect();
     for ant in &mut ants {
-        if ant.pose == Pose::Dig && input.building.contains(&ant.id) {
+        if parked.contains(&ant.id) {
+            ant.pose = Pose::Sleep;
+            ant.mark = Some(Mark::Sleep);
+            ant.facing_right = false;
+        } else if ant.pose == Pose::Dig && input.building.contains(&ant.id) {
             ant.pose = Pose::Build;
         }
     }

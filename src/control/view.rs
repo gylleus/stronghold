@@ -72,6 +72,10 @@ pub struct FleetSummary {
     pub needs_input: Vec<String>,
     /// Ids of stalled nodes (escalated by the whip).
     pub stalled: Vec<String>,
+    /// Ids of agents Karl parked in the sleeping room ([`crate::park`]). They count in
+    /// `agents`, `live` and `by_kind` but not in `by_state`, `needs_input` or `stalled`.
+    #[serde(default)]
+    pub parked: Vec<String>,
     pub runs: Vec<RunView>,
 }
 
@@ -162,6 +166,13 @@ pub struct AgentView {
     pub tokens: Option<TokensView>,
     /// Released worker / finished subagent, fading out.
     pub released: bool,
+    /// Parked by Karl ([`crate::park`]): asleep, its session kept; never `needs_input` or
+    /// `stalled`. Sending it text wakes it.
+    #[serde(default)]
+    pub parked: bool,
+    /// When it was parked, epoch ms.
+    #[serde(default)]
+    pub parked_at_ms: Option<i64>,
     pub worker_state: Option<String>,
     pub dispatch_status: Option<String>,
     /// Last line Orca previews for the terminal (truncated).
@@ -562,6 +573,7 @@ fn agent_view(node: &Node, snapshot: &FleetSnapshot, inputs: &ViewInputs<'_>) ->
         .and_then(|h| inputs.data?.needs_input.get(h))
         .and_then(|v| v.as_ref());
     let needs_input = match (node.state, prompt) {
+        _ if node.is_parked() => None,
         (NodeState::NeedsInput, Some(kind)) => Some(PromptView::from(kind)),
         (NodeState::NeedsInput, None) => Some(PromptView {
             kind: "unknown".into(),
@@ -616,13 +628,15 @@ fn agent_view(node: &Node, snapshot: &FleetSnapshot, inputs: &ViewInputs<'_>) ->
             .last_output_ms
             .map(|t| ((inputs.now_ms - t) / 1000).max(0)),
         needs_input,
-        stalled: node.state == NodeState::Stalled,
+        stalled: node.state == NodeState::Stalled && !node.is_parked(),
         escalated,
         tokens: inputs
             .claude
             .and_then(|c| c.node_usage(node))
             .map(|u| TokensView::from(&u.tokens)),
         released: node.released_at_ms.is_some(),
+        parked: node.is_parked(),
+        parked_at_ms: node.parked_at_ms,
         worker_state: node.worker_state.as_ref().map(|s| s.to_string()),
         dispatch_status: node.dispatch_status.as_ref().map(|s| s.to_string()),
         preview,
@@ -634,12 +648,14 @@ fn fleet_summary(snapshot: &FleetSnapshot, agents: &[AgentView]) -> FleetSummary
     let mut by_state = BTreeMap::new();
     for a in agents {
         *by_kind.entry(a.kind.clone()).or_insert(0) += 1;
-        *by_state.entry(a.state.clone()).or_insert(0) += 1;
+        if !a.parked {
+            *by_state.entry(a.state.clone()).or_insert(0) += 1;
+        }
     }
     let ids = |state: &str| {
         agents
             .iter()
-            .filter(|a| a.state == state)
+            .filter(|a| a.state == state && !a.parked)
             .map(|a| a.id.clone())
             .collect::<Vec<_>>()
     };
@@ -652,7 +668,7 @@ fn fleet_summary(snapshot: &FleetSnapshot, agents: &[AgentView]) -> FleetSummary
                 .filter(|a| a.run_id.as_deref() == Some(run.id.as_str()))
                 .collect();
             let mut run_states = BTreeMap::new();
-            for a in &members {
+            for a in members.iter().filter(|a| !a.parked) {
                 *run_states.entry(a.state.clone()).or_insert(0) += 1;
             }
             let coordinator = run
@@ -686,6 +702,11 @@ fn fleet_summary(snapshot: &FleetSnapshot, agents: &[AgentView]) -> FleetSummary
         by_state,
         needs_input: ids("needs_input"),
         stalled: ids("stalled"),
+        parked: agents
+            .iter()
+            .filter(|a| a.parked)
+            .map(|a| a.id.clone())
+            .collect(),
         runs,
     }
 }

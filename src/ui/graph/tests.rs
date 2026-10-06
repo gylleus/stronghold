@@ -26,6 +26,7 @@ fn node(id: &str, kind: NodeKind, run: Option<&str>) -> Node {
         dispatch_status: None,
         worker_terminal_state: None,
         released_at_ms: None,
+        parked_at_ms: None,
     }
 }
 

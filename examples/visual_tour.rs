@@ -359,5 +359,6 @@ fn node(id: NodeId, kind: NodeKind, state: NodeState) -> Node {
         dispatch_status: None,
         worker_terminal_state: None,
         released_at_ms: None,
+        parked_at_ms: None,
     }
 }

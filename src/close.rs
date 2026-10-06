@@ -191,6 +191,12 @@ pub fn plan_close(
             tab: opts.whole_tab,
         });
     }
+    if node.is_parked() {
+        plan.warnings.push(format!(
+            "{} is parked: Karl kept it to continue later, and closing ends its session for good",
+            node.label
+        ));
+    }
     if node.kind == NodeKind::Coordinator {
         plan.warnings.extend(coordinator_warnings(node, snapshot));
     }
@@ -293,7 +299,8 @@ fn dedupe_closes(closes: Vec<CloseStep>, tab_of: &HashMap<&str, &str>) -> Vec<Cl
 }
 
 /// Visible nodes "Close shown…" offers: loose terminals and workers (and coordinators when
-/// asked) that have something to close.
+/// asked) that have something to close. Parked agents are left out: they are closed only by
+/// name.
 pub fn bulk_candidates<'a>(
     snapshot: &'a FleetSnapshot,
     hidden: &BTreeSet<NodeId>,
@@ -302,7 +309,7 @@ pub fn bulk_candidates<'a>(
     snapshot
         .nodes
         .iter()
-        .filter(|n| !hidden.contains(&n.id))
+        .filter(|n| !hidden.contains(&n.id) && !n.is_parked())
         .filter(|n| match n.kind {
             NodeKind::Terminal | NodeKind::Worker => true,
             NodeKind::Coordinator | NodeKind::Attendant => include_coordinators,
