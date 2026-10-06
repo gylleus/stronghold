@@ -348,6 +348,22 @@ pub fn agent_marker(agent: Option<&AgentIdentity>) -> Option<char> {
     }
 }
 
+/// Fill and letter colors of a Claude or Codex badge, matching the ant farm's coats: light
+/// amber with a dark letter, dark slate with a teal one.
+fn agent_badge_colors(letter: char) -> Option<(Color32, Color32)> {
+    match letter {
+        'C' => Some((
+            Color32::from_rgb(0xe2, 0xa2, 0x5e),
+            Color32::from_rgb(0x2c, 0x16, 0x06),
+        )),
+        'X' => Some((
+            Color32::from_rgb(0x3e, 0x4e, 0x56),
+            Color32::from_rgb(0x8c, 0xe6, 0xd8),
+        )),
+        _ => None,
+    }
+}
+
 /// WCAG 2 relative luminance of an opaque color.
 pub fn relative_luminance(color: Color32) -> f64 {
     let channel = |c: u8| {
@@ -661,8 +677,9 @@ impl FleetNodeShape {
         let visuals = &ctx.ctx.global_style().visuals;
         let badge_r = (radius * 0.45).clamp(5.0, 9.0);
         let badge_center = center + Vec2::new(radius, -radius) * 0.8;
-        let bg = visuals.panel_fill.gamma_multiply(alpha);
-        let fg = visuals.strong_text_color().gamma_multiply(alpha);
+        let (bg, fg) =
+            agent_badge_colors(letter).unwrap_or((visuals.panel_fill, visuals.strong_text_color()));
+        let (bg, fg) = (bg.gamma_multiply(alpha), fg.gamma_multiply(alpha));
         let galley = ctx.ctx.fonts_mut(|f| {
             f.layout_no_wrap(
                 letter.to_string(),
@@ -1106,6 +1123,15 @@ mod tests {
     fn only_active_states_animate() {
         let animated: Vec<_> = ALL_STATES.into_iter().filter(|s| is_animated(*s)).collect();
         assert_eq!(animated, [NodeState::NeedsInput]);
+    }
+
+    #[test]
+    fn agent_badge_letters_are_readable() {
+        for letter in ['C', 'X'] {
+            let (bg, fg) = agent_badge_colors(letter).unwrap();
+            assert!(contrast_ratio(bg, fg) >= 4.5, "{letter}");
+        }
+        assert_eq!(agent_badge_colors('G'), None);
     }
 
     #[test]

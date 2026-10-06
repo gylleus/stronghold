@@ -30,7 +30,7 @@ use crate::ui::graph::nav::{self, ScrollAction, ScrollSource, route_scroll};
 use death::{Body, Fall};
 use layout::{FarmInput, Pose, Scene, Spot, layout};
 use motion::{Walk, route};
-use sprites::{AntLook, Item, Palette, Sprites};
+use sprites::{AntLook, Coat, Item, Palette, Sprites};
 use zoom::Camera;
 
 /// Redraw interval while an ant walks.
@@ -594,7 +594,7 @@ impl AntFarmView {
                     Some(h) if h.x.abs() > 0.1 => h.x > 0.0,
                     _ => ant.facing_right,
                 },
-                red: ant.pose == Pose::Failed,
+                coat: Coat::new(ant.agent.as_ref(), ant.pose == Pose::Failed),
                 alpha: ant.alpha,
             });
             current.insert(&ant.id, at);
@@ -845,7 +845,7 @@ fn paint_ants(
             cell = cell.translate(vec2(0.0, -layout::SLEEPER_LIFT * tpx));
         }
         let look = AntLook {
-            red: ant.pose == Pose::Failed,
+            coat: Coat::new(ant.agent.as_ref(), ant.pose == Pose::Failed),
             frame,
             facing_right,
             upside_down: matches!(ant.pose, Pose::Failed | Pose::Sleep) && !walking,
@@ -962,7 +962,7 @@ fn paint_falls(
             continue;
         };
         let look = AntLook {
-            red: fall.body.red,
+            coat: fall.body.coat,
             frame: 0,
             facing_right: fall.body.facing_right,
             upside_down: frame.upside_down,

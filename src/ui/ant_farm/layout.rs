@@ -18,6 +18,7 @@ use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
 use crate::model::{
     EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RepoIndex, dispatch_ended,
 };
+use crate::orca::AgentIdentity;
 
 /// Side of a sprite cell in texels.
 pub const CELL: f32 = 16.0;
@@ -153,6 +154,8 @@ pub struct Ant {
     /// tunnel); `None` for the Queen, coordinators at their tunnel's mouth (the tunnel is
     /// labelled) and subagents.
     pub tag: Option<String>,
+    /// The coding agent it runs, when known.
+    pub agent: Option<AgentIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1069,5 +1072,6 @@ fn ant(node: &Node, spot: Spot, pos: Pos2, size: f32, home: Home, pr: bool, now_
             }
         },
         alpha: crate::ui::graph::fade_alpha(node.released_at_ms, now_ms),
+        agent: node.agent.clone(),
     }
 }
