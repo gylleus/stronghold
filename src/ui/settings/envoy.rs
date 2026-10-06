@@ -43,7 +43,7 @@ impl EnvoyDraft {
 }
 
 pub(super) fn section(pane: &mut SettingsPane, ui: &mut egui::Ui, out: &mut super::PaneOutput) {
-    ui.weak("Dry run ON applies immediately when saved. Other changes apply on the next Start.");
+    ui.weak("Policies and dry run ON apply immediately when saved. Other changes apply on the next Start.");
     let draft = &mut pane.envoy_draft;
     egui::Grid::new("envoy_settings")
         .num_columns(2)
@@ -79,6 +79,50 @@ pub(super) fn section(pane: &mut SettingsPane, ui: &mut egui::Ui, out: &mut supe
             ui.add(egui::TextEdit::multiline(&mut draft.channels).desired_rows(3));
             ui.end_row();
         });
+    ui.separator();
+    ui.strong("Approval policies");
+    ui.weak("Exact destination, then dm, then *. Unlisted destinations require your approval.");
+    let mut remove = None;
+    for (i, policy) in draft.settings.policies.iter_mut().enumerate() {
+        ui.push_id(i, |ui| {
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut policy.destination).desired_width(120.0));
+                let mut auto = matches!(
+                    policy.mode,
+                    crate::envoy::settings::ApprovalMode::Auto { .. }
+                );
+                if ui.checkbox(&mut auto, "Auto").changed() {
+                    policy.mode = if auto {
+                        crate::envoy::settings::ApprovalMode::Auto { veto_secs: 120 }
+                    } else {
+                        crate::envoy::settings::ApprovalMode::Approve
+                    };
+                }
+                if let crate::envoy::settings::ApprovalMode::Auto { veto_secs } = &mut policy.mode {
+                    ui.add(
+                        egui::DragValue::new(veto_secs)
+                            .range(0..=86400)
+                            .suffix("s veto"),
+                    );
+                }
+                if ui.button("Remove").clicked() {
+                    remove = Some(i);
+                }
+            });
+        });
+    }
+    if let Some(i) = remove {
+        draft.settings.policies.remove(i);
+    }
+    if ui.button("Add policy").clicked() {
+        draft
+            .settings
+            .policies
+            .push(crate::envoy::settings::Policy {
+                destination: "*".into(),
+                mode: Default::default(),
+            });
+    }
     ui.checkbox(
         &mut draft.settings.dry_run,
         "Dry run (record approvals and relays without sending)",
@@ -105,6 +149,10 @@ pub(super) fn section(pane: &mut SettingsPane, ui: &mut egui::Ui, out: &mut supe
 impl SettingsPane {
     fn save_envoy(&mut self) -> Option<EnvoySettings> {
         let settings = self.envoy_draft.value();
+        if let Err(e) = settings.validate_policies() {
+            self.message = Some((true, e));
+            return None;
+        }
         if let Some(model) = &settings.model
             && !crate::spawn::valid_model(model)
         {

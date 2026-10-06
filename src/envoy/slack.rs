@@ -9,16 +9,29 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::BridgeStatus;
-use super::channel::{Channel, EventKind, InboundEvent, OutboundMessage, PollBatch};
+use super::channel::{Channel, EventKind, InboundEvent, OutboundMessage, PollBatch, SendReceipt};
 use super::inbox::{Cursor, Inbox, timestamp_us};
 use super::settings::EnvoySettings;
 use serde_json::Value;
 
 pub trait SlackSender: Send {
-    fn send(&mut self, message: &OutboundMessage) -> Result<(), String>;
+    fn send(&mut self, message: &OutboundMessage) -> Result<SendReceipt, String>;
 }
 
 pub trait SlackIo: SlackSender {
+    fn thread_subscription(
+        &mut self,
+        bridge: &Path,
+        thread: &super::requests::Thread,
+        label: Option<&str>,
+    ) -> Result<(), String> {
+        let _ = (bridge, thread, label);
+        Err("Thread subscriptions unavailable".into())
+    }
+    fn subscriptions(&mut self, bridge: &Path) -> Result<String, String> {
+        let _ = bridge;
+        Err("Subscription listing unavailable".into())
+    }
     fn api(&mut self, method: &str, params: &[(&str, String)]) -> Result<Value, String>;
     fn subscribe(&mut self, bridge_dir: &Path, conversation: &str) -> Result<(), String>;
 }
@@ -94,6 +107,27 @@ fn run(name: &str, args: &[String], bridge: Option<&Path>) -> Result<String, Str
 }
 
 impl SlackIo for SlackCli {
+    fn thread_subscription(
+        &mut self,
+        bridge: &Path,
+        thread: &super::requests::Thread,
+        label: Option<&str>,
+    ) -> Result<(), String> {
+        validate_conversation(&thread.conversation)?;
+        validate_ts(&thread.ts)?;
+        let mut args = vec![
+            if label.is_some() { "add" } else { "remove" }.into(),
+            thread.conversation.clone(),
+            thread.ts.clone(),
+        ];
+        if let Some(label) = label {
+            args.extend(["--label".into(), label.into()]);
+        }
+        run("slack-sub", &args, Some(bridge)).map(|_| ())
+    }
+    fn subscriptions(&mut self, bridge: &Path) -> Result<String, String> {
+        run("slack-sub", &["list".into()], Some(bridge))
+    }
     fn api(&mut self, method: &str, params: &[(&str, String)]) -> Result<Value, String> {
         let args: Vec<String> = ["api".to_owned(), method.to_owned()]
             .into_iter()
@@ -119,32 +153,34 @@ impl SlackIo for SlackCli {
 }
 
 impl SlackSender for SlackCli {
-    fn send(&mut self, message: &OutboundMessage) -> Result<(), String> {
+    fn send(&mut self, message: &OutboundMessage) -> Result<SendReceipt, String> {
         validate_conversation(&message.conversation)?;
         super::secrets::scan(&message.text)?;
-        let mut text = message.text.trim_end().to_owned();
-        if !text.ends_with(super::drafts::ATTRIBUTION) {
-            text.push_str("\n\n");
-            text.push_str(super::drafts::ATTRIBUTION);
+        if ![super::drafts::ATTRIBUTION, super::drafts::AUTO_ATTRIBUTION]
+            .iter()
+            .any(|a| message.text.ends_with(a))
+        {
+            return Err("Outbound attribution is required".into());
         }
+        let mut params = vec![
+            ("channel", message.conversation.clone()),
+            ("text", message.text.clone()),
+        ];
         if let Some(thread) = &message.thread_ts {
             validate_ts(thread)?;
-            self.api(
-                "chat.postMessage",
-                &[
-                    ("channel", message.conversation.clone()),
-                    ("thread_ts", thread.clone()),
-                    ("text", text),
-                ],
-            )?;
-        } else {
-            run(
-                "slackmsg",
-                &["send".into(), message.conversation.clone(), text],
-                None,
-            )?;
+            params.push(("thread_ts", thread.clone()));
         }
-        Ok(())
+        let value = self.api("chat.postMessage", &params)?;
+        let receipt = SendReceipt {
+            conversation: string(&value, "channel"),
+            ts: string(&value, "ts"),
+        };
+        validate_conversation(&receipt.conversation)?;
+        validate_ts(&receipt.ts)?;
+        if receipt.conversation != message.conversation {
+            return Err("Slack receipt channel differs; outcome unknown".into());
+        }
+        Ok(receipt)
     }
 }
 
@@ -350,7 +386,10 @@ impl<I: SlackIo> SlackChannel<I> {
         self.next_subscribe_ms = 0;
     }
 
-    fn ingest(&mut self, e: InboundEvent, batch: &mut PollBatch) {
+    fn ingest(&mut self, e: InboundEvent, batch: &mut PollBatch) -> bool {
+        if e.user != self.settings.karl_user_id && !self.capture_reply(&e) {
+            return false;
+        }
         let fresh = self
             .inbox
             .first_enabled_ms
@@ -358,6 +397,7 @@ impl<I: SlackIo> SlackChannel<I> {
         if fresh && e.user != self.settings.karl_user_id && self.inbox.insert(e.clone()) {
             batch.events.push(e);
         }
+        true
     }
 
     fn tail(&mut self, channel: &str, batch: &mut PollBatch) -> Result<(), String> {
@@ -388,17 +428,17 @@ impl<I: SlackIo> SlackChannel<I> {
         let Some(end) = bytes.iter().rposition(|b| *b == b'\n') else {
             return Ok(());
         };
-        for line in bytes[..=end]
-            .split(|b| *b == b'\n')
-            .filter(|s| !s.is_empty())
-        {
+        let mut consumed = 0;
+        for line in bytes[..=end].split_inclusive(|b| *b == b'\n') {
             let parsed = parse_bridge_line(line);
             if matches!(&parsed, Ok(record) if !matches!(record, BridgeLine::Error(_))) {
                 self.errors.remove(channel);
             }
             match parsed {
                 Ok(BridgeLine::Event(e)) => {
-                    self.ingest(e, batch);
+                    if !self.ingest(e, batch) {
+                        break;
+                    }
                 }
                 Ok(BridgeLine::Error(_)) => {
                     self.subscribed.retain(|c| c != channel);
@@ -420,8 +460,9 @@ impl<I: SlackIo> SlackChannel<I> {
                     batch.notices.push(e);
                 }
             }
+            consumed += line.len() as u64;
         }
-        cursor.offset += end as u64 + 1;
+        cursor.offset += consumed;
         self.inbox.cursors.insert(channel.into(), cursor);
         Ok(())
     }
@@ -471,8 +512,9 @@ impl<I: SlackIo> SlackChannel<I> {
                 })
             });
             for e in events {
-                if timestamp_us(&e.ts).unwrap_or_default() / 1000 >= since {
-                    self.ingest(e, batch);
+                if timestamp_us(&e.ts).unwrap_or_default() / 1000 >= since && !self.ingest(e, batch)
+                {
+                    return Err("Reply handoff full; ingestion will retry".into());
                 }
             }
             let pages = value["messages"]["paging"]["pages"]
@@ -639,6 +681,9 @@ impl<I: SlackIo> Channel for SlackChannel<I> {
                 }
             }
         }
+        if let Err(error) = self.poll_threads(now_ms, &mut batch) {
+            batch.notices.push(error);
+        }
         for (channel, error) in self
             .errors
             .iter()
@@ -659,13 +704,15 @@ impl<I: SlackIo> Channel for SlackChannel<I> {
         batch.events.retain(|e| self.inbox.get(&e.id()).is_some());
         Ok(batch)
     }
-    fn send(&mut self, approved: &OutboundMessage) -> Result<(), String> {
+    fn send(&mut self, approved: &OutboundMessage) -> Result<SendReceipt, String> {
         self.io.send(approved)
     }
     fn health(&self) -> BridgeStatus {
         self.status
     }
 }
+
+pub mod threads;
 
 #[cfg(test)]
 mod tests;

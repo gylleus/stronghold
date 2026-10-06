@@ -11,7 +11,7 @@ struct Fake {
     subscribe_error: Option<String>,
 }
 impl SlackSender for Fake {
-    fn send(&mut self, _: &OutboundMessage) -> Result<(), String> {
+    fn send(&mut self, _: &OutboundMessage) -> Result<SendReceipt, String> {
         panic!("ingestion cannot send")
     }
 }

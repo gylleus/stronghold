@@ -20,6 +20,10 @@ use crate::notify::{Incoming, Severity, Source};
 use crate::orca::TerminalInput;
 use crate::traffic::{AgentMessage, MessageKind};
 
+mod gateway;
+use crate::envoy::requests::{Requester, Requests};
+use gateway::GatewayAction;
+
 pub const DRAFTS_TARGET: &str = "envoy:drafts";
 const SHAKE_COOLDOWN_MS: i64 = 8_000;
 
@@ -28,6 +32,14 @@ pub struct AppEnvoy {
     settings: EnvoySettings,
     inbox: Inbox,
     drafts: Option<DraftQueue>,
+    requests: Option<Requests>,
+    watches: Option<Vec<crate::envoy::slack::threads::Watch>>,
+    watches_pending: bool,
+    watch_retry_ms: i64,
+    cleanup_retry_ms: i64,
+    dispatch_blocked: bool,
+    gateway_actions: HashMap<ActionId, GatewayAction>,
+    gateway_retry_ms: i64,
     worker: Option<Worker>,
     bridge: BridgeStatus,
     bridge_seen: bool,
@@ -80,6 +92,9 @@ impl AppEnvoy {
                 move || wake.request_repaint(),
             ));
         }
+        if let Err(e) = core.reconcile_requests() {
+            core.error = Some(e);
+        }
         core
     }
 
@@ -87,6 +102,7 @@ impl AppEnvoy {
         let inbox_path = dir.join(crate::envoy::inbox::INBOX_FILE);
         let loaded = Inbox::load(&inbox_path);
         let drafts = DraftQueue::load(dir.join(crate::envoy::drafts::DRAFTS_FILE));
+        let requests = Requests::load(dir.join(crate::envoy::requests::REQUESTS_FILE));
         let relay_path = dir.join("envoy-relays.json");
         let relays = RelayLimiter::load(&relay_path);
         let error = loaded
@@ -94,13 +110,22 @@ impl AppEnvoy {
             .err()
             .map(|e| e.to_string())
             .or_else(|| drafts.as_ref().err().cloned())
-            .or_else(|| relays.as_ref().err().cloned());
+            .or_else(|| relays.as_ref().err().cloned())
+            .or_else(|| requests.as_ref().err().cloned());
         let inbox = loaded.unwrap_or_default();
         Self {
             handle: None,
             settings: EnvoySettings::default(),
             inbox,
             drafts: drafts.ok(),
+            requests: requests.ok(),
+            watches: None,
+            watches_pending: false,
+            watch_retry_ms: 0,
+            cleanup_retry_ms: 0,
+            dispatch_blocked: false,
+            gateway_actions: HashMap::new(),
+            gateway_retry_ms: 0,
             worker: None,
             bridge: BridgeStatus::Missing,
             bridge_seen: false,
@@ -148,7 +173,9 @@ impl AppEnvoy {
         }
         self.traffic_handle = Some(handle.clone());
         self.handle = Some(handle);
+        settings.validate_policies()?;
         self.settings = settings;
+        self.reconcile_requests()?;
         Ok(())
     }
 
@@ -253,7 +280,34 @@ impl AppEnvoy {
     pub fn settings(&self) -> &EnvoySettings {
         &self.settings
     }
+    pub(super) fn block_dispatch(&mut self, blocked: bool) {
+        self.dispatch_blocked = blocked;
+        if blocked {
+            self.settings.dry_run = true;
+            self.stop();
+        }
+    }
+
     pub fn configure(&mut self, settings: EnvoySettings) -> Result<(), String> {
+        settings.validate_policies()?;
+        let cancel: Vec<_> = self
+            .drafts()
+            .iter()
+            .filter(|d| {
+                d.status == DraftStatus::Pending
+                    && d.auto_at_ms.is_some()
+                    && d.destination().is_some_and(|c| {
+                        matches!(
+                            settings.approval(c),
+                            crate::envoy::settings::ApprovalMode::Approve
+                        )
+                    })
+            })
+            .map(|d| d.id.clone())
+            .collect();
+        for id in cancel {
+            self.queue()?.schedule(&id, None)?;
+        }
         if self.handle.is_some() {
             self.worker()?
                 .submit(Work::Configure(Some(settings.clone())))?;
@@ -269,7 +323,20 @@ impl AppEnvoy {
         })
     }
     fn request(&mut self, command: &EnvoyCommand) -> Result<Value, String> {
+        if crate::envoy::control::PUBLIC_METHODS.contains(&command.method.as_str()) {
+            return self.gateway_request(command, Requester::from_origin(command.origin.clone())?);
+        }
         crate::envoy::authorize(self, &command.origin)?;
+        if [
+            "envoy_request",
+            "envoy_route",
+            "envoy_decline",
+            "envoy_link_reply",
+        ]
+        .contains(&command.method.as_str())
+        {
+            return self.gateway_envoy_request(command);
+        }
         let method = command.method.as_str();
         let args = &command.args;
         match method {
@@ -329,7 +396,8 @@ impl AppEnvoy {
                     )
                 };
                 let draft = self.queue()?.create(draft)?;
-                Ok(json!({"draft":draft}))
+                self.schedule_draft(&draft.id)?;
+                Ok(json!({"draft":self.queue()?.get(&draft.id)}))
             }
             _ => Err("Unknown Envoy method".into()),
         }
@@ -342,10 +410,32 @@ impl AppEnvoy {
         queen_ready: bool,
         queen: impl FnOnce(&str) -> bool,
     ) -> Result<bool, String> {
-        let proposal = self
-            .drafts()
-            .iter()
-            .any(|d| d.id == id && d.kind == DraftKind::TaskProposal);
+        if self.dispatch_blocked {
+            return Err(
+                "Dispatch paused after settings persistence failure; save settings again".into(),
+            );
+        }
+        self.reconcile_requests()?;
+        let draft = self.queue()?.get(id).cloned().ok_or("Unknown draft")?;
+        if let Some(link) = &draft.request {
+            let request = self.requests_mut()?.get(&link.id)?;
+            request.next_turn(Some(link.turn_id))?;
+            if let Some(thread) = &request.thread
+                && (draft.conversation.as_deref() != Some(&thread.conversation)
+                    || draft.thread_ts.as_deref() != Some(&thread.ts))
+            {
+                return Err(
+                    "Draft conflicts with the confirmed request thread; decline this turn".into(),
+                );
+            }
+            if request.requires_thread(link.turn_id)
+                && request.thread.is_none()
+                && !self.settings.dry_run
+            {
+                return Err("Follow-up requires a confirmed live thread".into());
+            }
+        }
+        let proposal = draft.kind == DraftKind::TaskProposal;
         if !self.settings.dry_run {
             if proposal && !queen_ready {
                 return Err("Queen chat is busy; try approval when she is ready".into());
@@ -388,6 +478,21 @@ impl AppEnvoy {
 
     fn poll_updates(&mut self) -> (Vec<Incoming>, Vec<AgentMessage>) {
         let mut notifications = Vec::new();
+        if self
+            .drafts
+            .as_mut()
+            .is_some_and(|q| q.take_restarted_automatic() > 0)
+        {
+            notifications.push(
+                Incoming::new(
+                    Source::Envoy,
+                    Severity::Info,
+                    "Envoy draft ready",
+                    "Automatic drafts were paused after restart and need your approval.",
+                )
+                .with_target(DRAFTS_TARGET),
+            );
+        }
         let mut traffic = Vec::new();
         let updates = self.worker.as_ref().map_or_else(Vec::new, Worker::updates);
         for update in updates {
@@ -398,6 +503,10 @@ impl AppEnvoy {
                     bridge,
                     notices,
                 } => {
+                    if let Err(e) = self.record_replies(&inbox) {
+                        self.error = Some(e);
+                        continue;
+                    }
                     self.merge_polled(inbox, events);
                     if self.observe_bridge(bridge) {
                         notifications.push(Incoming::new(
@@ -439,14 +548,108 @@ impl AppEnvoy {
                     {
                         traffic.push(AgentMessage::new(from, "slack", MessageKind::Relay));
                     }
-                    if let Err(e) = self.queue().and_then(|q| q.finish(&id, result, now_ms())) {
+                    if let Err(e) = self
+                        .queue()
+                        .and_then(|q| q.finish_receipt(&id, result, now_ms()))
+                    {
                         self.error = Some(e);
                     }
+                }
+                Update::Watches { watches, result } => {
+                    self.watches_pending = false;
+                    match result {
+                        Ok(()) => self.watches = Some(watches),
+                        Err(e) => {
+                            self.watch_retry_ms = now_ms() + 30_000;
+                            self.error = Some(e);
+                        }
+                    }
+                }
+                Update::Removed { thread, result } => {
+                    match result.and_then(|()| {
+                        let ids: Vec<_> = self
+                            .requests()
+                            .iter()
+                            .filter(|r| r.settled && r.thread.as_ref() == Some(&thread))
+                            .map(|r| r.id.clone())
+                            .collect();
+                        for id in ids {
+                            self.requests_mut()?.change(&id, |r| {
+                                r.close_requested = false;
+                                Ok(())
+                            })?;
+                        }
+                        Ok(())
+                    }) {
+                        Ok(()) => {}
+                        Err(e) => self.error = Some(e),
+                    }
+                }
+                Update::Adopted(result) => {
+                    match result.and_then(|threads| {
+                        self.reconcile_requests()?;
+                        for (thread, label) in threads {
+                            self.requests_mut()?.adopt(thread, label, now_ms())?;
+                        }
+                        self.reconcile_requests()
+                    }) {
+                        Ok(()) => {}
+                        Err(e) => self.error = Some(e),
+                    }
+                }
+                Update::Resolved {
+                    command,
+                    reply,
+                    result,
+                } => {
+                    let result = crate::envoy::authorize(self, &command.origin)
+                        .and(result)
+                        .and_then(|destination| self.route(&command.args, &destination));
+                    if result.is_ok() {
+                        notifications.push(
+                            Incoming::new(
+                                Source::Envoy,
+                                Severity::Info,
+                                "Envoy draft ready",
+                                "A draft is waiting for your approval.",
+                            )
+                            .with_target(DRAFTS_TARGET),
+                        );
+                    }
+                    reply.send(result.map_err(ControlError::invalid_params));
+                }
+                Update::BindingPreview {
+                    command,
+                    requester,
+                    reply,
+                    result,
+                } => {
+                    let result = crate::envoy::authorize(self, &command.origin)
+                        .and(result)
+                        .and_then(|preview| {
+                            self.propose_binding(&command.args, *requester, preview)?;
+                            self.gateway_envoy_request(&command)
+                        });
+                    if result.is_ok() {
+                        notifications.push(
+                            Incoming::new(
+                                Source::Envoy,
+                                Severity::Info,
+                                "Envoy reply routing proposal",
+                                "Review the proposed reply recipient in the Envoy Inbox.",
+                            )
+                            .with_target(DRAFTS_TARGET),
+                        );
+                    }
+                    reply.send(result.map_err(ControlError::invalid_params));
                 }
                 Update::Error(error) => {
                     self.error = Some(error);
                 }
             }
+        }
+        if let Err(e) = self.auto_approve(now_ms()) {
+            self.error = Some(e);
         }
         if self.error != self.error_notified {
             if let Some(error) = self.error.clone() {
@@ -510,6 +713,72 @@ impl AppEnvoy {
         queen: impl FnOnce(&str) -> bool,
     ) -> (String, Result<bool, String>) {
         match action {
+            crate::ui::envoy::DraftAction::Pause(id) => {
+                let result = self
+                    .queue()
+                    .and_then(|q| q.schedule(&id, None))
+                    .map(|()| false);
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::Adopt => (
+                "adopt".into(),
+                self.worker()
+                    .and_then(|w| w.submit(Work::Adopt))
+                    .map(|()| false),
+            ),
+            crate::ui::envoy::DraftAction::Binding {
+                id,
+                proposal_id,
+                accept,
+            } => {
+                let result = self
+                    .decide_binding(&id, proposal_id, accept)
+                    .map(|()| false);
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::Keep(id) => {
+                let result = self
+                    .requests_mut()
+                    .and_then(|s| {
+                        s.change(&id, |r| {
+                            r.orphan_kept = true;
+                            Ok(())
+                        })
+                    })
+                    .map(|()| false);
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::Settle(id) => {
+                let result = (|| {
+                    let request = self.requests_mut()?.get(&id)?.clone();
+                    if request.turns.iter().any(|t| {
+                        matches!(
+                            t.status,
+                            crate::envoy::requests::Status::Queued
+                                | crate::envoy::requests::Status::Drafted
+                                | crate::envoy::requests::Status::Approved
+                        )
+                    }) {
+                        return Err("Resolve pending turns before settling".into());
+                    }
+                    let dry_run = self.settings.dry_run;
+                    let borrowed = request
+                        .thread
+                        .as_ref()
+                        .is_some_and(|t| self.borrowed_thread(t));
+                    self.requests_mut()?.change(&id, |r| {
+                        r.close_requested =
+                            r.thread.is_some() && r.reply_after_us.is_some() && !borrowed;
+                        if !dry_run || !r.close_requested {
+                            r.settled = true;
+                        }
+                        Ok(())
+                    })?;
+                    self.reconcile_requests()?;
+                    Ok(false)
+                })();
+                (id, result)
+            }
             crate::ui::envoy::DraftAction::Approve { id, text } => {
                 let result = self
                     .envoy_edit(&id, &text)
@@ -541,6 +810,7 @@ impl MyrstackApp {
     }
 
     pub(super) fn envoy_pane(&mut self, ui: &mut egui::Ui) {
+        self.envoy_panel.set_requests(self.envoy_core.requests());
         let action = self.envoy_panel.show(
             ui,
             self.envoy_core.drafts(),
@@ -549,6 +819,7 @@ impl MyrstackApp {
             self.envoy_core.error.as_deref(),
         );
         if let Some(action) = action {
+            let pause = matches!(action, crate::ui::envoy::DraftAction::Pause(_));
             let ready = self.chat_ready();
             let chat = &mut self.chat;
             let (id, result) = self
@@ -557,7 +828,12 @@ impl MyrstackApp {
             if matches!(result, Ok(true)) {
                 self.open_chat();
             }
-            self.envoy_panel.result(&id, result.map(|_| ()));
+            if !pause || result.is_err() {
+                self.envoy_panel.result(&id, result.map(|_| ()));
+            }
+            if let Err(e) = self.envoy_core.reconcile_requests() {
+                self.envoy_core.error = Some(e);
+            }
         }
     }
 
@@ -567,10 +843,80 @@ impl MyrstackApp {
         command: EnvoyCommand,
         reply: Reply,
     ) -> Result<(), ControlError> {
+        if crate::envoy::control::PUBLIC_METHODS.contains(&command.method.as_str()) {
+            let result = self
+                .gateway_requester(command.origin.clone())
+                .and_then(|who| self.envoy_core.gateway_request(&command, who));
+            if command.method == "reach_out"
+                && result.as_ref().is_ok_and(|v| v["merged"] == false)
+                && command.args["urgency"] == "blocking"
+            {
+                self.raise(
+                    Incoming::new(
+                        Source::Envoy,
+                        Severity::Warn,
+                        "Blocking request to Envoy",
+                        "An ant is waiting for an external reply.",
+                    )
+                    .with_target(DRAFTS_TARGET),
+                );
+            }
+            reply.send(result.map_err(ControlError::invalid_params));
+            return Ok(());
+        }
         if let Err(e) = crate::envoy::authorize(&self.envoy_core, &command.origin) {
             let error = ControlError::new(ErrorCode::Refused, e);
             reply.send(Err(error.clone()));
             return Err(error);
+        }
+        if command.method == "envoy_route" {
+            match self.envoy_core.worker() {
+                Ok(worker) => {
+                    let _ = worker.submit(Work::Resolve { command, reply });
+                }
+                Err(e) => reply.send(Err(ControlError::new(ErrorCode::Unavailable, e))),
+            }
+            return Ok(());
+        }
+        if command.method == "envoy_link_reply" && command.args.get("requester").is_some() {
+            let result: Result<_, String> = (|| {
+                let target = required(&command.args, "requester")?;
+                let node = self.control_node(target).map_err(|e| e.to_string())?;
+                if !node.live {
+                    return Err("Requester must be live".into());
+                }
+                let handle = node
+                    .terminal_handle
+                    .clone()
+                    .ok_or("Requester has no terminal")?;
+                let who = self.gateway_requester(crate::review::mark::Origin {
+                    terminal_handle: Some(handle),
+                    ..Default::default()
+                })?;
+                let thread = self.envoy_core.binding_thread(&command.args, &who)?;
+                Ok((who, thread))
+            })();
+            match result {
+                Ok((requester, Some(thread))) => {
+                    match self.envoy_core.worker() {
+                        Ok(worker) => {
+                            let _ = worker.submit(Work::BindingPreview {
+                                command,
+                                requester: Box::new(requester),
+                                thread,
+                                reply,
+                            });
+                        }
+                        Err(e) => reply.send(Err(ControlError::new(ErrorCode::Unavailable, e))),
+                    }
+                    return Ok(());
+                }
+                Ok((_, None)) => {}
+                Err(e) => {
+                    reply.send(Err(ControlError::invalid_params(e)));
+                    return Ok(());
+                }
+            }
         }
         if command.method == "envoy_event" {
             let result = required(&command.args, "id").and_then(|id| {
@@ -728,6 +1074,7 @@ impl MyrstackApp {
             self.traffic.sender().send(message);
         }
         self.forward_envoy();
+        self.forward_gateway();
     }
 
     fn envoy_target_ready(&self, handle: &str) -> bool {
@@ -751,6 +1098,9 @@ impl MyrstackApp {
     }
 
     fn forward_envoy(&mut self) {
+        if !self.envoy_core.gateway_actions.is_empty() {
+            return;
+        }
         if !self
             .envoy_core
             .handle
@@ -772,6 +1122,8 @@ impl MyrstackApp {
             self.traffic.sender().send(message);
         }
         let traffic = self.traffic.sender();
+        self.envoy_core
+            .gateway_done(result, |message| traffic.send(message));
         self.envoy_core
             .forward_done(result, now_ms(), |message| traffic.send(message));
     }
@@ -839,5 +1191,7 @@ fn optional<'a>(args: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
     }
 }
 
+#[cfg(test)]
+mod gateway_tests;
 #[cfg(test)]
 mod tests;

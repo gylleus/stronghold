@@ -91,7 +91,7 @@ fn each_section_renders_headless() {
                 "Poll interval (seconds)",
                 "Channels (IDs, one per line)",
                 "Save Envoy settings",
-                "Dry run ON applies immediately when saved. Other changes apply on the next Start.",
+                "Policies and dry run ON apply immediately when saved. Other changes apply on the next Start.",
             ],
         ),
         (

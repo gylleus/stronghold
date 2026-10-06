@@ -1,7 +1,7 @@
 //! Slack subprocesses are serialized here; the UI only sends work and drains results.
 
 use super::BridgeStatus;
-use super::channel::{Channel, InboundEvent, OutboundMessage};
+use super::channel::{Channel, InboundEvent, OutboundMessage, SendReceipt};
 use super::inbox::Inbox;
 use super::settings::EnvoySettings;
 use super::slack::{SlackChannel, SlackIo};
@@ -13,6 +13,20 @@ use std::time::Duration;
 
 pub enum Work {
     Configure(Option<EnvoySettings>),
+    Watches(Vec<super::slack::threads::Watch>),
+    RecordedReplies(Vec<String>),
+    Adopt,
+    Remove(super::requests::Thread),
+    Resolve {
+        command: super::control::EnvoyCommand,
+        reply: Reply,
+    },
+    BindingPreview {
+        command: super::control::EnvoyCommand,
+        requester: Box<super::requests::Requester>,
+        thread: super::requests::Thread,
+        reply: Reply,
+    },
     Forwarded(Vec<String>),
     Send {
         id: String,
@@ -33,7 +47,27 @@ pub enum Update {
     },
     Sent {
         id: String,
+        result: Result<SendReceipt, String>,
+    },
+    Watches {
+        watches: Vec<super::slack::threads::Watch>,
         result: Result<(), String>,
+    },
+    Removed {
+        thread: super::requests::Thread,
+        result: Result<(), String>,
+    },
+    Adopted(Result<Vec<(super::requests::Thread, String)>, String>),
+    Resolved {
+        command: super::control::EnvoyCommand,
+        reply: Reply,
+        result: Result<super::slack::threads::ResolvedDestination, String>,
+    },
+    BindingPreview {
+        command: super::control::EnvoyCommand,
+        requester: Box<super::requests::Requester>,
+        reply: Reply,
+        result: Result<super::requests::BindingPreview, String>,
     },
     Error(String),
 }
@@ -66,6 +100,54 @@ impl Worker {
                         if let Some(settings) = settings {
                             slack.configure(settings);
                         }
+                    }
+                    Ok(Work::Watches(watches)) => {
+                        let result = slack.watches(watches.clone());
+                        let _ = results.send(Update::Watches { watches, result });
+                        wake();
+                    }
+                    Ok(Work::RecordedReplies(keys)) => {
+                        if let Err(e) = slack.acknowledge_replies(&keys) {
+                            let _ = results.send(Update::Error(e));
+                            wake();
+                        }
+                    }
+                    Ok(Work::Adopt) => {
+                        let _ = results.send(Update::Adopted(
+                            slack.list_subscriptions(crate::control::server::now_ms()),
+                        ));
+                        wake();
+                    }
+                    Ok(Work::Remove(thread)) => {
+                        let result = slack.remove_subscription(&thread);
+                        let _ = results.send(Update::Removed { thread, result });
+                        wake();
+                    }
+                    Ok(Work::Resolve { command, reply }) => {
+                        let result = slack.resolve_destination(
+                            command.args["conversation"].as_str().unwrap_or_default(),
+                        );
+                        let _ = results.send(Update::Resolved {
+                            command,
+                            reply,
+                            result,
+                        });
+                        wake();
+                    }
+                    Ok(Work::BindingPreview {
+                        command,
+                        requester,
+                        thread,
+                        reply,
+                    }) => {
+                        let result = slack.binding_preview(&thread);
+                        let _ = results.send(Update::BindingPreview {
+                            command,
+                            requester,
+                            reply,
+                            result,
+                        });
+                        wake();
                     }
                     Ok(Work::Forwarded(ids)) => {
                         if let Err(e) = slack.mark_forwarded(&ids) {

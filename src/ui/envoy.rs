@@ -11,8 +11,20 @@ pub const DRY_RUN_BANNER: &str = "Dry run: approving records the message, nothin
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum DraftAction {
-    Approve { id: String, text: String },
+    Approve {
+        id: String,
+        text: String,
+    },
     Reject(String),
+    Pause(String),
+    Adopt,
+    Keep(String),
+    Settle(String),
+    Binding {
+        id: String,
+        proposal_id: u64,
+        accept: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -29,9 +41,14 @@ pub struct DraftsPanel {
     tab: Option<Tab>,
     dismissed_failures: HashSet<String>,
     recorded_task: Option<String>,
+    requests: Vec<crate::envoy::requests::Request>,
 }
 
 impl DraftsPanel {
+    pub fn set_requests(&mut self, requests: &[crate::envoy::requests::Request]) {
+        self.requests = requests.to_vec();
+    }
+
     #[cfg(test)]
     pub(crate) fn set_edit(&mut self, id: &str, text: &str) {
         self.edits.insert(id.into(), text.into());
@@ -39,10 +56,13 @@ impl DraftsPanel {
 
     pub fn open(&mut self, drafts: &[Draft]) {
         self.tab = Some(
-            if drafts.iter().any(|d| {
-                d.status == DraftStatus::Pending
-                    || (d.status == DraftStatus::Failed && !self.dismissed_failures.contains(&d.id))
-            }) {
+            if self.requests.iter().any(|r| !r.settled)
+                || drafts.iter().any(|d| {
+                    d.status == DraftStatus::Pending
+                        || (d.status == DraftStatus::Failed
+                            && !self.dismissed_failures.contains(&d.id))
+                })
+            {
                 Tab::Inbox
             } else {
                 Tab::Outbox
@@ -78,8 +98,11 @@ impl DraftsPanel {
                 .iter()
                 .any(|d| d.id == *id && d.status == DraftStatus::Pending)
         });
-        self.errors
-            .retain(|id, _| drafts.iter().any(|d| d.id == *id));
+        self.errors.retain(|id, _| {
+            drafts.iter().any(|d| d.id == *id)
+                || self.requests.iter().any(|r| r.id == *id)
+                || id == "adopt"
+        });
         let mut action = None;
         let now = ui.input(|i| i.time);
         let ready = self.last_action_at.is_none_or(|at| now - at >= 0.6);
@@ -91,6 +114,12 @@ impl DraftsPanel {
             self.open(drafts);
         }
         ui.heading("Envoy");
+        if let Some(error) = self.errors.get("adopt") {
+            ui.colored_label(ui.visuals().error_fg_color, error);
+        }
+        if deliberate_click(&ui.button("Adopt open threads")) {
+            action = Some(DraftAction::Adopt);
+        }
         if dry_run {
             ui.label(DRY_RUN_BANNER);
         } else {
@@ -107,6 +136,94 @@ impl DraftsPanel {
         egui::ScrollArea::vertical()
             .id_salt(("envoy", self.tab == Some(Tab::Inbox)))
             .show(ui, |ui| {
+                let inbox_tab = self.tab == Some(Tab::Inbox);
+                for request in self.requests.iter().filter(|r| r.settled != inbox_tab) {
+                    ui.push_id(&request.id, |ui| {
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
+                            ui.strong(format!(
+                                "{} · {:?} · {}",
+                                request.id, request.status, request.to
+                            ));
+                            ui.label(format!(
+                                "Asked by {}",
+                                request
+                                    .bound_requester()
+                                    .map_or("unknown", |r| r.label.as_str())
+                            ));
+                            if let Some(error) = self.errors.get(&request.id) {
+                                ui.colored_label(ui.visuals().error_fg_color, error);
+                            }
+                            if request.close_requested {
+                                ui.weak(if dry_run {
+                                    "Dry run: close recorded; subscription retained"
+                                } else {
+                                    "Closing subscription…"
+                                });
+                            }
+                            for turn in &request.turns {
+                                ui.label(format!("Why: {}", turn.why));
+                                ui.label(&turn.ask);
+                                if let Some(error) = &turn.error {
+                                    ui.colored_label(ui.visuals().error_fg_color, error);
+                                }
+                            }
+                            for reply in &request.deliveries {
+                                if reply.inbox {
+                                    ui.strong("Reply for a finished or unknown ant");
+                                }
+                                ui.label(&reply.text);
+                                if reply.dry_run {
+                                    ui.weak("Dry run: reply recorded without terminal delivery");
+                                }
+                            }
+                            if inbox_tab {
+                                if let Some(proposal) = &request.binding_proposal {
+                                    let thread = &proposal.preview.thread;
+                                    ui.strong(format!(
+                                        "Route replies from {} / {} to {}?",
+                                        thread.conversation, thread.ts, proposal.requester.label
+                                    ));
+                                    ui.label(&proposal.preview.first_line);
+                                    ui.weak(format!("Terminal: {}", proposal.requester.handle()));
+                                    slack_link(ui, Some(&proposal.preview.slack_link));
+                                    ui.label(format!("Envoy reason: {}", proposal.reason));
+                                    ui.push_id(proposal.id, |ui| {
+                                        ui.horizontal(|ui| {
+                                            for (label, accept) in
+                                                [("Accept", true), ("Reject", false)]
+                                            {
+                                                if deliberate_click(&ui.button(label)) {
+                                                    action = Some(DraftAction::Binding {
+                                                        id: request.id.clone(),
+                                                        proposal_id: proposal.id,
+                                                        accept,
+                                                    });
+                                                }
+                                            }
+                                        });
+                                    });
+                                }
+                                if request.bound_requester().is_none() && !request.orphan_kept {
+                                    ui.strong("Orphan thread");
+                                    if ui.button("Keep").clicked() {
+                                        action = Some(DraftAction::Keep(request.id.clone()));
+                                    }
+                                }
+                                if ui
+                                    .button(if request.bound_requester().is_none() {
+                                        "Close"
+                                    } else {
+                                        "Settle"
+                                    })
+                                    .clicked()
+                                {
+                                    action = Some(DraftAction::Settle(request.id.clone()));
+                                }
+                            }
+                        });
+                    });
+                    ui.add_space(8.0);
+                }
                 if self.tab == Some(Tab::Inbox) {
                     let mut cards = 0;
                     for draft in drafts {
@@ -183,17 +300,48 @@ impl DraftsPanel {
     ) -> Option<DraftAction> {
         destination(ui, draft, inbox);
         ui.label(format!("Why: {}", draft.rationale));
+        if let Some(link) = &draft.request {
+            ui.strong(format!("Asked by {}", link.requester));
+            ui.label(format!("Why: {}", link.why));
+        }
+        if let Some(at) = draft.auto_at_ms {
+            let remaining = (at - crate::control::server::now_ms()).max(0);
+            ui.label(format!(
+                "Automatic approval in {}s",
+                (remaining + 999) / 1000
+            ));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
         let text = self
             .edits
             .entry(draft.id.clone())
             .or_insert_with(|| draft.text.clone());
-        ui.add(
-            egui::TextEdit::multiline(text)
-                .desired_width(f32::INFINITY)
-                .desired_rows(4),
-        );
-        if draft.kind == DraftKind::Reply && !text.trim_end().ends_with(ATTRIBUTION) {
-            ui.label(ATTRIBUTION);
+        let edit = |ui: &mut Ui, text: &mut String| {
+            ui.add_enabled(
+                !draft.request.as_ref().is_some_and(|r| r.agent),
+                egui::TextEdit::multiline(text)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(4),
+            )
+            .changed()
+        };
+        let edited = if let Some(link) = &draft.request {
+            ui.columns(2, |columns| {
+                columns[0].strong("Original ask");
+                columns[0].label(&link.original_ask);
+                columns[1].strong("Draft");
+                edit(&mut columns[1], text)
+            })
+        } else {
+            edit(ui, text)
+        };
+        if draft.kind != DraftKind::TaskProposal && !text.trim_end().ends_with(ATTRIBUTION) {
+            ui.label(if draft.automatic {
+                crate::envoy::drafts::AUTO_ATTRIBUTION
+            } else {
+                ATTRIBUTION
+            });
         }
         if draft.kind == DraftKind::TaskProposal {
             ui.label(if dry_run {
@@ -205,7 +353,11 @@ impl DraftsPanel {
         if let Some(error) = self.errors.get(&draft.id) {
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
-        let mut action = None;
+        let mut action = if edited && draft.auto_at_ms.is_some() {
+            Some(DraftAction::Pause(draft.id.clone()))
+        } else {
+            None
+        };
         ui.horizontal(|ui| {
             let approve = if draft.kind == DraftKind::TaskProposal {
                 "Accept task"
@@ -223,7 +375,14 @@ impl DraftsPanel {
                     text: text.clone(),
                 });
             }
-            let response = ui.add_enabled(ready, egui::Button::new("Reject"));
+            let response = ui.add_enabled(
+                ready,
+                egui::Button::new(if draft.auto_at_ms.is_some() {
+                    "Cancel"
+                } else {
+                    "Reject"
+                }),
+            );
             if deliberate_click(&response) {
                 action = Some(DraftAction::Reject(draft.id.clone()));
             }
@@ -287,6 +446,18 @@ fn deliberate_click(response: &egui::Response) -> bool {
 }
 
 fn destination(ui: &mut Ui, draft: &Draft, inbox: &Inbox) {
+    if let Some(conversation) = &draft.conversation {
+        ui.strong(format!("To {conversation}"));
+        ui.label(
+            draft
+                .thread_ts
+                .as_ref()
+                .map_or_else(|| "New message".into(), |ts| format!("Thread {ts}")),
+        );
+        slack_link(ui, draft.slack_link.as_deref());
+        return;
+    }
+
     if let Some(target) = &draft.in_reply_to {
         ui.strong(format!("Slack · {}", target.conversation));
         ui.label(
@@ -578,6 +749,163 @@ mod tests {
         assert!(!h.visible("Approve"));
         let mut empty = Harness::new(vec![]);
         assert!(empty.visible("Decisions (0)"));
+    }
+
+    #[test]
+    fn gateway_card_keeps_original_ask_and_auto_cancel_visible() {
+        use crate::envoy::drafts::RequestLink;
+        let link = RequestLink {
+            id: "request-1".into(),
+            turn_id: 1,
+            original_ask: "Review abc012def at 12:34".into(),
+            requester: "Build ant".into(),
+            why: "Unblock review".into(),
+            agent: true,
+        };
+        let mut draft = Draft::outgoing(
+            "C123".into(),
+            Some("1.000001".into()),
+            link.verbatim(),
+            "Avery owns review".into(),
+            link,
+            0,
+        );
+        draft.id = "draft-1".into();
+        draft.automatic = true;
+        draft.auto_at_ms = Some(crate::control::server::now_ms() + 120_000);
+        let mut h = Harness::new(vec![draft]);
+        assert!(h.visible("Asked by Build ant"));
+        assert!(h.visible("Thread 1.000001"));
+        assert!(h.visible("Original ask"));
+        assert!(h.visible("Review abc012def at 12:34"));
+        assert!(h.visible("Why: Unblock review"));
+        assert_eq!(
+            h.click("Cancel"),
+            Some(DraftAction::Reject("draft-1".into()))
+        );
+    }
+
+    #[test]
+    fn adopted_orphan_opens_inbox_and_offers_keep_and_close() {
+        use crate::envoy::requests::{Requests, Thread};
+        let dir = tempfile::tempdir().unwrap();
+        let mut requests = Requests::load(dir.path().join("requests.json")).unwrap();
+        requests
+            .adopt(
+                Thread {
+                    conversation: "D123".into(),
+                    ts: "1.000001".into(),
+                },
+                "Fixture".into(),
+                0,
+            )
+            .unwrap();
+        let id = requests.all()[0].id.clone();
+        let mut h = Harness::new(vec![]);
+        h.panel.set_requests(requests.all());
+        assert!(h.visible("Orphan thread"));
+        assert_eq!(h.click("Keep"), Some(DraftAction::Keep(id.clone())));
+        assert_eq!(h.click("Close"), Some(DraftAction::Settle(id.clone())));
+        requests
+            .change(&id, |r| {
+                r.settled = true;
+                Ok(())
+            })
+            .unwrap();
+        h.panel.set_requests(requests.all());
+        assert!(!h.visible("Asked by unknown"));
+        h.click("Outbox");
+        assert!(h.visible("Asked by unknown"));
+    }
+
+    #[test]
+    fn binding_requires_deliberate_click_on_the_displayed_proposal() {
+        use crate::envoy::requests::{
+            BindingPreview, BindingProposal, Requester, Requests, Thread,
+        };
+        use crate::review::mark::Origin;
+        let dir = tempfile::tempdir().unwrap();
+        let mut requests = Requests::load(dir.path().join("requests.json")).unwrap();
+        let thread = Thread {
+            conversation: "D123".into(),
+            ts: "1.000001".into(),
+        };
+        requests.adopt(thread.clone(), "Fixture".into(), 0).unwrap();
+        let id = requests.all()[0].id.clone();
+        let requester = Requester::from_origin(Origin {
+            terminal_handle: Some("term:fixture".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        requests
+            .change(&id, |r| {
+                r.binding_proposal = Some(BindingProposal {
+                    id: 1,
+                    requester,
+                    reason: "Review belongs here".into(),
+                    preview: BindingPreview {
+                        thread,
+                        first_line: "Root context".into(),
+                        slack_link: "https://example.slack.com/archives/D123/p1000001".into(),
+                    },
+                });
+                Ok(())
+            })
+            .unwrap();
+        let mut h = Harness::new(vec![]);
+        h.panel.set_requests(requests.all());
+        assert!(h.visible("Route replies from D123 / 1.000001 to term:fixture?"));
+        assert!(h.visible("Root context"));
+        assert!(h.visible("Envoy reason: Review belongs here"));
+        for key in [egui::Key::Tab, egui::Key::Enter, egui::Key::Space]
+            .into_iter()
+            .cycle()
+            .take(18)
+        {
+            let events = [true, false].map(|pressed| egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            assert!(h.frame(events.into()).1.is_none());
+        }
+        let at = text_center(&h.frame(vec![]).0, "Accept").unwrap();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        h.frame(vec![egui::Event::PointerMoved(at), button(true)]);
+        requests
+            .change(&id, |r| {
+                r.binding_proposal.as_mut().unwrap().id = 2;
+                Ok(())
+            })
+            .unwrap();
+        h.panel.set_requests(requests.all());
+        assert!(
+            h.frame(vec![button(false)]).1.is_none(),
+            "a replacement proposal must not inherit the previous pointer press"
+        );
+        assert_eq!(
+            h.click("Accept"),
+            Some(DraftAction::Binding {
+                id: id.clone(),
+                proposal_id: 2,
+                accept: true
+            })
+        );
+        assert_eq!(
+            h.click("Reject"),
+            Some(DraftAction::Binding {
+                id,
+                proposal_id: 2,
+                accept: false
+            })
+        );
     }
 
     #[test]

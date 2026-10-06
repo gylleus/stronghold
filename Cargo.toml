@@ -32,6 +32,7 @@ egui_extras = { version = "0.36", features = ["svg"] }
 sherpa-rs = { version = "0.6.8", features = ["static"] }
 cpal = "0.18"
 sha2 = "0.10"
+url = "2"
 egui_dock = { version = "0.21", features = ["serde"] }
 ron = "0.12"
 # Decodes the ant farm's PNG sprites; already in the tree through eframe.

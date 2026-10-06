@@ -67,6 +67,12 @@ pub struct OutboundMessage {
     pub text: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SendReceipt {
+    pub conversation: String,
+    pub ts: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct PollBatch {
     pub events: Vec<InboundEvent>,
@@ -75,6 +81,6 @@ pub struct PollBatch {
 
 pub trait Channel: Send {
     fn poll(&mut self, now_ms: i64) -> Result<PollBatch, String>;
-    fn send(&mut self, approved: &OutboundMessage) -> Result<(), String>;
+    fn send(&mut self, approved: &OutboundMessage) -> Result<SendReceipt, String>;
     fn health(&self) -> BridgeStatus;
 }

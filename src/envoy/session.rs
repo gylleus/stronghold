@@ -281,6 +281,19 @@ impl Session {
     }
 
     /// Safety ON applies to this session; OFF requires a new launch.
+    pub fn apply_policies(&mut self, settings: &EnvoySettings) -> Result<(), String> {
+        settings.validate_policies()?;
+        let old = self.settings.clone();
+        self.settings.policies = settings.policies.clone();
+        self.settings.dry_run |= settings.dry_run;
+        if let Err(e) = self.save() {
+            self.settings = old;
+            self.settings.dry_run |= settings.dry_run;
+            return Err(e);
+        }
+        Ok(())
+    }
+
     pub fn enable_dry_run(&mut self) -> Result<(), String> {
         self.settings.dry_run = true;
         self.save()
