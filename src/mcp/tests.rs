@@ -1219,6 +1219,8 @@ fn playbook_tools_work_without_the_app() {
         r["structuredContent"]["files"],
         json!(["ENVOY-PLAYBOOK.md"])
     );
+    // Claude Code reads structuredContent, not the text block: the rules must be in it.
+    assert_eq!(r["structuredContent"]["text"], json!(text(&r)));
 
     let r = call(&mut server, "get_playbook", json!({"section": "topo"}));
     assert!(text(&r).contains("section \"Topology\""), "{}", text(&r));

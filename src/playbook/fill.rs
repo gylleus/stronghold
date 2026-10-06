@@ -324,6 +324,7 @@ impl Filled {
             "filled": self.result.filled,
             "missing": self.result.missing,
             "runtime": self.result.runtime,
+            "text": self.text(),
         })
     }
 }

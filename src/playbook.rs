@@ -242,6 +242,9 @@ impl Served {
             "section": self.section,
             "files": self.files,
             "version": self.version.to_json(),
+            // Claude Code shows the model `structuredContent` instead of the text block, so
+            // the rules themselves must be here too.
+            "text": self.text(),
         })
     }
 }
