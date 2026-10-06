@@ -10,7 +10,7 @@ use eframe::egui::{
     self, Color32, ColorImage, Painter, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2,
 };
 
-use super::layout::{Mark, PIPE_H, PIPE_LIP_W};
+use super::layout::{MATTRESS_TOP, Mark, PIPE_H, PIPE_LIP_W};
 use super::nature::Deco;
 
 const ANT_GREY: &[u8] = include_bytes!("../../../assets/art/farm/ant_grey.png");
@@ -249,6 +249,53 @@ impl Sprites {
         let edge = Rect::from_min_max(rect.min - vec2(px, px), rect.max + vec2(px, px));
         painter.rect_filled(edge, 0.0, Color32::from_rgb(0x3a, 0x22, 0x12));
         tiled(painter, self.tunnel.id(), rect, px);
+    }
+
+    /// A wooden bed in the sleeping room filling `rect` (see [`super::layout::BED_W`]): a
+    /// headboard on the left, where a sleeper's head lies, a mattress and a pillow.
+    pub fn bed(&self, painter: &Painter, rect: Rect, px: f32) {
+        let wood = Color32::from_rgb(0x8a, 0x4b, 0x1c);
+        let dark = Color32::from_rgb(0x5a, 0x30, 0x12);
+        let sheet = Color32::from_rgb(0xe8, 0xdc, 0xc0);
+        let pillow = Color32::from_rgb(0xfb, 0xf4, 0xe6);
+        let at = |x: f32, y: f32, w: f32, h: f32, color: Color32| {
+            let min = rect.min + vec2(x * px, y * px);
+            painter.rect_filled(Rect::from_min_size(min, vec2(w * px, h * px)), 0.0, color);
+        };
+        let (w, h) = (rect.width() / px, rect.height() / px);
+        let mattress = h - MATTRESS_TOP;
+        // Legs, the side rail, the mattress on it, the boards at either end.
+        at(1.0, h - 1.0, 1.0, 1.0, dark);
+        at(w - 2.0, h - 1.0, 1.0, 1.0, dark);
+        at(0.0, h - 3.0, w, 2.0, wood);
+        at(0.0, h - 2.0, w, 1.0, dark);
+        at(2.0, mattress, w - 3.0, 3.0, sheet);
+        at(
+            2.0,
+            mattress + 2.0,
+            w - 3.0,
+            1.0,
+            Color32::from_rgb(0xc8, 0xb8, 0x98),
+        );
+        at(0.0, 0.0, 2.0, h - 1.0, wood);
+        at(0.0, 0.0, 2.0, 1.0, dark);
+        at(w - 1.0, mattress - 1.0, 1.0, h - mattress, wood);
+        at(3.0, mattress - 2.0, 4.0, 2.0, pillow);
+    }
+
+    /// The blanket over the back half of the sleeper at `cell` lying on the bed at `bed`,
+    /// its head and kicking legs left out.
+    pub fn blanket(&self, painter: &Painter, bed: Rect, cell: Rect, px: f32, alpha: f32) {
+        let quilt = Color32::from_rgb(0x4a, 0x6f, 0xb8).gamma_multiply(alpha);
+        let fold = Color32::from_rgb(0x9c, 0xb8, 0xe8).gamma_multiply(alpha);
+        let top = bed.bottom() - (MATTRESS_TOP + 3.0) * px;
+        let body = Rect::from_min_max(
+            pos2(cell.left() + 0.45 * cell.width(), top),
+            pos2(bed.right() - px, bed.bottom() - (MATTRESS_TOP - 2.0) * px),
+        );
+        painter.rect_filled(body, 0.0, quilt);
+        let edge = Rect::from_min_size(body.min, vec2(px, body.height()));
+        painter.rect_filled(edge, 0.0, fold);
     }
 
     /// An ant filling `cell`.

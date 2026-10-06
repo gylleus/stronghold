@@ -3,7 +3,8 @@
 //!
 //! `cargo run --example ant_farm [--light] [--graph] [--sweep] [--shot out.png]`.
 //! `--receipt-at-ms 31` freezes a receipt mid-shake; `--reduced-motion` shows its flash.
-//! `--bridge-down` and `--approval` show the Envoy receiver health. `--graph`
+//! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
+//! terminals in the sleeping room. `--graph`
 //! shows the same fleet as the graph; `--sweep` flies the worktree cleanup's broom around the
 //! farm. Every few seconds one worker
 //! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
@@ -50,6 +51,7 @@ fn main() -> eframe::Result {
     let reduced_motion = args.iter().any(|a| a == "--reduced-motion");
     let show_graph = args.iter().any(|a| a == "--graph");
     let sweep = args.iter().any(|a| a == "--sweep").then(sweep_marker);
+    let parked = args.iter().any(|a| a == "--parked");
     eframe::run_native(
         "ant farm",
         eframe::NativeOptions {
@@ -64,6 +66,13 @@ fn main() -> eframe::Result {
                 egui::Theme::Dark
             });
             let mut snapshot = fleet();
+            if parked {
+                for name in ["sleepy", "dozy", "napper"] {
+                    let mut n = node(name, NodeKind::Terminal, None, NodeState::Idle, "myrstack");
+                    n.parked_at_ms = Some(1);
+                    snapshot.nodes.push(n);
+                }
+            }
             snapshot
                 .nodes
                 .iter_mut()
