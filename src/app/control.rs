@@ -356,6 +356,10 @@ impl MyrstackApp {
                 self.traffic.push(message);
                 Ok(json!({ "drawn": true }))
             }
+            ControlCommand::ToolCall(call) => {
+                self.traffic.calls.push((call, None));
+                Ok(json!({ "drawn": true }))
+            }
             ControlCommand::Finish(request) => self.control_finish(request),
         };
         let error = result.as_ref().err().cloned();

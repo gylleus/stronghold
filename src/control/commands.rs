@@ -152,6 +152,8 @@ pub enum ControlCommand {
     Finish(crate::finish::FinishRequest),
     /// A message between agents happened elsewhere (the Envoy's relays, say): draw it.
     AgentMessage(crate::traffic::AgentMessage),
+    /// An MCP tool call acted on agents: draw it as a beam from its caller.
+    ToolCall(crate::traffic::beam::ToolCall),
 }
 
 impl ControlCommand {
@@ -310,6 +312,7 @@ impl ControlCommand {
             "agent_message" => {
                 crate::traffic::AgentMessage::from_params(params).map(Self::AgentMessage)
             }
+            "tool_call" => crate::traffic::beam::ToolCall::from_params(params).map(Self::ToolCall),
             _ => return None,
         };
         Some(result)

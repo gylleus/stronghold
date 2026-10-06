@@ -4,6 +4,7 @@
 //! [`layout`] decides where everything goes, [`motion`] walks ants to new places and
 //! [`sprites`] draws them; this module ties them to egui and handles input.
 
+mod beams;
 mod comms;
 pub mod death;
 pub mod layout;
@@ -190,6 +191,8 @@ pub struct AntFarmView {
     envoy_receipt: crate::ui::envoy_receipt::ReceiptCue,
     /// Messages carried between ants; see [`mail`].
     mail: crate::ui::envelope::Flights,
+    /// Tool calls beaming from their callers; see [`beams`].
+    beams: crate::ui::beam::Beams,
     /// The part of the farm on screen; see [`zoom`].
     camera: Camera,
     /// Device of the latest scroll over the farm; see [`ScrollSource`].
@@ -233,6 +236,11 @@ impl AntFarmView {
     /// motion.
     pub fn message(&mut self, flight: crate::traffic::Flight, now_s: f64, still: bool) {
         self.mail.push(flight, now_s, still);
+    }
+
+    /// Shows a tool call's beam, asked for at `now_s` (egui time); `still` for Reduce motion.
+    pub fn beam(&mut self, beam: crate::traffic::beam::Beam, now_s: f64, still: bool) {
+        self.beams.push(beam, now_s, still);
     }
 
     /// Draws the farm filling the available space and handles clicks, hover and the context
@@ -328,6 +336,7 @@ impl AntFarmView {
         );
         paint_falls(&painter, sprites, &scene, &self.falls, now_s);
         mail::paint(&painter, &scene, &placed, self.mail.tick(now_s), now_s);
+        beams::paint(&painter, &scene, &placed, self.beams.tick(now_s), now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
         comms::tray(
             &painter,
@@ -353,7 +362,8 @@ impl AntFarmView {
             || !self.ripples.is_empty()
             || !self.births.is_empty()
             || !self.falls.is_empty()
-            || !self.mail.is_empty();
+            || !self.mail.is_empty()
+            || !self.beams.is_empty();
         let stepping = scene.ants.iter().any(|a| {
             matches!(a.pose, Pose::Dig | Pose::Build | Pose::Wait | Pose::Sleep)
                 || (a.pose == Pose::Queen && self.queen_busy)
