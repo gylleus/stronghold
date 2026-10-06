@@ -228,7 +228,7 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
         )
         .unwrap();
         wait_for(&mut core, |c| !c.pending.is_empty());
-        let (action, batch) = core.next_forward(now_ms()).expect("fixture forwarded");
+        let (action, batch) = core.next_forward(now_ms(), &[]).expect("fixture forwarded");
         let Action::Send { handle, input } = action else {
             panic!("expected terminal line");
         };
@@ -510,7 +510,7 @@ fn receipt_event(ts: &str) -> InboundEvent {
 }
 
 fn submit_receipt_batch(core: &mut AppEnvoy, now: i64, id: ActionId) -> ActionResult {
-    let (action, batch) = core.next_forward(now).expect("pending batch");
+    let (action, batch) = core.next_forward(now, &[]).expect("pending batch");
     core.forwarding = Some((id, batch));
     ActionResult {
         id,
@@ -577,7 +577,7 @@ fn failed_forward_and_retry_submission_do_not_start_receipt() {
     core.forward_done(&result, 100, |_| panic!("failed delivery"));
     assert_eq!(core.shake_started_ms, None);
     assert_eq!(core.pending.iter().cloned().collect::<Vec<_>>(), events);
-    assert!(core.next_forward(30_099).is_none());
+    assert!(core.next_forward(30_099, &[]).is_none());
     let result = submit_receipt_batch(&mut core, 30_100, 2);
     assert_eq!(core.shake_started_ms, None);
     core.forward_done(&result, 30_101, |_| {});
@@ -618,7 +618,7 @@ fn filtered_backlog_and_duplicate_events_do_not_start_receipt() {
     let mut core = AppEnvoy::load(dir.path().into());
     core.handle = Some("term_envoy".into());
     core.merge_polled(Inbox::load(&path).unwrap(), batch.events);
-    assert!(core.next_forward(3_000).is_none());
+    assert!(core.next_forward(3_000, &[]).is_none());
     assert_eq!(core.shake_started_ms, None);
 
     let fresh = json!({"type":"message", "channel":"C123", "ts":"3.000001", "user":"U123", "text":"Fixture message"});
@@ -631,9 +631,75 @@ fn filtered_backlog_and_duplicate_events_do_not_start_receipt() {
     assert_eq!(batch.events.len(), 1, "same channel accepts a fresh event");
     assert_eq!(batch.events[0].ts, "3.000001");
     core.merge_polled(Inbox::load(&path).unwrap(), batch.events);
-    assert!(core.next_forward(3_001).is_some());
+    assert!(core.next_forward(3_001, &[]).is_some());
     assert_eq!(
         core.shake_started_ms, None,
         "fresh ingestion still is not delivery"
     );
+}
+
+#[test]
+fn idle_envoy_with_a_bare_composer_preview_takes_events() {
+    // Orca's preview of an idle Claude Envoy: a stale banner, then only the empty composer.
+    let terminal = Terminal {
+        agent_identity: Some(AgentIdentity::Claude),
+        writable: true,
+        title: Some("\u{2733} Envoy MCP tool setup".into()),
+        preview: Some(
+            "approves them without a prompt. Replace that * with the exact value you mean.\n\u{276f}"
+                .into(),
+        ),
+        ..Terminal::default()
+    };
+    assert!(can_forward(&terminal, true, false));
+}
+
+#[test]
+fn batches_name_candidate_ants_and_fold_the_backlog() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    let now = 1_791_300_000_000;
+    let mut old = receipt_event("1791200000.000001");
+    old.text = "yesterday".into();
+    let mut root = receipt_event("1791299900.000001");
+    root.text = "Plan for realtime#694".into();
+    let mut reply = receipt_event("1791299950.000001");
+    reply.thread_ts = Some(root.ts.clone());
+    reply.text = "yes, push the merge commit yourself".into();
+    let mut chatter = receipt_event("1791299960.000001");
+    chatter.text = "lunch?".into();
+    let events = vec![old, root, reply, chatter];
+    let mut inbox = Inbox::default();
+    for event in &events {
+        inbox.insert(event.clone());
+    }
+    core.merge_polled(inbox, events);
+    let ants = [Ant {
+        id: "term:term_ant".into(),
+        label: "Recs rollout".into(),
+        prs: vec!["realtime#694".into()],
+        ..Ant::default()
+    }];
+    let (action, batch) = core.next_forward(now, &ants).expect("batch");
+    assert_eq!(batch.len(), 4, "the backlog is acknowledged with the batch");
+    let Action::Send { input, .. } = action else {
+        panic!("typed batch")
+    };
+    let lines: Vec<String> = input
+        .text
+        .unwrap()
+        .split(" | ")
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(lines.len(), 4);
+    assert!(lines[0].starts_with("Envoy backlog: 1 event(s) older than 30 min"));
+    assert!(lines[1].ends_with("ants: Recs rollout (term:term_ant, realtime#694)"));
+    assert!(
+        lines[2].contains("push the merge commit")
+            && lines[2].ends_with("ants: Recs rollout (term:term_ant, realtime#694)"),
+        "a reply inherits its thread's refs: {}",
+        lines[2]
+    );
+    assert!(lines[3].ends_with("— no ant match"));
 }

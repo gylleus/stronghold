@@ -439,6 +439,30 @@ impl GhSource for GhCli {
     }
 }
 
+impl GhCli {
+    /// The head branch of `owner/repo#number`.
+    pub fn head_branch(&self, owner: &str, repo: &str, number: u64) -> Result<String, GhError> {
+        let number = number.to_string();
+        let repo = format!("{owner}/{repo}");
+        let args = [
+            "pr",
+            "view",
+            &number,
+            "--repo",
+            &repo,
+            "--json",
+            "headRefName",
+            "-q",
+            ".headRefName",
+        ];
+        let (ok, stdout, stderr) = run_with_timeout(&self.binary, &args, GH_TIMEOUT)?;
+        if !ok {
+            return Err(classify_failure(&stderr));
+        }
+        Ok(stdout.trim().to_owned())
+    }
+}
+
 /// A failed `gh` run: auth problems make every PR unreadable.
 pub fn classify_failure(stderr: &str) -> GhError {
     let first = stderr

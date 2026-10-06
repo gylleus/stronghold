@@ -1,12 +1,13 @@
 # Agent Fleet Playbook: parallel Claude Code agents under Orca
 
-**v7, 2026-10-02.** How Karl runs a multi-agent engineering effort: one coordinator session,
+**v7.2, 2026-10-06.** How Karl runs a multi-agent engineering effort: one coordinator session,
 long-lived worker worktrees, adversarial review inside each, everything as Orca terminals Karl
 can watch and join. Workers follow `_AGENT_PROTOCOL.md`; this file is for coordinators. v7 drops
 the attendant (Myrstack forwards events now) and tiers the plan gate by risk; see
 `~/Documents/agents/tracks/playbook-evaluation-REPORT.md`. v7.1 adds `ask_karl` for questions
 you wait on (including "done, can I close?") and `finish_session` for leaving once Karl says so
-(_Human in the loop_).
+(_Human in the loop_). v7.2 starts every Codex and Claude agent through `spawn_session`, never
+a hand-typed `orca terminal create` (_Setup and dispatch_).
 
 ## Topology
 
@@ -96,6 +97,13 @@ trust modals, submits a parked brief, trusts direnv and waits for the `⏺` line
 independent worker before waiting on any. Write the spec with `kickoff {task_id}` or by hand
 from `KICKOFF-TEMPLATE.md`.
 
+**Start Codex and Claude agents only through `spawn_session`:** mode `worker` for your run's
+workers, `worktree`/`new_worktree` for a loose session, with `agent: "codex"` (and `model` if
+needed). Never hand-type `orca terminal create … --command "codex …"` or `"claude …"`:
+`spawn_session` sets the right flags (Codex bypass mode), waits for the prompt, records the
+dispatch and gets past the permission check, while a hand-typed launch gets blocked or stalls on
+approvals. If `spawn_session` can't do what you need, `ask_karl` instead of working around it.
+
 Fallback when Myrstack isn't running, or for a task created ahead with `task-create --deps`:
 
 ```bash
@@ -122,7 +130,7 @@ sits unsubmitted at the `❯` prompt or behind the Bypass Permissions modal. `te
   upgrades by hand (`brew upgrade --cask codex`) while no workers are starting.
 - Failed start: inspect `stage`, `effects`, `residualResources`; don't blind-retry.
 - `--repo id:<repoId>` comes from `orca repo list`; a worktree id is `<repoId>::<path>`.
-- Same-checkout work: `orca terminal create --worktree active --command "claude --model claude-opus-5-5"`.
+- Same-checkout work: `spawn_session` mode `worktree` on that worktree.
 - **Model tiering** (Karl's rule since 2026-10-01; `--model <id> [--effort high]` on
   `worker-start`, fresh terminals only):
   - **Coding workers: Codex** (`--agent codex`).

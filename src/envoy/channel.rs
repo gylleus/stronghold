@@ -11,6 +11,8 @@ pub enum EventKind {
     Dm,
     AgentComms,
     ThreadReply,
+    /// A message newly pinned in a conversation Karl can see.
+    Pin,
 }
 
 impl EventKind {
@@ -20,6 +22,7 @@ impl EventKind {
             Self::Dm => "dm",
             Self::AgentComms => "agent_comms",
             Self::ThreadReply => "thread_reply",
+            Self::Pin => "pin",
         }
     }
 }
