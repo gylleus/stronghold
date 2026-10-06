@@ -55,7 +55,7 @@ pub enum Update {
     Resolved {
         command: super::control::EnvoyCommand,
         reply: Reply,
-        result: Result<String, String>,
+        result: Result<super::slack::threads::ResolvedDestination, String>,
     },
     Error(String),
 }

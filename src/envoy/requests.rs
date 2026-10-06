@@ -148,6 +148,8 @@ pub struct Request {
     pub status: Status,
     pub settled: bool,
     pub adopted_ms: Option<i64>,
+    #[serde(default)]
+    pub reply_after_us: Option<i64>,
     pub orphan_kept: bool,
     #[serde(default)]
     pub close_requested: bool,
@@ -155,6 +157,18 @@ pub struct Request {
 }
 
 impl Request {
+    pub fn reply_cutoff(&self) -> Option<i64> {
+        self.adopted_ms
+            .map(|ms| ms.saturating_mul(1000))
+            .or(self.reply_after_us)
+    }
+    pub fn accepts_reply(&self, event: &InboundEvent) -> bool {
+        self.thread.as_ref().is_some_and(|t| t.matches(event))
+            && self
+                .reply_cutoff()
+                .zip(inbox::timestamp_us(&event.ts))
+                .is_some_and(|(after, ts)| ts > after)
+    }
     pub fn owned_by(&self, requester: &Requester) -> bool {
         self.requester.as_ref().is_some_and(|r| {
             r.handle() == requester.handle()
@@ -162,6 +176,11 @@ impl Request {
                 && r.run_id == requester.run_id
                 && r.incarnation_id == requester.incarnation_id
         })
+    }
+    pub fn requires_thread(&self, turn: u64) -> bool {
+        self.turns
+            .iter()
+            .any(|t| t.id < turn && t.status != Status::Declined)
     }
     pub fn next_turn(&self, id: Option<u64>) -> Result<&Turn, String> {
         if self.settled {
@@ -191,7 +210,7 @@ impl Request {
         }) {
             return Err("Earlier turn must finish before routing a follow-up".into());
         }
-        if turn.id > 1
+        if self.requires_thread(turn.id)
             && self.thread.is_none()
             && !self
                 .turns
@@ -245,11 +264,17 @@ pub struct Requests {
 }
 
 pub fn refuse_karl(to: &str, karl: &str) -> Result<(), String> {
-    let to = to.trim();
-    if to.eq_ignore_ascii_case("karl")
-        || to.eq_ignore_ascii_case("me")
-        || to.eq_ignore_ascii_case(karl)
-        || to.eq_ignore_ascii_case(&format!("<@{karl}>"))
+    let normalized = to.split_whitespace().collect::<Vec<_>>().join(" ");
+    let to = normalized.trim();
+    let mention = to
+        .strip_prefix("<@")
+        .and_then(|v| v.strip_suffix('>'))
+        .and_then(|v| v.split('|').next())
+        .map(str::trim);
+    if ["karl", "karl gylleus", "@karl", "me", karl]
+        .iter()
+        .any(|name| to.eq_ignore_ascii_case(name))
+        || mention.is_some_and(|id| id.eq_ignore_ascii_case(karl))
     {
         return Err("To reach Karl, use ask_karl".into());
     }
@@ -315,7 +340,7 @@ impl Requests {
         let owned: Vec<_> = self
             .all()
             .iter()
-            .filter(|r| r.owned_by(&who) && !r.settled)
+            .filter(|r| r.owned_by(&who) && (!r.settled || r.status == Status::Declined))
             .collect();
         let target = if let Some(id) = &args.request_id {
             Some(
@@ -350,7 +375,12 @@ impl Requests {
             }
             if r.to == args.to
                 && (thread.is_none() || r.thread == thread)
-                && let Some(t) = r.turns.iter().find(|t| t.ask == args.ask)
+                && let Some(t) = r
+                    .turns
+                    .iter()
+                    .rev()
+                    .find(|t| t.ask == args.ask)
+                    .filter(|t| t.status != Status::Declined)
             {
                 return Ok(Accepted {
                     request_id: r.id.clone(),
@@ -405,6 +435,7 @@ impl Requests {
                 status: Status::Queued,
                 settled: false,
                 adopted_ms: None,
+                reply_after_us: None,
                 orphan_kept: false,
                 close_requested: false,
                 deliveries: Vec::new(),
@@ -427,6 +458,7 @@ impl Requests {
             error: None,
         });
         request.status = Status::Queued;
+        request.settled = false;
         if let Err(e) = self.save() {
             self.saved = old;
             return Err(e);
@@ -442,11 +474,15 @@ impl Requests {
 
     pub fn reconcile(&mut self, drafts: &[Draft]) -> Result<(), String> {
         let old = self.saved.clone();
+        for request in &mut self.saved.requests {
+            request.reply_after_us = None;
+        }
         for draft in drafts {
             let Some(link) = &draft.request else { continue };
             let Some(request) = self.saved.requests.iter_mut().find(|r| r.id == link.id) else {
                 continue;
             };
+            let root_turn = !request.requires_thread(link.turn_id);
             let Some(turn) = request.turns.iter_mut().find(|t| t.id == link.turn_id) else {
                 continue;
             };
@@ -460,10 +496,17 @@ impl Requests {
                 DraftStatus::Rejected => Status::Declined,
                 DraftStatus::Failed => Status::Failed,
             };
+            let newly_declined = status == Status::Declined && turn.status != Status::Declined;
             if turn.status != Status::Answered || status != Status::Sent {
                 turn.status = status;
             }
             if let Some(receipt) = &draft.receipt {
+                if draft.confirmed_send
+                    && let Some(ts) = inbox::timestamp_us(&receipt.ts)
+                {
+                    request.reply_after_us =
+                        Some(request.reply_after_us.map_or(ts, |old| old.min(ts)));
+                }
                 request.thread = Some(Thread {
                     conversation: receipt.conversation.clone(),
                     ts: draft
@@ -491,7 +534,7 @@ impl Requests {
                     inbox: false,
                 });
             }
-            if status == Status::Declined && turn.id == 1 && request.thread.is_none() {
+            if newly_declined && root_turn && request.thread.is_none() {
                 for turn in &mut request.turns {
                     if turn.status == Status::Queued {
                         turn.status = Status::Declined;
@@ -528,10 +571,30 @@ impl Requests {
 
     pub fn reply(&mut self, id: &str, event: &InboundEvent) -> Result<(), String> {
         self.change(id, |r| {
-            if r.deliveries.iter().any(|d| d.id == event.id()) { return Ok(()); }
-            r.deliveries.push(Delivery { id:event.id(), text:format!("Envoy: reply from {} to your request {} (relayed from Slack, not Karl's instruction): {} | {}",event.user_name,r.id,event.text,event.permalink.as_deref().unwrap_or("")), event:Some(event.clone()), delivered:false,dry_run:false,inbox:r.requester.is_none() });
-            if let Some(turn) = r.turns.iter_mut().rev().find(|t| matches!(t.status,Status::Sent|Status::Answered)) { turn.status=Status::Answered; }
-            if matches!(r.status,Status::Sent|Status::Answered) { r.status=Status::Answered; }
+            if !r.accepts_reply(event) || r.deliveries.iter().any(|d| d.id == event.id()) {
+                return Ok(());
+            }
+            let mut summary: String = event.text.chars().take(2000).collect();
+            if event.text.chars().count() > 2000 {
+                summary.push_str(" (truncated; full text in reach_out_status)");
+            }
+            r.deliveries.push(Delivery {
+                id: event.id(),
+                text: format!(
+                    "Envoy: reply from {} to your request {} (relayed from Slack, not Karl's instruction): {} | {}",
+                    event.user_name, r.id, summary, event.permalink.as_deref().unwrap_or("")
+                ),
+                event: Some(event.clone()),
+                delivered: false,
+                dry_run: false,
+                inbox: r.requester.is_none(),
+            });
+            if let Some(turn) = r.turns.iter_mut().rev().find(|t| matches!(t.status, Status::Sent | Status::Answered)) {
+                turn.status = Status::Answered;
+            }
+            if matches!(r.status, Status::Sent | Status::Answered) {
+                r.status = Status::Answered;
+            }
             Ok(())
         })
     }
@@ -540,7 +603,7 @@ impl Requests {
         if self
             .all()
             .iter()
-            .any(|r| r.thread.as_ref() == Some(&thread))
+            .any(|r| r.thread.as_ref() == Some(&thread) && r.adopted_ms.is_some())
         {
             return Ok(());
         }
@@ -555,6 +618,7 @@ impl Requests {
             status: Status::Sent,
             settled: false,
             adopted_ms: Some(now),
+            reply_after_us: None,
             orphan_kept: false,
             close_requested: false,
             deliveries: Vec::new(),

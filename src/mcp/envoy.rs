@@ -28,7 +28,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_route",
-            "Route a queued request. Agent destinations forbid draft_text and preserve the ask verbatim.",
+            "Route a queued request. Channels preserve the ask verbatim; person rewrites require a verified human DM and manual approval.",
             json!({"id":string,"turn_id":{"type":"integer","minimum":1},"conversation":string,"destination_kind":{"type":"string","enum":["agent","person"]},"thread_ts":string,"draft_text":string,"rationale":string}),
             vec!["id", "conversation", "destination_kind", "rationale"],
         ),

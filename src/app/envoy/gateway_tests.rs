@@ -35,6 +35,8 @@ impl crate::mcp::Control for Control<'_> {
 #[derive(Clone)]
 struct Fake {
     sent: Arc<Mutex<Vec<OutboundMessage>>>,
+    calls: Arc<Mutex<Vec<String>>>,
+    receipt_ts: String,
     bridge: PathBuf,
     event: InboundEvent,
 }
@@ -45,14 +47,15 @@ impl SlackSender for Fake {
         std::fs::write(self.bridge.join("channels/C123.jsonl"), format!("{line}\n")).unwrap();
         Ok(SendReceipt {
             conversation: message.conversation.clone(),
-            ts: self.event.thread_ts.clone().unwrap(),
+            ts: self.receipt_ts.clone(),
         })
     }
 }
 impl SlackIo for Fake {
     fn api(&mut self, method: &str, _: &[(&str, String)]) -> Result<Value, String> {
+        self.calls.lock().unwrap().push(method.into());
         Ok(if method == "conversations.replies" {
-            json!({"ok":true,"messages":[{"ts":self.event.ts,"thread_ts":self.event.thread_ts,"user":self.event.user,"text":self.event.text}]})
+            json!({"ok":true,"messages":[{"ts":"2.000001","thread_ts":self.event.thread_ts,"user":"UHISTORY","text":"Private old history","permalink":"https://example.slack.com/archives/C123/p2000001"},{"ts":self.event.ts,"thread_ts":self.event.thread_ts,"user":self.event.user,"text":self.event.text}]})
         } else if method == "chat.getPermalink" {
             json!({"ok":true,"permalink":self.event.permalink})
         } else {
@@ -67,8 +70,16 @@ impl SlackIo for Fake {
         &mut self,
         dir: &std::path::Path,
         _: &crate::envoy::requests::Thread,
-        _: Option<&str>,
+        label: Option<&str>,
     ) -> Result<(), String> {
+        self.calls.lock().unwrap().push(
+            if label.is_some() {
+                "thread_add"
+            } else {
+                "thread_remove"
+            }
+            .into(),
+        );
         assert_eq!(dir, self.bridge);
         Ok(())
     }
@@ -80,6 +91,8 @@ fn fixture(dir: &std::path::Path) -> Fake {
     let root = format!("{}.000001", now_ms() / 1000 + 1);
     Fake {
         sent: Default::default(),
+        calls: Default::default(),
+        receipt_ts: root.clone(),
         bridge,
         event: InboundEvent {
             channel_kind: "slack".into(),
@@ -120,14 +133,32 @@ fn submit(core: &mut AppEnvoy, ask: &str) -> String {
         .unwrap()
         .into()
 }
+fn route_command(core: &mut AppEnvoy, command: &EnvoyCommand) -> Result<Value, String> {
+    crate::envoy::authorize(core, &command.origin)?;
+    let conversation = command.args["conversation"].as_str().unwrap().to_owned();
+    assert!(
+        !conversation.starts_with('D'),
+        "DM fixtures must use worker verification"
+    );
+    core.route(
+        &command.args,
+        &crate::envoy::slack::threads::ResolvedDestination {
+            conversation,
+            person: false,
+        },
+    )
+}
+
 fn route(core: &mut AppEnvoy, id: &str) -> Draft {
-    let result = core
-        .request(&command(
+    let result = route_command(
+        core,
+        &command(
             "envoy",
             "envoy_route",
             json!({"id":id,"conversation":"C123","destination_kind":"agent","rationale":"Fixture"}),
-        ))
-        .unwrap();
+        ),
+    )
+    .unwrap();
     serde_json::from_value(result["draft"].clone()).unwrap()
 }
 
@@ -205,15 +236,11 @@ fn gateway_mcp_to_event_route_approval_fast_reply_and_safe_terminal_delivery() {
         preview: Some("OpenAI Codex\n›".into()),
         ..Default::default()
     };
+    assert!(!can_forward(&terminal, false, false));
+    assert!(can_forward(&terminal, true, false));
+    let (action, record) = core.reply_action(&id, &delivery, "ant").unwrap();
     assert!(
-        core.reply_action(&id, &delivery, "ant", can_forward(&terminal, false, false))
-            .is_none()
-    );
-    let (action, record) = core
-        .reply_action(&id, &delivery, "ant", can_forward(&terminal, true, false))
-        .unwrap();
-    assert!(
-        matches!(&action,Action::Send{handle,input} if handle=="ant"&&input.text.as_ref().unwrap().contains("not Karl's instruction") && input.text.as_ref().unwrap().contains(fake.event.permalink.as_ref().unwrap()))
+        matches!(&action,Action::Send{handle,input} if handle=="ant" && input.text.as_ref().unwrap().contains("not Karl's instruction") && input.text.as_ref().unwrap().contains(fake.event.permalink.as_ref().unwrap()))
     );
     core.gateway_actions.insert(2, record);
     let mut traffic = Vec::new();
@@ -348,8 +375,8 @@ fn followups_wait_for_root_and_cannot_upgrade_simulated_root_to_live() {
         json!({"to":"Avery agent","ask":"follow","why":"review","request_id":id}),
     ))
     .unwrap();
-    assert!(core.request(&command("envoy","envoy_route",json!({"id":id,"turn_id":2,"conversation":"C123","destination_kind":"agent","rationale":"test"}))).is_err());
-    let first=core.request(&command("envoy","envoy_route",json!({"id":id,"turn_id":1,"conversation":"C123","destination_kind":"agent","rationale":"test"}))).unwrap();
+    assert!(route_command(&mut core, &command("envoy","envoy_route",json!({"id":id,"turn_id":2,"conversation":"C123","destination_kind":"agent","rationale":"test"}))).is_err());
+    let first=route_command(&mut core, &command("envoy","envoy_route",json!({"id":id,"turn_id":1,"conversation":"C123","destination_kind":"agent","rationale":"test"}))).unwrap();
     core.envoy_approve(first["draft"]["id"].as_str().unwrap(), None, false, |_| {
         false
     })
@@ -470,7 +497,7 @@ fn policy_precedence_zero_veto_secret_scan_and_cancel_are_enforced() {
     assert!(!commands.try_iter().any(|w| matches!(w, Work::Send { .. })));
     let id = submit(&mut core, "ghp_123456789012345678901234567890");
     assert!(
-        core.request(&command(
+        route_command(&mut core, &command(
             "envoy",
             "envoy_route",
             json!({"id":id,"conversation":"C123","destination_kind":"agent","rationale":"fixture"})
@@ -631,7 +658,7 @@ fn no_reply_root_does_not_settle_an_accepted_followup() {
         json!({"to":"Avery agent","ask":"follow","why":"review","request_id":id}),
     ))
     .unwrap();
-    let routed = core.request(&command("envoy", "envoy_route", json!({"id":id,"turn_id":1,"conversation":"C123","destination_kind":"agent","rationale":"test"}))).unwrap();
+    let routed = route_command(&mut core, &command("envoy", "envoy_route", json!({"id":id,"turn_id":1,"conversation":"C123","destination_kind":"agent","rationale":"test"}))).unwrap();
     let draft_id = routed["draft"]["id"].as_str().unwrap();
     core.queue()
         .unwrap()
@@ -654,7 +681,7 @@ fn no_reply_root_does_not_settle_an_accepted_followup() {
 }
 
 #[test]
-fn adopted_close_is_dry_run_safe_and_retries_failed_cleanup() {
+fn owned_close_is_dry_run_safe_and_retries_failed_cleanup() {
     use crate::envoy::requests::Thread;
     use crate::ui::envoy::DraftAction;
     let dir = tempfile::tempdir().unwrap();
@@ -662,14 +689,28 @@ fn adopted_close_is_dry_run_safe_and_retries_failed_cleanup() {
     let (worker, commands, updates) = Worker::test_pair();
     core.worker = Some(worker);
     let thread = Thread {
-        conversation: "D123".into(),
+        conversation: "C123".into(),
         ts: "1.000001".into(),
     };
-    core.requests_mut()
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "Owned request");
+    let draft = route(&mut core, &id);
+    core.queue()
         .unwrap()
-        .adopt(thread.clone(), "Orphan".into(), 0)
+        .begin_approval(&draft.id, None, false, 0)
         .unwrap();
-    let id = core.requests()[0].id.clone();
+    core.queue()
+        .unwrap()
+        .finish_receipt(
+            &draft.id,
+            Ok(SendReceipt {
+                conversation: thread.conversation.clone(),
+                ts: thread.ts.clone(),
+            }),
+            1,
+        )
+        .unwrap();
+    core.reconcile_requests().unwrap();
     core.panel_action(DraftAction::Keep(id.clone()), false, |_| false)
         .1
         .unwrap();
@@ -760,4 +801,319 @@ fn invalid_adoption_reply_does_not_bind_owner_before_retry() {
     core.bind_requester(&json!({"request_id":id,"event_id":fake.event.id()}), who)
         .unwrap();
     assert!(core.requests()[0].requester.is_some());
+}
+
+#[test]
+fn foreign_thread_hint_cannot_watch_or_disclose_history_before_real_send() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut fake = fixture(dir.path());
+    fake.event.thread_ts = Some("1.000001".into());
+    let calls = fake.calls.clone();
+    let mut core = AppEnvoy::at(
+        dir.path().into(),
+        &egui::Context::default(),
+        fake.clone(),
+        fake.bridge.clone(),
+    );
+    core.set_enabled(
+        "envoy".into(),
+        EnvoySettings {
+            dry_run: false,
+            channels: vec![],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let accepted = core.request(&command("ant","reach_out",json!({"to":"Avery","ask":"A private thread hint","why":"review","thread":"https://example.slack.com/archives/C123/p1000001"}))).unwrap();
+    let id = accepted["request_id"].as_str().unwrap().to_owned();
+    core.reconcile_requests().unwrap();
+    wait(&mut core, |c| {
+        c.watches == Some(vec![]) && c.bridge == BridgeStatus::Ok
+    });
+    assert!(
+        !calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m == "thread_add" || m == "conversations.replies")
+    );
+    core.requests_mut()
+        .unwrap()
+        .reply(&id, &fake.event)
+        .unwrap();
+    assert!(core.requests()[0].deliveries.is_empty());
+    let draft = route(&mut core, &id);
+    core.reconcile_requests().unwrap();
+    assert_eq!(core.watches, Some(vec![]));
+    core.envoy_approve(&draft.id, None, false, |_| false)
+        .unwrap();
+    wait(&mut core, |c| !c.requests()[0].deliveries.is_empty());
+    assert!(calls.lock().unwrap().iter().any(|m| m == "thread_add"));
+    assert!(
+        calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m == "conversations.replies")
+    );
+    assert_eq!(
+        core.requests()[0].reply_after_us,
+        crate::envoy::inbox::timestamp_us(&fake.receipt_ts)
+    );
+    assert_eq!(core.requests()[0].deliveries.len(), 1);
+    assert_eq!(
+        core.requests()[0].deliveries[0].event.as_ref().unwrap().ts,
+        fake.event.ts
+    );
+    let reloaded = Requests::load(dir.path().join(crate::envoy::requests::REQUESTS_FILE)).unwrap();
+    assert_eq!(reloaded.all()[0].deliveries.len(), 1);
+}
+
+#[test]
+fn dry_run_and_explicit_link_never_authorize_a_request_watch() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, commands, _updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "simulate");
+    let draft = route(&mut core, &id);
+    core.envoy_approve(&draft.id, None, false, |_| false)
+        .unwrap();
+    let fake = fixture(dir.path());
+    core.inbox.insert(fake.event.clone());
+    core.request(&command(
+        "envoy",
+        "envoy_link_reply",
+        json!({"request_id":id,"event_id":fake.event.id()}),
+    ))
+    .unwrap();
+    core.settings.dry_run = false;
+    core.reconcile_requests().unwrap();
+    assert!(core.requests()[0].reply_cutoff().is_none());
+    assert!(core.requests()[0].deliveries.is_empty());
+    assert!(
+        commands
+            .try_iter()
+            .all(|w| !matches!(w,Work::Watches(watches) if !watches.is_empty()))
+    );
+}
+
+#[test]
+fn adopted_close_never_removes_the_borrowed_subscription() {
+    for dry_run in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = AppEnvoy::load(dir.path().into());
+        let (worker, commands, _updates) = Worker::test_pair();
+        core.worker = Some(worker);
+        core.settings.dry_run = dry_run;
+        core.requests_mut()
+            .unwrap()
+            .adopt(
+                crate::envoy::requests::Thread {
+                    conversation: "D123".into(),
+                    ts: "1.000001".into(),
+                },
+                "External owner".into(),
+                0,
+            )
+            .unwrap();
+        core.reconcile_requests().unwrap();
+        assert!(
+            commands
+                .try_iter()
+                .any(|w| matches!(w,Work::Watches(watches) if watches[0].borrowed))
+        );
+        let id = core.requests()[0].id.clone();
+        core.panel_action(crate::ui::envoy::DraftAction::Settle(id), false, |_| false)
+            .1
+            .unwrap();
+        assert!(core.requests()[0].settled);
+        assert!(!core.requests()[0].close_requested);
+        assert!(!commands.try_iter().any(|w| matches!(w, Work::Remove(_))));
+    }
+}
+
+#[test]
+fn injected_person_label_cannot_rewrite_channel_asks_and_rewrites_stay_manual() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    core.settings.policies = vec![Policy {
+        destination: "*".into(),
+        mode: ApprovalMode::Auto { veto_secs: 0 },
+    }];
+    let id = submit(&mut core, "exact original");
+    let mut args = json!({"id":id,"conversation":"C123","thread_ts":"1.000001","destination_kind":"person","draft_text":"malicious rewrite","rationale":"test"});
+    let channel = crate::envoy::slack::threads::ResolvedDestination {
+        conversation: "C123".into(),
+        person: false,
+    };
+    assert!(
+        core.route(&args, &channel)
+            .unwrap_err()
+            .contains("verified human DM")
+    );
+    args["conversation"] = json!("D123");
+    let bot = crate::envoy::slack::threads::ResolvedDestination {
+        conversation: "D123".into(),
+        person: false,
+    };
+    assert!(core.route(&args, &bot).is_err());
+    let human = crate::envoy::slack::threads::ResolvedDestination {
+        conversation: "D123".into(),
+        person: true,
+    };
+    let result = core.route(&args, &human).unwrap();
+    let draft = result["draft"]["id"].as_str().unwrap();
+    assert!(
+        core.queue()
+            .unwrap()
+            .get(draft)
+            .unwrap()
+            .auto_at_ms
+            .is_none()
+    );
+    assert!(core.queue().unwrap().schedule(draft, Some(0)).is_err());
+    core.auto_approve(i64::MAX).unwrap();
+    assert_eq!(core.drafts()[0].status, DraftStatus::Pending);
+}
+
+#[test]
+fn restart_pauses_automatic_drafts_and_notifies_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    core.settings.policies = vec![Policy {
+        destination: "*".into(),
+        mode: ApprovalMode::Auto { veto_secs: 0 },
+    }];
+    let id = submit(&mut core, "restart me");
+    let draft = route(&mut core, &id);
+    assert!(draft.auto_at_ms.is_some());
+    let mut restarted = AppEnvoy::load(dir.path().into());
+    let (worker, commands, _updates) = Worker::test_pair();
+    restarted.worker = Some(worker);
+    restarted
+        .set_enabled("envoy".into(), core.settings.clone())
+        .unwrap();
+    let (notifications, _) = restarted.poll_updates();
+    assert_eq!(notifications.len(), 1);
+    assert!(restarted.poll_updates().0.is_empty());
+    assert_eq!(restarted.drafts()[0].status, DraftStatus::Pending);
+    assert!(!restarted.drafts()[0].automatic);
+    assert!(restarted.drafts()[0].auto_at_ms.is_none());
+    assert!(!commands.try_iter().any(|w| matches!(w, Work::Send { .. })));
+}
+
+#[test]
+fn rejected_root_is_not_reapplied_when_routing_identical_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "retry after review");
+    route(&mut core, &id);
+    core.request(&command(
+        "envoy",
+        "envoy_decline",
+        json!({"id":id,"reason":"Try again"}),
+    ))
+    .unwrap();
+    let accepted=core.request(&command("ant","reach_out",json!({"to":"Avery agent","ask":"retry after review","why":"Review again","request_id":id}))).unwrap();
+    assert_eq!(accepted["merged"], false);
+    let draft = route(&mut core, &id);
+    assert_eq!(draft.request.unwrap().turn_id, 2);
+    assert_eq!(draft.status, DraftStatus::Pending);
+    assert!(!core.requests()[0].settled);
+}
+
+#[test]
+fn adoption_collision_keeps_hint_unauthorized_and_borrows_the_shared_subscription() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, commands, updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    core.handle = Some("envoy".into());
+    core.settings.dry_run = false;
+    let accepted=core.request(&command("ant","reach_out",json!({"to":"Avery","ask":"hint","why":"review","thread":"https://example.slack.com/archives/C123/p1000001"}))).unwrap();
+    let id = accepted["request_id"].as_str().unwrap().to_owned();
+    let thread = crate::envoy::requests::Thread {
+        conversation: "C123".into(),
+        ts: "1.000001".into(),
+    };
+    core.requests_mut()
+        .unwrap()
+        .adopt(thread.clone(), "External label".into(), 0)
+        .unwrap();
+    assert_eq!(core.requests().len(), 2);
+    assert!(core.requests()[0].requester.is_some());
+    assert!(core.requests()[0].reply_cutoff().is_none());
+    assert!(core.requests()[1].requester.is_none());
+    core.reconcile_requests().unwrap();
+    let Work::Watches(watches) = commands.recv().unwrap() else {
+        panic!()
+    };
+    assert_eq!(watches.len(), 1);
+    assert!(watches[0].borrowed);
+    updates
+        .send(Update::Watches {
+            watches,
+            result: Ok(()),
+        })
+        .unwrap();
+    core.poll_updates();
+    let draft = route(&mut core, &id);
+    core.queue()
+        .unwrap()
+        .begin_approval(&draft.id, None, false, 0)
+        .unwrap();
+    core.queue()
+        .unwrap()
+        .finish_receipt(
+            &draft.id,
+            Ok(SendReceipt {
+                conversation: "C123".into(),
+                ts: "3.000001".into(),
+            }),
+            1,
+        )
+        .unwrap();
+    core.reconcile_requests().unwrap();
+    let emitted: Vec<_> = commands.try_iter().collect();
+    assert!(emitted.iter().any(|w|matches!(w,Work::Watches(watches) if watches.len()==2 && watches.iter().all(|w|w.borrowed))));
+    let ids: Vec<_> = core.requests().iter().map(|r| r.id.clone()).collect();
+    for id in ids {
+        core.panel_action(crate::ui::envoy::DraftAction::Settle(id), false, |_| false)
+            .1
+            .unwrap();
+    }
+    assert!(
+        core.requests()
+            .iter()
+            .all(|r| r.settled && !r.close_requested)
+    );
+    assert!(!commands.try_iter().any(|w| matches!(w, Work::Remove(_))));
+}
+
+#[test]
+fn declined_unsent_thread_hint_cannot_remove_a_subscription() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, commands, _updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    core.handle = Some("envoy".into());
+    core.settings.dry_run = false;
+    let accepted=core.request(&command("ant","reach_out",json!({"to":"Avery","ask":"hint","why":"review","thread":"https://example.slack.com/archives/C123/p1000001"}))).unwrap();
+    let id = accepted["request_id"].as_str().unwrap().to_owned();
+    core.request(&command(
+        "envoy",
+        "envoy_decline",
+        json!({"id":id,"reason":"No"}),
+    ))
+    .unwrap();
+    core.panel_action(crate::ui::envoy::DraftAction::Settle(id), false, |_| false)
+        .1
+        .unwrap();
+    assert!(!core.requests()[0].close_requested);
+    assert!(!commands.try_iter().any(|w| matches!(w, Work::Remove(_))));
 }

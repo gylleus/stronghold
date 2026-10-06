@@ -5,6 +5,9 @@ use serde_json::json;
 struct Fake {
     subscriptions: usize,
     broken: Option<String>,
+    recipient: Option<String>,
+    bot: bool,
+    app: bool,
 }
 impl SlackSender for Fake {
     fn send(&mut self, _: &OutboundMessage) -> Result<SendReceipt, String> {
@@ -20,7 +23,12 @@ impl SlackIo for Fake {
             );
         }
         if method == "conversations.info" {
-            return Ok(json!({"ok":true,"channel":{"user":"UKARL"}}));
+            return Ok(
+                json!({"ok":true,"channel":{"user":self.recipient.as_deref().unwrap_or("UKARL")}}),
+            );
+        }
+        if method == "users.info" {
+            return Ok(json!({"ok":true,"user":{"is_bot":self.bot,"is_app_user":self.app}}));
         }
         if method != "conversations.replies" {
             return Ok(json!({"ok":true,"messages":{"matches":[],"paging":{"pages":1}}}));
@@ -77,6 +85,7 @@ fn watch(id: &str, channel: &str) -> Watch {
             ts: "1.000001".into(),
         },
         after_us: 1_000_001,
+        borrowed: false,
     }
 }
 fn reply(n: usize) -> InboundEvent {
@@ -159,7 +168,10 @@ fn routing_verifies_dm_recipient_and_refuses_karl() {
             .unwrap_err()
             .contains("ask_karl")
     );
-    assert_eq!(channel.resolve_destination("C123").unwrap(), "C123");
+    assert_eq!(
+        channel.resolve_destination("C123").unwrap().conversation,
+        "C123"
+    );
 }
 
 #[test]
@@ -203,4 +215,36 @@ fn adoption_parser_uses_cli_identities_not_paths_and_rejects_partial_garbage() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn borrowed_watch_reads_without_relabeling_or_resubscribing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut channel = channel(dir.path());
+    let mut borrowed = watch("adopted", "D123");
+    borrowed.borrowed = true;
+    channel.watches(vec![borrowed.clone()]).unwrap();
+    assert!(channel.inbox.thread_watches["adopted"].subscribed);
+    std::fs::write(channel.bridge.join("threads/D123-1.000001.jsonl"),
+        "{\"type\":\"reply\",\"channel\":\"D123\",\"ts\":\"2.000001\",\"thread_ts\":\"1.000001\",\"user\":\"UOTHER\",\"text\":\"Borrowed reply\"}\n{\"type\":\"error\",\"reason\":\"membership\"}\n").unwrap();
+    channel.poll(10).unwrap();
+    assert_eq!(channel.inbox.pending_replies.len(), 1);
+    channel.watches(vec![borrowed]).unwrap();
+    channel.poll(120_100).unwrap();
+    assert_eq!(channel.io.subscriptions, 0);
+    assert!(channel.inbox.thread_watches["adopted"].subscribed);
+}
+
+#[test]
+fn dm_person_classification_rejects_bots_and_app_users() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut channel = channel(dir.path());
+    channel.io.recipient = Some("UPERSON".into());
+    assert!(channel.resolve_destination("D123").unwrap().person);
+    channel.io.bot = true;
+    assert!(!channel.resolve_destination("D123").unwrap().person);
+    channel.io.bot = false;
+    channel.io.app = true;
+    assert!(!channel.resolve_destination("D123").unwrap().person);
+    assert!(!channel.resolve_destination("C123").unwrap().person);
 }

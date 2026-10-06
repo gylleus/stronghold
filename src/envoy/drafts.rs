@@ -79,6 +79,8 @@ pub struct Draft {
     #[serde(default)]
     pub receipt: Option<SendReceipt>,
     #[serde(default)]
+    pub confirmed_send: bool,
+    #[serde(default)]
     pub auto_at_ms: Option<i64>,
     #[serde(default)]
     pub automatic: bool,
@@ -108,6 +110,7 @@ impl Draft {
             conversation: None,
             request: None,
             receipt: None,
+            confirmed_send: false,
             auto_at_ms: None,
             automatic: false,
         }
@@ -136,6 +139,7 @@ impl Draft {
             conversation: None,
             request: None,
             receipt: None,
+            confirmed_send: false,
             auto_at_ms: None,
             automatic: false,
         }
@@ -164,6 +168,14 @@ impl Draft {
         draft
     }
 
+    pub fn allows_auto(&self) -> bool {
+        self.kind != DraftKind::TaskProposal
+            && self
+                .request
+                .as_ref()
+                .is_none_or(|r| self.text == r.original_ask || self.text == r.verbatim())
+    }
+
     pub fn outbound(&self) -> Result<OutboundMessage, String> {
         self.validate()?;
         let conversation = self.destination().ok_or("Draft is a task proposal")?;
@@ -173,10 +185,26 @@ impl Draft {
         } else {
             ATTRIBUTION
         };
-        if self.request.as_ref().is_some_and(|r| r.agent) || !text.ends_with(attribution) {
-            text.push_str("\n\n");
-            text.push_str(attribution);
+        let original_payload = self
+            .request
+            .as_ref()
+            .is_some_and(|r| self.text == r.verbatim() || self.text == r.original_ask);
+        // Source ask bytes are opaque; only normalize a composed draft's footer.
+        if !original_payload {
+            loop {
+                let trimmed = text.trim_end();
+                if let Some(body) = [ATTRIBUTION, AUTO_ATTRIBUTION]
+                    .iter()
+                    .find_map(|line| trimmed.strip_suffix(line))
+                {
+                    text = body.trim_end_matches('\n').to_owned();
+                } else {
+                    break;
+                }
+            }
         }
+        text.push_str("\n\n");
+        text.push_str(attribution);
         Ok(OutboundMessage {
             conversation: conversation.into(),
             thread_ts: self.thread_ts.clone(),
@@ -195,6 +223,9 @@ impl Draft {
     }
 
     fn validate(&self) -> Result<(), String> {
+        if self.automatic && !self.allows_auto() {
+            return Err("Rewritten requests require manual approval".into());
+        }
         if let Some(link) = &self.request
             && link.agent
             && self.text != link.verbatim()
@@ -241,16 +272,26 @@ struct Saved {
 pub struct DraftQueue {
     path: PathBuf,
     saved: Saved,
+    restarted_automatic: usize,
 }
 
 impl DraftQueue {
     pub fn load(path: impl Into<PathBuf>) -> Result<Self, String> {
         let path = path.into();
         let saved = inbox::load(&path).map_err(|e| e.to_string())?;
-        let mut queue = Self { path, saved };
+        let mut queue = Self {
+            path,
+            saved,
+            restarted_automatic: 0,
+        };
         let mut interrupted = false;
         for draft in &mut queue.saved.drafts {
-            if draft.auto_at_ms.take().is_some() {
+            if draft.status == DraftStatus::Pending
+                && (draft.automatic || draft.auto_at_ms.is_some())
+            {
+                draft.auto_at_ms = None;
+                draft.automatic = false;
+                queue.restarted_automatic += 1;
                 interrupted = true;
             }
         }
@@ -270,6 +311,10 @@ impl DraftQueue {
     pub fn drafts(&self) -> &[Draft] {
         &self.saved.drafts
     }
+    pub fn take_restarted_automatic(&mut self) -> usize {
+        std::mem::take(&mut self.restarted_automatic)
+    }
+
     pub fn get(&self, id: &str) -> Option<&Draft> {
         self.saved.drafts.iter().find(|d| d.id == id)
     }
@@ -385,6 +430,7 @@ impl DraftQueue {
         }
         match result {
             Ok(receipt) => {
+                d.confirmed_send = true;
                 d.receipt = Some(receipt);
                 d.status = DraftStatus::Sent;
             }
@@ -400,6 +446,9 @@ impl DraftQueue {
     pub fn schedule(&mut self, id: &str, at: Option<i64>) -> Result<(), String> {
         let old = self.saved.clone();
         let d = self.pending_mut(id)?;
+        if at.is_some() && !d.allows_auto() {
+            return Err("Rewritten requests require manual approval".into());
+        }
         d.auto_at_ms = at;
         d.automatic = at.is_some();
         self.commit(old)
@@ -485,6 +534,62 @@ mod tests {
             1,
         )
     }
+    #[test]
+    fn attribution_inside_original_ask_remains_byte_identical() {
+        for automatic in [false, true] {
+            for footer in [ATTRIBUTION, AUTO_ATTRIBUTION] {
+                let ask = format!("Quote these literal bytes\n\n{footer}\n\n{footer}\n  ");
+                let link = RequestLink {
+                    id: "r".into(),
+                    turn_id: 1,
+                    original_ask: ask,
+                    requester: "ant".into(),
+                    why: "test".into(),
+                    agent: true,
+                };
+                let original = link.verbatim();
+                let mut draft = Draft::outgoing(
+                    "C123".into(),
+                    None,
+                    original.clone(),
+                    "test".into(),
+                    link,
+                    0,
+                );
+                draft.automatic = automatic;
+                let footer = if automatic {
+                    AUTO_ATTRIBUTION
+                } else {
+                    ATTRIBUTION
+                };
+                assert_eq!(
+                    draft.outbound().unwrap().text,
+                    format!("{original}\n\n{footer}")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn outbound_has_one_current_attribution_footer() {
+        for automatic in [false, true] {
+            for footer in [ATTRIBUTION, AUTO_ATTRIBUTION] {
+                let mut draft = reply();
+                draft.text = format!("Fixture body\n\n{footer}\n\n{footer}\n");
+                draft.automatic = automatic;
+                let expected = if automatic {
+                    AUTO_ATTRIBUTION
+                } else {
+                    ATTRIBUTION
+                };
+                assert_eq!(
+                    draft.outbound().unwrap().text,
+                    format!("Fixture body\n\n{expected}")
+                );
+            }
+        }
+    }
+
     #[test]
     fn dry_run_scan_edit_reject_and_one_shot_approval() {
         let dir = tempfile::tempdir().unwrap();

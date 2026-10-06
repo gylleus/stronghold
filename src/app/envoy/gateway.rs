@@ -58,7 +58,12 @@ impl AppEnvoy {
         }
     }
 
-    pub(super) fn route(&mut self, args: &Value, conversation: &str) -> Result<Value, String> {
+    pub(super) fn route(
+        &mut self,
+        args: &Value,
+        destination: &crate::envoy::slack::threads::ResolvedDestination,
+    ) -> Result<Value, String> {
+        let conversation = destination.conversation.as_str();
         self.reconcile_requests()?;
         crate::envoy::requests::refuse_karl(conversation, &self.settings.karl_user_id)?;
         crate::envoy::slack::validate_conversation(conversation)?;
@@ -77,8 +82,10 @@ impl AppEnvoy {
             "person" => false,
             _ => return Err("destination_kind must be agent or person".into()),
         };
-        if conversation == crate::envoy::settings::AGENT_COMMS && !agent {
-            return Err("Agent-comms requests must use destination_kind agent".into());
+        if !(agent || conversation.starts_with('D') && destination.person) {
+            return Err(
+                "Rewritten asks require a verified human DM; use destination_kind agent".into(),
+            );
         }
         if agent && args.get("draft_text").is_some() {
             return Err("Agent destinations do not accept draft_text".into());
@@ -94,7 +101,7 @@ impl AppEnvoy {
         } else {
             requested_thread.map(str::to_owned)
         };
-        if turn.id > 1 && request.thread.is_none() && !self.settings.dry_run {
+        if request.requires_thread(turn.id) && request.thread.is_none() && !self.settings.dry_run {
             return Err("Follow-up has no confirmed live thread".into());
         }
         let link = RequestLink {
@@ -137,13 +144,6 @@ impl AppEnvoy {
             "envoy_request" => {
                 Ok(json!({"request":self.requests_mut()?.get(required(args,"id")?)?}))
             }
-            "envoy_route" => {
-                let conversation = required(args, "conversation")?;
-                if conversation.starts_with('D') {
-                    return Err("DM routing requires worker recipient verification".into());
-                }
-                self.route(args, conversation)
-            }
             "envoy_decline" => {
                 self.reconcile_requests()?;
                 let id = required(args, "id")?;
@@ -170,7 +170,7 @@ impl AppEnvoy {
                         t.status = Status::Declined;
                         t.error = Some(reason.into());
                         r.status = Status::Declined;
-                        if turn.id == 1 && r.thread.is_none() {
+                        if !r.requires_thread(turn.id) && r.thread.is_none() {
                             r.settled = true;
                             for t in &mut r.turns {
                                 if t.status == Status::Queued {
@@ -266,6 +266,12 @@ impl AppEnvoy {
         Ok(event)
     }
 
+    pub(super) fn borrowed_thread(&self, thread: &Thread) -> bool {
+        self.requests()
+            .iter()
+            .any(|r| r.adopted_ms.is_some() && r.thread.as_ref() == Some(thread))
+    }
+
     pub(super) fn reconcile_requests(&mut self) -> Result<(), String> {
         if let (Some(requests), Some(drafts)) = (&mut self.requests, &self.drafts) {
             requests.reconcile(drafts.drafts())?;
@@ -278,9 +284,8 @@ impl AppEnvoy {
                 let thread = r.thread.clone()?;
                 Some(Watch {
                     request_id: r.id.clone(),
-                    after_us: r.adopted_ms.map(|ms| ms * 1000).unwrap_or_else(|| {
-                        crate::envoy::inbox::timestamp_us(&thread.ts).unwrap_or_default()
-                    }),
+                    after_us: r.reply_cutoff()?,
+                    borrowed: self.borrowed_thread(&thread),
                     thread,
                 })
             })
@@ -297,8 +302,9 @@ impl AppEnvoy {
             let threads: Vec<_> = self
                 .requests()
                 .iter()
-                .filter(|r| r.settled && r.close_requested)
+                .filter(|r| r.settled && r.close_requested && r.adopted_ms.is_none())
                 .filter_map(|r| r.thread.clone())
+                .filter(|thread| !self.borrowed_thread(thread))
                 .filter(|thread| {
                     !self
                         .requests()
@@ -321,7 +327,8 @@ impl AppEnvoy {
     pub(super) fn schedule_draft(&mut self, id: &str) -> Result<(), String> {
         let draft = self.queue()?.get(id).ok_or("Unknown draft")?;
         let destination = draft.destination().map(str::to_owned);
-        if let Some(destination) = destination
+        if draft.allows_auto()
+            && let Some(destination) = destination
             && let ApprovalMode::Auto { veto_secs } = self.settings.approval(&destination)
         {
             self.queue()?
@@ -430,19 +437,22 @@ impl AppEnvoy {
         request: &str,
         delivery: &str,
         target: &str,
-        ready: bool,
     ) -> Option<(Action, GatewayAction)> {
-        if !ready || self.settings.dry_run || self.dispatch_blocked {
+        if self.settings.dry_run || self.dispatch_blocked {
             return None;
         }
-        let reply = self
-            .requests
-            .as_ref()?
-            .get(request)
-            .ok()?
+        let record = self.requests.as_ref()?.get(request).ok()?;
+        let reply = record
             .deliveries
             .iter()
             .find(|d| d.id == delivery && !d.delivered)?;
+        if reply
+            .event
+            .as_ref()
+            .is_some_and(|event| !record.accepts_reply(event))
+        {
+            return None;
+        }
         Some((
             Action::Send {
                 handle: target.into(),
@@ -610,7 +620,13 @@ impl MyrstackApp {
             })
             .collect();
         for (request, requester, delivery) in pending {
-            if self.envoy_core.gateway_actions.values().any(|a|matches!(a,GatewayAction::Reply{request:r,delivery:d,..} if *r==request&&*d==delivery.id)) {continue;}
+            let in_flight = self.envoy_core.gateway_actions.values().any(|action| {
+                matches!(action, GatewayAction::Reply { request: r, delivery: d, .. }
+                    if *r == request && *d == delivery.id)
+            });
+            if in_flight {
+                continue;
+            }
             let target = requester
                 .as_ref()
                 .and_then(|who| reply_target(snapshot, self.data.as_ref(), who));
@@ -649,7 +665,7 @@ impl MyrstackApp {
             }
             if let Some((action, record)) =
                 self.envoy_core
-                    .reply_action(&request, &delivery.id, &target, true)
+                    .reply_action(&request, &delivery.id, &target)
             {
                 let id = self.actions.submit(action);
                 self.envoy_core.gateway_actions.insert(id, record);

@@ -7,11 +7,19 @@ use std::collections::BTreeSet;
 
 const MAX_PENDING: usize = 1000;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedDestination {
+    pub conversation: String,
+    pub person: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Watch {
     pub request_id: String,
     pub thread: Thread,
     pub after_us: i64,
+    #[serde(default)]
+    pub borrowed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,11 +59,14 @@ impl<I: SlackIo> SlackChannel<I> {
                     seen: BTreeSet::new(),
                     api_cursor: String::new(),
                     caught_up: false,
-                    subscribed: false,
+                    subscribed: watch.borrowed,
                     next_poll_ms: 0,
                 });
             if state.watch != watch {
                 state.seen.clear();
+            }
+            if watch.borrowed {
+                state.subscribed = true;
             }
             state.watch = watch;
             state.api_cursor.clear();
@@ -126,7 +137,11 @@ impl<I: SlackIo> SlackChannel<I> {
         let state = self.inbox.thread_watches[id].clone();
         let thread = &state.watch.thread;
         if !self.settings.channels.contains(&thread.conversation) {
-            if !state.subscribed && now >= state.next_poll_ms && !self.settings.dry_run {
+            if !state.watch.borrowed
+                && !state.subscribed
+                && now >= state.next_poll_ms
+                && !self.settings.dry_run
+            {
                 match self.io.thread_subscription(
                     &self.bridge,
                     thread,
@@ -252,7 +267,7 @@ impl<I: SlackIo> SlackChannel<I> {
                         .values_mut()
                         .filter(|s| s.watch.thread == *thread)
                     {
-                        state.subscribed = false;
+                        state.subscribed = state.watch.borrowed;
                         state.caught_up = false;
                         state.next_poll_ms = 0;
                     }
@@ -271,7 +286,7 @@ impl<I: SlackIo> SlackChannel<I> {
                             .values_mut()
                             .filter(|s| s.watch.thread == *thread)
                         {
-                            s.subscribed = false;
+                            s.subscribed = s.watch.borrowed;
                         }
                     }
                 }
@@ -293,9 +308,13 @@ impl<I: SlackIo> SlackChannel<I> {
         }
         self.io.thread_subscription(&self.bridge, thread, None)
     }
-    pub fn resolve_destination(&mut self, conversation: &str) -> Result<String, String> {
+    pub fn resolve_destination(
+        &mut self,
+        conversation: &str,
+    ) -> Result<ResolvedDestination, String> {
         super::super::requests::refuse_karl(conversation, &self.settings.karl_user_id)?;
         validate_conversation(conversation)?;
+        let mut person = false;
         if conversation.starts_with('D') {
             let value = self
                 .io
@@ -304,8 +323,15 @@ impl<I: SlackIo> SlackChannel<I> {
                 .as_str()
                 .ok_or("DM recipient could not be verified")?;
             super::super::requests::refuse_karl(user, &self.settings.karl_user_id)?;
+            let info = self.io.api("users.info", &[("user", user.into())])?;
+            person = info["user"]["is_bot"] == false
+                && info["user"]["is_app_user"] != true
+                && info["user"]["deleted"] != true;
         }
-        Ok(conversation.into())
+        Ok(ResolvedDestination {
+            conversation: conversation.into(),
+            person,
+        })
     }
 }
 

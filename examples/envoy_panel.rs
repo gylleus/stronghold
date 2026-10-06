@@ -161,6 +161,7 @@ fn main() -> eframe::Result {
                     status: myrstack::envoy::requests::Status::Sent,
                     settled: false,
                     adopted_ms: Some(0),
+                    reply_after_us: None,
                     orphan_kept: false,
                     close_requested: false,
                     deliveries: Vec::new(),

@@ -175,15 +175,6 @@ impl AppEnvoy {
         self.handle = Some(handle);
         settings.validate_policies()?;
         self.settings = settings;
-        let pending: Vec<_> = self
-            .drafts()
-            .iter()
-            .filter(|d| d.status == DraftStatus::Pending && d.automatic)
-            .map(|d| d.id.clone())
-            .collect();
-        for id in pending {
-            self.schedule_draft(&id)?;
-        }
         self.reconcile_requests()?;
         Ok(())
     }
@@ -437,7 +428,10 @@ impl AppEnvoy {
                     "Draft conflicts with the confirmed request thread; decline this turn".into(),
                 );
             }
-            if link.turn_id > 1 && request.thread.is_none() && !self.settings.dry_run {
+            if request.requires_thread(link.turn_id)
+                && request.thread.is_none()
+                && !self.settings.dry_run
+            {
                 return Err("Follow-up requires a confirmed live thread".into());
             }
         }
@@ -484,6 +478,21 @@ impl AppEnvoy {
 
     fn poll_updates(&mut self) -> (Vec<Incoming>, Vec<AgentMessage>) {
         let mut notifications = Vec::new();
+        if self
+            .drafts
+            .as_mut()
+            .is_some_and(|q| q.take_restarted_automatic() > 0)
+        {
+            notifications.push(
+                Incoming::new(
+                    Source::Envoy,
+                    Severity::Info,
+                    "Envoy draft ready",
+                    "Automatic drafts were paused after restart and need your approval.",
+                )
+                .with_target(DRAFTS_TARGET),
+            );
+        }
         let mut traffic = Vec::new();
         let updates = self.worker.as_ref().map_or_else(Vec::new, Worker::updates);
         for update in updates {
@@ -594,7 +603,7 @@ impl AppEnvoy {
                 } => {
                     let result = crate::envoy::authorize(self, &command.origin)
                         .and(result)
-                        .and_then(|conversation| self.route(&command.args, &conversation));
+                        .and_then(|destination| self.route(&command.args, &destination));
                     if result.is_ok() {
                         notifications.push(
                             Incoming::new(
@@ -717,9 +726,14 @@ impl AppEnvoy {
                         return Err("Resolve pending turns before settling".into());
                     }
                     let dry_run = self.settings.dry_run;
+                    let borrowed = request
+                        .thread
+                        .as_ref()
+                        .is_some_and(|t| self.borrowed_thread(t));
                     self.requests_mut()?.change(&id, |r| {
-                        r.close_requested = r.thread.is_some();
-                        if !dry_run || r.thread.is_none() {
+                        r.close_requested =
+                            r.thread.is_some() && r.reply_after_us.is_some() && !borrowed;
+                        if !dry_run || !r.close_requested {
                             r.settled = true;
                         }
                         Ok(())
