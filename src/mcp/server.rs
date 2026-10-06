@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use crate::mcp::backend::Control;
 use crate::mcp::{envoy, lifecycle, notify, playbook, review, tools, worktrees};
 use crate::playbook::Playbook;
+use crate::traffic::beam::ToolCall;
 
 /// Protocol versions this server speaks, newest first. `initialize` echoes the client's version
 /// when it is one of these, and otherwise offers the newest.
@@ -328,6 +329,12 @@ impl<C: Control> McpServer<C> {
             .or_else(|| tools::call(&mut self.control, &self.review.origin, name, &args))
             .ok_or_else(|| (INVALID_PARAMS, format!("unknown tool: {name}")))?;
         let mut output = output;
+        if !output.is_error {
+            let result = output.structured.as_ref().unwrap_or(&Value::Null);
+            if let Some(call) = ToolCall::of(&self.review.origin, name, &args, result) {
+                self.control.emit("tool_call", call.to_params());
+            }
+        }
         match name {
             "spawn_session" if !output.is_error => {
                 let result = output.structured.clone().unwrap_or_default();

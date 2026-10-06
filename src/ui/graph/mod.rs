@@ -1,5 +1,6 @@
 //! Force-directed fleet graph: incremental sync from snapshots, state colors, click to select.
 
+mod beams;
 mod edge;
 mod fit;
 #[cfg(test)]
@@ -173,6 +174,8 @@ pub struct GraphView {
     scroll_source: ScrollSource,
     /// Messages flying between nodes; see [`mail`].
     mail: crate::ui::envelope::Flights,
+    /// Tool calls beaming from their callers; see [`beams`].
+    beams: crate::ui::beam::Beams,
 }
 
 impl Default for GraphView {
@@ -221,6 +224,7 @@ impl GraphView {
             pinned: HashSet::new(),
             scroll_source: ScrollSource::default(),
             mail: Default::default(),
+            beams: Default::default(),
         }
     }
 
@@ -625,6 +629,7 @@ impl GraphView {
         self.last_top_left = Some(response.response.rect.left_top());
         self.paint_regions(ui, backdrop, response.response.rect);
         self.paint_mail(ui, response.response.rect);
+        self.paint_beams(ui, response.response.rect);
 
         let mut clicked = None;
         let mut user_navigated = false;

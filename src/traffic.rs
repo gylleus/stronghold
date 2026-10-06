@@ -16,6 +16,8 @@
 //! In-process emitters (the Envoy's relays, say) push through a [`TrafficSender`]; other
 //! processes call the control API's `agent_message`.
 
+pub mod beam;
+
 use std::collections::HashSet;
 
 use crossbeam_channel::{Receiver, Sender};
@@ -263,6 +265,9 @@ pub struct Traffic {
     tx: Sender<AgentMessage>,
     rx: Receiver<AgentMessage>,
     pub inbox: InboxWatch,
+    /// Tool calls waiting for their ends to show up in the fleet, with when they came (egui
+    /// time); see [`beam`].
+    pub calls: Vec<(beam::ToolCall, Option<f64>)>,
 }
 
 impl Default for Traffic {
@@ -272,6 +277,7 @@ impl Default for Traffic {
             tx,
             rx,
             inbox: InboxWatch::default(),
+            calls: Vec::new(),
         }
     }
 }

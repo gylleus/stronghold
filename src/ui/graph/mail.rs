@@ -24,7 +24,7 @@ impl GraphView {
     }
 
     /// A node's canvas position and radius; `None` when it is not drawn.
-    fn mail_end(&self, end: &Endpoint) -> Option<(Pos2, f32)> {
+    pub(super) fn mail_end(&self, end: &Endpoint) -> Option<(Pos2, f32)> {
         let id = match end {
             Endpoint::Node(id) => id.clone(),
             Endpoint::Karl | Endpoint::Outside => NodeId::queen(),
