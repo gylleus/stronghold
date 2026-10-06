@@ -112,9 +112,10 @@ Ants reach people only through `reach_out`; each request arrives as
 6. **Follow-ups** arrive as a new turn of the same request: route them to the same
    conversation and thread. A follow-up can't go before the first turn is sent; with several
    turns queued, pass `turn_id` and route the earliest first.
-7. **A send that failed but did post** (its message shows up as an event): bind it with
-   `envoy_link_reply {request_id, event_id}`, so follow-ups can be routed. Linking delivers
-   nothing to the ant and starts no reply watch: pass any reply on with `envoy_relay`.
+7. **A send that failed but did post**: you see it when a reply threaded under that post
+   arrives as an event (your own post never does). Bind it with `envoy_link_reply
+   {request_id, event_id: <that reply>}` so follow-ups can be routed. Linking delivers nothing
+   to the ant and starts no reply watch: pass the reply on with `envoy_relay`.
 
 ## Who's who
 
