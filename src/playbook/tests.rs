@@ -263,15 +263,21 @@ fn the_repo_envoy_playbook_has_its_tool_reference() {
     let got = Playbook::at(BAKED_DIR)
         .get(&Target::Role(Role::Envoy), Some("tool reference"))
         .unwrap();
-    for tool in [
-        "envoy_inbox",
-        "envoy_event",
-        "envoy_draft",
-        "envoy_drafts",
-        "envoy_relay",
-        "envoy_propose_task",
-    ] {
+    for tool in crate::envoy::control::METHODS {
         assert!(got.body.contains(&format!("`{tool}`")), "{tool}");
+    }
+}
+
+#[test]
+fn workers_and_coordinators_are_told_to_reach_people_through_the_envoy() {
+    for role in [Role::Worker, Role::Coordinator] {
+        let got = Playbook::at(BAKED_DIR)
+            .get(
+                &Target::Role(role),
+                Some("reaching people outside the fleet"),
+            )
+            .unwrap();
+        assert!(got.body.contains("`reach_out`"), "{role:?}");
     }
 }
 
