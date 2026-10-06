@@ -32,7 +32,8 @@ fn hash(i: usize, salt: u32) -> u32 {
 pub fn surface(scene: &Scene) -> Vec<Placement> {
     let px = scene.px;
     let a = scene.cell();
-    let start = scene.landing.right() + a;
+    // With the dish at the left, Karl's sign stands past the waiting ants.
+    let start = scene.landing.right() + if scene.comms.is_some() { 4.0 * a } else { a };
     let end = scene.rect.right() - 0.5 * a;
     let mut out = Vec::new();
     let mut x = start;

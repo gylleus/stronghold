@@ -1,9 +1,10 @@
 //! The ant farm on a synthetic fleet of 6 runs, loose terminals and subagents (about 30
 //! agents), one of each state, to check how it looks.
 //!
-//! `cargo run --example ant_farm [--light] [--graph] [--sweep] [--shot out.png]` (`--graph`
-//! shows the same fleet as the graph, `--sweep` flies the worktree cleanup's broom around the
-//! farm): every few seconds one worker
+//! `cargo run --example ant_farm [--light] [--graph] [--sweep] [--shot out.png]`.
+//! `--bridge-down` and `--approval` show the Envoy receiver health. `--graph`
+//! shows the same fleet as the graph; `--sweep` flies the worktree cleanup's broom around the
+//! farm. Every few seconds one worker
 //! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
 //! report, N hatches a new worker, M sends a burst of messages between ants and T toggles the
 //! Queen thinking. With `--shot`, it saves a screenshot once settled and another while a worker
@@ -32,6 +33,13 @@ fn main() -> eframe::Result {
         .position(|a| a == "--shot")
         .and_then(|i| args.get(i + 1).cloned());
     let light = args.iter().any(|a| a == "--light");
+    let health = if args.iter().any(|a| a == "--bridge-down") {
+        myrstack::envoy::EnvoyHealth::BridgeDown
+    } else if args.iter().any(|a| a == "--approval") {
+        myrstack::envoy::EnvoyHealth::AwaitingApproval
+    } else {
+        myrstack::envoy::EnvoyHealth::Listening
+    };
     let show_graph = args.iter().any(|a| a == "--graph");
     let sweep = args.iter().any(|a| a == "--sweep").then(sweep_marker);
     eframe::run_native(
@@ -47,7 +55,13 @@ fn main() -> eframe::Result {
             } else {
                 egui::Theme::Dark
             });
-            let snapshot = fleet();
+            let mut snapshot = fleet();
+            snapshot
+                .nodes
+                .iter_mut()
+                .find(|n| n.kind == NodeKind::Envoy)
+                .unwrap()
+                .label = format!("Envoy · {}", health.label());
             let mut graph = GraphView::new();
             graph.sync(&snapshot);
             graph.set_pr_ready(HashSet::from([
@@ -65,6 +79,7 @@ fn main() -> eframe::Result {
                     // As in the app with the Queen's chat showing.
                     let mut farm = AntFarmView::new();
                     farm.set_queen_focused(true);
+                    farm.set_envoy_health(health);
                     farm
                 },
                 shot,
@@ -141,6 +156,8 @@ impl Demo {
             ("run2-w2", "run2-coord", MessageKind::Ask),
             ("queen", "run1-coord", MessageKind::Instruction),
             ("slack", "shop-1", MessageKind::Relay),
+            ("slack", "envoy", MessageKind::Relay),
+            ("envoy", "slack", MessageKind::Message),
             ("queen", "run3-w1", MessageKind::Nudge),
             ("shop-2", "karl", MessageKind::Status),
             ("run4-coord", "run5-coord", MessageKind::Message),
