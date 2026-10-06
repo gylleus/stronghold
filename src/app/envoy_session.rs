@@ -8,15 +8,12 @@ impl MyrstackApp {
         &mut self,
         settings: &crate::envoy::settings::EnvoySettings,
     ) {
-        if !settings.dry_run {
-            return;
-        }
-        let saved = self.envoy_session.enable_dry_run();
-        let configured = self
-            .envoy_core
-            .configure(self.envoy_session.settings().clone());
-        if let Err(error) = saved.and(configured) {
-            self.envoy_core.stop();
+        let applied = self.envoy_session.apply_policies(settings).and_then(|()| {
+            self.envoy_core
+                .configure(self.envoy_session.settings().clone())
+        });
+        self.envoy_core.block_dispatch(applied.is_err());
+        if let Err(error) = applied {
             self.envoy_session.error = Some(error);
         }
         self.overlays_changed = true;

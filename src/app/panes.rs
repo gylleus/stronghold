@@ -76,6 +76,7 @@ impl MyrstackApp {
     /// The dock filling the window below the top bar.
     pub(super) fn panes(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         if std::mem::take(&mut self.envoy_core.open_request) {
+            self.envoy_panel.set_requests(self.envoy_core.requests());
             self.envoy_panel.open(self.envoy_core.drafts());
             self.panes.open_envoy();
         }

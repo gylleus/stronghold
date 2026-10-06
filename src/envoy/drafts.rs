@@ -3,10 +3,12 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::channel::OutboundMessage;
+use super::channel::{OutboundMessage, SendReceipt};
 use super::{inbox, secrets};
 
 pub const DRAFTS_FILE: &str = "envoy-drafts.json";
+pub const AUTO_ATTRIBUTION: &str =
+    "— Karl's AI agent (the Envoy), authorized by Karl's approval policy.";
 pub const ATTRIBUTION: &str = "— Karl's AI agent (the Envoy), approved by Karl.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,12 +27,35 @@ pub enum DraftStatus {
 pub enum DraftKind {
     Reply,
     TaskProposal,
+    Outgoing,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplyTo {
     pub conversation: String,
     pub ts: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestLink {
+    pub id: String,
+    pub turn_id: u64,
+    pub original_ask: String,
+    pub requester: String,
+    pub why: String,
+    pub agent: bool,
+}
+impl RequestLink {
+    pub fn verbatim(&self) -> String {
+        format!(
+            "Request from {}:\n\n{}",
+            self.requester
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect::<String>(),
+            self.original_ask
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +72,16 @@ pub struct Draft {
     pub created_ms: i64,
     pub updated_ms: i64,
     pub error: Option<String>,
+    #[serde(default)]
+    pub conversation: Option<String>,
+    #[serde(default)]
+    pub request: Option<RequestLink>,
+    #[serde(default)]
+    pub receipt: Option<SendReceipt>,
+    #[serde(default)]
+    pub auto_at_ms: Option<i64>,
+    #[serde(default)]
+    pub automatic: bool,
 }
 
 impl Draft {
@@ -70,6 +105,11 @@ impl Draft {
             created_ms: now,
             updated_ms: now,
             error: None,
+            conversation: None,
+            request: None,
+            receipt: None,
+            auto_at_ms: None,
+            automatic: false,
         }
     }
 
@@ -93,21 +133,52 @@ impl Draft {
             created_ms: now,
             updated_ms: now,
             error: None,
+            conversation: None,
+            request: None,
+            receipt: None,
+            auto_at_ms: None,
+            automatic: false,
         }
     }
 
+    pub fn destination(&self) -> Option<&str> {
+        self.conversation
+            .as_deref()
+            .or_else(|| self.in_reply_to.as_ref().map(|r| r.conversation.as_str()))
+    }
+
+    pub fn outgoing(
+        conversation: String,
+        thread_ts: Option<String>,
+        text: String,
+        rationale: String,
+        link: RequestLink,
+        now: i64,
+    ) -> Self {
+        let mut draft = Self::proposal(text, None, rationale, String::new(), now);
+        draft.kind = DraftKind::Outgoing;
+        draft.conversation = Some(conversation);
+        draft.thread_ts = thread_ts;
+        draft.slack_link = None;
+        draft.request = Some(link);
+        draft
+    }
+
     pub fn outbound(&self) -> Result<OutboundMessage, String> {
-        let target = self
-            .in_reply_to
-            .as_ref()
-            .ok_or("Draft is a task proposal")?;
-        let mut text = self.text.trim_end().to_owned();
-        if !text.ends_with(ATTRIBUTION) {
+        self.validate()?;
+        let conversation = self.destination().ok_or("Draft is a task proposal")?;
+        let mut text = self.text.clone();
+        let attribution = if self.automatic {
+            AUTO_ATTRIBUTION
+        } else {
+            ATTRIBUTION
+        };
+        if self.request.as_ref().is_some_and(|r| r.agent) || !text.ends_with(attribution) {
             text.push_str("\n\n");
-            text.push_str(ATTRIBUTION);
+            text.push_str(attribution);
         }
         Ok(OutboundMessage {
-            conversation: target.conversation.clone(),
+            conversation: conversation.into(),
             thread_ts: self.thread_ts.clone(),
             text,
         })
@@ -124,6 +195,15 @@ impl Draft {
     }
 
     fn validate(&self) -> Result<(), String> {
+        if let Some(link) = &self.request
+            && link.agent
+            && self.text != link.verbatim()
+        {
+            return Err("Agent requests must preserve the original ask verbatim".into());
+        }
+        if let Some(conversation) = &self.conversation {
+            super::slack::validate_conversation(conversation)?;
+        }
         if self.text.trim().is_empty() {
             return Err("Draft text is empty".into());
         }
@@ -170,6 +250,11 @@ impl DraftQueue {
         let mut queue = Self { path, saved };
         let mut interrupted = false;
         for draft in &mut queue.saved.drafts {
+            if draft.auto_at_ms.take().is_some() {
+                interrupted = true;
+            }
+        }
+        for draft in &mut queue.saved.drafts {
             if draft.status == DraftStatus::Approved {
                 draft.status = DraftStatus::Failed;
                 draft.error = Some("Outcome unknown: app restarted mid-send; check delivery before creating another draft".into());
@@ -197,6 +282,15 @@ impl DraftQueue {
     }
 
     pub fn create(&mut self, mut draft: Draft) -> Result<Draft, String> {
+        if let Some(link) = &draft.request
+            && let Some(existing) = self.saved.drafts.iter().find(|d| {
+                d.request
+                    .as_ref()
+                    .is_some_and(|r| r.id == link.id && r.turn_id == link.turn_id)
+            })
+        {
+            return Ok(existing.clone());
+        }
         draft.validate()?;
         let old = self.saved.clone();
         self.saved.next_id += 1;
@@ -214,6 +308,8 @@ impl DraftQueue {
         edited.validate()?;
         *d = edited;
         d.updated_ms = now;
+        d.auto_at_ms = None;
+        d.automatic = false;
         self.commit(old)
     }
 
@@ -267,6 +363,85 @@ impl DraftQueue {
             DraftStatus::Failed
         };
         d.error = result.err();
+        d.updated_ms = now;
+        self.commit(old)
+    }
+
+    pub fn finish_receipt(
+        &mut self,
+        id: &str,
+        result: Result<SendReceipt, String>,
+        now: i64,
+    ) -> Result<(), String> {
+        let old = self.saved.clone();
+        let d = self
+            .saved
+            .drafts
+            .iter_mut()
+            .find(|d| d.id == id)
+            .ok_or("Unknown draft")?;
+        if d.status != DraftStatus::Approved {
+            return Err("Draft is not awaiting delivery".into());
+        }
+        match result {
+            Ok(receipt) => {
+                d.receipt = Some(receipt);
+                d.status = DraftStatus::Sent;
+            }
+            Err(e) => {
+                d.error = Some(e);
+                d.status = DraftStatus::Failed;
+            }
+        }
+        d.updated_ms = now;
+        self.commit(old)
+    }
+
+    pub fn schedule(&mut self, id: &str, at: Option<i64>) -> Result<(), String> {
+        let old = self.saved.clone();
+        let d = self.pending_mut(id)?;
+        d.auto_at_ms = at;
+        d.automatic = at.is_some();
+        self.commit(old)
+    }
+
+    pub fn decline(&mut self, id: &str, reason: &str, now: i64) -> Result<(), String> {
+        let old = self.saved.clone();
+        let d = self
+            .saved
+            .drafts
+            .iter_mut()
+            .find(|d| d.id == id)
+            .ok_or("Unknown draft")?;
+        if !matches!(d.status, DraftStatus::Pending | DraftStatus::Failed) {
+            return Err("Only unsent drafts can be declined".into());
+        }
+        d.status = DraftStatus::Rejected;
+        d.error = Some(reason.into());
+        d.updated_ms = now;
+        self.commit(old)
+    }
+    pub fn resolve_failed(
+        &mut self,
+        id: &str,
+        receipt: SendReceipt,
+        now: i64,
+    ) -> Result<(), String> {
+        super::slack::validate_conversation(&receipt.conversation)?;
+        super::slack::validate_ts(&receipt.ts)?;
+        let old = self.saved.clone();
+        let d = self
+            .saved
+            .drafts
+            .iter_mut()
+            .find(|d| d.id == id)
+            .ok_or("Unknown draft")?;
+        if d.status != DraftStatus::Failed || d.destination() != Some(&receipt.conversation) {
+            return Err("Receipt does not resolve failed draft".into());
+        }
+        d.status = DraftStatus::Sent;
+        d.receipt = Some(receipt);
+        d.error = None;
         d.updated_ms = now;
         self.commit(old)
     }

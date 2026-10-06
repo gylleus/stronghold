@@ -4,7 +4,13 @@ use crate::control::{ControlError, ErrorCode};
 use crate::review::mark::Origin;
 use serde_json::Value;
 
+pub const PUBLIC_METHODS: &[&str] = &["reach_out", "reach_out_status"];
+
 pub const METHODS: &[&str] = &[
+    "envoy_request",
+    "envoy_route",
+    "envoy_decline",
+    "envoy_link_reply",
     "envoy_inbox",
     "envoy_event",
     "envoy_draft",
@@ -31,7 +37,7 @@ impl std::fmt::Debug for EnvoyCommand {
 
 impl EnvoyCommand {
     pub fn parse(method: &str, params: &Value) -> Option<Result<Self, ControlError>> {
-        if !METHODS.contains(&method) {
+        if !METHODS.contains(&method) && !PUBLIC_METHODS.contains(&method) {
             return None;
         }
         Some((|| {

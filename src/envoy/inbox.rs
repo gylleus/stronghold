@@ -30,6 +30,8 @@ pub struct Inbox {
     pub subscription_errors: BTreeMap<String, String>,
     pub cursors: BTreeMap<String, Cursor>,
     pub poll_watermarks: BTreeMap<String, i64>,
+    pub thread_watches: BTreeMap<String, super::slack::threads::WatchState>,
+    pub pending_replies: Vec<super::slack::threads::MatchedReply>,
 }
 
 pub fn timestamp_us(ts: &str) -> Option<i64> {

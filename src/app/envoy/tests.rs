@@ -144,9 +144,15 @@ struct FakeSlack {
     sent: std::sync::Arc<std::sync::Mutex<Vec<crate::envoy::channel::OutboundMessage>>>,
 }
 impl crate::envoy::slack::SlackSender for FakeSlack {
-    fn send(&mut self, message: &crate::envoy::channel::OutboundMessage) -> Result<(), String> {
+    fn send(
+        &mut self,
+        message: &crate::envoy::channel::OutboundMessage,
+    ) -> Result<crate::envoy::channel::SendReceipt, String> {
         self.sent.lock().unwrap().push(message.clone());
-        Ok(())
+        Ok(crate::envoy::channel::SendReceipt {
+            conversation: message.conversation.clone(),
+            ts: "1790000000.000100".into(),
+        })
     }
 }
 impl crate::envoy::slack::SlackIo for FakeSlack {

@@ -9,6 +9,42 @@ pub fn definitions() -> Vec<Value> {
     let string = json!({"type":"string"});
     let specs = [
         (
+            "reach_out",
+            "Ask the Envoy to reach someone; replies arrive automatically. Use ask_karl for Karl.",
+            json!({"to":string,"ask":string,"why":string,"thread":string,"request_id":string,"urgency":{"type":"string","enum":["normal","soon","blocking"]},"expect_reply":{"type":"boolean"}}),
+            vec!["to", "ask", "why"],
+        ),
+        (
+            "reach_out_status",
+            "Read only your requests and their replies.",
+            json!({"request_id":string}),
+            vec![],
+        ),
+        (
+            "envoy_request",
+            "Read a full request and its original asks.",
+            json!({"id":string}),
+            vec!["id"],
+        ),
+        (
+            "envoy_route",
+            "Route a queued request. Agent destinations forbid draft_text and preserve the ask verbatim.",
+            json!({"id":string,"turn_id":{"type":"integer","minimum":1},"conversation":string,"destination_kind":{"type":"string","enum":["agent","person"]},"thread_ts":string,"draft_text":string,"rationale":string}),
+            vec!["id", "conversation", "destination_kind", "rationale"],
+        ),
+        (
+            "envoy_decline",
+            "Decline an unsent request turn with a reason.",
+            json!({"id":string,"turn_id":{"type":"integer","minimum":1},"reason":string}),
+            vec!["id", "reason"],
+        ),
+        (
+            "envoy_link_reply",
+            "Link a retained reply; requester binds an adopted unknown request to a live ant.",
+            json!({"request_id":string,"event_id":string,"requester":string}),
+            vec!["request_id"],
+        ),
+        (
             "envoy_inbox",
             "Read new inbound Slack events; since is a Slack timestamp.",
             json!({"since":string,"limit":{"type":"integer","minimum":1,"maximum":2000}}),
@@ -47,7 +83,7 @@ pub fn definitions() -> Vec<Value> {
     ];
     specs.into_iter().map(|(name,description,properties,required)| json!({
         "name":name,"description":description,"inputSchema":{"type":"object","properties":properties,"required":required,"additionalProperties":false},
-        "annotations":{"readOnlyHint":matches!(name,"envoy_inbox"|"envoy_event"|"envoy_drafts"),"idempotentHint":matches!(name,"envoy_inbox"|"envoy_event"|"envoy_drafts"),"destructiveHint":false,"openWorldHint":name=="envoy_relay"||name=="envoy_event"}
+        "annotations":{"readOnlyHint":matches!(name,"envoy_inbox"|"envoy_event"|"envoy_drafts"|"envoy_request"|"reach_out_status"),"idempotentHint":matches!(name,"envoy_inbox"|"envoy_event"|"envoy_drafts"|"envoy_request"|"reach_out_status"),"destructiveHint":false,"openWorldHint":name=="envoy_relay"||name=="envoy_event"}
     })).collect()
 }
 
@@ -57,11 +93,13 @@ pub fn call(
     name: &str,
     args: &Value,
 ) -> Option<ToolOutput> {
-    if !crate::envoy::control::METHODS.contains(&name) {
+    if !crate::envoy::control::METHODS.contains(&name)
+        && !crate::envoy::control::PUBLIC_METHODS.contains(&name)
+    {
         return None;
     }
     let result = if origin.terminal_handle.as_deref().is_none_or(str::is_empty) {
-        Err("Only the persisted Envoy terminal may call Envoy tools".to_owned())
+        Err("Origin terminal is required".to_owned())
     } else {
         let mut params = if args.is_null() {
             json!({})

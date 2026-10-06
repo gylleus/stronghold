@@ -24,6 +24,57 @@ pub struct EnvoySettings {
     /// How often mentions and DMs are polled with Slack search (the bridge can't see them).
     #[serde(deserialize_with = "poll_secs")]
     pub poll_secs: u64,
+    pub policies: Vec<Policy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Policy {
+    pub destination: String,
+    pub mode: ApprovalMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalMode {
+    #[default]
+    Approve,
+    Auto {
+        veto_secs: u64,
+    },
+}
+
+impl EnvoySettings {
+    pub fn validate_policies(&self) -> Result<(), String> {
+        let mut seen = std::collections::HashSet::new();
+        for policy in &self.policies {
+            if !seen.insert(&policy.destination) {
+                return Err("Duplicate policy destination".into());
+            }
+            if policy.destination != "*" && policy.destination != "dm" {
+                super::slack::validate_conversation(&policy.destination)?;
+            }
+            if matches!(policy.mode, ApprovalMode::Auto { veto_secs } if veto_secs > 86400) {
+                return Err("Veto window must be at most 86400 seconds".into());
+            }
+        }
+        Ok(())
+    }
+    pub fn approval(&self, conversation: &str) -> ApprovalMode {
+        for selector in [
+            conversation,
+            if conversation.starts_with('D') {
+                "dm"
+            } else {
+                ""
+            },
+            "*",
+        ] {
+            if let Some(policy) = self.policies.iter().find(|p| p.destination == selector) {
+                return policy.mode.clone();
+            }
+        }
+        ApprovalMode::Approve
+    }
 }
 
 pub const MIN_POLL_SECS: u64 = 30;
@@ -41,6 +92,7 @@ impl Default for EnvoySettings {
             channels: vec![AGENT_COMMS.into()],
             karl_user_id: KARL_USER_ID.into(),
             poll_secs: 120,
+            policies: Vec::new(),
         }
     }
 }

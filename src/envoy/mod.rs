@@ -7,6 +7,7 @@ pub mod control;
 pub mod drafts;
 pub mod inbox;
 pub mod relay;
+pub mod requests;
 pub mod secrets;
 pub mod session;
 pub mod settings;
