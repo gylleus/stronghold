@@ -8,6 +8,7 @@ use crate::model::{FleetSnapshot, NodeId, NodeKind};
 use crate::review::mark::Origin;
 use crate::traffic::beam::{Beam, BeamKind, ToolCall};
 use crate::traffic::{AgentMessage, Endpoint, MessageKind};
+use crate::ui::state_pop::Cue;
 
 /// How long a spawn's beam waits for its new agent to show up in the fleet.
 const SPAWN_WAIT_S: f64 = 20.0;
@@ -59,6 +60,54 @@ impl MyrstackApp {
 }
 
 impl MyrstackApp {
+    /// Pops the agents whose state change just settled in both views, with a soft sound for
+    /// the done and the waiting when Karl turned it on.
+    pub(super) fn poll_state_pops(&mut self, ctx: &egui::Context) {
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
+        let now_ms = super::now_ms();
+        let cues = self.state_changes.observe(&snapshot.nodes, now_ms);
+        if let Some(due) = self.state_changes.next_due(now_ms) {
+            ctx.request_repaint_after(due);
+        }
+        if cues.is_empty() {
+            return;
+        }
+        let now_s = ctx.input(|i| i.time);
+        let still = crate::ui::ant_farm::death::reduce_motion();
+        for (id, cue) in &cues {
+            log::debug!("pop: {id:?} {cue:?}");
+            self.graph.pop(id.clone(), *cue, now_s, still);
+            self.ant_farm.pop(id.clone(), *cue, now_s, still);
+        }
+        self.pop_sound(cues.iter().map(|(_, cue)| *cue));
+        ctx.request_repaint();
+    }
+
+    /// One sound for a batch of pops, the most urgent cue's.
+    fn pop_sound(&mut self, cues: impl Iterator<Item = Cue>) {
+        let settings = self.whip_window.notifications();
+        if !settings.pop_sounds || settings.quiet {
+            return;
+        }
+        let volume = f32::from(settings.volume_percent.min(100)) / 100.0;
+        let cues: Vec<Cue> = cues.collect();
+        let Some(name) = [Cue::NeedsInput, Cue::Done]
+            .into_iter()
+            .filter(|c| cues.contains(c))
+            .find_map(Cue::sound)
+        else {
+            return;
+        };
+        let Some(path) = crate::notify::Sound::System(name.into()).path() else {
+            return;
+        };
+        if let Err(e) = crate::notify::play_sound(&path, volume) {
+            log::warn!("pop sound: {e:#}");
+        }
+    }
+
     /// Hands the tool calls whose ends are in the fleet to both views as beams; keystrokes go
     /// out as messages. A spawn waits for its new agent; calls that never resolve are dropped.
     fn poll_tool_calls(&mut self, ctx: &egui::Context) {

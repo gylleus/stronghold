@@ -69,6 +69,11 @@ pub(super) fn section(
         ui.label("Volume");
         ui.add(egui::Slider::new(&mut d.volume_percent, 0..=100).suffix(" %"));
     });
+    ui.checkbox(
+        &mut d.pop_sounds,
+        "Soft sound when an agent is done or needs input",
+    )
+    .on_hover_text("Plays with its pop in the graph and the ant farm; not in quiet mode");
     ui.add_space(6.0);
 
     ui.horizontal(|ui| {

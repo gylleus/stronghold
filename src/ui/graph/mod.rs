@@ -8,6 +8,7 @@ mod fit_tests;
 mod layout;
 mod mail;
 pub mod nav;
+mod pops;
 mod regions;
 mod saved;
 #[cfg(test)]
@@ -176,6 +177,10 @@ pub struct GraphView {
     mail: crate::ui::envelope::Flights,
     /// Tool calls beaming from their callers; see [`beams`].
     beams: crate::ui::beam::Beams,
+    /// Nodes that just changed state; see [`pops`].
+    pops: crate::ui::state_pop::Pops,
+    /// Nodes handed a pop last frame.
+    popped: HashSet<NodeId>,
 }
 
 impl Default for GraphView {
@@ -225,6 +230,8 @@ impl GraphView {
             scroll_source: ScrollSource::default(),
             mail: Default::default(),
             beams: Default::default(),
+            pops: Default::default(),
+            popped: HashSet::new(),
         }
     }
 
@@ -582,6 +589,7 @@ impl GraphView {
         self.anchor = ui.ctx().content_rect().center();
         self.prepare_layout(ui);
         self.sync_saved_view(ui, true);
+        self.apply_pops(ui);
 
         // The rect egui_graphs allocates below; fitting to it before drawing keeps this frame
         // inside the widget even right after a panel opened or the window resized.
