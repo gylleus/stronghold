@@ -587,6 +587,7 @@ impl AppEnvoy {
                 }
                 Update::Adopted(result) => {
                     match result.and_then(|threads| {
+                        self.reconcile_requests()?;
                         for (thread, label) in threads {
                             self.requests_mut()?.adopt(thread, label, now_ms())?;
                         }
@@ -611,6 +612,31 @@ impl AppEnvoy {
                                 Severity::Info,
                                 "Envoy draft ready",
                                 "A draft is waiting for your approval.",
+                            )
+                            .with_target(DRAFTS_TARGET),
+                        );
+                    }
+                    reply.send(result.map_err(ControlError::invalid_params));
+                }
+                Update::BindingPreview {
+                    command,
+                    requester,
+                    reply,
+                    result,
+                } => {
+                    let result = crate::envoy::authorize(self, &command.origin)
+                        .and(result)
+                        .and_then(|preview| {
+                            self.propose_binding(&command.args, *requester, preview)?;
+                            self.gateway_envoy_request(&command)
+                        });
+                    if result.is_ok() {
+                        notifications.push(
+                            Incoming::new(
+                                Source::Envoy,
+                                Severity::Info,
+                                "Envoy reply routing proposal",
+                                "Review the proposed reply recipient in the Envoy Inbox.",
                             )
                             .with_target(DRAFTS_TARGET),
                         );
@@ -700,6 +726,16 @@ impl AppEnvoy {
                     .and_then(|w| w.submit(Work::Adopt))
                     .map(|()| false),
             ),
+            crate::ui::envoy::DraftAction::Binding {
+                id,
+                proposal_id,
+                accept,
+            } => {
+                let result = self
+                    .decide_binding(&id, proposal_id, accept)
+                    .map(|()| false);
+                (id, result)
+            }
             crate::ui::envoy::DraftAction::Keep(id) => {
                 let result = self
                     .requests_mut()
@@ -843,7 +879,7 @@ impl MyrstackApp {
             return Ok(());
         }
         if command.method == "envoy_link_reply" && command.args.get("requester").is_some() {
-            let result = (|| {
+            let result: Result<_, String> = (|| {
                 let target = required(&command.args, "requester")?;
                 let node = self.control_node(target).map_err(|e| e.to_string())?;
                 if !node.live {
@@ -857,11 +893,29 @@ impl MyrstackApp {
                     terminal_handle: Some(handle),
                     ..Default::default()
                 })?;
-                self.envoy_core.bind_requester(&command.args, who)
+                let thread = self.envoy_core.binding_thread(&command.args, &who)?;
+                Ok((who, thread))
             })();
-            if let Err(e) = result {
-                reply.send(Err(ControlError::invalid_params(e)));
-                return Ok(());
+            match result {
+                Ok((requester, Some(thread))) => {
+                    match self.envoy_core.worker() {
+                        Ok(worker) => {
+                            let _ = worker.submit(Work::BindingPreview {
+                                command,
+                                requester: Box::new(requester),
+                                thread,
+                                reply,
+                            });
+                        }
+                        Err(e) => reply.send(Err(ControlError::new(ErrorCode::Unavailable, e))),
+                    }
+                    return Ok(());
+                }
+                Ok((_, None)) => {}
+                Err(e) => {
+                    reply.send(Err(ControlError::invalid_params(e)));
+                    return Ok(());
+                }
             }
         }
         if command.method == "envoy_event" {

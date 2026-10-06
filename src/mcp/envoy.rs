@@ -40,8 +40,8 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_link_reply",
-            "Link a retained reply; requester binds an adopted unknown request to a live ant.",
-            json!({"request_id":string,"event_id":string,"requester":string}),
+            "Link a retained reply; assigning an unknown thread requires reason and proposes a recipient for Karl to accept in the Inbox.",
+            json!({"request_id":string,"event_id":string,"requester":string,"reason":string}),
             vec!["request_id"],
         ),
         (

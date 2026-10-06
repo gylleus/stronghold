@@ -21,6 +21,12 @@ pub enum Work {
         command: super::control::EnvoyCommand,
         reply: Reply,
     },
+    BindingPreview {
+        command: super::control::EnvoyCommand,
+        requester: Box<super::requests::Requester>,
+        thread: super::requests::Thread,
+        reply: Reply,
+    },
     Forwarded(Vec<String>),
     Send {
         id: String,
@@ -56,6 +62,12 @@ pub enum Update {
         command: super::control::EnvoyCommand,
         reply: Reply,
         result: Result<super::slack::threads::ResolvedDestination, String>,
+    },
+    BindingPreview {
+        command: super::control::EnvoyCommand,
+        requester: Box<super::requests::Requester>,
+        reply: Reply,
+        result: Result<super::requests::BindingPreview, String>,
     },
     Error(String),
 }
@@ -117,6 +129,21 @@ impl Worker {
                         );
                         let _ = results.send(Update::Resolved {
                             command,
+                            reply,
+                            result,
+                        });
+                        wake();
+                    }
+                    Ok(Work::BindingPreview {
+                        command,
+                        requester,
+                        thread,
+                        reply,
+                    }) => {
+                        let result = slack.binding_preview(&thread);
+                        let _ = results.send(Update::BindingPreview {
+                            command,
+                            requester,
                             reply,
                             result,
                         });

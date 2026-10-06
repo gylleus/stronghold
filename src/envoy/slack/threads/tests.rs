@@ -18,8 +18,14 @@ impl SlackIo for Fake {
     fn api(&mut self, method: &str, params: &[(&str, String)]) -> Result<Value, String> {
         if method == "chat.getPermalink" {
             let channel = &params.iter().find(|(k, _)| *k == "channel").unwrap().1;
+            let ts = &params
+                .iter()
+                .find(|(k, _)| *k == "message_ts")
+                .unwrap()
+                .1
+                .replace('.', "");
             return Ok(
-                json!({"ok":true,"permalink":format!("https://example.slack.com/archives/{channel}/p2000001")}),
+                json!({"ok":true,"permalink":format!("https://example.slack.com/archives/{channel}/p{ts}")}),
             );
         }
         if method == "conversations.info" {
@@ -42,8 +48,17 @@ impl SlackIo for Fake {
         if self.broken.as_ref() == Some(&channel) {
             return Err("fixture denied".into());
         }
+        if params
+            .iter()
+            .any(|(key, value)| *key == "limit" && value == "1")
+        {
+            let ts = &params.iter().find(|(k, _)| *k == "ts").unwrap().1;
+            return Ok(
+                json!({"ok":true,"messages":[{"ts":ts,"text":"Root context\nSecond line"}]}),
+            );
+        }
         Ok(
-            json!({"ok":true,"messages":[{"ts":"2.000001","thread_ts":"1.000001","user":"UOTHER","text":"Fixture reply"}]}),
+            json!({"ok":true,"messages":[ {"ts":"2.000001","thread_ts":"1.000001","user":"UOTHER","text":"Fixture reply"}]}),
         )
     }
     fn subscribe(&mut self, _: &Path, _: &str) -> Result<(), String> {
@@ -247,4 +262,23 @@ fn dm_person_classification_rejects_bots_and_app_users() {
     channel.io.app = true;
     assert!(!channel.resolve_destination("D123").unwrap().person);
     assert!(!channel.resolve_destination("C123").unwrap().person);
+}
+
+#[test]
+fn adoption_skips_envoy_labels_and_preview_only_reads_root_context() {
+    let parsed = parse_subscriptions("D123 1.000001  label=\"envoy:request-1\"  expires=never\nD456 2.000001  label=\"Borrowed\"  expires=never\n", 0).unwrap();
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].0.conversation, "D456");
+    let dir = tempfile::tempdir().unwrap();
+    let mut channel = channel(dir.path());
+    let thread = watch("r", "D123").thread;
+    let preview = channel.binding_preview(&thread).unwrap();
+    assert_eq!(preview.thread, thread);
+    assert_eq!(preview.first_line, "Root context");
+    assert_eq!(
+        preview.slack_link,
+        "https://example.slack.com/archives/D123/p1000001"
+    );
+    assert_eq!(channel.io.subscriptions, 0);
+    assert!(channel.inbox.thread_watches.is_empty());
 }

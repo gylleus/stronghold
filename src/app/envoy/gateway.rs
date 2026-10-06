@@ -233,19 +233,88 @@ impl AppEnvoy {
         }
     }
 
-    pub(super) fn bind_requester(&mut self, args: &Value, who: Requester) -> Result<(), String> {
+    pub(super) fn binding_thread(
+        &mut self,
+        args: &Value,
+        who: &Requester,
+    ) -> Result<Option<Thread>, String> {
         let id = required(args, "request_id")?;
         if let Some(event_id) = optional(args, "event_id")? {
             self.reply_to_link(id, event_id)?;
         }
+        let request = self.requests_mut()?.get(id)?;
+        if request.settled {
+            return Err("Request closed; start a new reach_out".into());
+        }
+        if request.bound_requester().is_some() {
+            return if request.owned_by(who) {
+                Ok(None)
+            } else {
+                Err("A known requester cannot be reassigned".into())
+            };
+        }
+        let reason = required(args, "reason")?;
+        if reason.trim().is_empty() || reason.len() > 4000 {
+            return Err("Binding reason is empty or too long".into());
+        }
+        Ok(Some(
+            request
+                .thread
+                .clone()
+                .ok_or("Binding requires a known thread")?,
+        ))
+    }
+
+    pub(super) fn propose_binding(
+        &mut self,
+        args: &Value,
+        who: Requester,
+        preview: crate::envoy::requests::BindingPreview,
+    ) -> Result<(), String> {
+        let Some(thread) = self.binding_thread(args, &who)? else {
+            return Ok(());
+        };
+        if thread != preview.thread {
+            return Err("Binding thread changed during preview".into());
+        }
+        self.requests_mut()?
+            .change(required(args, "request_id")?, |r| {
+                r.binding_sequence += 1;
+                r.binding_proposal = Some(crate::envoy::requests::BindingProposal {
+                    id: r.binding_sequence,
+                    requester: who,
+                    reason: required(args, "reason")?.into(),
+                    preview,
+                });
+                Ok(())
+            })
+    }
+
+    pub(super) fn decide_binding(
+        &mut self,
+        id: &str,
+        proposal_id: u64,
+        accept: bool,
+    ) -> Result<(), String> {
         self.requests_mut()?.change(id, |r| {
-            if r.requester.is_some() {
-                return Err("Only unknown adopted requests can be bound".into());
+            let proposal = r
+                .binding_proposal
+                .as_ref()
+                .ok_or("Binding proposal unavailable")?;
+            if r.settled
+                || proposal.id != proposal_id
+                || r.thread.as_ref() != Some(&proposal.preview.thread)
+            {
+                return Err("Binding proposal changed; review it again".into());
             }
-            r.requester = Some(who);
-            for d in &mut r.deliveries {
-                d.inbox = false;
+            if accept {
+                r.requester = Some(proposal.requester.clone());
+                r.binding_approved = true;
+                for d in &mut r.deliveries {
+                    d.inbox = false;
+                }
             }
+            r.binding_proposal = None;
             Ok(())
         })
     }
@@ -442,6 +511,7 @@ impl AppEnvoy {
             return None;
         }
         let record = self.requests.as_ref()?.get(request).ok()?;
+        record.bound_requester()?;
         let reply = record
             .deliveries
             .iter()
@@ -616,7 +686,7 @@ impl MyrstackApp {
                 r.deliveries
                     .iter()
                     .filter(|d| !d.delivered)
-                    .map(move |d| (r.id.clone(), r.requester.clone(), d.clone()))
+                    .map(move |d| (r.id.clone(), r.bound_requester().cloned(), d.clone()))
             })
             .collect();
         for (request, requester, delivery) in pending {

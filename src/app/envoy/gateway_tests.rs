@@ -52,12 +52,29 @@ impl SlackSender for Fake {
     }
 }
 impl SlackIo for Fake {
-    fn api(&mut self, method: &str, _: &[(&str, String)]) -> Result<Value, String> {
+    fn api(&mut self, method: &str, params: &[(&str, String)]) -> Result<Value, String> {
         self.calls.lock().unwrap().push(method.into());
+        if method == "conversations.replies"
+            && params
+                .iter()
+                .any(|(key, value)| *key == "limit" && value == "1")
+        {
+            let ts = &params.iter().find(|(k, _)| *k == "ts").unwrap().1;
+            return Ok(
+                json!({"ok":true,"messages":[{"ts":ts,"text":"Root context\nSecond line"}]}),
+            );
+        }
         Ok(if method == "conversations.replies" {
             json!({"ok":true,"messages":[{"ts":"2.000001","thread_ts":self.event.thread_ts,"user":"UHISTORY","text":"Private old history","permalink":"https://example.slack.com/archives/C123/p2000001"},{"ts":self.event.ts,"thread_ts":self.event.thread_ts,"user":self.event.user,"text":self.event.text}]})
         } else if method == "chat.getPermalink" {
-            json!({"ok":true,"permalink":self.event.permalink})
+            let channel = &params.iter().find(|(k, _)| *k == "channel").unwrap().1;
+            let ts = params
+                .iter()
+                .find(|(k, _)| *k == "message_ts")
+                .unwrap()
+                .1
+                .replace('.', "");
+            json!({"ok":true,"permalink":format!("https://example.slack.com/archives/{channel}/p{ts}")})
         } else {
             json!({"ok":true,"messages":{"matches":[],"paging":{"pages":1}}})
         })
@@ -88,7 +105,8 @@ fn fixture(dir: &std::path::Path) -> Fake {
     let bridge = dir.join("bridge");
     std::fs::create_dir_all(bridge.join("channels")).unwrap();
     std::fs::write(bridge.join("heartbeat"), jiff::Timestamp::now().to_string()).unwrap();
-    let root = format!("{}.000001", now_ms() / 1000 + 1);
+    let second = now_ms() / 1000 + 1;
+    let root = format!("{second}.000001");
     Fake {
         sent: Default::default(),
         calls: Default::default(),
@@ -97,13 +115,15 @@ fn fixture(dir: &std::path::Path) -> Fake {
         event: InboundEvent {
             channel_kind: "slack".into(),
             conversation: "C123".into(),
-            ts: format!("{}.000002", now_ms() / 1000 + 1),
+            ts: format!("{second}.000002"),
             thread_ts: Some(root),
             user: "UOTHER".into(),
             user_name: "Avery".into(),
             text: "Fixture reply, ready.".into(),
             kind: crate::envoy::channel::EventKind::ThreadReply,
-            permalink: Some("https://example.slack.com/archives/C123/p1790000000000002".into()),
+            permalink: Some(format!(
+                "https://example.slack.com/archives/C123/p{second}000002"
+            )),
         },
     }
 }
@@ -785,22 +805,34 @@ fn invalid_adoption_reply_does_not_bind_owner_before_retry() {
     let id = core.requests()[0].id.clone();
     let who = Requester::from_origin(origin("ant")).unwrap();
     assert!(
-        core.bind_requester(&json!({"request_id":id,"event_id":"missing"}), who.clone())
-            .is_err()
+        core.binding_thread(
+            &json!({"request_id":id,"event_id":"missing","reason":"review"}),
+            &who
+        )
+        .is_err()
     );
     assert!(core.requests()[0].requester.is_none());
     let mut wrong = fake.event.clone();
     wrong.conversation = "D456".into();
     core.inbox.insert(wrong.clone());
     assert!(
-        core.bind_requester(&json!({"request_id":id,"event_id":wrong.id()}), who.clone())
-            .is_err()
+        core.binding_thread(
+            &json!({"request_id":id,"event_id":wrong.id(),"reason":"review"}),
+            &who
+        )
+        .is_err()
     );
     assert!(core.requests()[0].requester.is_none());
     core.inbox.insert(fake.event.clone());
-    core.bind_requester(&json!({"request_id":id,"event_id":fake.event.id()}), who)
-        .unwrap();
-    assert!(core.requests()[0].requester.is_some());
+    assert!(
+        core.binding_thread(
+            &json!({"request_id":id,"event_id":fake.event.id(),"reason":"review"}),
+            &who
+        )
+        .unwrap()
+        .is_some()
+    );
+    assert!(core.requests()[0].requester.is_none());
 }
 
 #[test]
@@ -1019,12 +1051,20 @@ fn rejected_root_is_not_reapplied_when_routing_identical_retry() {
         json!({"id":id,"reason":"Try again"}),
     ))
     .unwrap();
-    let accepted=core.request(&command("ant","reach_out",json!({"to":"Avery agent","ask":"retry after review","why":"Review again","request_id":id}))).unwrap();
-    assert_eq!(accepted["merged"], false);
-    let draft = route(&mut core, &id);
-    assert_eq!(draft.request.unwrap().turn_id, 2);
-    assert_eq!(draft.status, DraftStatus::Pending);
-    assert!(!core.requests()[0].settled);
+    let refused = core.request(&command(
+        "ant",
+        "reach_out",
+        json!({"to":"Avery agent","ask":"retry after review","why":"Review again","request_id":id}),
+    ));
+    assert!(
+        refused
+            .unwrap_err()
+            .contains("closed; start a new reach_out")
+    );
+    let new_id = submit(&mut core, "retry after review");
+    assert_ne!(new_id, id);
+    assert_eq!(route(&mut core, &new_id).request.unwrap().turn_id, 1);
+    assert!(core.requests()[0].settled);
 }
 
 #[test]
@@ -1116,4 +1156,345 @@ fn declined_unsent_thread_hint_cannot_remove_a_subscription() {
         .unwrap();
     assert!(!core.requests()[0].close_requested);
     assert!(!commands.try_iter().any(|w| matches!(w, Work::Remove(_))));
+}
+
+#[test]
+fn closed_sent_request_cannot_reopen_after_last_turn_declined() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, commands, _updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    core.handle = Some("envoy".into());
+    core.settings.dry_run = false;
+    let id = submit(&mut core, "first send");
+    let draft = route(&mut core, &id);
+    core.queue()
+        .unwrap()
+        .begin_approval(&draft.id, None, false, 0)
+        .unwrap();
+    core.queue()
+        .unwrap()
+        .finish_receipt(
+            &draft.id,
+            Ok(SendReceipt {
+                conversation: "C123".into(),
+                ts: "1.000001".into(),
+            }),
+            1,
+        )
+        .unwrap();
+    core.reconcile_requests().unwrap();
+    core.request(&command(
+        "ant",
+        "reach_out",
+        json!({"to":"Avery agent","ask":"follow","why":"test","request_id":id}),
+    ))
+    .unwrap();
+    core.request(&command(
+        "envoy",
+        "envoy_decline",
+        json!({"id":id,"reason":"No more"}),
+    ))
+    .unwrap();
+    core.panel_action(
+        crate::ui::envoy::DraftAction::Settle(id.clone()),
+        false,
+        |_| false,
+    )
+    .1
+    .unwrap();
+    commands.try_iter().for_each(drop);
+    assert!(
+        core.request(&command(
+            "ant",
+            "reach_out",
+            json!({"to":"Avery agent","ask":"reopen","why":"test","request_id":id})
+        ))
+        .unwrap_err()
+        .contains("closed; start a new reach_out")
+    );
+    assert!(core.requests()[0].settled);
+    core.reconcile_requests().unwrap();
+    assert!(
+        !commands
+            .try_iter()
+            .any(|w| matches!(w,Work::Watches(watches) if !watches.is_empty()))
+    );
+}
+
+#[test]
+fn adoption_skips_owned_request_even_with_an_external_label() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "owned");
+    let draft = route(&mut core, &id);
+    core.queue()
+        .unwrap()
+        .begin_approval(&draft.id, None, false, 0)
+        .unwrap();
+    core.queue()
+        .unwrap()
+        .finish_receipt(
+            &draft.id,
+            Ok(SendReceipt {
+                conversation: "C123".into(),
+                ts: "1.000001".into(),
+            }),
+            1,
+        )
+        .unwrap();
+    core.reconcile_requests().unwrap();
+    let thread = core.requests()[0].thread.clone().unwrap();
+    core.requests_mut()
+        .unwrap()
+        .adopt(thread, "External label".into(), 0)
+        .unwrap();
+    assert_eq!(core.requests().len(), 1);
+    assert!(core.requests()[0].adopted_ms.is_none());
+}
+
+#[test]
+fn binding_proposal_requires_acceptance_and_reject_never_routes() {
+    for accept in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = AppEnvoy::load(dir.path().into());
+        core.settings.dry_run = false;
+        let fake = fixture(dir.path());
+        let thread = crate::envoy::requests::Thread {
+            conversation: fake.event.conversation.clone(),
+            ts: fake.event.thread_ts.clone().unwrap(),
+        };
+        core.requests_mut()
+            .unwrap()
+            .adopt(thread.clone(), "Borrowed".into(), 0)
+            .unwrap();
+        let id = core.requests()[0].id.clone();
+        let who = Requester::from_origin(origin("ant")).unwrap();
+        let args = json!({"request_id":id,"requester":"ant","reason":"This ant owns the review"});
+        let preview = crate::envoy::requests::BindingPreview {
+            thread,
+            first_line: "Review discussion".into(),
+            slack_link: "https://example.slack.com/archives/C123/p1000001".into(),
+        };
+        core.propose_binding(&args, who.clone(), preview.clone())
+            .unwrap();
+        core.requests_mut()
+            .unwrap()
+            .reply(&id, &fake.event)
+            .unwrap();
+        assert!(core.reply_action(&id, &fake.event.id(), "ant").is_none());
+        assert!(!core.requests()[0].owned_by(&who));
+        let previous = core.requests()[0].binding_proposal.as_ref().unwrap().id;
+        core.propose_binding(&args, who.clone(), preview).unwrap();
+        assert!(core.decide_binding(&id, previous, true).is_err());
+        let proposal_id = core.requests()[0].binding_proposal.as_ref().unwrap().id;
+        let mut reloaded = AppEnvoy::load(dir.path().into());
+        reloaded.settings.dry_run = false;
+        assert!(
+            reloaded
+                .reply_action(&id, &fake.event.id(), "ant")
+                .is_none()
+        );
+        reloaded
+            .panel_action(
+                crate::ui::envoy::DraftAction::Binding {
+                    id: id.clone(),
+                    proposal_id,
+                    accept,
+                },
+                false,
+                |_| false,
+            )
+            .1
+            .unwrap();
+        assert_eq!(
+            reloaded
+                .reply_action(&id, &fake.event.id(), "ant")
+                .is_some(),
+            accept
+        );
+        assert_eq!(reloaded.requests()[0].owned_by(&who), accept);
+        let mut later = fake.event.clone();
+        later.ts = format!("{}.000003", now_ms() / 1000 + 2);
+        reloaded.requests_mut().unwrap().reply(&id, &later).unwrap();
+        assert_eq!(
+            reloaded.reply_action(&id, &later.id(), "ant").is_some(),
+            accept
+        );
+    }
+}
+
+#[test]
+fn own_request_binding_is_noop_and_legacy_unapproved_adoption_is_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let id = submit(&mut core, "mine");
+    let who = Requester::from_origin(origin("ant")).unwrap();
+    assert!(
+        core.binding_thread(&json!({"request_id":id,"requester":"ant"}), &who)
+            .unwrap()
+            .is_none()
+    );
+    let fake = fixture(dir.path());
+    core.requests_mut()
+        .unwrap()
+        .change(&id, |r| {
+            r.adopted_ms = Some(0);
+            r.thread = Some(crate::envoy::requests::Thread {
+                conversation: fake.event.conversation.clone(),
+                ts: fake.event.thread_ts.clone().unwrap(),
+            });
+            Ok(())
+        })
+        .unwrap();
+    core.requests_mut()
+        .unwrap()
+        .reply(&id, &fake.event)
+        .unwrap();
+    core.settings.dry_run = false;
+    assert!(core.reply_action(&id, &fake.event.id(), "ant").is_none());
+    assert!(!core.requests()[0].owned_by(&who));
+}
+
+#[test]
+fn legacy_sent_receipt_load_restores_watch_but_explicit_false_stays_unconfirmed() {
+    for legacy in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = AppEnvoy::load(dir.path().into());
+        core.handle = Some("envoy".into());
+        let id = submit(&mut core, "upgrade");
+        let draft = route(&mut core, &id);
+        core.queue()
+            .unwrap()
+            .begin_approval(&draft.id, None, false, 0)
+            .unwrap();
+        core.queue()
+            .unwrap()
+            .finish_receipt(
+                &draft.id,
+                Ok(SendReceipt {
+                    conversation: "C123".into(),
+                    ts: "3.000004".into(),
+                }),
+                1,
+            )
+            .unwrap();
+        let path = dir.path().join(crate::envoy::drafts::DRAFTS_FILE);
+        let mut wire: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        if legacy {
+            wire["drafts"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("confirmed_send");
+        } else {
+            wire["drafts"][0]["confirmed_send"] = json!(false);
+        }
+        std::fs::write(path, serde_json::to_vec(&wire).unwrap()).unwrap();
+        let mut loaded = AppEnvoy::load(dir.path().into());
+        let (worker, commands, _updates) = Worker::test_pair();
+        loaded.worker = Some(worker);
+        loaded.reconcile_requests().unwrap();
+        assert_eq!(
+            loaded.requests()[0].reply_after_us,
+            if legacy { Some(3_000_004) } else { None }
+        );
+        let Work::Watches(watches) = commands.recv().unwrap() else {
+            panic!()
+        };
+        assert_eq!(watches.len(), usize::from(legacy));
+        assert_eq!(loaded.drafts()[0].confirmed_send, legacy);
+    }
+}
+
+#[test]
+fn binding_worker_preview_persists_proposal_and_notifies_without_assigning_owner() {
+    use crate::control::commands::CommandHandler;
+    use crate::control::commands::{AppCommands, ControlCommand};
+    use crate::envoy::requests::{Requester, Thread};
+    let dir = tempfile::tempdir().unwrap();
+    let fake = fixture(dir.path());
+    let calls = fake.calls.clone();
+    let mut core = AppEnvoy::at(
+        dir.path().into(),
+        &egui::Context::default(),
+        fake.clone(),
+        fake.bridge.clone(),
+    );
+    core.set_enabled(
+        "envoy".into(),
+        EnvoySettings {
+            channels: vec![],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let thread = Thread {
+        conversation: "D123".into(),
+        ts: "1.000001".into(),
+    };
+    core.requests_mut()
+        .unwrap()
+        .adopt(thread.clone(), "Fixture".into(), 0)
+        .unwrap();
+    let id = core.requests.as_ref().unwrap().all()[0].id.clone();
+    let command = command(
+        "envoy",
+        "envoy_link_reply",
+        json!({"request_id":id,"requester":"ant","reason":"Build context"}),
+    );
+    let requester = Requester::from_origin(origin("ant")).unwrap();
+    assert_eq!(
+        core.binding_thread(&command.args, &requester).unwrap(),
+        Some(thread.clone())
+    );
+    let (commands, pending) = AppCommands::channel(None);
+    let control = command.clone();
+    let caller = std::thread::spawn(move || commands.execute(ControlCommand::Envoy(control)));
+    let reply = pending
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap()
+        .reply;
+    core.worker
+        .as_ref()
+        .unwrap()
+        .submit(Work::BindingPreview {
+            command,
+            requester: Box::new(requester),
+            thread,
+            reply,
+        })
+        .unwrap();
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut notified = false;
+    while !caller.is_finished() {
+        assert!(std::time::Instant::now() < until);
+        notified |= !core.poll_updates().0.is_empty();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let result = caller.join().unwrap().unwrap();
+    assert_eq!(
+        result["request"]["binding_proposal"]["preview"]["first_line"],
+        "Root context"
+    );
+    assert_eq!(
+        result["request"]["binding_proposal"]["reason"],
+        "Build context"
+    );
+    assert!(result["request"]["requester"].is_null());
+    assert!(notified);
+    assert!(calls.lock().unwrap().contains(&"chat.getPermalink".into()));
+    assert!(
+        !calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.starts_with("thread_"))
+    );
+    let restored = crate::envoy::requests::Requests::load(
+        dir.path().join(crate::envoy::requests::REQUESTS_FILE),
+    )
+    .unwrap();
+    assert!(restored.get(&id).unwrap().binding_proposal.is_some());
+    assert!(restored.get(&id).unwrap().bound_requester().is_none());
 }

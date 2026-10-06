@@ -11,12 +11,20 @@ pub const DRY_RUN_BANNER: &str = "Dry run: approving records the message, nothin
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum DraftAction {
-    Approve { id: String, text: String },
+    Approve {
+        id: String,
+        text: String,
+    },
     Reject(String),
     Pause(String),
     Adopt,
     Keep(String),
     Settle(String),
+    Binding {
+        id: String,
+        proposal_id: u64,
+        accept: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -139,8 +147,7 @@ impl DraftsPanel {
                             ui.label(format!(
                                 "Asked by {}",
                                 request
-                                    .requester
-                                    .as_ref()
+                                    .bound_requester()
                                     .map_or("unknown", |r| r.label.as_str())
                             ));
                             if let Some(error) = self.errors.get(&request.id) {
@@ -170,14 +177,40 @@ impl DraftsPanel {
                                 }
                             }
                             if inbox_tab {
-                                if request.requester.is_none() && !request.orphan_kept {
+                                if let Some(proposal) = &request.binding_proposal {
+                                    let thread = &proposal.preview.thread;
+                                    ui.strong(format!(
+                                        "Route replies from {} / {} to {}?",
+                                        thread.conversation, thread.ts, proposal.requester.label
+                                    ));
+                                    ui.label(&proposal.preview.first_line);
+                                    ui.weak(format!("Terminal: {}", proposal.requester.handle()));
+                                    slack_link(ui, Some(&proposal.preview.slack_link));
+                                    ui.label(format!("Envoy reason: {}", proposal.reason));
+                                    ui.push_id(proposal.id, |ui| {
+                                        ui.horizontal(|ui| {
+                                            for (label, accept) in
+                                                [("Accept", true), ("Reject", false)]
+                                            {
+                                                if deliberate_click(&ui.button(label)) {
+                                                    action = Some(DraftAction::Binding {
+                                                        id: request.id.clone(),
+                                                        proposal_id: proposal.id,
+                                                        accept,
+                                                    });
+                                                }
+                                            }
+                                        });
+                                    });
+                                }
+                                if request.bound_requester().is_none() && !request.orphan_kept {
                                     ui.strong("Orphan thread");
                                     if ui.button("Keep").clicked() {
                                         action = Some(DraftAction::Keep(request.id.clone()));
                                     }
                                 }
                                 if ui
-                                    .button(if request.requester.is_none() {
+                                    .button(if request.bound_requester().is_none() {
                                         "Close"
                                     } else {
                                         "Settle"
@@ -783,6 +816,96 @@ mod tests {
         assert!(!h.visible("Asked by unknown"));
         h.click("Outbox");
         assert!(h.visible("Asked by unknown"));
+    }
+
+    #[test]
+    fn binding_requires_deliberate_click_on_the_displayed_proposal() {
+        use crate::envoy::requests::{
+            BindingPreview, BindingProposal, Requester, Requests, Thread,
+        };
+        use crate::review::mark::Origin;
+        let dir = tempfile::tempdir().unwrap();
+        let mut requests = Requests::load(dir.path().join("requests.json")).unwrap();
+        let thread = Thread {
+            conversation: "D123".into(),
+            ts: "1.000001".into(),
+        };
+        requests.adopt(thread.clone(), "Fixture".into(), 0).unwrap();
+        let id = requests.all()[0].id.clone();
+        let requester = Requester::from_origin(Origin {
+            terminal_handle: Some("term:fixture".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        requests
+            .change(&id, |r| {
+                r.binding_proposal = Some(BindingProposal {
+                    id: 1,
+                    requester,
+                    reason: "Review belongs here".into(),
+                    preview: BindingPreview {
+                        thread,
+                        first_line: "Root context".into(),
+                        slack_link: "https://example.slack.com/archives/D123/p1000001".into(),
+                    },
+                });
+                Ok(())
+            })
+            .unwrap();
+        let mut h = Harness::new(vec![]);
+        h.panel.set_requests(requests.all());
+        assert!(h.visible("Route replies from D123 / 1.000001 to term:fixture?"));
+        assert!(h.visible("Root context"));
+        assert!(h.visible("Envoy reason: Review belongs here"));
+        for key in [egui::Key::Tab, egui::Key::Enter, egui::Key::Space]
+            .into_iter()
+            .cycle()
+            .take(18)
+        {
+            let events = [true, false].map(|pressed| egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            assert!(h.frame(events.into()).1.is_none());
+        }
+        let at = text_center(&h.frame(vec![]).0, "Accept").unwrap();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        h.frame(vec![egui::Event::PointerMoved(at), button(true)]);
+        requests
+            .change(&id, |r| {
+                r.binding_proposal.as_mut().unwrap().id = 2;
+                Ok(())
+            })
+            .unwrap();
+        h.panel.set_requests(requests.all());
+        assert!(
+            h.frame(vec![button(false)]).1.is_none(),
+            "a replacement proposal must not inherit the previous pointer press"
+        );
+        assert_eq!(
+            h.click("Accept"),
+            Some(DraftAction::Binding {
+                id: id.clone(),
+                proposal_id: 2,
+                accept: true
+            })
+        );
+        assert_eq!(
+            h.click("Reject"),
+            Some(DraftAction::Binding {
+                id,
+                proposal_id: 2,
+                accept: false
+            })
+        );
     }
 
     #[test]

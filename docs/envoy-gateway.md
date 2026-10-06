@@ -18,7 +18,7 @@ Requests can queue while the Envoy is stopped. Without the app, the tool reports
 it does not authorize posting directly. Blocking urgency raises an app notification.
 New requests are limited to six per hour per terminal. A follow-up identified by an owned
 open `request_id` or the same owned thread has a separate 30/hour conversation allowance.
-Exact duplicate asks merge without spending either budget; retrying a declined ask creates a new turn and spends the applicable allowance. Follow-ups wait for the earlier
+Exact duplicate asks merge without spending either budget; retrying a declined ask on an open request creates a new turn and spends the applicable allowance. A settled request stays closed: start a new `reach_out` without that `request_id`. Follow-ups wait for the earlier
 turn and a confirmed root thread; a failed or unknown send is never automatically retried.
 
 Errors include missing Origin, invalid/oversized text, invalid urgency/permalink, Karl as
@@ -37,7 +37,7 @@ pick up the new launch tools after installing the app.
 | `envoy_request` | `id` | `request` with all original asks, requester identity, turns and replies |
 | `envoy_route` | `id`, `conversation` (Slack C/D/G id), `destination_kind` (`agent`/`person`), `rationale`; optional `turn_id`, `thread_ts`, `draft_text` | `request_id`, `turn_id`, `draft` |
 | `envoy_decline` | `id`, `reason`; optional `turn_id` | Updated `request`; rejection is queued for safe delivery to the asker |
-| `envoy_link_reply` | `request_id`; at least one of `event_id`, `requester` | Updated `request` with the retained event linked or the adopted unknown owner bound |
+| `envoy_link_reply` | `request_id`; at least one of `event_id`, `requester`; `reason` required for a new owner proposal | Updated `request` with the retained event linked or a pending `binding_proposal` |
 
 For an agent destination, `draft_text` is forbidden. The app constructs the draft from the
 requester's header and exact ask bytes, then appends attribution. Editing/approval cannot
@@ -53,6 +53,13 @@ draft. A bound conversation cannot be silently rerouted. Decline cannot cancel a
 dispatched send. To reconcile an ambiguous failed send, link a retained event in its known
 thread; that records an explicit reconciliation, without sending again or granting reply-watch permission. An adopted request's
 `requester` accepts a live fleet agent id or terminal; a known owner cannot be reassigned.
+For borrowed or unknown-owner threads, it creates a proposal with the root message's first
+line, Slack link, recipient and Envoy reason in the Inbox. Only Karl's deliberate Accept
+click grants reply delivery and caller access; before acceptance and after Reject, replies
+stay in the Inbox. Proposals persist across restart. Linking an ant's own `reach_out`
+request to that same ant needs no approval. Missing/invalid reason, unavailable root preview,
+closed request or a changed proposal produce errors. A separate configured people list is
+not implemented; verified human-DM checks enforce the current rewrite restriction.
 
 Routing errors also include missing/invalid destination kind, supplied agent draft text,
 missing person draft text, conflicting route, earlier unfinished turn, absent live binding,
@@ -75,6 +82,8 @@ A supplied thread permalink is only a routing hint. Ordinary request watches and
 relays require a real, non-dry-run send receipt for that request; only replies newer than
 that sent message qualify, never earlier thread history. Dry-run and explicit reply links
 do not grant this permission. Successful sends persist receipts and canonical bindings.
+Legacy saved Sent drafts with a recorded send timestamp and no confirmation field upgrade
+to confirmed using that timestamp as the cutoff; an explicit false confirmation stays false.
 Authorized threads outside channel feeds get subscriptions and catch-up reads. Replies have a durable
 handoff independent of bounded Inbox display history, and do not spend unsolicited relay
 limits. A gone/reused asker falls back to its captured live coordinator; otherwise its reply
@@ -85,7 +94,7 @@ and saving that acknowledgment may replay a reply.
 
 Inbox shows open/answered requests and unresolved orphan threads. Outbox shows settled
 requests and draft decisions. Adopt open threads reads `slack-sub list`, skips channel feeds
-and expired subscriptions, and creates unknown/sent requests idempotently. Adopted subscriptions are borrowed: watches start subscribed and never add, relabel or
+and expired subscriptions, `envoy:` labels and threads already owned through confirmed requests, and creates unknown/sent requests idempotently. Adopted subscriptions are borrowed: watches start subscribed and never add, relabel or
 remove their registry entries, even when an ant request already references that thread.
 Keep retains an orphan; Close only settles its app request. For a thread the Envoy owns,
 Close removes its subscription only after a real send and after all active requests finish;
@@ -96,4 +105,4 @@ detector is deferred to migration after Karl picks its start date.
 
 `cargo test` uses fake Slack senders, temporary bridge/data directories and fake terminal
 actions. `cargo run --example envoy_panel -- --gateway --shot /tmp/envoy-gateway.png`
-renders a synthetic native panel without starting any app services or live Envoy session.
+renders a synthetic native panel (add `--binding` to show a recipient proposal) without starting any app services or live Envoy session.

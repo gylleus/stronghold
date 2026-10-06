@@ -149,10 +149,13 @@ fn main() -> eframe::Result {
                 panel.open(&[]);
             }
             if gateway {
-                let orphan = myrstack::envoy::requests::Request {
+                let mut orphan = myrstack::envoy::requests::Request {
                     id: "envoy-request-2".into(),
                     to: "Adopted fixture thread".into(),
                     requester: None,
+                    binding_approved: false,
+                    binding_sequence: 0,
+                    binding_proposal: None,
                     turns: Vec::new(),
                     thread: Some(myrstack::envoy::requests::Thread {
                         conversation: "D123".into(),
@@ -166,6 +169,26 @@ fn main() -> eframe::Result {
                     close_requested: false,
                     deliveries: Vec::new(),
                 };
+                if args.iter().any(|a| a == "--binding") {
+                    orphan.binding_sequence = 1;
+                    orphan.binding_proposal = Some(myrstack::envoy::requests::BindingProposal {
+                        id: 1,
+                        requester: myrstack::envoy::requests::Requester::from_origin(
+                            myrstack::review::mark::Origin {
+                                terminal_handle: Some("Build ant".into()),
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap(),
+                        reason: "The build ant owns this review and needs the replies.".into(),
+                        preview: myrstack::envoy::requests::BindingPreview {
+                            thread: orphan.thread.clone().unwrap(),
+                            first_line: "Please review the fixture release.".into(),
+                            slack_link: "https://example.slack.com/archives/D123/p1790000000000001"
+                                .into(),
+                        },
+                    });
+                }
                 panel.set_requests(&[orphan]);
             }
             Ok(Box::new(Demo {

@@ -299,6 +299,53 @@ impl<I: SlackIo> SlackChannel<I> {
         Ok(())
     }
 
+    pub fn binding_preview(
+        &mut self,
+        thread: &Thread,
+    ) -> Result<crate::envoy::requests::BindingPreview, String> {
+        validate_conversation(&thread.conversation)?;
+        validate_ts(&thread.ts)?;
+        let result = self.io.api(
+            "conversations.replies",
+            &[
+                ("channel", thread.conversation.clone()),
+                ("ts", thread.ts.clone()),
+                ("limit", "1".into()),
+            ],
+        )?;
+        let root = result["messages"]
+            .as_array()
+            .and_then(|messages| messages.iter().find(|m| m["ts"] == thread.ts))
+            .ok_or("Thread root unavailable for review")?;
+        let first_line: String = root["text"]
+            .as_str()
+            .unwrap_or("(No text in thread root)")
+            .lines()
+            .next()
+            .unwrap_or("(Empty thread root)")
+            .chars()
+            .take(500)
+            .collect();
+        let link = self.io.api(
+            "chat.getPermalink",
+            &[
+                ("channel", thread.conversation.clone()),
+                ("message_ts", thread.ts.clone()),
+            ],
+        )?;
+        let slack_link = link["permalink"]
+            .as_str()
+            .ok_or("Thread permalink unavailable")?;
+        if Thread::from_link(slack_link)? != *thread {
+            return Err("Thread permalink conflicts with preview".into());
+        }
+        Ok(crate::envoy::requests::BindingPreview {
+            thread: thread.clone(),
+            first_line,
+            slack_link: slack_link.into(),
+        })
+    }
+
     pub fn list_subscriptions(&mut self, now: i64) -> Result<Vec<(Thread, String)>, String> {
         parse_subscriptions(&self.io.subscriptions(&self.bridge)?, now)
     }
@@ -369,6 +416,9 @@ pub fn parse_subscriptions(output: &str, now: i64) -> Result<Vec<(Thread, String
         } else {
             format!("{conversation} {ts}")
         };
+        if label.starts_with("envoy:") {
+            continue;
+        }
         out.push((
             Thread {
                 conversation: conversation.into(),

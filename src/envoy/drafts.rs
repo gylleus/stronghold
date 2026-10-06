@@ -278,13 +278,35 @@ pub struct DraftQueue {
 impl DraftQueue {
     pub fn load(path: impl Into<PathBuf>) -> Result<Self, String> {
         let path = path.into();
-        let saved = inbox::load(&path).map_err(|e| e.to_string())?;
+        let mut wire: serde_json::Value = inbox::load(&path).map_err(|e| e.to_string())?;
+        let mut upgraded = false;
+        if let Some(drafts) = wire
+            .get_mut("drafts")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for draft in drafts {
+                if draft.get("confirmed_send").is_none()
+                    && draft["status"] == "sent"
+                    && draft["receipt"]["ts"]
+                        .as_str()
+                        .is_some_and(|ts| super::slack::validate_ts(ts).is_ok())
+                {
+                    draft["confirmed_send"] = true.into();
+                    upgraded = true;
+                }
+            }
+        }
+        let saved = if wire.is_null() {
+            Saved::default()
+        } else {
+            serde_json::from_value(wire).map_err(|e| e.to_string())?
+        };
         let mut queue = Self {
             path,
             saved,
             restarted_automatic: 0,
         };
-        let mut interrupted = false;
+        let mut interrupted = upgraded;
         for draft in &mut queue.saved.drafts {
             if draft.status == DraftStatus::Pending
                 && (draft.automatic || draft.auto_at_ms.is_some())

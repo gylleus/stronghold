@@ -138,11 +138,32 @@ pub struct Delivery {
     pub inbox: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BindingPreview {
+    pub thread: Thread,
+    pub first_line: String,
+    pub slack_link: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BindingProposal {
+    pub id: u64,
+    pub requester: Requester,
+    pub reason: String,
+    pub preview: BindingPreview,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
     pub id: String,
     pub to: String,
     pub requester: Option<Requester>,
+    #[serde(default)]
+    pub binding_approved: bool,
+    #[serde(default)]
+    pub binding_sequence: u64,
+    #[serde(default)]
+    pub binding_proposal: Option<BindingProposal>,
     pub turns: Vec<Turn>,
     pub thread: Option<Thread>,
     pub status: Status,
@@ -157,20 +178,28 @@ pub struct Request {
 }
 
 impl Request {
+    pub fn bound_requester(&self) -> Option<&Requester> {
+        if self.adopted_ms.is_some() && !self.binding_approved {
+            None
+        } else {
+            self.requester.as_ref()
+        }
+    }
     pub fn reply_cutoff(&self) -> Option<i64> {
         self.adopted_ms
             .map(|ms| ms.saturating_mul(1000))
             .or(self.reply_after_us)
     }
     pub fn accepts_reply(&self, event: &InboundEvent) -> bool {
-        self.thread.as_ref().is_some_and(|t| t.matches(event))
+        !self.settled
+            && self.thread.as_ref().is_some_and(|t| t.matches(event))
             && self
                 .reply_cutoff()
                 .zip(inbox::timestamp_us(&event.ts))
                 .is_some_and(|(after, ts)| ts > after)
     }
     pub fn owned_by(&self, requester: &Requester) -> bool {
-        self.requester.as_ref().is_some_and(|r| {
+        self.bound_requester().is_some_and(|r| {
             r.handle() == requester.handle()
                 && r.dispatch_id == requester.dispatch_id
                 && r.run_id == requester.run_id
@@ -337,10 +366,16 @@ impl Requests {
             return Err("Invalid urgency".into());
         }
         let thread = args.thread.as_deref().map(Thread::from_link).transpose()?;
+        if let Some(id) = &args.request_id {
+            let request = self.get(id)?;
+            if request.owned_by(&who) && request.settled {
+                return Err("Request closed; start a new reach_out".into());
+            }
+        }
         let owned: Vec<_> = self
             .all()
             .iter()
-            .filter(|r| r.owned_by(&who) && (!r.settled || r.status == Status::Declined))
+            .filter(|r| r.owned_by(&who) && !r.settled)
             .collect();
         let target = if let Some(id) = &args.request_id {
             Some(
@@ -430,6 +465,9 @@ impl Requests {
                 id: id.clone(),
                 to: args.to,
                 requester: Some(who),
+                binding_approved: false,
+                binding_sequence: 0,
+                binding_proposal: None,
                 turns: Vec::new(),
                 thread,
                 status: Status::Queued,
@@ -458,7 +496,6 @@ impl Requests {
             error: None,
         });
         request.status = Status::Queued;
-        request.settled = false;
         if let Err(e) = self.save() {
             self.saved = old;
             return Err(e);
@@ -587,7 +624,7 @@ impl Requests {
                 event: Some(event.clone()),
                 delivered: false,
                 dry_run: false,
-                inbox: r.requester.is_none(),
+                inbox: r.bound_requester().is_none(),
             });
             if let Some(turn) = r.turns.iter_mut().rev().find(|t| matches!(t.status, Status::Sent | Status::Answered)) {
                 turn.status = Status::Answered;
@@ -600,10 +637,11 @@ impl Requests {
     }
 
     pub fn adopt(&mut self, thread: Thread, label: String, now: i64) -> Result<(), String> {
-        if self
-            .all()
-            .iter()
-            .any(|r| r.thread.as_ref() == Some(&thread) && r.adopted_ms.is_some())
+        if label.starts_with("envoy:")
+            || self.all().iter().any(|r| {
+                r.thread.as_ref() == Some(&thread)
+                    && (r.adopted_ms.is_some() || r.reply_after_us.is_some())
+            })
         {
             return Ok(());
         }
@@ -613,6 +651,9 @@ impl Requests {
             id: format!("envoy-request-{}", self.saved.next_id),
             to: label,
             requester: None,
+            binding_approved: false,
+            binding_sequence: 0,
+            binding_proposal: None,
             turns: Vec::new(),
             thread: Some(thread),
             status: Status::Sent,

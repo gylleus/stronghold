@@ -151,7 +151,7 @@ fn karl_aliases_and_labeled_mentions_are_refused() {
 }
 
 #[test]
-fn declined_exact_retry_is_a_new_routable_turn() {
+fn declined_exact_retry_in_open_request_is_a_new_routable_turn() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = Requests::load(dir.path().join(REQUESTS_FILE)).unwrap();
     let id = store
@@ -162,7 +162,7 @@ fn declined_exact_retry_is_a_new_routable_turn() {
         .change(&id, |r| {
             r.turns[0].status = Status::Declined;
             r.status = Status::Declined;
-            r.settled = true;
+            r.settled = false;
             Ok(())
         })
         .unwrap();
