@@ -204,6 +204,7 @@ fn node(id: NodeId, kind: NodeKind, now: i64) -> Node {
         dispatch_status: None,
         worker_terminal_state: None,
         released_at_ms: None,
+        parked_at_ms: None,
     }
 }
 

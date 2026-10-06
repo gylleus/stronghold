@@ -176,6 +176,7 @@ mod fleet {
             dispatch_status: None,
             worker_terminal_state: None,
             released_at_ms: None,
+            parked_at_ms: None,
         }
     }
 

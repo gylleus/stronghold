@@ -85,6 +85,8 @@ pub struct WhipEngine {
     terminals: BTreeMap<GroupKey, TerminalNudge>,
     needs_input: BTreeMap<String, NeedsInputWait>,
     findings: Vec<StallFinding>,
+    /// Handles of parked agents; see [`WhipEngine::set_parked`].
+    parked: BTreeSet<String>,
     forwarder: Forwarder,
     log: VecDeque<WhipLogEntry>,
     log_capacity: usize,
@@ -108,10 +110,18 @@ impl WhipEngine {
             terminals: BTreeMap::new(),
             needs_input: BTreeMap::new(),
             findings: Vec::new(),
+            parked: BTreeSet::new(),
             forwarder: Forwarder::new(),
             log: VecDeque::new(),
             log_capacity: log_capacity.max(1),
         }
+    }
+
+    /// The terminals of parked agents ([`crate::park`]): findings on them are dropped (no
+    /// nudge, no escalation) and their prompts raise no needs-input notice. Event forwarding
+    /// is message delivery, not a nudge, and still reaches them.
+    pub fn set_parked(&mut self, parked: BTreeSet<String>) {
+        self.parked = parked;
     }
 
     /// Evaluates one poll and returns what to do. Updates escalation state as if every returned
@@ -136,7 +146,8 @@ impl WhipEngine {
             abandon_after_ms: settings.abandon_after_ms,
             needs_input,
         };
-        let findings = evaluate(&report, data, &ctx, now_ms);
+        let mut findings = evaluate(&report, data, &ctx, now_ms);
+        findings.retain(|f| !self.parked.contains(f.target.handle()));
 
         // Forget recovered targets, and terminals with nothing stalled left.
         let current: BTreeSet<&StallTarget> = findings.iter().map(|f| &f.target).collect();
@@ -215,7 +226,8 @@ impl WhipEngine {
             });
         }
 
-        actions.extend(self.track_needs_input(data, needs_input, settings, now_ms));
+        let needs_input: BTreeSet<String> = needs_input.difference(&self.parked).cloned().collect();
+        actions.extend(self.track_needs_input(data, &needs_input, settings, now_ms));
         if settings.forward_events {
             actions.extend(self.forwarder.tick(data, &report, &findings, now_ms));
         }

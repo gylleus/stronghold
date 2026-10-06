@@ -11,6 +11,7 @@ fn clean() -> Facts {
     Facts {
         is_main: false,
         pinned: false,
+        parked: false,
         exists: true,
         age_ms: Some(3 * 24 * 60 * 60 * 1000),
         terminals: Vec::new(),
@@ -1012,4 +1013,14 @@ fn merged_pr_head_contains_head_or_its_ancestors() {
     git(&wt, &["checkout", "-q", "feature"]);
     commit(&wt, "three");
     assert_eq!(merged_pr_containing(&wt, &rev(&wt, "HEAD"), &prs), None);
+}
+
+#[test]
+fn a_parked_agents_worktree_is_kept() {
+    let v = decide(&Facts {
+        parked: true,
+        ..clean()
+    });
+    assert!(!v.remove);
+    assert!(v.reasons.iter().any(|r| r.contains("parked")));
 }

@@ -43,6 +43,8 @@ pub struct WhipInput {
     pub data: FleetData,
     /// Handles of terminals in the NeedsInput state; never nudged.
     pub needs_input: BTreeSet<String>,
+    /// Handles of parked agents ([`crate::park`]): never nudged, escalated or notified about.
+    pub parked: BTreeSet<String>,
 }
 
 /// A log entry numbered in logging order, with what it is about as structured fields so the UI
@@ -203,6 +205,7 @@ impl WhipLoop {
         live: &dyn Fn() -> Box<dyn WhipExecutor>,
     ) -> Option<WhipStatus> {
         let input = self.input.as_ref()?;
+        self.engine.set_parked(input.parked.clone());
         let actions = self
             .engine
             .tick(&input.data, &input.needs_input, &self.settings, now_ms);
@@ -558,6 +561,7 @@ mod tests {
                 ..Default::default()
             },
             needs_input: BTreeSet::from([HANDLE.to_string()]),
+            parked: BTreeSet::new(),
         }
     }
 
@@ -602,6 +606,7 @@ mod tests {
         WhipInput {
             data,
             needs_input: BTreeSet::new(),
+            parked: BTreeSet::new(),
         }
     }
 
@@ -882,6 +887,7 @@ mod tests {
         WhipInput {
             data,
             needs_input: BTreeSet::new(),
+            parked: BTreeSet::new(),
         }
     }
 
@@ -983,5 +989,25 @@ mod tests {
             0,
             "dry-run ticks never build the live executor"
         );
+    }
+
+    #[test]
+    fn parked_agents_are_neither_nudged_nor_notified_about() {
+        let rec = Recorder::default();
+        let factory = rec.factory();
+        let now = now_ms();
+        let mut whip = WhipLoop::new(WhipSettings::default());
+        let mut stalled = stalled_worker(now);
+        stalled.parked = BTreeSet::from([WORKER.to_string()]);
+        whip.set_input(stalled);
+        let status = whip.tick(now, &|| factory()).unwrap();
+        assert!(status.new_log.is_empty(), "{:?}", status.new_log);
+        assert_eq!(status.findings, 0);
+
+        let mut waiting = waiting_input(now);
+        waiting.parked = BTreeSet::from([HANDLE.to_string()]);
+        whip.set_input(waiting);
+        let status = whip.tick(now + MIN, &|| factory()).unwrap();
+        assert!(status.new_log.is_empty(), "{:?}", status.new_log);
     }
 }

@@ -128,6 +128,11 @@ pub enum ControlCommand {
         whole_tab: bool,
         dry_run: bool,
     },
+    /// Park `agents` in the sleeping room ([`crate::park`]), or with `park` false wake them.
+    Park {
+        agents: Vec<String>,
+        park: bool,
+    },
     /// Nudge `agents` now (live, bypassing threshold and cooldown), or with `stalled` run an
     /// immediate whip tick under the normal rules.
     Whip {
@@ -265,6 +270,20 @@ impl ControlCommand {
                     agents,
                     whole_tab: p.bool("whole_tab")?.unwrap_or(false),
                     dry_run: p.bool("dry_run")?.unwrap_or(false),
+                })
+            })(),
+            "park" => (|| {
+                let mut agents = p.strings("ids")?.unwrap_or_default();
+                if let Some(id) = p.str("id")? {
+                    agents.insert(0, id.to_owned());
+                }
+                agents.retain(|a| !a.trim().is_empty());
+                if agents.is_empty() {
+                    return Err(ControlError::invalid_params("missing \"id\" or \"ids\""));
+                }
+                Ok(Self::Park {
+                    agents,
+                    park: p.bool("park")?.unwrap_or(true),
                 })
             })(),
             "whip" if ["id", "ids", "stalled"].iter().any(|k| p.has(k)) => (|| {

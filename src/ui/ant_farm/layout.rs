@@ -5,7 +5,8 @@
 //! left, the Queen's chamber under the surface in the middle, the storage chamber at the
 //! right, a gallery running under them and one tunnel per run (or per repo for loose
 //! terminals) dropping from the gallery. A coordinator stands at its tunnel's mouth, its
-//! workers in the chamber at the tunnel's end.
+//! workers in the chamber at the tunnel's end. Parked agents sleep in the sleeping room under
+//! the surface at the left, drawn only while someone sleeps there.
 
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -49,6 +50,8 @@ pub enum Spot {
     Landing(usize),
     /// In the storage chamber with its crumb, the nth on the pile.
     Storage(usize),
+    /// Asleep in the sleeping room (parked), the nth there.
+    Dormitory(usize),
     /// At the mouth of a tunnel (coordinators and attendants).
     Mouth(usize, usize),
     /// In the chamber at a tunnel's end.
@@ -63,6 +66,7 @@ pub enum Area {
     Queen,
     Landing,
     Storage,
+    Dormitory,
     Tunnel(usize),
     Trail,
 }
@@ -73,6 +77,7 @@ impl Spot {
             Spot::Queen => Area::Queen,
             Spot::Landing(_) => Area::Landing,
             Spot::Storage(_) => Area::Storage,
+            Spot::Dormitory(_) => Area::Dormitory,
             Spot::Mouth(t, _) | Spot::Chamber(t, _) => Area::Tunnel(*t),
             Spot::Trail(..) => Area::Trail,
         }
@@ -163,6 +168,8 @@ pub struct Scene {
     pub landing: Rect,
     pub queen_chamber: Rect,
     pub storage: Rect,
+    /// The sleeping room, while some ant is parked.
+    pub dormitory: Option<Rect>,
     pub tunnels: Vec<Tunnel>,
     /// In draw order: parents before the subagents trailing them.
     pub ants: Vec<Ant>,
@@ -200,6 +207,8 @@ pub struct Crowd {
     pub chamber: usize,
     pub landing: usize,
     pub storage: usize,
+    /// Parked ants, in the sleeping room.
+    pub dormitory: usize,
 }
 
 /// The surface band's geometry at `a` points per cell: (surface y offset, landing rows per
@@ -210,10 +219,12 @@ fn band(size: Vec2, a: f32, crowd: Crowd) -> (f32, usize, usize, f32) {
     let landing_per_row = ((landing_w / (SLOT * a)).floor() as usize).max(1);
     let landing_h = (rows(crowd.landing, landing_per_row) - 1.0) * ROW * a + 1.4 * a;
     let surface = (2.4 * a).max(size.y * 0.16).max(landing_h + 0.8 * a);
+    // The sleeping room is as wide as storage and as tall as the fuller of the two.
     let storage_w = (size.x * 0.26).max(3.0 * a);
     let storage_per_row = ((storage_w / (SLOT * a)).floor() as usize).max(1);
+    let stored = crowd.storage.max(crowd.dormitory);
     let storage_h =
-        ((rows(crowd.storage, storage_per_row) - 1.0) * ROW * a + (2.2 + TAG) * a).max(2.4 * a);
+        ((rows(stored, storage_per_row) - 1.0) * ROW * a + (2.2 + TAG) * a).max(2.4 * a);
     (surface, landing_per_row, storage_per_row, storage_h)
 }
 
@@ -293,6 +304,8 @@ pub enum Home {
     Queen,
     Landing,
     Storage,
+    /// The sleeping room: parked ([`crate::park`]).
+    Dormitory,
     Mouth,
     Chamber,
     Trail,
@@ -444,6 +457,9 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         .iter()
         .map(|n| {
             let mut home = home(n.kind, n.state, input.pr_ready.contains(&n.id));
+            if n.is_parked() && !matches!(home, Home::Queen | Home::Trail) {
+                home = Home::Dormitory;
+            }
             if home == Home::Trail && !parents.get(&n.id).is_some_and(|p| shown.contains(p)) {
                 home = Home::Chamber;
             }
@@ -454,7 +470,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
     // Tunnels: runs in run-list order, then runs the list lacks, then repos by name.
     let mut keys: Vec<TunnelKey> = Vec::new();
     for n in &visible {
-        if matches!(homes[&n.id], Home::Queen | Home::Trail) {
+        if matches!(homes[&n.id], Home::Queen | Home::Trail | Home::Dormitory) {
             continue;
         }
         let key = tunnel_key(n, &repos);
@@ -507,6 +523,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         chamber: chamber_counts.iter().copied().max().unwrap_or(0),
         landing: count(Home::Landing),
         storage: count(Home::Storage),
+        dormitory: count(Home::Dormitory),
     };
     let px = pixel_scale(rect.size(), crowd);
     let a = CELL * px;
@@ -533,6 +550,12 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         pos2(rect.right() - 0.5 * a - storage_w, surface_y + 0.4 * a),
         vec2(storage_w, storage_h),
     );
+    let dormitory = (crowd.dormitory > 0).then(|| {
+        Rect::from_min_size(
+            pos2(rect.left() + 0.5 * a, surface_y + 0.4 * a),
+            vec2(storage_w, storage_h),
+        )
+    });
     let gallery_top = queen_chamber.bottom().max(storage.bottom()) + 0.6 * a;
     let gallery = Rect::from_min_max(
         pos2(rect.left() + 0.5 * a, gallery_top),
@@ -620,6 +643,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
     // Slots, in snapshot order within each place.
     let mut landing_n = 0;
     let mut storage_n = 0;
+    let mut dormitory_n = 0;
     let mut mouth_n = vec![0usize; tunnels.len()];
     let mut ants: Vec<Ant> = Vec::new();
     let mut pr_ready = 0;
@@ -655,6 +679,17 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                 );
                 (Spot::Storage(k), pos)
             }
+            Home::Dormitory => {
+                let room = dormitory.expect("a sleeping room while an ant is parked");
+                let k = dormitory_n;
+                dormitory_n += 1;
+                let (row, col) = (k / storage_per_row, k % storage_per_row);
+                let pos = pos2(
+                    room.left() + (col as f32 + 0.5) * SLOT * a,
+                    room.bottom() - (0.5 + TAG) * a - row as f32 * ROW * a,
+                );
+                (Spot::Dormitory(k), pos)
+            }
             Home::Mouth => {
                 let t = tunnel_of[&tunnel_key(node, &repos)];
                 let k = mouth_n[t];
@@ -668,7 +703,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         let mut placed = ant(node, spot, pos, a, home, is_pr, input.now_ms);
         // A coordinator away from its tunnel's mouth is named by its run.
         if matches!(node.kind, NodeKind::Coordinator | NodeKind::Attendant)
-            && matches!(home, Home::Landing | Home::Storage)
+            && matches!(home, Home::Landing | Home::Storage | Home::Dormitory)
         {
             let objective = snapshot
                 .runs
@@ -737,6 +772,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         landing,
         queen_chamber,
         storage,
+        dormitory,
         tunnels,
         ants,
         pr_ready,
@@ -744,7 +780,11 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
 }
 
 fn ant(node: &Node, spot: Spot, pos: Pos2, size: f32, home: Home, pr: bool, now_ms: i64) -> Ant {
-    let pose = pose(node.kind, node.state, home);
+    let pose = if home == Home::Dormitory {
+        Pose::Sleep
+    } else {
+        pose(node.kind, node.state, home)
+    };
     let size = if node.kind == NodeKind::Queen {
         size * 2.0
     } else {
@@ -760,6 +800,8 @@ fn ant(node: &Node, spot: Spot, pos: Pos2, size: f32, home: Home, pr: bool, now_
         pose,
         mark: if node.kind == NodeKind::Queen {
             None
+        } else if home == Home::Dormitory {
+            Some(Mark::Sleep)
         } else {
             mark(node.state, pr)
         },

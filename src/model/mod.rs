@@ -127,6 +127,15 @@ pub struct Node {
     /// When a released worker's terminal was released, or a subagent finished; the UI fades
     /// these out.
     pub released_at_ms: Option<i64>,
+    /// When Karl parked the agent ([`crate::park`]): its terminal and worktree are kept, but
+    /// it sleeps out of the live fleet until woken.
+    pub parked_at_ms: Option<i64>,
+}
+
+impl Node {
+    pub fn is_parked(&self) -> bool {
+        self.parked_at_ms.is_some()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -377,8 +386,9 @@ impl FleetSnapshot {
             .nodes
             .iter()
             .filter(|n| {
-                matches!(n.kind, NodeKind::Coordinator | NodeKind::Terminal)
-                    || self.coordinator_gone(n)
+                !n.is_parked()
+                    && (matches!(n.kind, NodeKind::Coordinator | NodeKind::Terminal)
+                        || self.coordinator_gone(n))
             })
             .map(|n| Edge {
                 from: queen.id.clone(),
@@ -465,6 +475,7 @@ impl FleetSnapshot {
                 dispatch_status: None,
                 worker_terminal_state: None,
                 released_at_ms: Some(f.at_ms),
+                parked_at_ms: None,
             });
             self.index.insert(id, self.nodes.len() - 1);
             changed = true;
@@ -472,6 +483,29 @@ impl FleetSnapshot {
         if changed {
             self.add_queen();
         }
+    }
+
+    /// Marks the nodes Karl parked ([`crate::park`]) and takes them off the Queen's spokes and
+    /// out of her state. Entries without a node here are skipped. Updates the queen.
+    pub fn mark_parked<'a>(
+        &mut self,
+        parked: impl IntoIterator<Item = &'a crate::park::ParkedAgent>,
+    ) {
+        let mut changed = false;
+        for p in parked {
+            if let Some(&i) = self.index.get(&NodeId(p.node_id.clone())) {
+                self.nodes[i].parked_at_ms = Some(p.at_ms);
+                changed = true;
+            }
+        }
+        if changed {
+            self.add_queen();
+        }
+    }
+
+    /// Parked agent nodes.
+    pub fn parked_nodes(&self) -> impl Iterator<Item = &Node> {
+        self.nodes.iter().filter(|n| n.is_parked())
     }
 
     /// The queen node, present in every built snapshot.
@@ -643,6 +677,7 @@ fn terminal_node(
         dispatch_status: None,
         worker_terminal_state: None,
         released_at_ms: None,
+        parked_at_ms: None,
     }
 }
 
@@ -675,6 +710,7 @@ fn worker_node(
             dispatch_status: None,
             worker_terminal_state: None,
             released_at_ms: None,
+            parked_at_ms: None,
         },
     };
     node.kind = NodeKind::Worker;

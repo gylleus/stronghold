@@ -128,6 +128,9 @@ pub struct AntFarmResponse {
     /// Nodes to close or whip, picked in an ant's context menu.
     pub close_requested: Vec<NodeId>,
     pub whip_requested: Vec<NodeId>,
+    /// Nodes to park or wake, picked in an ant's context menu.
+    pub park_requested: Vec<NodeId>,
+    pub wake_requested: Vec<NodeId>,
 }
 
 /// An ant's place and its walk there, if it is still walking.
@@ -311,6 +314,8 @@ impl AntFarmView {
             hovered,
             close_requested: menu.close,
             whip_requested: menu.whip,
+            park_requested: menu.park,
+            wake_requested: menu.wake,
             boxed,
         }
     }
@@ -533,6 +538,9 @@ fn paint_ground(
     let up = |x: f32, top: f32| {
         Rect::from_min_max(egui::pos2(x - 0.6 * a, top), egui::pos2(x + 0.6 * a, gy))
     };
+    let dormitory_shaft = scene
+        .dormitory
+        .map(|room| up(room.center().x, room.bottom() - px));
     for shaft in [
         up(scene.landing.center().x, scene.surface_y - px),
         up(
@@ -540,7 +548,10 @@ fn paint_ground(
             scene.queen_chamber.bottom() - px,
         ),
         up(scene.storage.center().x, scene.storage.bottom() - px),
-    ] {
+    ]
+    .into_iter()
+    .chain(dormitory_shaft)
+    {
         sprites.passage(painter, shaft, px);
     }
     for tunnel in &scene.tunnels {
@@ -553,6 +564,9 @@ fn paint_ground(
     }
     sprites.passage(painter, scene.queen_chamber, px);
     sprites.passage(painter, scene.storage, px);
+    if let Some(room) = scene.dormitory {
+        sprites.passage(painter, room, px);
+    }
     for tunnel in &scene.tunnels {
         sprites.passage(painter, tunnel.chamber, px);
     }
@@ -603,6 +617,17 @@ fn paint_ground(
         FontId::monospace(10.0 + 2.0 * px),
         palette,
     );
+    if let Some(room) = scene.dormitory {
+        label(
+            painter,
+            room.left_top() + vec2(2.0 * px, 2.0 * px),
+            Align2::LEFT_TOP,
+            "Sleeping room",
+            font.clone(),
+            room.width(),
+            palette,
+        );
+    }
     label(
         painter,
         scene.storage.left_top() + vec2(2.0 * px, 2.0 * px),

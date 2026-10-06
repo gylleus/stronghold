@@ -336,6 +336,57 @@ fn agents_filters() {
 }
 
 #[test]
+fn a_parked_agent_is_reported_apart_from_the_live_counts() {
+    let data = fleet();
+    let mut snapshot = FleetSnapshot::build(&data, NOW);
+    let codex = crate::model::NodeId::terminal(CODEX);
+    snapshot.mark_parked(&[crate::park::ParkedAgent {
+        node_id: codex.to_string(),
+        handle: CODEX.into(),
+        label: "codex".into(),
+        worktree_path: None,
+        branch: None,
+        at_ms: NOW - 1_000,
+    }]);
+    let view = StatusView::build(&ViewInputs {
+        snapshot: Some(&snapshot),
+        data: Some(&data),
+        claude: None,
+        whip_status: &WhipStatus::default(),
+        whip_settings: &WhipSettings::default(),
+        whip_log: Vec::new(),
+        quotas: &Quotas::default(),
+        alerts: &[],
+        view: View::Graph,
+        selected: None,
+        selection: Vec::new(),
+        filter: &FleetFilter::default(),
+        whip_settings_open: false,
+        now_ms: NOW,
+    });
+    assert_eq!(view.fleet.parked, vec![codex.to_string()]);
+    assert!(view.fleet.needs_input.is_empty());
+    assert_eq!(view.fleet.agents, 3, "a parked agent is still an agent");
+    assert_eq!(view.fleet.by_state.values().sum::<usize>(), 2);
+    assert_ne!(view.fleet.state, "needs_input");
+    assert!(!view.fleet.runs[0].needs_input);
+    let agent = view.find_agent(CODEX).unwrap();
+    assert!(agent.parked);
+    assert_eq!(agent.parked_at_ms, Some(NOW - 1_000));
+    assert_eq!(
+        agent.state, "needs_input",
+        "the state stays what Orca reports"
+    );
+    assert!(agent.needs_input.is_none());
+
+    let h = Harness::new();
+    h.status.publish(view);
+    assert_eq!(h.ok("agents", json!({"parked": true}))["count"], 1);
+    assert_eq!(h.ok("agents", json!({"parked": false}))["count"], 2);
+    assert_eq!(h.ok("agents", json!({"needs_input": true}))["count"], 0);
+}
+
+#[test]
 fn agent_detail_reads_the_screen() {
     let h = Harness::new();
     let r = h.ok("agent", json!({"id": CODEX, "lines": 3}));
@@ -496,6 +547,8 @@ fn every_action_reaches_the_handler() {
             "close",
             json!({"ids": ["a", "b"], "whole_tab": true, "dry_run": true}),
         ),
+        ("park", json!({"ids": ["a", "b"]})),
+        ("park", json!({"id": "a", "park": false})),
     ];
     for (method, params) in &calls {
         h.ok(method, params.clone());
@@ -577,6 +630,14 @@ fn every_action_reaches_the_handler() {
             agents: vec!["a".into(), "b".into()],
             whole_tab: true,
             dry_run: true,
+        },
+        ControlCommand::Park {
+            agents: vec!["a".into(), "b".into()],
+            park: true,
+        },
+        ControlCommand::Park {
+            agents: vec!["a".into()],
+            park: false,
         },
     ];
     assert_eq!(h.commands(), expected);

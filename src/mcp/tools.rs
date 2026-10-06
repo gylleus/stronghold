@@ -189,6 +189,7 @@ pub fn definitions() -> Vec<Value> {
                     "repo": { "type": "string", "description": "Repo name." },
                     "needs_input": { "type": "boolean", "description": "Waiting on Karl (or not)." },
                     "live": { "type": "boolean", "description": "Terminal still open (or not)." },
+                    "parked": { "type": "boolean", "description": "Parked in the sleeping room (or not)." },
                     "text": { "type": "string", "description": "Case-insensitive substring of the label, branch or run objective." },
                     "limit": { "type": "integer", "minimum": 1, "maximum": MAX_LIST_LIMIT, "default": DEFAULT_LIST_LIMIT },
                 }),
@@ -213,8 +214,9 @@ pub fn definitions() -> Vec<Value> {
             "send_to_agent",
             "Send text to an agent",
             "Types text into an agent's terminal and, unless submit is false, presses Enter. \
-             Needs a live terminal (not a subagent). This is real input to a running agent: \
-             confirm with Karl first (the Queen in auto mode needn't).",
+             Needs a live terminal (not a subagent). A parked agent is woken first (back in \
+             the live fleet). This is real input to a running agent: confirm with Karl first \
+             (the Queen in auto mode needn't).",
             object(
                 json!({
                     "id": id_prop(),
@@ -245,12 +247,33 @@ pub fn definitions() -> Vec<Value> {
             "Kills agents' sessions: an active dispatch is stopped, then the terminal is closed. \
              dry_run defaults to TRUE, which only returns the plan and its warnings. To really \
              close, show Karl the plan and call again with dry_run=false. Subagents and the \
-             Queen cannot be closed.",
+             Queen cannot be closed. Parked agents are closed only when named here, with a \
+             warning in the plan.",
             object(
                 json!({
                     "ids": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Agent ids to close." },
                     "whole_tab": { "type": "boolean", "default": false, "description": "Close each terminal's whole Orca tab." },
                     "dry_run": { "type": "boolean", "default": true, "description": "Only return the plan. Pass false to actually close." },
+                }),
+                &["ids"],
+            ),
+            ACTS,
+        ),
+        tool(
+            "park_agents",
+            "Park or wake agents",
+            "Parks agents in the sleeping room: an ant that finished but that Karl wants to \
+             keep for later. A parked agent leaves the live fleet (its own place in the graph \
+             and the ant farm, out of fleet state, stalled and needs-input counts), the whip \
+             never nudges it, and no cleanup closes it or removes its worktree unless named \
+             explicitly; its terminal, session and worktree stay, so it can continue later. \
+             wake=true brings agents back; send_to_agent also wakes a parked agent. Parking \
+             survives restarts. Only agents with a live terminal can be parked (not the Queen \
+             or subagents). Park or wake when Karl asks.",
+            object(
+                json!({
+                    "ids": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Agent ids (or terminal handles or labels)." },
+                    "wake": { "type": "boolean", "default": false, "description": "Wake them instead of parking." },
                 }),
                 &["ids"],
             ),
@@ -475,6 +498,7 @@ pub fn call(
         "send_to_agent" => send_to_agent(control, origin, &p),
         "press_key" => press_key(control, &p),
         "close_agents" => close_agents(control, &p),
+        "park_agents" => park_agents(control, &p),
         "broadcast_to_coordinators" => broadcast(control, &p),
         "whip_status" => whip_status(control, &p),
         "set_whip" => set_whip(control, &p),
@@ -550,6 +574,7 @@ struct Status {
     waiting: Vec<AgentView>,
     stalled: Vec<AgentView>,
     coordinators: Vec<AgentView>,
+    parked: Vec<AgentView>,
     quotas: Option<QuotasView>,
 }
 
@@ -558,11 +583,12 @@ fn fleet_status(control: &mut dyn Control) -> ToolResult {
         let status = c.call("status", Value::Null)?;
         let fleet: FleetSummary = parse(status.get("fleet").unwrap_or(&Value::Null))?;
         let ready = status.get("ready").and_then(Value::as_bool) == Some(true);
-        let (waiting, stalled, coordinators) = if ready {
+        let (waiting, stalled, coordinators, parked) = if ready {
             (
                 agents_of(&c.call("agents", json!({"needs_input": true}))?)?,
-                agents_of(&c.call("agents", json!({"state": "stalled"}))?)?,
+                agents_of(&c.call("agents", json!({"state": "stalled", "parked": false}))?)?,
                 agents_of(&c.call("agents", json!({"kind": "coordinator"}))?)?,
+                agents_of(&c.call("agents", json!({"parked": true}))?)?,
             )
         } else {
             Default::default()
@@ -578,6 +604,7 @@ fn fleet_status(control: &mut dyn Control) -> ToolResult {
             waiting,
             stalled,
             coordinators,
+            parked,
             quotas,
         })
     })?;
@@ -591,6 +618,7 @@ fn fleet_status(control: &mut dyn Control) -> ToolResult {
         "fleet": s.fleet,
         "needs_input": s.waiting.iter().map(compact).collect::<Vec<_>>(),
         "stalled": s.stalled.iter().map(compact).collect::<Vec<_>>(),
+        "parked": s.parked.iter().map(compact).collect::<Vec<_>>(),
         "whip": if fallback { Value::Null } else { s.status.get("whip").cloned().unwrap_or_default() },
         "queen_auto": if fallback { Value::Null } else { s.status.get("queen_auto").cloned().unwrap_or(Value::Bool(false)) },
         "notifications": if fallback { Value::Null } else { s.status.get("notifications").cloned().unwrap_or_default() },
@@ -657,6 +685,19 @@ fn fleet_text(s: &Status, fallback: bool, now: i64) -> String {
         for handle in escalated.iter().filter(|h| !listed.contains(&h.as_str())) {
             out.push(format!("- escalated terminal {handle}"));
         }
+    }
+
+    if !s.parked.is_empty() {
+        let names: Vec<String> = s
+            .parked
+            .iter()
+            .map(|a| format!("{} `{}`", truncate(&a.label, LABEL_CHARS), a.id))
+            .collect();
+        out.push(format!(
+            "Parked ({}, asleep, not counted above): {}",
+            s.parked.len(),
+            names.join(", ")
+        ));
     }
 
     out.push(String::new());
@@ -886,7 +927,7 @@ fn list_agents(control: &mut dyn Control, p: &Params) -> ToolResult {
             filters.insert(key.into(), json!(v));
         }
     }
-    for key in ["needs_input", "live"] {
+    for key in ["needs_input", "live", "parked"] {
         if let Some(v) = p.bool(key)? {
             filters.insert(key.into(), json!(v));
         }
@@ -919,6 +960,9 @@ fn list_agents(control: &mut dyn Control, p: &Params) -> ToolResult {
             let mut state = a.state.clone();
             if !a.live && a.kind != "subagent" {
                 state.push_str(" (closed)");
+            }
+            if a.parked {
+                state.push_str(" (parked)");
             }
             out.push(format!(
                 "| {} | {} | {} | {} | {} | {} |",
@@ -957,6 +1001,7 @@ fn compact(a: &AgentView) -> Value {
         "needs_input": a.needs_input,
         "stalled": a.stalled,
         "released": a.released,
+        "parked": a.parked,
     })
 }
 
@@ -1017,6 +1062,14 @@ fn get_agent(control: &mut dyn Control, p: &Params) -> ToolResult {
     if a.stalled || a.escalated {
         out.push("Stalled (escalated by the whip)".into());
     }
+    if a.parked {
+        out.push(format!(
+            "Parked in the sleeping room{} (the whip leaves it alone; sending it text wakes it)",
+            a.parked_at_ms
+                .map(|t| format!(" {}", since(now, t)))
+                .unwrap_or_default()
+        ));
+    }
     if let Some(parent) = &a.parent {
         out.push(format!("Parent: {parent}"));
     }
@@ -1070,11 +1123,14 @@ fn send_to_agent(control: &mut dyn Control, origin: &Origin, p: &Params) -> Tool
     let params = json!({"id": id, "text": text, "enter": submit, "origin": origin});
     let result = control.call("send", params)?;
     let agent = result.get("agent").and_then(Value::as_str).unwrap_or(id);
-    let text = if submit {
+    let mut text = if submit {
         format!("Sent to {agent} and pressed Enter.")
     } else {
         format!("Typed into {agent} (not submitted).")
     };
+    if result.get("woke").and_then(Value::as_bool) == Some(true) {
+        text.push_str(" It was parked; it is awake now.");
+    }
     Ok(ToolOutput::ok(text, result))
 }
 
@@ -1175,6 +1231,45 @@ fn close_text(result: &Value, dry_run: bool) -> String {
         }
     }
     out.join("\n")
+}
+
+fn park_agents(control: &mut dyn Control, p: &Params) -> ToolResult {
+    let ids = p
+        .strings("ids")?
+        .filter(|ids| !ids.is_empty())
+        .ok_or_else(|| Error::Args("missing \"ids\"".into()))?;
+    let wake = p.bool("wake")?.unwrap_or(false);
+    let result = control.call("park", json!({ "ids": ids, "park": !wake }))?;
+    let mut out = Vec::new();
+    for r in result["results"].as_array().into_iter().flatten() {
+        let who = r["label"]
+            .as_str()
+            .or(r["agent"].as_str())
+            .unwrap_or("?")
+            .to_owned();
+        let id = r["id"]
+            .as_str()
+            .map(|i| format!(" `{i}`"))
+            .unwrap_or_default();
+        out.push(match (r["ok"].as_bool(), r["changed"].as_bool()) {
+            (Some(true), Some(true)) if wake => {
+                format!("- {who}{id}: woke, back in the live fleet")
+            }
+            (Some(true), Some(true)) => format!("- {who}{id}: parked in the sleeping room"),
+            (Some(true), _) if wake => format!("- {who}{id}: wasn't parked"),
+            (Some(true), _) => format!("- {who}{id}: already parked"),
+            _ => format!(
+                "- {who}{id}: not {}: {}",
+                if wake { "woken" } else { "parked" },
+                r["error"].as_str().unwrap_or("?")
+            ),
+        });
+    }
+    out.push(format!(
+        "{} parked in all.",
+        result["parked_now"].as_u64().unwrap_or(0)
+    ));
+    Ok(ToolOutput::ok(out.join("\n"), result))
 }
 
 fn broadcast(control: &mut dyn Control, p: &Params) -> ToolResult {

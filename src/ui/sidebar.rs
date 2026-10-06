@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use eframe::egui::{self, RichText, Sense, Ui};
 
 use crate::model::{FleetSnapshot, Node, NodeId, NodeKind, NodeState, RepoIndex, TaskCounts};
+use crate::park::SLEEPING_ROOM;
 use crate::ui::graph::{kind_label, state_color, state_label};
 
 pub use crate::model::{NO_REPO, node_repo, repo_of};
@@ -250,6 +251,23 @@ pub fn repo_groups(snapshot: &FleetSnapshot) -> Vec<RepoGroup> {
         entry(&mut out, repo).runs.push(row);
     }
     for node in snapshot.agent_nodes() {
+        // Parked agents sleep in their own group, last, without state counts.
+        if node.is_parked() {
+            let group = out
+                .entry((true, SLEEPING_ROOM.to_string()))
+                .or_insert_with(|| RepoGroup {
+                    repo: SLEEPING_ROOM.to_string(),
+                    runs: Vec::new(),
+                    loose: Vec::new(),
+                    states: BTreeMap::new(),
+                });
+            group.loose.push(LooseRow {
+                id: node.id.clone(),
+                label: node.label.clone(),
+                state: node.state,
+            });
+            continue;
+        }
         let repo = index.node(&node.id).unwrap_or(NO_REPO);
         let group = entry(&mut out, repo);
         *group.states.entry(node.state).or_insert(0) += 1;
@@ -493,7 +511,7 @@ fn repos_section(
 
 /// The repo header's "+": opens "New ant…" with the repo picked.
 fn new_session_button(ui: &mut Ui, group: &RepoView, response: &mut SidebarResponse) {
-    if group.repo == NO_REPO {
+    if group.repo == NO_REPO || group.repo == SLEEPING_ROOM {
         return;
     }
     let button = ui

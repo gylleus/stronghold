@@ -467,6 +467,29 @@ When the close runs, the reply comes after every step has finished:
 A plan that is refused (for a subagent, the Queen, or a node with nothing to close) returns a
 `refused` error.
 
+### `park`
+
+Parks agents in the sleeping room, or wakes them (see [the MCP docs](mcp.md#parked-agents)).
+A message sent with `send` to a parked agent wakes it first (`"woke": true` in its result).
+
+| param | type | default |
+|---|---|---|
+| `id` / `ids` | string / string list | the agents |
+| `park` | bool | true; false wakes them |
+
+```json
+{"v":1,"method":"park","params":{"ids":["term:term_2574…"]}}
+→ {"ok":true,"result":{"parked":true,"parked_now":1,"results":[
+    {"agent":"term:term_2574…","id":"term:term_2574…","label":"park-agent","kind":"terminal",
+     "worktree":"/…/park-agent","ok":true,"changed":true}]}}
+```
+
+A row is `ok: false` with an `error` for an agent that can't be parked (the Queen, a
+subagent, a closed terminal); the call fails only when no agent resolves. `agents` takes a
+`parked` bool filter, every agent row has `parked` and `parked_at_ms`, and `status`'s
+`fleet.parked` lists the parked ids (they are left out of `by_state`, `needs_input` and
+`stalled`).
+
 ### `whip` (action)
 
 Nudges agents now, or runs a whip pass now. `whip` without `id`, `ids` or `stalled` is the

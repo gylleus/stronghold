@@ -242,6 +242,7 @@ impl MyrstackApp {
                 enter,
                 from,
             } => {
+                let woke = self.wake_for_message(&agent);
                 if !text.is_empty() {
                     let from = from.unwrap_or_else(|| "queen".into());
                     let kind = match from.as_str() {
@@ -256,7 +257,7 @@ impl MyrstackApp {
                     enter,
                     interrupt: false,
                 };
-                return self.control_terminal_input(&agent, input, "send", reply);
+                return self.control_terminal_input(&agent, input, "send", woke, reply);
             }
             ControlCommand::Key { agent, key } => {
                 let (input, name) = match key {
@@ -264,7 +265,7 @@ impl MyrstackApp {
                     TerminalKey::Escape => (TerminalInput::key(Key::Escape), "esc"),
                     TerminalKey::Interrupt => (TerminalInput::interrupt_key(), "interrupt"),
                 };
-                return self.control_terminal_input(&agent, input, name, reply);
+                return self.control_terminal_input(&agent, input, name, false, reply);
             }
             ControlCommand::Broadcast { text, runs } => {
                 return self.control_broadcast(&text, runs, reply);
@@ -332,6 +333,7 @@ impl MyrstackApp {
                 whole_tab,
                 dry_run,
             } => return self.control_close(&agents, whole_tab, dry_run, reply),
+            ControlCommand::Park { agents, park } => self.control_park(&agents, park),
             ControlCommand::Whip { agents, stalled } => {
                 return self.control_whip(&agents, stalled, reply);
             }
@@ -404,6 +406,7 @@ impl MyrstackApp {
         agent: &str,
         input: TerminalInput,
         what: &str,
+        woke: bool,
         reply: Reply,
     ) -> Result<(), ControlError> {
         let target = self.control_node(agent).and_then(|node| {
@@ -426,7 +429,10 @@ impl MyrstackApp {
             handle: handle.clone(),
             input,
         };
-        let context = json!({ "agent": id, "handle": handle, "sent": what });
+        let mut context = json!({ "agent": id, "handle": handle, "sent": what });
+        if woke {
+            context["woke"] = json!(true);
+        }
         let _ = self.submit_control_actions(vec![action], reply, context, false);
         Ok(())
     }

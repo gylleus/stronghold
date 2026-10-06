@@ -127,6 +127,7 @@ fn agent(handle: &str, show_screen: bool) -> Content {
         dispatch_status: None,
         worker_terminal_state: None,
         released_at_ms: None,
+        parked_at_ms: None,
     };
     Content::Agent {
         node: Box::new(node),

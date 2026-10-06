@@ -430,6 +430,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "send_to_agent",
         "press_key",
         "close_agents",
+        "park_agents",
         "broadcast_to_coordinators",
         "whip_status",
         "set_whip",
@@ -482,6 +483,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "send_to_agent",
         "press_key",
         "close_agents",
+        "park_agents",
         "broadcast_to_coordinators",
         "set_whip",
         "whip_agents",
@@ -2387,5 +2389,66 @@ fn clean_worktrees_refuses_a_real_run_without_ids() {
     assert_eq!(
         tool["inputSchema"]["properties"]["dry_run"]["default"],
         true
+    );
+}
+
+#[test]
+fn park_agents_parks_or_wakes_and_reports_each() {
+    let reply = json!({"parked": true, "parked_now": 1, "results": [
+        {"agent": "term:a", "id": "term:a", "label": "Ant A", "ok": true, "changed": true},
+        {"agent": "queen", "id": "queen", "label": "Queen", "ok": false,
+         "error": "the Queen isn't a session"},
+    ]});
+    let mut server = McpServer::new(FakeControl::default().reply("park", Ok(reply)));
+    let r = call(
+        &mut server,
+        "park_agents",
+        json!({"ids": ["term:a", "queen"]}),
+    );
+    assert!(!is_error(&r));
+    assert_eq!(
+        server.control().calls,
+        vec![(
+            "park".to_string(),
+            json!({"ids": ["term:a", "queen"], "park": true})
+        )]
+    );
+    let t = text(&r);
+    assert!(
+        t.contains("Ant A `term:a`: parked in the sleeping room"),
+        "{t}"
+    );
+    assert!(t.contains("Queen `queen`: not parked: the Queen"), "{t}");
+    assert!(t.ends_with("1 parked in all."), "{t}");
+
+    let reply = json!({"parked": false, "parked_now": 0, "results": [
+        {"agent": "term:a", "id": "term:a", "label": "Ant A", "ok": true, "changed": true}]});
+    let mut server = McpServer::new(FakeControl::default().reply("park", Ok(reply)));
+    let r = call(
+        &mut server,
+        "park_agents",
+        json!({"ids": ["term:a"], "wake": true}),
+    );
+    assert_eq!(server.control().calls[0].1["park"], json!(false));
+    assert!(
+        text(&r).contains("woke, back in the live fleet"),
+        "{}",
+        text(&r)
+    );
+}
+
+#[test]
+fn sending_to_a_parked_agent_says_it_woke() {
+    let reply = json!({"agent": "term:a", "handle": "a", "sent": "send", "woke": true});
+    let mut server = McpServer::new(FakeControl::default().reply("send", Ok(reply)));
+    let r = call(
+        &mut server,
+        "send_to_agent",
+        json!({"id": "term:a", "text": "go on"}),
+    );
+    assert!(
+        text(&r).ends_with("It was parked; it is awake now."),
+        "{}",
+        text(&r)
     );
 }

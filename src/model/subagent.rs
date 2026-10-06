@@ -103,6 +103,7 @@ fn subagent_node(info: &SubagentInfo, owner: Option<&Node>, now_ms: i64) -> Opti
         dispatch_status: None,
         worker_terminal_state: None,
         released_at_ms: finished_at,
+        parked_at_ms: None,
     })
 }
 

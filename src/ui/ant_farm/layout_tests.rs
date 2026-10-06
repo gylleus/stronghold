@@ -36,6 +36,7 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState) -> Node
         dispatch_status: None,
         worker_terminal_state: None,
         released_at_ms: None,
+        parked_at_ms: None,
     }
 }
 
@@ -355,6 +356,7 @@ fn past_dispatches_without_a_terminal_are_not_drawn() {
         live: false,
         worker_terminal_state: Some(WorkerTerminalState::Released),
         released_at_ms: Some(0),
+        parked_at_ms: None,
         ..node("released", NodeKind::Worker, Some("r1"), NodeState::Done)
     });
     let scene = scene(&s);
@@ -1126,4 +1128,54 @@ fn subagent_trails_take_room_in_the_chamber() {
     for a in &scene.ants {
         assert!(chamber.expand(1.0).contains(a.pos), "{} outside", a.id.0);
     }
+}
+
+#[test]
+fn parked_ants_sleep_in_the_sleeping_room() {
+    let mut s = snapshot();
+    assert_eq!(scene(&s).dormitory, None, "no room while nobody is parked");
+    for i in 0..9 {
+        let mut n = node(
+            &format!("parked{i}"),
+            NodeKind::Terminal,
+            None,
+            NodeState::Working,
+        );
+        n.parked_at_ms = Some(1);
+        s.nodes.push(n);
+    }
+    let mut waiting = node(
+        "parked-waiting",
+        NodeKind::Worker,
+        Some("r1"),
+        NodeState::NeedsInput,
+    );
+    waiting.parked_at_ms = Some(1);
+    s.nodes.push(waiting);
+    let scene = assert_fits(&s);
+    let room = scene.dormitory.expect("a sleeping room");
+    assert!(room.bottom() < scene.gallery.top());
+    assert!(room.right() < scene.queen_chamber.left());
+    for a in scene
+        .ants
+        .iter()
+        .filter(|a| a.id.as_str().starts_with("parked"))
+    {
+        assert!(matches!(a.spot, Spot::Dormitory(_)), "{}", a.id);
+        assert!(
+            room.contains(a.pos),
+            "{} at {:?} outside {room:?}",
+            a.id,
+            a.pos
+        );
+        assert_eq!(a.pose, Pose::Sleep);
+        assert_eq!(a.mark, Some(Mark::Sleep));
+    }
+    // Parked loose terminals open no tunnel of their own.
+    assert!(
+        scene
+            .tunnels
+            .iter()
+            .all(|t| !matches!(&t.key, TunnelKey::Repo(r) if r.starts_with("repo-parked")))
+    );
 }

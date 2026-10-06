@@ -21,6 +21,7 @@ fn node(id: &str, kind: NodeKind, handle: Option<&str>) -> Node {
         dispatch_status: None,
         worker_terminal_state: None,
         released_at_ms: None,
+        parked_at_ms: None,
     }
 }
 
@@ -387,4 +388,29 @@ fn attendant_closes_with_a_forwarding_warning() {
     with.nodes = vec![a];
     assert!(bulk_candidates(&with, &BTreeSet::new(), false).is_empty());
     assert_eq!(bulk_candidates(&with, &BTreeSet::new(), true).len(), 1);
+}
+
+#[test]
+fn a_parked_agent_is_closed_only_by_name_with_a_warning() {
+    let mut s = snapshot();
+    let mut parked = node("parked", NodeKind::Terminal, Some("t_p"));
+    parked.parked_at_ms = Some(1);
+    s.nodes = vec![
+        node("loose", NodeKind::Terminal, Some("t_l")),
+        parked.clone(),
+    ];
+    let ids: Vec<&str> = bulk_candidates(&s, &BTreeSet::new(), true)
+        .iter()
+        .map(|n| n.id.as_str())
+        .collect();
+    assert_eq!(ids, vec!["loose"]);
+
+    let plan = plan_close(&parked, &s, &[], PANE);
+    assert!(plan.can_run());
+    assert_eq!(plan.steps, vec![close("t_p", false)]);
+    assert!(
+        plan.warnings.iter().any(|w| w.contains("parked")),
+        "{:?}",
+        plan.warnings
+    );
 }
