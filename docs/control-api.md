@@ -639,8 +639,10 @@ PRs reach the queue from `pr_ready` and from `merge_ready` bus messages in the i
 polls (every PR URL in the subject, body or payload, attributed to the sender). A mark made
 while the app is down waits in `<data dir>/pr-ready.jsonl` (0600) and is taken on start. The
 app reads each queued PR with `gh pr view --json …` (read-only) every 3 minutes and at once
-when it joins. Bus entries show only once GitHub has been read (so old `merge_ready` messages
-about merged PRs never show); merged or closed PRs leave after 5 minutes. The queue is saved
+when it joins. A `merge_ready` message is a worker's hand-off to its coordinator, so a bus
+entry shows only once GitHub says the PR's description opens with the coordinator's `✅ Ready
+for review` marker naming the current head. Drafts never show, whatever marked them. Merged or
+closed PRs leave after 5 minutes. The queue is saved
 in `<data dir>/review-queue.json` (0600).
 
 ## `myrstack ctl`

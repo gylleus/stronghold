@@ -2,7 +2,8 @@
 //! GitHub state until Karl reviews them or they merge.
 //!
 //! Marks come from the `mark_pr_ready` MCP tool and `myrstack pr-ready` (both carry the
-//! caller's Orca identity), and from `merge_ready` bus messages. The app reads each PR with
+//! caller's Orca identity), and from `merge_ready` bus messages (listed only with a `✅` marker
+//! on the PR's head; see [`queue`]). The app reads each PR with
 //! `gh pr view` (read-only). Docs: `docs/control-api.md` (`pr_ready`, `review_queue`),
 //! `docs/mcp.md`.
 
