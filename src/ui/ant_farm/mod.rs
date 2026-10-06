@@ -13,6 +13,7 @@ mod layout_tests;
 pub mod mail;
 pub mod motion;
 pub mod nature;
+mod pops;
 pub mod rooms;
 #[cfg(test)]
 mod rooms_tests;
@@ -198,6 +199,8 @@ pub struct AntFarmView {
     mail: crate::ui::envelope::Flights,
     /// Tool calls beaming from their callers; see [`beams`].
     beams: crate::ui::beam::Beams,
+    /// Ants that just changed state; see [`pops`].
+    pops: crate::ui::state_pop::Pops,
     /// The part of the farm on screen; see [`zoom`].
     camera: Camera,
     /// Device of the latest scroll over the farm; see [`ScrollSource`].
@@ -423,6 +426,12 @@ impl AntFarmView {
         self.beams.push(beam, now_s, still);
     }
 
+    /// Pops an ant that just changed state, asked for at `now_s` (egui time); `still` for
+    /// Reduce motion.
+    pub fn pop(&mut self, node: NodeId, cue: crate::ui::state_pop::Cue, now_s: f64, still: bool) {
+        self.pops.push(node, cue, now_s, still);
+    }
+
     /// Draws the farm filling the available space and handles clicks, hover and the context
     /// menu. `graph` supplies the filters, selection, PR badges, tooltips and menu, so both
     /// views act alike.
@@ -461,12 +470,14 @@ impl AntFarmView {
         self.falls.retain(|f| now_s - f.start_s < f.duration());
         self.bury(&scene, snapshot, now_s, death::reduce_motion);
         let placed = self.advance(&scene, now_s);
+        let pops = self.pops.frames(now_s);
         let effects = Effects {
             ripples: &self.ripples,
             births: &self.births,
             queen_busy: self.queen_busy,
             queen_focused: self.queen_focused,
             envoy_receipt: self.envoy_receipt,
+            pops: &pops,
         };
         let sprites = self.sprites.get_or_insert_with(|| Sprites::load(ui.ctx()));
         let painter = ui.painter_at(rect);
@@ -504,6 +515,7 @@ impl AntFarmView {
         let hovered = pointer
             .filter(|_| !tray_hovered)
             .and_then(|p| hit(&scene, &placed, p));
+        pops::paint(&painter, sprites, &scene, &placed, &pops, true);
         paint_ants(
             &painter,
             sprites,
@@ -515,6 +527,7 @@ impl AntFarmView {
             &effects,
             ui,
         );
+        pops::paint(&painter, sprites, &scene, &placed, &pops, false);
         paint_falls(&painter, sprites, &scene, &self.falls, now_s);
         mail::paint(&painter, &scene, &placed, self.mail.tick(now_s), now_s);
         beams::paint(&painter, &scene, &placed, self.beams.tick(now_s), now_s);
@@ -545,6 +558,7 @@ impl AntFarmView {
             || !self.falls.is_empty()
             || !self.mail.is_empty()
             || !self.beams.is_empty()
+            || !self.pops.is_empty()
             || !self.room_glides.is_empty()
             || self.frame_glide.is_some();
         let stepping = scene.ants.iter().any(|a| {
@@ -1124,6 +1138,11 @@ fn paint_ants(
                 .fold(0.0, f32::max);
             cell = cell.translate(vec2(0.0, -(lift / tpx).round() * tpx));
         }
+        // An ant hops as it pops.
+        cell = cell.translate(vec2(
+            0.0,
+            -pops::lift(pops::of(effects.pops, &ant.id), ant.size),
+        ));
         // The name tag stays on the floor; a sleeper in bed lies on its mattress.
         let tag_at = cell.center_bottom();
         let bed = scene
@@ -1282,6 +1301,7 @@ struct Effects<'a> {
     queen_busy: bool,
     queen_focused: bool,
     envoy_receipt: crate::ui::envoy_receipt::ReceiptCue,
+    pops: &'a [(NodeId, crate::ui::state_pop::PopFrame)],
 }
 
 /// Where the Queen sits.
