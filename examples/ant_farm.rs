@@ -1,10 +1,10 @@
 //! The ant farm on a synthetic fleet of 6 runs, loose terminals and subagents (about 30
 //! agents), one of each state, to check how it looks.
 //!
-//! `cargo run --example ant_farm [--light] [--graph] [--sweep] [--shot out.png]` (`--graph`
+//! `cargo run --example ant_farm [--light] [--graph] [--sweep] [--shot out.png]`.
 //! `--bridge-down` and `--approval` show the Envoy receiver health. `--graph`
-//! shows the same fleet as the graph, `--sweep` flies the worktree cleanup's broom around the
-//! farm): every few seconds one worker
+//! shows the same fleet as the graph; `--sweep` flies the worktree cleanup's broom around the
+//! farm. Every few seconds one worker
 //! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
 //! report, N hatches a new worker, M sends a burst of messages between ants and T toggles the
 //! Queen thinking. With `--shot`, it saves a screenshot once settled and another while a worker

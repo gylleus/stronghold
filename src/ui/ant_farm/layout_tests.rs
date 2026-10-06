@@ -1153,6 +1153,7 @@ fn envoy_stays_in_its_comms_room_without_a_work_tunnel() {
 #[test]
 fn comms_room_fits_beside_entrance_at_small_and_large_fleets() {
     for size in [
+        vec2(176.0, 400.0),
         vec2(320.0, 400.0),
         vec2(640.0, 400.0),
         vec2(1280.0, 800.0),
