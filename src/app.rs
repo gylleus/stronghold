@@ -1069,6 +1069,7 @@ impl MyrstackApp {
         self.filter = state.filter;
         self.selected = state.layout.selected.clone();
         self.graph.import_layout(state.layout);
+        self.ant_farm.set_rooms(state.farm_rooms);
         self.search
             .set_recents(ui::commands::Recents::from_keys(&state.recent_actions));
     }
@@ -1082,6 +1083,7 @@ impl MyrstackApp {
             recent_actions: self.search.recents().keys(),
             panes: self.panes.encode(),
             notifications_panel: self.panes.notifications,
+            farm_rooms: self.ant_farm.rooms().clone(),
             ..PersistedState::default()
         }
     }

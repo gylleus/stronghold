@@ -16,7 +16,7 @@ pub(super) fn id(s: &str) -> NodeId {
     NodeId(s.to_string())
 }
 
-fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState) -> Node {
+pub(super) fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState) -> Node {
     Node {
         id: id(name),
         kind,
@@ -40,7 +40,7 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState) -> Node
     }
 }
 
-fn run(name: &str, completed: usize, total: usize) -> RunSummary {
+pub(super) fn run(name: &str, completed: usize, total: usize) -> RunSummary {
     RunSummary {
         id: name.into(),
         objective: Some(format!("Objective {name}")),
@@ -105,7 +105,11 @@ pub(super) fn ant<'a>(scene: &'a Scene, name: &str) -> &'a Ant {
 
 fn tunnel_of(scene: &Scene, name: &str) -> usize {
     match ant(scene, name).spot {
-        Spot::Mouth(t, _) | Spot::Chamber(t, _) => t,
+        Spot::Mouth(ref t, _) | Spot::Chamber(ref t, _) => scene
+            .tunnels
+            .iter()
+            .position(|u| &u.key == t)
+            .expect("its tunnel is drawn"),
         ref other => panic!("{name} is not in a tunnel: {other:?}"),
     }
 }
@@ -201,15 +205,17 @@ fn ants_go_where_their_state_says() {
 
     for name in ["working", "idle", "stalled", "failed"] {
         let a = ant(&scene, name);
-        assert!(matches!(a.spot, Spot::Chamber(tt, _) if tt == t), "{name}");
+        assert!(matches!(a.spot, Spot::Chamber(..)), "{name}");
+        assert_eq!(tunnel_of(&scene, name), t, "{name}");
         assert!(tunnel.chamber.contains(a.pos), "{name} in the chamber");
     }
     assert!(
         ant(&scene, "working").facing_right,
         "diggers face the dig face"
     );
+    let (working, idle) = (ant(&scene, "working").pos, ant(&scene, "idle").pos);
     assert!(
-        ant(&scene, "working").pos.x > ant(&scene, "idle").pos.x,
+        working.x > ant(&scene, "stalled").pos.x && working.x >= idle.x,
         "diggers at the face, sleepers behind them"
     );
 
@@ -412,7 +418,7 @@ fn a_finished_run_without_workers_has_no_tunnel() {
         "a finished run's coordinator digs in its repo's tunnel; one with a worker keeps its own"
     );
     let c = ant(&scene, "over-coord");
-    assert!(matches!(c.spot, Spot::Chamber(1, _)));
+    assert!(matches!(c.spot, Spot::Chamber(TunnelKey::Repo(ref r), _) if r == "alpha"));
     assert_eq!(c.tag.as_deref(), Some("Other work"));
 }
 
@@ -1167,7 +1173,11 @@ fn parked_ants_sleep_in_the_resting_area() {
         .iter()
         .filter(|a| a.id.as_str().starts_with("parked"))
     {
-        assert!(matches!(a.spot, Spot::Chamber(i, _) if i == t), "{}", a.id);
+        assert!(
+            matches!(a.spot, Spot::Chamber(TunnelKey::RestingArea, _)),
+            "{}",
+            a.id
+        );
         assert_eq!(a.pose, Pose::Sleep);
         assert_eq!(a.mark, Some(Mark::Sleep));
     }

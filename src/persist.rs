@@ -1,10 +1,11 @@
 //! UI state saved between launches through eframe's storage: filters, view, graph layout,
-//! selection, the pane arrangement and the command palette's recent actions. Window size and
+//! selection, the pane arrangement, the command palette's recent actions and the ant farm's rooms. Window size and
 //! position are saved by eframe itself.
 
 use serde::{Deserialize, Serialize};
 
 use crate::app::View;
+use crate::ui::ant_farm::rooms::RoomPlan;
 use crate::ui::dock::NotificationsDock;
 use crate::ui::graph::SavedLayout;
 use crate::ui::sidebar::FleetFilter;
@@ -30,6 +31,8 @@ pub struct PersistedState {
     pub panes: Option<String>,
     /// The notifications panel: open or collapsed, its side and width.
     pub notifications_panel: NotificationsDock,
+    /// Where the ant farm's rooms are dug, so they keep their places across launches.
+    pub farm_rooms: RoomPlan,
 }
 
 impl Default for PersistedState {
@@ -43,6 +46,7 @@ impl Default for PersistedState {
             recent_actions: Vec::new(),
             panes: None,
             notifications_panel: NotificationsDock::default(),
+            farm_rooms: RoomPlan::default(),
         }
     }
 }
@@ -116,6 +120,19 @@ mod tests {
                 open: false,
                 side: crate::ui::dock::Side::Right,
                 share: 0.3,
+            },
+            farm_rooms: {
+                let mut plan = RoomPlan::default();
+                plan.rooms = vec![crate::ui::ant_farm::rooms::Room {
+                    key: crate::ui::ant_farm::layout::TunnelKey::Repo("myrstack".into()),
+                    level: 1,
+                    col: 2,
+                    span: 1,
+                    rows: 3,
+                    empty_since_ms: Some(1_000),
+                }];
+                plan.landing = 2;
+                plan
             },
         }
     }

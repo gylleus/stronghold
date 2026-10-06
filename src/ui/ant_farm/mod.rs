@@ -13,6 +13,9 @@ mod layout_tests;
 pub mod mail;
 pub mod motion;
 pub mod nature;
+pub mod rooms;
+#[cfg(test)]
+mod rooms_tests;
 pub mod scenery;
 pub mod sprites;
 pub mod zoom;
@@ -29,7 +32,7 @@ use crate::ui::daylight;
 use crate::ui::graph::GraphView;
 use crate::ui::graph::nav::{self, ScrollAction, ScrollSource, route_scroll};
 use death::{Body, Fall};
-use layout::{FarmInput, Pose, Scene, Spot, layout};
+use layout::{FarmInput, Pose, Scene, Spot, TunnelKey, layout_in};
 use motion::{Walk, route};
 use sprites::{AntLook, Coat, Item, Palette, Sprites};
 use zoom::Camera;
@@ -56,6 +59,8 @@ const BIRTH_GLOW_S: f64 = 1.2;
 /// A gap between frames longer than this means the farm was not on screen: ants that
 /// appeared meanwhile are placed, not born.
 const AWAY_S: f64 = 2.5;
+/// How long rooms and their ants take to glide to where a rearranged or grown plan put them.
+pub const GLIDE_S: f64 = 0.8;
 
 /// A call of the Queen that ripples across the farm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,6 +202,80 @@ pub struct AntFarmView {
     camera: Camera,
     /// Device of the latest scroll over the farm; see [`ScrollSource`].
     scroll_source: ScrollSource,
+    /// Where the rooms are dug, kept across frames and launches; see [`rooms`].
+    rooms: rooms::RoomPlan,
+    /// Each room's shape last frame, and the rooms gliding to a new one.
+    room_shapes: HashMap<TunnelKey, RoomShape>,
+    room_glides: HashMap<TunnelKey, RoomGlide>,
+    /// The rect of the last frame drawn and of the last ants placed: a move in an unchanged
+    /// rect glides, a resize does not.
+    shown_rect: Option<Rect>,
+    advanced_rect: Option<Rect>,
+    /// Reduce motion as set for tests; the system's setting otherwise.
+    reduce_motion: Option<bool>,
+}
+
+/// A room's chamber, shaft and label relative to the farm's rect (see [`motion::to_unit`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RoomShape {
+    chamber: Rect,
+    shaft: Rect,
+    label_top: Pos2,
+}
+
+impl RoomShape {
+    fn of(tunnel: &layout::Tunnel, rect: Rect) -> Self {
+        let unit = |r: Rect| {
+            Rect::from_min_max(motion::to_unit(r.min, rect), motion::to_unit(r.max, rect))
+        };
+        Self {
+            chamber: unit(tunnel.chamber),
+            shaft: unit(tunnel.shaft),
+            label_top: motion::to_unit(tunnel.label_top, rect),
+        }
+    }
+
+    fn lerp(self, to: Self, t: f32) -> Self {
+        let rect =
+            |a: Rect, b: Rect| Rect::from_min_max(a.min.lerp(b.min, t), a.max.lerp(b.max, t));
+        Self {
+            chamber: rect(self.chamber, to.chamber),
+            shaft: rect(self.shaft, to.shaft),
+            label_top: self.label_top.lerp(to.label_top, t),
+        }
+    }
+
+    fn screen(self, rect: Rect) -> (Rect, Rect, Pos2) {
+        let screen = |r: Rect| {
+            Rect::from_min_max(
+                motion::from_unit(r.min, rect),
+                motion::from_unit(r.max, rect),
+            )
+        };
+        (
+            screen(self.chamber),
+            screen(self.shaft),
+            motion::from_unit(self.label_top, rect),
+        )
+    }
+}
+
+/// A room gliding from `from` to its place since `start_s`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RoomGlide {
+    from: RoomShape,
+    start_s: f64,
+}
+
+impl RoomGlide {
+    fn at(&self, to: RoomShape, now_s: f64) -> RoomShape {
+        let t = ((now_s - self.start_s) / GLIDE_S) as f32;
+        self.from.lerp(to, motion::ease(t))
+    }
+
+    fn done(&self, now_s: f64) -> bool {
+        now_s >= self.start_s + GLIDE_S
+    }
 }
 
 impl AntFarmView {
@@ -226,6 +305,25 @@ impl AntFarmView {
 
     pub fn set_envoy_receipt(&mut self, receipt: crate::ui::envoy_receipt::ReceiptCue) {
         self.envoy_receipt = receipt;
+    }
+
+    /// The room plan, to save between launches.
+    pub fn rooms(&self) -> &rooms::RoomPlan {
+        &self.rooms
+    }
+
+    /// Restores a room plan saved by an earlier launch.
+    pub fn set_rooms(&mut self, plan: rooms::RoomPlan) {
+        self.rooms = plan;
+    }
+
+    /// Overrides the system's Reduce motion setting (for tests).
+    pub fn set_reduce_motion(&mut self, still: bool) {
+        self.reduce_motion = Some(still);
+    }
+
+    fn still(&self) -> bool {
+        self.reduce_motion.unwrap_or_else(death::reduce_motion)
     }
 
     pub fn pulse(&mut self, pulse: Pulse) {
@@ -262,10 +360,11 @@ impl AntFarmView {
             building: graph.building(),
             now_ms: now_ms(),
         };
-        let scene = layout(&input, rect);
+        let mut scene = layout_in(&input, rect, &mut self.rooms);
         let away = self.last_frame_s.is_none_or(|t| now_s - t > AWAY_S);
         self.last_frame_s = Some(now_s);
         self.away = away;
+        self.glide_rooms(&mut scene, now_s);
         if away {
             self.pending.clear();
         }
@@ -363,7 +462,8 @@ impl AntFarmView {
             || !self.births.is_empty()
             || !self.falls.is_empty()
             || !self.mail.is_empty()
-            || !self.beams.is_empty();
+            || !self.beams.is_empty()
+            || !self.room_glides.is_empty();
         let stepping = scene.ants.iter().any(|a| {
             matches!(a.pose, Pose::Dig | Pose::Build | Pose::Wait | Pose::Sleep)
                 || (a.pose == Pose::Queen && self.queen_busy)
@@ -489,6 +589,61 @@ impl AntFarmView {
         }
     }
 
+    /// Glides rooms whose place changed while the view kept its size (a rearrange, or a room
+    /// grown or deepened) from where they were drawn, and draws `scene` with them where they
+    /// are on the way. A resize, a return to the farm or Reduce motion moves them at once.
+    pub fn glide_rooms(&mut self, scene: &mut Scene, now_s: f64) {
+        let rect = scene.rect;
+        let steady = !self.away && self.shown_rect == Some(rect);
+        self.shown_rect = Some(rect);
+        if !steady {
+            self.room_glides.clear();
+        }
+        let mut still = None;
+        let mut shapes = HashMap::new();
+        for tunnel in &mut scene.tunnels {
+            let target = RoomShape::of(tunnel, rect);
+            if let Some(&last) = self.room_shapes.get(&tunnel.key)
+                && steady
+                && last != target
+            {
+                if *still.get_or_insert_with(|| self.still()) {
+                    self.room_glides.remove(&tunnel.key);
+                } else {
+                    let from = match self.room_glides.get(&tunnel.key) {
+                        Some(glide) => glide.at(last, now_s),
+                        None => last,
+                    };
+                    self.room_glides.insert(
+                        tunnel.key.clone(),
+                        RoomGlide {
+                            from,
+                            start_s: now_s,
+                        },
+                    );
+                }
+            }
+            shapes.insert(tunnel.key.clone(), target);
+            let Some(glide) = self.room_glides.get(&tunnel.key) else {
+                continue;
+            };
+            if glide.done(now_s) {
+                self.room_glides.remove(&tunnel.key);
+                continue;
+            }
+            let (chamber, shaft, label_top) = glide.at(target, now_s).screen(rect);
+            let shift = chamber.right_bottom() - tunnel.chamber.right_bottom();
+            for bed in &mut scene.beds {
+                if tunnel.chamber.contains(bed.rect.center()) {
+                    bed.rect = bed.rect.translate(shift);
+                }
+            }
+            (tunnel.chamber, tunnel.shaft, tunnel.label_top) = (chamber, shaft, label_top);
+        }
+        self.room_glides.retain(|key, _| shapes.contains_key(key));
+        self.room_shapes = shapes;
+    }
+
     /// Starts a fall for every ant drawn last frame that has left the fleet: gone from
     /// `snapshot` too, not just filtered out, however it was removed. `reduce_motion` is asked
     /// only when one falls.
@@ -522,9 +677,13 @@ impl AntFarmView {
     /// and returns where each of `scene.ants` is at `now_s`.
     ///
     /// An ant never drawn before walks out of the Queen's chamber, unless the farm was just
-    /// opened (everyone is placed then).
+    /// opened (everyone is placed then). An ant whose spot moved while the view kept its size,
+    /// as when its room was dug afresh, glides there with it, or with Reduce motion is placed.
     pub fn advance(&mut self, scene: &Scene, now_s: f64) -> Vec<Placed> {
         let fresh = self.seen.is_empty() || self.away;
+        let steady = !fresh && self.advanced_rect == Some(scene.rect);
+        self.advanced_rect = Some(scene.rect);
+        let mut still = None;
         self.tracks
             .retain(|id, _| scene.ants.iter().any(|a| &a.id == id));
         let mut current: HashMap<&NodeId, Placed> = HashMap::new();
@@ -575,6 +734,15 @@ impl AntFarmView {
                 let path = route(from, ant.pos, same_area, scene.gallery.center().y);
                 track.walk = Some(Walk::new(&path, scene.rect, now_s));
                 track.spot = ant.spot.clone();
+            } else if steady && track.walk.is_none() {
+                let from = motion::from_unit(track.at, scene.rect);
+                if (from - ant.pos).length() > 0.5
+                    && !*still.get_or_insert_with(|| {
+                        self.reduce_motion.unwrap_or_else(death::reduce_motion)
+                    })
+                {
+                    track.walk = Some(Walk::glide(from, ant.pos, scene.rect, now_s, GLIDE_S));
+                }
             }
             track.at = motion::to_unit(ant.pos, scene.rect);
             if let Some(walk) = &mut track.walk {
