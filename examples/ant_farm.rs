@@ -80,6 +80,9 @@ fn main() -> eframe::Result {
                     let mut farm = AntFarmView::new();
                     farm.set_queen_focused(true);
                     farm.set_envoy_health(health);
+                    if health == myrstack::envoy::EnvoyHealth::AwaitingApproval {
+                        farm.set_envoy_pending(2);
+                    }
                     farm
                 },
                 shot,

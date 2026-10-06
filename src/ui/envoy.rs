@@ -1,6 +1,6 @@
 //! Karl's review surface; draft actions are returned to the app for persistence and delivery.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use eframe::egui::{self, PointerButton, Ui};
 
@@ -15,17 +15,39 @@ pub enum DraftAction {
     Reject(String),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Inbox,
+    Outbox,
+}
+
 #[derive(Default)]
 pub struct DraftsPanel {
     edits: HashMap<String, String>,
     errors: HashMap<String, String>,
     last_action_at: Option<f64>,
+    tab: Option<Tab>,
+    dismissed_failures: HashSet<String>,
+    recorded_task: Option<String>,
 }
 
 impl DraftsPanel {
     #[cfg(test)]
     pub(crate) fn set_edit(&mut self, id: &str, text: &str) {
         self.edits.insert(id.into(), text.into());
+    }
+
+    pub fn open(&mut self, drafts: &[Draft]) {
+        self.tab = Some(
+            if drafts.iter().any(|d| {
+                d.status == DraftStatus::Pending
+                    || (d.status == DraftStatus::Failed && !self.dismissed_failures.contains(&d.id))
+            }) {
+                Tab::Inbox
+            } else {
+                Tab::Outbox
+            },
+        );
     }
 
     pub fn result(&mut self, id: &str, result: Result<(), String>) {
@@ -35,6 +57,9 @@ impl DraftsPanel {
                 self.edits.remove(id);
             }
             Err(error) => {
+                if self.recorded_task.as_deref() == Some(id) {
+                    self.recorded_task = None;
+                }
                 self.errors.insert(id.into(), error);
             }
         }
@@ -62,97 +87,197 @@ impl DraftsPanel {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
-        ui.heading("Envoy drafts");
+        if self.tab.is_none() {
+            self.open(drafts);
+        }
+        ui.heading("Envoy");
         if dry_run {
             ui.label(DRY_RUN_BANNER);
         } else {
-            ui.label("Approved replies are posted to Slack. Approved tasks go to the Queen.");
+            ui.label("Approved replies are posted to Slack. Accepted tasks go to the Queen.");
         }
         if let Some(error) = error {
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.tab, Some(Tab::Inbox), "Inbox");
+            ui.selectable_value(&mut self.tab, Some(Tab::Outbox), "Outbox");
+        });
         ui.separator();
         egui::ScrollArea::vertical()
-            .id_salt("envoy_drafts")
+            .id_salt(("envoy", self.tab == Some(Tab::Inbox)))
             .show(ui, |ui| {
-                let pending: Vec<_> = drafts
-                    .iter()
-                    .filter(|d| d.status == DraftStatus::Pending)
-                    .collect();
-                if pending.is_empty() {
-                    ui.weak("No drafts waiting for approval.");
-                }
-                for draft in pending {
-                    ui.push_id(&draft.id, |ui| {
-                        egui::Frame::group(ui.style()).show(ui, |ui| {
-                            destination(ui, draft, inbox);
-                            ui.label(format!("Why: {}", draft.rationale));
-                            let text = self
-                                .edits
-                                .entry(draft.id.clone())
-                                .or_insert_with(|| draft.text.clone());
-                            ui.add(
-                                egui::TextEdit::multiline(text)
-                                    .desired_width(f32::INFINITY)
-                                    .desired_rows(4),
-                            );
-                            if draft.kind == DraftKind::Reply
-                                && !text.trim_end().ends_with(ATTRIBUTION)
-                            {
-                                ui.label(ATTRIBUTION);
-                            }
-                            if let Some(error) = self.errors.get(&draft.id) {
-                                ui.colored_label(ui.visuals().error_fg_color, error);
-                            }
-                            ui.horizontal(|ui| {
-                                let approve = if draft.kind == DraftKind::TaskProposal {
-                                    "Send to Queen"
+                if self.tab == Some(Tab::Inbox) {
+                    let mut cards = 0;
+                    for draft in drafts {
+                        let failed = draft.status == DraftStatus::Failed
+                            && !self.dismissed_failures.contains(&draft.id);
+                        let recorded = draft.status == DraftStatus::DryRunSent
+                            && self.recorded_task.as_deref() == Some(&draft.id);
+                        if draft.status != DraftStatus::Pending && !failed && !recorded {
+                            continue;
+                        }
+                        cards += 1;
+                        ui.push_id(&draft.id, |ui| {
+                            egui::Frame::group(ui.style()).show(ui, |ui| {
+                                if draft.status == DraftStatus::Pending {
+                                    if let Some(next) =
+                                        self.pending_card(ui, draft, inbox, dry_run, ready)
+                                    {
+                                        action = Some(next);
+                                    }
                                 } else {
-                                    "Approve"
-                                };
-                                // Keyboard activation must never authorize an outbound message.
-                                let response = ui.add_enabled(ready, egui::Button::new(approve));
-                                if deliberate_click(&response) {
-                                    action = Some(DraftAction::Approve {
-                                        id: draft.id.clone(),
-                                        text: text.clone(),
-                                    });
-                                }
-                                let response = ui.add_enabled(ready, egui::Button::new("Reject"));
-                                if deliberate_click(&response) {
-                                    action = Some(DraftAction::Reject(draft.id.clone()));
+                                    decided_card(ui, draft, inbox);
+                                    if ui.button("Dismiss").clicked() {
+                                        if failed {
+                                            self.dismissed_failures.insert(draft.id.clone());
+                                        } else {
+                                            self.recorded_task = None;
+                                        }
+                                    }
                                 }
                             });
                         });
-                    });
-                    ui.add_space(8.0);
+                        ui.add_space(8.0);
+                    }
+                    if cards == 0 {
+                        ui.weak("No decisions waiting for you.");
+                    }
+                    recent_messages(ui, inbox);
+                } else {
+                    let mut history: Vec<_> = drafts
+                        .iter()
+                        .rev()
+                        .filter(|d| d.status != DraftStatus::Pending)
+                        .collect();
+                    history.sort_by_key(|d| std::cmp::Reverse(d.updated_ms));
+                    egui::CollapsingHeader::new(format!("Decisions ({})", history.len()))
+                        .id_salt("envoy_outbox_decisions")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            if history.is_empty() {
+                                ui.weak("No decisions yet.");
+                            }
+                            for draft in history {
+                                ui.push_id(&draft.id, |ui| {
+                                    decided_card(ui, draft, inbox);
+                                    ui.separator();
+                                });
+                            }
+                        });
                 }
-                let history: Vec<_> = drafts
-                    .iter()
-                    .rev()
-                    .filter(|d| d.status != DraftStatus::Pending)
-                    .collect();
-                egui::CollapsingHeader::new(format!("History ({})", history.len()))
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        for draft in history {
-                            ui.push_id(&draft.id, |ui| {
-                                ui.strong(format!("{} · {}", status_label(draft.status), draft.id));
-                                destination(ui, draft, inbox);
-                                ui.label(&draft.text);
-                                if let Some(error) = &draft.error {
-                                    ui.colored_label(ui.visuals().error_fg_color, error);
-                                }
-                                ui.separator();
-                            });
-                        }
-                    });
             });
         if action.is_some() {
             self.last_action_at = Some(now);
         }
         action
     }
+
+    fn pending_card(
+        &mut self,
+        ui: &mut Ui,
+        draft: &Draft,
+        inbox: &Inbox,
+        dry_run: bool,
+        ready: bool,
+    ) -> Option<DraftAction> {
+        destination(ui, draft, inbox);
+        ui.label(format!("Why: {}", draft.rationale));
+        let text = self
+            .edits
+            .entry(draft.id.clone())
+            .or_insert_with(|| draft.text.clone());
+        ui.add(
+            egui::TextEdit::multiline(text)
+                .desired_width(f32::INFINITY)
+                .desired_rows(4),
+        );
+        if draft.kind == DraftKind::Reply && !text.trim_end().ends_with(ATTRIBUTION) {
+            ui.label(ATTRIBUTION);
+        }
+        if draft.kind == DraftKind::TaskProposal {
+            ui.label(if dry_run {
+                "Dry run: accepting records this task; it is not sent to the Queen."
+            } else {
+                "The Queen will start the ant for this task."
+            });
+        }
+        if let Some(error) = self.errors.get(&draft.id) {
+            ui.colored_label(ui.visuals().error_fg_color, error);
+        }
+        let mut action = None;
+        ui.horizontal(|ui| {
+            let approve = if draft.kind == DraftKind::TaskProposal {
+                "Accept task"
+            } else {
+                "Approve"
+            };
+            // Keyboard activation must never authorize an outbound message.
+            let response = ui.add_enabled(ready, egui::Button::new(approve));
+            if deliberate_click(&response) {
+                if draft.kind == DraftKind::TaskProposal && dry_run {
+                    self.recorded_task = Some(draft.id.clone());
+                }
+                action = Some(DraftAction::Approve {
+                    id: draft.id.clone(),
+                    text: text.clone(),
+                });
+            }
+            let response = ui.add_enabled(ready, egui::Button::new("Reject"));
+            if deliberate_click(&response) {
+                action = Some(DraftAction::Reject(draft.id.clone()));
+            }
+        });
+        action
+    }
+}
+
+fn decided_card(ui: &mut Ui, draft: &Draft, inbox: &Inbox) {
+    ui.strong(format!("{} · {}", status_label(draft.status), draft.id));
+    destination(ui, draft, inbox);
+    ui.label(&draft.text);
+    if draft.kind == DraftKind::TaskProposal && draft.status == DraftStatus::DryRunSent {
+        ui.label("Task recorded in dry run; not sent to the Queen.");
+    }
+    if let Some(error) = &draft.error {
+        ui.colored_label(ui.visuals().error_fg_color, error);
+    }
+}
+
+fn recent_messages(ui: &mut Ui, inbox: &Inbox) {
+    egui::CollapsingHeader::new("Recent messages")
+        .id_salt("envoy_recent_messages")
+        .default_open(false)
+        .show(ui, |ui| {
+            if inbox.events().is_empty() {
+                ui.weak("No incoming messages yet.");
+            }
+            for event in inbox.events().iter().rev().take(20) {
+                let time = crate::envoy::inbox::timestamp_us(&event.ts)
+                    .and_then(|us| jiff::Timestamp::from_microsecond(us).ok())
+                    .map(|t| {
+                        t.to_zoned(jiff::tz::TimeZone::system())
+                            .strftime("%b %d %H:%M")
+                            .to_string()
+                    })
+                    .unwrap_or_else(|| event.ts.clone());
+                ui.strong(format!(
+                    "{} · {} · {time}",
+                    event.user_name, event.conversation
+                ));
+                let first_line: String = event
+                    .text
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(200)
+                    .collect();
+                ui.label(first_line);
+                slack_link(ui, event.permalink.as_deref());
+                ui.separator();
+            }
+        });
 }
 
 fn deliberate_click(response: &egui::Response) -> bool {
@@ -206,7 +331,7 @@ fn status_label(status: DraftStatus) -> &'static str {
         DraftStatus::Sent => "Sent",
         DraftStatus::Failed => "Failed",
         DraftStatus::Rejected => "Rejected",
-        DraftStatus::DryRunSent => "Dry run sent",
+        DraftStatus::DryRunSent => "Dry run recorded",
     }
 }
 
@@ -306,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn proposals_have_explicit_send_to_queen_action() {
+    fn proposals_have_explicit_accept_task_action() {
         let drafts = [Draft::proposal(
             "Do the task".into(),
             Some("repo".into()),
@@ -314,7 +439,10 @@ mod tests {
             "https://example.slack.com/message".into(),
             0,
         )];
-        let action = click_label("Send to Queen", |ui| {
+        click_label("The Queen will start the ant for this task.", |ui| {
+            DraftsPanel::default().show(ui, &drafts, &Inbox::default(), false, None)
+        });
+        let action = click_label("Accept task", |ui| {
             DraftsPanel::default().show(ui, &drafts, &Inbox::default(), true, None)
         });
         assert!(matches!(action, Some(DraftAction::Approve { text, .. }) if text == "Do the task"));
@@ -364,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn errors_stay_inline_and_history_is_collapsed() {
+    fn errors_stay_inline_after_delivery_failure() {
         let mut draft = reply();
         let mut panel = DraftsPanel::default();
         panel.result(&draft.id, Err("Blocked: token detected".into()));
@@ -373,9 +501,200 @@ mod tests {
         });
         draft.status = DraftStatus::Failed;
         draft.error = Some("delivery failed".into());
-        click_label("History (1)", |ui| {
+        click_label("delivery failed", |ui| {
             panel.show(ui, &[draft.clone()], &Inbox::default(), true, None)
         });
-        assert_eq!(status_label(DraftStatus::DryRunSent), "Dry run sent");
+        assert_eq!(status_label(DraftStatus::DryRunSent), "Dry run recorded");
+    }
+
+    struct Harness {
+        ctx: egui::Context,
+        panel: DraftsPanel,
+        drafts: Vec<Draft>,
+        inbox: Inbox,
+        time: f64,
+    }
+
+    impl Harness {
+        fn new(drafts: Vec<Draft>) -> Self {
+            Self {
+                ctx: egui::Context::default(),
+                panel: DraftsPanel::default(),
+                drafts,
+                inbox: Inbox::default(),
+                time: 0.0,
+            }
+        }
+
+        fn frame(&mut self, events: Vec<egui::Event>) -> (egui::FullOutput, Option<DraftAction>) {
+            self.time += 0.2;
+            let mut action = None;
+            let mut output = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1000.0, 1000.0),
+                    )),
+                    time: Some(self.time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| action = self.panel.show(ui, &self.drafts, &self.inbox, true, None),
+            );
+            output.textures_delta.clear();
+            (output, action)
+        }
+
+        fn click(&mut self, label: &str) -> Option<DraftAction> {
+            self.frame(vec![]);
+            let at = text_center(&self.frame(vec![]).0, label)
+                .unwrap_or_else(|| panic!("missing {label}"));
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            self.frame(vec![egui::Event::PointerMoved(at), button(true)]);
+            self.frame(vec![button(false)]).1
+        }
+
+        fn visible(&mut self, label: &str) -> bool {
+            text_center(&self.frame(vec![]).0, label).is_some()
+        }
+    }
+
+    #[test]
+    fn opening_selects_inbox_for_decisions_and_outbox_otherwise() {
+        let mut h = Harness::new(vec![reply()]);
+        assert!(h.visible("Approve"));
+        h.click("Outbox");
+        assert!(!h.visible("Approve"));
+        h.panel.open(&h.drafts);
+        assert!(h.visible("Approve"));
+        h.drafts[0].status = DraftStatus::Sent;
+        h.panel.open(&h.drafts);
+        assert!(h.visible("Decisions (1)"));
+        assert!(!h.visible("Approve"));
+        let mut empty = Harness::new(vec![]);
+        assert!(empty.visible("Decisions (0)"));
+    }
+
+    #[test]
+    fn failed_delivery_stays_in_inbox_until_dismissed_and_remains_in_outbox() {
+        let mut h = Harness::new(vec![reply()]);
+        assert!(matches!(
+            h.click("Approve"),
+            Some(DraftAction::Approve { .. })
+        ));
+        h.drafts[0].status = DraftStatus::Failed;
+        h.drafts[0].error = Some("Network unavailable".into());
+        h.panel.result(&h.drafts[0].id, Ok(()));
+        assert!(h.visible("Network unavailable"));
+        assert!(!h.visible("Approve"));
+        h.panel.open(&h.drafts);
+        assert!(h.visible("Network unavailable"));
+        h.click("Dismiss");
+        assert!(!h.visible("Network unavailable"));
+        assert!(h.visible("No decisions waiting for you."));
+        h.panel.open(&h.drafts);
+        assert!(h.visible("Decisions (1)"));
+        assert!(h.visible("Network unavailable"));
+        h.click("Inbox");
+        assert!(!h.visible("Network unavailable"));
+    }
+
+    #[test]
+    fn accepting_a_dry_run_task_shows_confirmation_on_the_card() {
+        let mut task = Draft::proposal(
+            "Start a fixture ant".into(),
+            None,
+            "Requested".into(),
+            String::new(),
+            0,
+        );
+        task.id = "task-1".into();
+        let mut h = Harness::new(vec![task]);
+        assert!(h.visible("Dry run: accepting records this task; it is not sent to the Queen."));
+        assert!(matches!(
+            h.click("Accept task"),
+            Some(DraftAction::Approve { .. })
+        ));
+        h.drafts[0].status = DraftStatus::DryRunSent;
+        h.panel.result("task-1", Ok(()));
+        assert!(h.visible("Task recorded in dry run; not sent to the Queen."));
+        h.click("Dismiss");
+        assert!(!h.visible("Task recorded in dry run; not sent to the Queen."));
+        h.click("Outbox");
+        assert!(h.visible("Task recorded in dry run; not sent to the Queen."));
+    }
+
+    #[test]
+    fn outbox_keeps_expansion_when_items_arrive_and_orders_by_decision_time() {
+        let mut older = reply();
+        older.status = DraftStatus::Rejected;
+        older.updated_ms = 10;
+        let mut h = Harness::new(vec![older.clone()]);
+        assert!(h.visible("Visible reply"));
+        h.click("Decisions (1)");
+        assert!(!h.visible("Visible reply"));
+        let mut newer = older.clone();
+        newer.id = "second".into();
+        newer.text = "New decision".into();
+        newer.updated_ms = 20;
+        h.drafts.push(newer);
+        assert!(h.visible("Decisions (2)"));
+        assert!(!h.visible("New decision"));
+        h.click("Decisions (2)");
+        assert!(h.visible("New decision"));
+        let mut latest = older;
+        latest.id = "third".into();
+        latest.text = "Latest decision".into();
+        latest.updated_ms = 30;
+        h.drafts.insert(0, latest);
+        let output = h.frame(vec![]).0;
+        assert!(
+            text_center(&output, "Latest decision").unwrap().y
+                < text_center(&output, "New decision").unwrap().y
+        );
+        assert!(
+            text_center(&output, "New decision").unwrap().y
+                < text_center(&output, "Visible reply").unwrap().y
+        );
+    }
+
+    #[test]
+    fn recent_messages_show_events_without_drafts_and_only_the_first_line() {
+        use crate::envoy::channel::{EventKind, InboundEvent};
+        let mut h = Harness::new(vec![]);
+        for (ts, text) in [
+            ("1.0", "Older message"),
+            ("2.0", "Latest message\nPrivate second line"),
+        ] {
+            h.inbox.insert(InboundEvent {
+                channel_kind: "slack".into(),
+                conversation: "C123".into(),
+                ts: ts.into(),
+                thread_ts: None,
+                user: "U123".into(),
+                user_name: "Avery".into(),
+                text: text.into(),
+                kind: EventKind::Mention,
+                permalink: Some("https://example.slack.com/archives/C123/p2".into()),
+            });
+        }
+        h.click("Inbox");
+        assert!(h.visible("Recent messages"));
+        assert!(!h.visible("Latest message"));
+        assert!(h.click("Recent messages").is_none());
+        let output = h.frame(vec![]).0;
+        assert!(
+            text_center(&output, "Latest message").unwrap().y
+                < text_center(&output, "Older message").unwrap().y
+        );
+        assert!(!h.visible("Private second line"));
+        assert!(h.visible("Open Slack message"));
+        assert!(!h.visible("Approve"));
+        assert!(!h.visible("Accept task"));
     }
 }

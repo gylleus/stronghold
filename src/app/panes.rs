@@ -30,7 +30,7 @@ impl TabViewer for Panes<'_> {
             Pane::Details => "Details".into(),
             Pane::Conversation => self.app.conversation_title().into(),
             Pane::Notifications => self.app.notifications_title().into(),
-            Pane::Envoy => "Envoy drafts".into(),
+            Pane::Envoy => "Envoy".into(),
         }
     }
 
@@ -76,6 +76,7 @@ impl MyrstackApp {
     /// The dock filling the window below the top bar.
     pub(super) fn panes(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         if std::mem::take(&mut self.envoy_core.open_request) {
+            self.envoy_panel.open(self.envoy_core.drafts());
             self.panes.open_envoy();
         }
         self.panes.set_conversation(self.has_conversation());
@@ -241,10 +242,15 @@ impl MyrstackApp {
                     self.ant_farm.set_queen_busy(self.queen_thinking());
                     self.ant_farm.set_queen_focused(self.shows_chat());
                     self.ant_farm.set_envoy_health(self.envoy_status().health());
+                    self.ant_farm
+                        .set_envoy_pending(self.envoy_core.pending_count());
                     let farm = egui::Rect::from_min_size(ui.cursor().min, ui.available_size());
                     let response = self.ant_farm.show(ui, snapshot, &self.graph);
                     self.worktrees.broom_in_farm(ui, farm);
                     self.broom_in_farm = true;
+                    if response.open_envoy {
+                        self.envoy_core.open_request = true;
+                    }
                     if let Some(id) = &response.clicked {
                         let additive = ui.input(|i| ui::graph::is_additive(i.modifiers));
                         self.graph.click_node(id, additive);

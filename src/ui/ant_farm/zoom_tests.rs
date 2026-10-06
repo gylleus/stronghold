@@ -119,6 +119,7 @@ fn zoomed_text_is_laid_out_at_the_zoomed_size() {
 struct Harness {
     ctx: egui::Context,
     time: f64,
+    output: Option<egui::FullOutput>,
     snapshot: crate::model::FleetSnapshot,
     graph: crate::ui::graph::GraphView,
     farm: super::AntFarmView,
@@ -132,6 +133,7 @@ impl Harness {
         let mut harness = Self {
             ctx: egui::Context::default(),
             time: 0.0,
+            output: None,
             snapshot,
             graph,
             farm: super::AntFarmView::new(),
@@ -156,6 +158,7 @@ impl Harness {
             out = Some((rect, farm.show(ui, snapshot, graph)));
         });
         output.textures_delta.clear();
+        self.output = Some(output);
         out.expect("a frame ran")
     }
 
@@ -279,4 +282,132 @@ fn double_click_on_empty_ground_fits_the_farm() {
     assert!(!h.farm.camera.is_fit());
     h.click(soil);
     assert!(h.farm.camera.is_fit());
+}
+
+impl Harness {
+    fn with_envoy() -> Self {
+        let mut h = Self::new();
+        let mut envoy = h.snapshot.nodes[0].clone();
+        envoy.id = super::layout_tests::id("envoy");
+        envoy.kind = crate::model::NodeKind::Envoy;
+        h.snapshot.nodes.push(envoy);
+        h.graph.sync(&h.snapshot);
+        h.frame(vec![]);
+        h
+    }
+
+    fn tray_center(&self) -> Pos2 {
+        let scene = super::layout_tests::scene(&self.snapshot);
+        self.farm.camera.transform(FULL) * scene.comms.unwrap().tray_rect().center()
+    }
+}
+
+#[test]
+fn tray_click_opens_without_selecting_or_clearing_at_fit_and_zoomed() {
+    for zoomed in [false, true] {
+        let mut h = Harness::with_envoy();
+        if zoomed {
+            let target = h.tray_center();
+            h.farm.camera.zoom_at(FULL, target, 2.0);
+            h.farm.camera.pan(FULL, vec2(-15.0, -12.0));
+        }
+        let at = h.tray_center();
+        h.frame(vec![egui::Event::PointerMoved(at)]);
+        h.settle();
+        assert!(
+            crate::ui::test_util::text_center(
+                h.output.as_ref().unwrap(),
+                "Envoy inbox: 0 waiting · outbox"
+            )
+            .is_some()
+        );
+        let response = h.click(at);
+        assert!(response.open_envoy);
+        assert!(response.clicked.is_none());
+        assert!(!response.clicked_empty);
+        assert!(response.hovered.is_none());
+        assert_eq!(
+            h.output.as_ref().unwrap().platform_output.cursor_icon,
+            egui::CursorIcon::PointingHand
+        );
+        let camera = h.farm.camera;
+        h.click(at);
+        assert_eq!(
+            h.farm.camera, camera,
+            "double-clicking the tray must not reset zoom"
+        );
+        let outside = h.click(FULL.right_bottom() - vec2(5.0, 5.0));
+        assert!(!outside.open_envoy);
+        assert!(outside.clicked_empty);
+    }
+    let mut absent = Harness::new();
+    assert!(!absent.click(pos2(150.0, 200.0)).open_envoy);
+}
+
+#[test]
+fn tray_has_priority_over_a_walking_ant_and_cannot_start_a_selection_box() {
+    let mut h = Harness::with_envoy();
+    let at = h.tray_center();
+    let id = super::layout_tests::id("working");
+    let track = h.farm.tracks.get_mut(&id).unwrap();
+    let mut walk = super::motion::Walk::new(&[at, at], FULL, h.time);
+    walk.duration_s = 1000.0;
+    track.walk = Some(walk);
+    let response = h.click(at);
+    assert!(response.open_envoy);
+    assert!(response.clicked.is_none());
+    assert!(!response.clicked_empty);
+    let button = |pressed, pos| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    h.frame(vec![button(true, at)]);
+    let end = at + vec2(80.0, 50.0);
+    h.frame(vec![egui::Event::PointerMoved(end)]);
+    let response = h.frame(vec![button(false, end)]).1;
+    assert!(response.boxed.is_none());
+}
+
+#[test]
+fn badge_counts_pending_replies_and_tasks_only() {
+    use crate::envoy::drafts::{Draft, DraftQueue, ReplyTo};
+    use crate::ui::test_util::text_center;
+    let dir = tempfile::tempdir().unwrap();
+    let mut queue = DraftQueue::load(dir.path().join("drafts.json")).unwrap();
+    let reply = queue
+        .create(Draft::reply(
+            ReplyTo {
+                conversation: "C123".into(),
+                ts: "1".into(),
+            },
+            None,
+            "Reply".into(),
+            "Why".into(),
+            0,
+        ))
+        .unwrap();
+    queue
+        .create(Draft::proposal(
+            "Task".into(),
+            None,
+            "Why".into(),
+            String::new(),
+            0,
+        ))
+        .unwrap();
+    let mut h = Harness::with_envoy();
+    assert_eq!(queue.pending_count(), 2);
+    h.farm.set_envoy_pending(queue.pending_count());
+    h.frame(vec![]);
+    assert!(text_center(h.output.as_ref().unwrap(), "2").is_some());
+    queue.reject(&reply.id, 1).unwrap();
+    assert_eq!(queue.pending_count(), 1);
+    h.farm.set_envoy_pending(queue.pending_count());
+    h.frame(vec![]);
+    assert!(text_center(h.output.as_ref().unwrap(), "1").is_some());
+    h.farm.set_envoy_pending(0);
+    h.frame(vec![]);
+    assert!(text_center(h.output.as_ref().unwrap(), "0").is_none());
 }

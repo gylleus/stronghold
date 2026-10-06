@@ -102,23 +102,23 @@ pub fn paint(painter: &Painter, sprites: &Sprites, scene: &Scene, health: EnvoyH
     }
 
     let console = room.console();
-    pixel(console, -16.0, -13.0, 32.0, 22.0, ink);
-    pixel(console, -14.0, -11.0, 28.0, 18.0, steel);
-    pixel(console, -12.0, -9.0, 18.0, 12.0, ink);
-    pixel(console, -11.0, -8.0, 16.0, 10.0, light.gamma_multiply(0.35));
+    pixel(console, -9.0, -13.0, 18.0, 22.0, ink);
+    pixel(console, -8.0, -11.0, 16.0, 18.0, steel);
+    pixel(console, -8.0, -9.0, 11.0, 12.0, ink);
+    pixel(console, -7.0, -8.0, 9.0, 10.0, light.gamma_multiply(0.35));
     if health != EnvoyHealth::Stopped {
-        for (x, y, w) in [(-10.0, -5.0, 4.0), (-6.0, -7.0, 3.0), (-3.0, -3.0, 6.0)] {
+        for (x, y, w) in [(-6.0, -5.0, 3.0), (-3.0, -7.0, 2.0), (-2.0, -3.0, 3.0)] {
             pixel(console, x, y, w, 1.0, light);
         }
     }
-    pixel(console, 8.0, -8.0, 5.0, 5.0, light);
+    pixel(console, 5.0, -8.0, 3.0, 5.0, light);
     for row in 0..3 {
-        pixel(console, 8.0, row as f32 * 3.0, 5.0, 1.0, metal);
+        pixel(console, 5.0, row as f32 * 3.0, 3.0, 1.0, metal);
     }
-    pixel(console, -12.0, 5.0, 16.0, 2.0, metal);
-    pixel(console, -18.0, 9.0, 36.0, 3.0, metal);
-    pixel(console, -15.0, 12.0, 3.0, 6.0, steel);
-    pixel(console, 12.0, 12.0, 3.0, 6.0, steel);
+    pixel(console, -7.0, 5.0, 10.0, 2.0, metal);
+    pixel(console, -10.0, 9.0, 20.0, 3.0, metal);
+    pixel(console, -8.0, 12.0, 2.0, 6.0, steel);
+    pixel(console, 6.0, 12.0, 2.0, 6.0, steel);
     // A rack and wall label distinguish the room from a worker's empty digging chamber.
     let rack = room.chamber.min + vec2(6.0, 10.0) * px;
     pixel(rack, 0.0, 0.0, 8.0, 23.0, ink);
@@ -151,5 +151,55 @@ pub fn headphones(painter: &Painter, cell: Rect, px: f32, facing_right: bool, al
             0.0,
             color,
         );
+    }
+}
+
+pub fn tray(painter: &Painter, scene: &Scene, pending: usize, hovered: bool) {
+    let Some(room) = scene.comms else { return };
+    let rect = room.tray_rect();
+    let px = room.px;
+    let ink = Color32::from_rgb(25, 39, 48);
+    let metal = Color32::from_rgb(188, 215, 219);
+    let amber = Color32::from_rgb(255, 192, 65);
+    let pixel = |x, y, w, h, color| {
+        painter.rect_filled(
+            Rect::from_min_size(rect.min + vec2(x, y) * px, vec2(w, h) * px),
+            0.0,
+            color,
+        );
+    };
+    if hovered {
+        painter.rect_filled(rect.expand(px), 0.0, amber.gamma_multiply(0.35));
+    }
+    for y in [7.0, 18.0] {
+        pixel(0.0, y, 17.0, 7.0, ink);
+        pixel(1.0, y + 1.0, 15.0, 4.0, metal);
+        pixel(3.0, y - 4.0, 11.0, 6.0, Color32::from_rgb(229, 244, 239));
+        painter.line_segment(
+            [
+                rect.min + vec2(3.0, y - 4.0) * px,
+                rect.min + vec2(8.0, y) * px,
+            ],
+            Stroke::new(px, ink),
+        );
+        painter.line_segment(
+            [
+                rect.min + vec2(8.0, y) * px,
+                rect.min + vec2(14.0, y - 4.0) * px,
+            ],
+            Stroke::new(px, ink),
+        );
+        pixel(1.0, y + 5.0, 15.0, 1.0, metal);
+    }
+    if pending > 0 {
+        let text = pending.to_string();
+        let font = FontId::monospace(6.0 * px);
+        let galley = painter.layout_no_wrap(text, font, ink);
+        let badge = Rect::from_min_size(
+            rect.min + vec2(17.0 * px - galley.size().x - 2.0 * px, -2.0 * px),
+            galley.size() + vec2(2.0, 1.0) * px,
+        );
+        painter.rect_filled(badge, 0.0, amber);
+        painter.galley(badge.min + vec2(px, 0.0), galley, ink);
     }
 }
