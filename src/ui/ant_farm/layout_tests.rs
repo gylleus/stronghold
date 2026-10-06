@@ -977,7 +977,7 @@ fn a_dead_ant_falls_to_the_bottom() {
         at: pos2(0.5, 0.2),
         size: 32.0,
         facing_right: true,
-        red: false,
+        coat: super::sprites::Coat::Plain,
         alpha: 1.0,
     };
     let fall = Fall {
@@ -1178,6 +1178,99 @@ fn parked_ants_sleep_in_the_sleeping_room() {
             .iter()
             .all(|t| !matches!(&t.key, TunnelKey::Repo(r) if r.starts_with("repo-parked")))
     );
+    // Each sleeper lies on a bed of its own in the room; the beds don't overlap.
+    let chamber = scene.tunnels[t].chamber;
+    let sleepers: Vec<&Ant> = scene
+        .ants
+        .iter()
+        .filter(|a| a.id.as_str().starts_with("parked"))
+        .collect();
+    assert!(scene.beds.len() >= sleepers.len());
+    for a in &sleepers {
+        let bed = scene
+            .beds
+            .iter()
+            .find(|b| b.sleeper.as_ref() == Some(&a.id))
+            .unwrap_or_else(|| panic!("{} has a bed", a.id));
+        assert!((bed.rect.center().x - a.pos.x).abs() < 0.5);
+        assert!(bed.rect.bottom() > a.pos.y && bed.rect.top() < a.pos.y + a.size);
+    }
+    for (i, bed) in scene.beds.iter().enumerate() {
+        assert!(chamber.contains_rect(bed.rect), "bed {i} in the room");
+        for other in &scene.beds[i + 1..] {
+            assert!(!bed.rect.intersects(other.rect), "beds overlap");
+        }
+    }
+}
+
+#[test]
+fn only_the_sleeping_room_has_beds() {
+    assert!(scene(&snapshot()).beds.is_empty());
+}
+
+/// Many runs in a tall view stack their chambers two to a column, which draws the ants
+/// bigger than one long row of narrow columns, and no shaft cuts through another chamber.
+#[test]
+fn many_tunnels_stack_chambers_to_draw_ants_bigger() {
+    let mut s = FleetSnapshot::default();
+    s.nodes
+        .push(node("queen", NodeKind::Queen, None, NodeState::Working));
+    for r in 0..10 {
+        let name = format!("r{r}");
+        s.runs.push(run(&name, r % 4, 4));
+        for w in 0..2 {
+            s.nodes.push(node(
+                &format!("{name}-w{w}"),
+                NodeKind::Worker,
+                Some(&name),
+                NodeState::Working,
+            ));
+        }
+    }
+    let size = vec2(1280.0, 1000.0);
+    let crowd = Crowd {
+        tunnels: 10,
+        chamber: 2,
+        ..Crowd::default()
+    };
+    let (px, levels) = pixel_scale(size, crowd);
+    assert_eq!(levels, 2);
+    let rect = Rect::from_min_size(Pos2::ZERO, size);
+    let input = FarmInput {
+        snapshot: &s,
+        hidden: &BTreeSet::new(),
+        pr_ready: &HashSet::new(),
+        building: &HashSet::new(),
+        now_ms: 0,
+    };
+    let scene = layout(&input, rect);
+    assert_eq!(scene.px, px);
+    // One row of ten 128-point columns packs two ants to a chamber only at scale 1.
+    assert_eq!(px, 2.0);
+    let tunnels = &scene.tunnels;
+    assert!(
+        tunnels
+            .iter()
+            .any(|t| tunnels.iter().any(|u| u.chamber.top() > t.chamber.bottom())),
+        "chambers stack"
+    );
+    for (i, t) in tunnels.iter().enumerate() {
+        assert!(rect.contains_rect(t.chamber), "chamber {i} in the view");
+        for (j, u) in tunnels.iter().enumerate().filter(|(j, _)| *j != i) {
+            assert!(
+                !t.chamber.intersects(u.chamber),
+                "chambers {i} and {j} overlap"
+            );
+            assert!(
+                !t.shaft.intersects(u.chamber),
+                "shaft {i} crosses chamber {j}"
+            );
+        }
+    }
+    for a in scene.ants.iter().filter(|a| a.kind == NodeKind::Worker) {
+        let t = &tunnels[tunnel_of(&scene, a.id.as_str())];
+        assert!(t.chamber.contains(a.pos), "{} in its chamber", a.id);
+    }
 }
 
 #[test]

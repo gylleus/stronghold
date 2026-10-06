@@ -30,7 +30,7 @@ use crate::ui::graph::nav::{self, ScrollAction, ScrollSource, route_scroll};
 use death::{Body, Fall};
 use layout::{FarmInput, Pose, Scene, Spot, layout};
 use motion::{Walk, route};
-use sprites::{AntLook, Item, Palette, Sprites};
+use sprites::{AntLook, Coat, Item, Palette, Sprites};
 use zoom::Camera;
 
 /// Redraw interval while an ant walks.
@@ -594,7 +594,7 @@ impl AntFarmView {
                     Some(h) if h.x.abs() > 0.1 => h.x > 0.0,
                     _ => ant.facing_right,
                 },
-                red: ant.pose == Pose::Failed,
+                coat: Coat::new(ant.agent.as_ref(), ant.pose == Pose::Failed),
                 alpha: ant.alpha,
             });
             current.insert(&ant.id, at);
@@ -695,11 +695,14 @@ fn paint_ground(
     for tunnel in &scene.tunnels {
         sprites.passage(painter, tunnel.chamber, px);
     }
+    for bed in &scene.beds {
+        sprites.bed(painter, bed.rect, px);
+    }
 
     // Each tunnel's name and progress under the gallery, above its shaft.
     let font = FontId::monospace(9.0 + 2.0 * px);
     for tunnel in &scene.tunnels {
-        let top = egui::pos2(tunnel.shaft.center().x, scene.gallery.bottom() + 3.0 * px);
+        let top = tunnel.label_top;
         let width = tunnel.chamber.width() + 0.4 * a;
         let text = label(
             painter,
@@ -831,8 +834,18 @@ fn paint_ants(
                 .fold(0.0, f32::max);
             cell = cell.translate(vec2(0.0, -(lift / tpx).round() * tpx));
         }
+        // The name tag stays on the floor; a sleeper in bed lies on its mattress.
+        let tag_at = cell.center_bottom();
+        let bed = scene
+            .beds
+            .iter()
+            .find(|b| b.sleeper.as_ref() == Some(&ant.id))
+            .filter(|_| !walking && ant.pose == Pose::Sleep);
+        if bed.is_some() {
+            cell = cell.translate(vec2(0.0, -layout::SLEEPER_LIFT * tpx));
+        }
         let look = AntLook {
-            red: ant.pose == Pose::Failed,
+            coat: Coat::new(ant.agent.as_ref(), ant.pose == Pose::Failed),
             frame,
             facing_right,
             upside_down: matches!(ant.pose, Pose::Failed | Pose::Sleep) && !walking,
@@ -864,6 +877,9 @@ fn paint_ants(
             continue;
         }
         sprites.ant(painter, cell, look);
+        if let Some(bed) = bed {
+            sprites.blanket(painter, bed.rect, cell, tpx, ant.alpha);
+        }
         if ant.pose == Pose::Carry || (walking && ant.state == crate::model::NodeState::Done) {
             let crumb = Rect::from_center_size(
                 cell.center()
@@ -916,7 +932,7 @@ fn paint_ants(
             let width = 2.0 * scene.cell() - 2.0 * px;
             tag(
                 painter,
-                cell.center_bottom(),
+                tag_at,
                 name,
                 px,
                 width,
@@ -946,7 +962,7 @@ fn paint_falls(
             continue;
         };
         let look = AntLook {
-            red: fall.body.red,
+            coat: fall.body.coat,
             frame: 0,
             facing_right: fall.body.facing_right,
             upside_down: frame.upside_down,

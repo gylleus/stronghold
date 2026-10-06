@@ -5,6 +5,7 @@
 use eframe::egui::{Pos2, Rect, pos2};
 
 use super::motion;
+use super::sprites::Coat;
 
 /// From the hop to hitting the bottom.
 pub const FALL_S: f64 = 1.0;
@@ -25,7 +26,7 @@ pub struct Body {
     pub at: Pos2,
     pub size: f32,
     pub facing_right: bool,
-    pub red: bool,
+    pub coat: Coat,
     pub alpha: f32,
 }
 

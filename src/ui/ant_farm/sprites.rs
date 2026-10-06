@@ -10,8 +10,9 @@ use eframe::egui::{
     self, Color32, ColorImage, Painter, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2,
 };
 
-use super::layout::{Mark, PIPE_H, PIPE_LIP_W};
+use super::layout::{MATTRESS_TOP, Mark, PIPE_H, PIPE_LIP_W};
 use super::nature::Deco;
+use crate::orca::AgentIdentity;
 
 const ANT_GREY: &[u8] = include_bytes!("../../../assets/art/farm/ant_grey.png");
 const ANT_RED: &[u8] = include_bytes!("../../../assets/art/farm/ant_red.png");
@@ -29,10 +30,61 @@ pub const ANT_FRAMES: usize = 2;
 /// Side of a generated soil tile in texels.
 const TILE: usize = 32;
 
+/// An ant's body colors. Claude and Codex ants differ in brightness as well as hue (light
+/// amber against dark slate with teal glints), so they stay apart under color blindness; red
+/// means failed whatever the agent, and amber is kept light so it never reads as red.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Coat {
+    /// No known agent, and the Queen: the sprite's own grey.
+    Plain,
+    Claude,
+    Codex,
+    Failed,
+}
+
+impl Coat {
+    pub fn new(agent: Option<&AgentIdentity>, failed: bool) -> Self {
+        match agent {
+            _ if failed => Coat::Failed,
+            Some(AgentIdentity::Claude) => Coat::Claude,
+            Some(AgentIdentity::Codex) => Coat::Codex,
+            _ => Coat::Plain,
+        }
+    }
+}
+
+/// The grey sprite's colors, outline first, then body, shade, highlight, dark and darkest.
+const GREY_COATS: [[u8; 3]; 6] = [
+    [4, 28, 34],
+    [139, 164, 172],
+    [111, 128, 133],
+    [190, 213, 221],
+    [69, 89, 94],
+    [55, 71, 77],
+];
+/// [`GREY_COATS`] recolored for Claude: light amber.
+const CLAUDE_COATS: [[u8; 3]; 6] = [
+    [44, 22, 6],
+    [226, 162, 94],
+    [192, 126, 68],
+    [250, 212, 156],
+    [142, 86, 42],
+    [112, 66, 34],
+];
+/// [`GREY_COATS`] recolored for Codex: dark slate with teal glints.
+const CODEX_COATS: [[u8; 3]; 6] = [
+    [2, 8, 10],
+    [62, 78, 86],
+    [46, 60, 66],
+    [84, 200, 186],
+    [32, 42, 46],
+    [24, 32, 36],
+];
+
 /// How to draw one ant.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AntLook {
-    pub red: bool,
+    pub coat: Coat,
     /// Walk frame, wrapped to [`ANT_FRAMES`].
     pub frame: usize,
     pub facing_right: bool,
@@ -91,6 +143,8 @@ impl Palette {
 pub struct Sprites {
     ant_grey: TextureHandle,
     ant_red: TextureHandle,
+    ant_claude: TextureHandle,
+    ant_codex: TextureHandle,
     crown: TextureHandle,
     coin: TextureHandle,
     pile: TextureHandle,
@@ -114,6 +168,13 @@ impl Sprites {
                 TextureOptions::NEAREST,
             )
         };
+        let recolored = |name: &str, coats: [[u8; 3]; 6]| {
+            ctx.load_texture(
+                format!("ant_farm/{name}"),
+                recolor(decode(ANT_GREY), &GREY_COATS, &coats),
+                TextureOptions::NEAREST,
+            )
+        };
         let tile = |name: &str, image: ColorImage| {
             ctx.load_texture(
                 format!("ant_farm/{name}"),
@@ -124,6 +185,8 @@ impl Sprites {
         Self {
             ant_grey: png("ant_grey", ANT_GREY),
             ant_red: png("ant_red", ANT_RED),
+            ant_claude: recolored("ant_claude", CLAUDE_COATS),
+            ant_codex: recolored("ant_codex", CODEX_COATS),
             crown: png("crown", CROWN),
             coin: png("coin", COIN),
             pile: png("pile", COIN_PILE),
@@ -251,12 +314,60 @@ impl Sprites {
         tiled(painter, self.tunnel.id(), rect, px);
     }
 
+    /// A wooden bed in the sleeping room filling `rect` (see [`super::layout::BED_W`]): a
+    /// headboard on the left, where a sleeper's head lies, a mattress and a pillow.
+    pub fn bed(&self, painter: &Painter, rect: Rect, px: f32) {
+        let wood = Color32::from_rgb(0x8a, 0x4b, 0x1c);
+        let dark = Color32::from_rgb(0x5a, 0x30, 0x12);
+        let sheet = Color32::from_rgb(0xe8, 0xdc, 0xc0);
+        let pillow = Color32::from_rgb(0xfb, 0xf4, 0xe6);
+        let at = |x: f32, y: f32, w: f32, h: f32, color: Color32| {
+            let min = rect.min + vec2(x * px, y * px);
+            painter.rect_filled(Rect::from_min_size(min, vec2(w * px, h * px)), 0.0, color);
+        };
+        let (w, h) = (rect.width() / px, rect.height() / px);
+        let mattress = h - MATTRESS_TOP;
+        // Legs, the side rail, the mattress on it, the boards at either end.
+        at(1.0, h - 1.0, 1.0, 1.0, dark);
+        at(w - 2.0, h - 1.0, 1.0, 1.0, dark);
+        at(0.0, h - 3.0, w, 2.0, wood);
+        at(0.0, h - 2.0, w, 1.0, dark);
+        at(2.0, mattress, w - 3.0, 3.0, sheet);
+        at(
+            2.0,
+            mattress + 2.0,
+            w - 3.0,
+            1.0,
+            Color32::from_rgb(0xc8, 0xb8, 0x98),
+        );
+        at(0.0, 0.0, 2.0, h - 1.0, wood);
+        at(0.0, 0.0, 2.0, 1.0, dark);
+        at(w - 1.0, mattress - 1.0, 1.0, h - mattress, wood);
+        at(3.0, mattress - 2.0, 4.0, 2.0, pillow);
+    }
+
+    /// The blanket over the back half of the sleeper at `cell` lying on the bed at `bed`,
+    /// its head and kicking legs left out.
+    pub fn blanket(&self, painter: &Painter, bed: Rect, cell: Rect, px: f32, alpha: f32) {
+        let quilt = Color32::from_rgb(0x4a, 0x6f, 0xb8).gamma_multiply(alpha);
+        let fold = Color32::from_rgb(0x9c, 0xb8, 0xe8).gamma_multiply(alpha);
+        let top = bed.bottom() - (MATTRESS_TOP + 3.0) * px;
+        let body = Rect::from_min_max(
+            pos2(cell.left() + 0.45 * cell.width(), top),
+            pos2(bed.right() - px, bed.bottom() - (MATTRESS_TOP - 2.0) * px),
+        );
+        painter.rect_filled(body, 0.0, quilt);
+        let edge = Rect::from_min_size(body.min, vec2(px, body.height()));
+        painter.rect_filled(edge, 0.0, fold);
+    }
+
     /// An ant filling `cell`.
     pub fn ant(&self, painter: &Painter, cell: Rect, look: AntLook) {
-        let texture = if look.red {
-            &self.ant_red
-        } else {
-            &self.ant_grey
+        let texture = match look.coat {
+            Coat::Plain => &self.ant_grey,
+            Coat::Claude => &self.ant_claude,
+            Coat::Codex => &self.ant_codex,
+            Coat::Failed => &self.ant_red,
         };
         let frame = look.frame % ANT_FRAMES;
         let h = 1.0 / ANT_FRAMES as f32;
@@ -561,6 +672,18 @@ fn decode(bytes: &[u8]) -> ColorImage {
     ColorImage::from_rgba_unmultiplied(size, image.as_flat_samples().as_slice())
 }
 
+/// `image` with each color of `from` swapped for the same slot of `to`; others kept.
+fn recolor(mut image: ColorImage, from: &[[u8; 3]], to: &[[u8; 3]]) -> ColorImage {
+    for pixel in &mut image.pixels {
+        let [r, g, b, a] = pixel.to_srgba_unmultiplied();
+        if let Some(i) = from.iter().position(|c| *c == [r, g, b]) {
+            let [r, g, b] = to[i];
+            *pixel = Color32::from_rgba_unmultiplied(r, g, b, a);
+        }
+    }
+    image
+}
+
 /// Soil shades, darkest last; the last is used sparsely for pebbles.
 const SOIL: [Color32; 4] = [
     Color32::from_rgb(0x8a, 0x5a, 0x34),
@@ -623,4 +746,37 @@ pub fn grass_tile() -> ColorImage {
         }
     }
     image
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::graph::contrast_ratio;
+
+    #[test]
+    fn coats_cover_every_color_of_the_grey_ant() {
+        let image = decode(ANT_GREY);
+        for pixel in image.pixels.iter().filter(|p| p.a() > 0) {
+            let [r, g, b, _] = pixel.to_srgba_unmultiplied();
+            assert!(GREY_COATS.contains(&[r, g, b]), "unmapped {pixel:?}");
+        }
+    }
+
+    /// Claude and Codex ants must differ in brightness, not only hue.
+    #[test]
+    fn claude_and_codex_differ_in_brightness() {
+        let body = |coats: [[u8; 3]; 6]| {
+            let [r, g, b] = coats[1];
+            Color32::from_rgb(r, g, b)
+        };
+        let ratio = contrast_ratio(body(CLAUDE_COATS), body(CODEX_COATS));
+        assert!(ratio > 3.0, "{ratio}");
+    }
+
+    #[test]
+    fn failed_wins_over_the_agent() {
+        assert_eq!(Coat::new(Some(&AgentIdentity::Claude), true), Coat::Failed);
+        assert_eq!(Coat::new(Some(&AgentIdentity::Codex), false), Coat::Codex);
+        assert_eq!(Coat::new(None, false), Coat::Plain);
+    }
 }
