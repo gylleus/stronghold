@@ -76,6 +76,10 @@ pub struct WorktreePanel {
 }
 
 impl WorktreePanel {
+    pub fn reduced_motion(&self) -> bool {
+        self.reduced_motion.load(Ordering::Relaxed)
+    }
+
     pub fn new(ctx: &egui::Context) -> Self {
         let reduced_motion = Arc::new(AtomicBool::new(false));
         let flag = reduced_motion.clone();
@@ -439,7 +443,7 @@ impl WorktreePanel {
             (farm.width() / 2.0 - 1.0).min(reach),
             (farm.height() / 2.0 - 1.0).min(reach + 18.0),
         ));
-        if self.reduced_motion.load(Ordering::Relaxed) {
+        if self.reduced_motion() {
             let center = inner.right_bottom();
             draw_broom(&painter, center + lift, 0.0, 1.0, scale);
             broom_label(&painter, center - lift - vec2(0.0, 6.0), label);
@@ -466,7 +470,7 @@ impl WorktreePanel {
         let Some((done, total)) = self.progress() else {
             return;
         };
-        let reduced = self.reduced_motion.load(Ordering::Relaxed);
+        let reduced = self.reduced_motion();
         let screen = ctx.content_rect();
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,

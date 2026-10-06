@@ -2,6 +2,7 @@
 //! agents), one of each state, to check how it looks.
 //!
 //! `cargo run --example ant_farm [--light] [--graph] [--sweep] [--shot out.png]`.
+//! `--receipt-at-ms 31` freezes a receipt mid-shake; `--reduced-motion` shows its flash.
 //! `--bridge-down` and `--approval` show the Envoy receiver health. `--graph`
 //! shows the same fleet as the graph; `--sweep` flies the worktree cleanup's broom around the
 //! farm. Every few seconds one worker
@@ -19,6 +20,7 @@ use myrstack::model::{
 };
 use myrstack::traffic::{AgentMessage, MessageKind};
 use myrstack::ui::ant_farm::{AntFarmView, Pulse};
+use myrstack::ui::envoy_receipt::ReceiptCue;
 use myrstack::ui::graph::GraphView;
 use myrstack::ui::worktrees::WorktreePanel;
 use myrstack::worktrees::SweepMarker;
@@ -40,6 +42,12 @@ fn main() -> eframe::Result {
     } else {
         myrstack::envoy::EnvoyHealth::Listening
     };
+    let receipt_at_ms = args.iter().position(|a| a == "--receipt-at-ms").map(|i| {
+        args[i + 1]
+            .parse::<i64>()
+            .expect("receipt age in milliseconds")
+    });
+    let reduced_motion = args.iter().any(|a| a == "--reduced-motion");
     let show_graph = args.iter().any(|a| a == "--graph");
     let sweep = args.iter().any(|a| a == "--sweep").then(sweep_marker);
     eframe::run_native(
@@ -87,6 +95,8 @@ fn main() -> eframe::Result {
                 },
                 shot,
                 show_graph,
+                receipt_at_ms,
+                reduced_motion,
                 started: Instant::now(),
                 flipped_at: Instant::now(),
                 stage: 0,
@@ -103,6 +113,8 @@ struct Demo {
     farm: AntFarmView,
     shot: Option<String>,
     show_graph: bool,
+    receipt_at_ms: Option<i64>,
+    reduced_motion: bool,
     started: Instant,
     flipped_at: Instant,
     thinking: bool,
@@ -207,6 +219,13 @@ impl Demo {
 
 impl eframe::App for Demo {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let receipt = self
+            .receipt_at_ms
+            .map_or_else(ReceiptCue::default, |elapsed| {
+                ReceiptCue::at(Some(0), elapsed, self.reduced_motion)
+            });
+        self.graph.set_envoy_receipt(receipt);
+        self.farm.set_envoy_receipt(receipt);
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {

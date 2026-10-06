@@ -5,12 +5,22 @@ use eframe::egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Stroke, vec2};
 use super::{layout::Scene, sprites::Sprites};
 use crate::envoy::EnvoyHealth;
 
-pub fn paint(painter: &Painter, sprites: &Sprites, scene: &Scene, health: EnvoyHealth, now_s: f64) {
-    let Some(room) = scene.comms else { return };
+pub fn paint(
+    painter: &Painter,
+    sprites: &Sprites,
+    scene: &Scene,
+    health: EnvoyHealth,
+    now_s: f64,
+    receipt: crate::ui::envoy_receipt::ReceiptCue,
+) {
+    let Some(mut room) = scene.comms else { return };
     let px = room.px;
     let ink = Color32::from_rgb(25, 39, 48);
     let steel = Color32::from_rgb(85, 114, 130);
-    let metal = if health == EnvoyHealth::Stopped {
+    let metal = if receipt.highlight > 0.0 {
+        Color32::from_rgb(255, 220, 120)
+            .lerp_to_gamma(Color32::from_rgb(188, 215, 219), 1.0 - receipt.highlight)
+    } else if health == EnvoyHealth::Stopped {
         Color32::from_rgb(82, 91, 94)
     } else {
         Color32::from_rgb(188, 215, 219)
@@ -26,6 +36,10 @@ pub fn paint(painter: &Painter, sprites: &Sprites, scene: &Scene, health: EnvoyH
     };
     sprites.passage(painter, room.shaft, scene.px);
     sprites.passage(painter, room.chamber, scene.px);
+    // Move the equipment, keeping the soil cutouts and hit geometry fixed.
+    let offset = vec2(receipt.offset, 0.0);
+    room.chamber = room.chamber.translate(offset);
+    room.dish += offset;
     for leg in [room.dish, room.cable_elbow(), room.cable_port()].windows(2) {
         painter.line_segment([leg[0], leg[1]], Stroke::new(3.0 * px, ink));
         painter.line_segment([leg[0], leg[1]], Stroke::new(px, metal));
@@ -154,9 +168,9 @@ pub fn headphones(painter: &Painter, cell: Rect, px: f32, facing_right: bool, al
     }
 }
 
-pub fn tray(painter: &Painter, scene: &Scene, pending: usize, hovered: bool) {
+pub fn tray(painter: &Painter, scene: &Scene, pending: usize, hovered: bool, offset: f32) {
     let Some(room) = scene.comms else { return };
-    let rect = room.tray_rect();
+    let rect = room.tray_rect().translate(vec2(offset, 0.0));
     let px = room.px;
     let ink = Color32::from_rgb(25, 39, 48);
     let metal = Color32::from_rgb(188, 215, 219);

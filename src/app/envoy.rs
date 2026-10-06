@@ -21,6 +21,7 @@ use crate::orca::TerminalInput;
 use crate::traffic::{AgentMessage, MessageKind};
 
 pub const DRAFTS_TARGET: &str = "envoy:drafts";
+const SHAKE_COOLDOWN_MS: i64 = 8_000;
 
 pub struct AppEnvoy {
     handle: Option<String>,
@@ -41,6 +42,7 @@ pub struct AppEnvoy {
     traffic_handle: Option<String>,
     forward_after_ms: i64,
     notices: HashSet<String>,
+    pub shake_started_ms: Option<i64>,
     pub open_request: bool,
     pub error: Option<String>,
 }
@@ -113,6 +115,7 @@ impl AppEnvoy {
             traffic_handle: None,
             forward_after_ms: 0,
             notices: HashSet::new(),
+            shake_started_ms: None,
             open_request: false,
             error,
         }
@@ -178,6 +181,44 @@ impl AppEnvoy {
         self.inbox.mark_forwarded(&ids);
         if let Some(worker) = &self.worker {
             let _ = worker.submit(Work::Forwarded(ids));
+        }
+    }
+
+    fn forward_done(
+        &mut self,
+        result: &ActionResult,
+        now: i64,
+        mut delivered: impl FnMut(AgentMessage),
+    ) {
+        if self
+            .forwarding
+            .as_ref()
+            .is_none_or(|(id, _)| *id != result.id)
+        {
+            return;
+        }
+        let (_, batch) = self.forwarding.take().expect("matching action");
+        if result.outcome.is_ok() {
+            if self
+                .shake_started_ms
+                .is_none_or(|start| now - start >= SHAKE_COOLDOWN_MS)
+            {
+                self.shake_started_ms = Some(now);
+            }
+            for _ in &batch {
+                delivered(AgentMessage::new(
+                    "slack",
+                    result.action.handle(),
+                    MessageKind::Relay,
+                ));
+            }
+            self.acknowledge(&batch);
+        }
+        if result.outcome.is_err() && self.handle.is_some() {
+            for event in batch.into_iter().rev() {
+                self.pending.push_front(event);
+            }
+            self.forward_after_ms = now + 30_000;
         }
     }
 
@@ -730,31 +771,9 @@ impl MyrstackApp {
         {
             self.traffic.sender().send(message);
         }
-        if self
-            .envoy_core
-            .forwarding
-            .as_ref()
-            .is_none_or(|(id, _)| *id != result.id)
-        {
-            return;
-        }
-        let (_, batch) = self.envoy_core.forwarding.take().expect("matching action");
-        if result.outcome.is_ok() {
-            for _ in &batch {
-                self.traffic.sender().send(AgentMessage::new(
-                    "slack",
-                    result.action.handle(),
-                    MessageKind::Relay,
-                ));
-            }
-            self.envoy_core.acknowledge(&batch);
-        }
-        if result.outcome.is_err() && self.envoy_core.handle.is_some() {
-            for event in batch.into_iter().rev() {
-                self.envoy_core.pending.push_front(event);
-            }
-            self.envoy_core.forward_after_ms = now_ms() + 30_000;
-        }
+        let traffic = self.traffic.sender();
+        self.envoy_core
+            .forward_done(result, now_ms(), |message| traffic.send(message));
     }
 }
 

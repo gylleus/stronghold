@@ -488,3 +488,146 @@ fn send_failure_raises_targeted_warning_and_keeps_history_error() {
         Some("fixture send failed")
     );
 }
+
+fn receipt_event(ts: &str) -> InboundEvent {
+    InboundEvent {
+        channel_kind: "slack".into(),
+        conversation: "C123".into(),
+        ts: ts.into(),
+        thread_ts: None,
+        user: "U123".into(),
+        user_name: "Avery".into(),
+        text: "Fixture message".into(),
+        kind: crate::envoy::channel::EventKind::AgentComms,
+        permalink: None,
+    }
+}
+
+fn submit_receipt_batch(core: &mut AppEnvoy, now: i64, id: ActionId) -> ActionResult {
+    let (action, batch) = core.next_forward(now).expect("pending batch");
+    core.forwarding = Some((id, batch));
+    ActionResult {
+        id,
+        action,
+        outcome: Ok(()),
+        note: None,
+    }
+}
+
+#[test]
+fn receipt_starts_only_after_matching_success_and_respects_cooldown() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    let events = vec![receipt_event("1.000001"), receipt_event("1.000002")];
+    let mut inbox = Inbox::default();
+    for event in &events {
+        inbox.insert(event.clone());
+    }
+    core.merge_polled(inbox, events);
+    assert_eq!(core.shake_started_ms, None, "ingestion is not delivery");
+    let result = submit_receipt_batch(&mut core, 100, 1);
+    assert_eq!(core.shake_started_ms, None, "submission is not delivery");
+    core.forward_done(
+        &ActionResult {
+            id: 2,
+            ..result.clone()
+        },
+        100,
+        |_| panic!("unrelated action"),
+    );
+    assert_eq!(core.shake_started_ms, None);
+    assert!(core.forwarding.is_some());
+    let mut traffic = Vec::new();
+    core.forward_done(&result, 100, |m| traffic.push(m));
+    assert_eq!(traffic.len(), 2);
+    assert_eq!(core.shake_started_ms, Some(100));
+    assert!(core.inbox.unforwarded().is_empty());
+    core.forward_done(&result, 10_000, |_| panic!("duplicate completion"));
+    assert_eq!(core.shake_started_ms, Some(100));
+
+    for (now, expected) in [
+        (200, 100),
+        (100 + SHAKE_COOLDOWN_MS - 1, 100),
+        (100 + SHAKE_COOLDOWN_MS, 100 + SHAKE_COOLDOWN_MS),
+    ] {
+        core.pending
+            .push_back(receipt_event(&format!("{now}.000001")));
+        let result = submit_receipt_batch(&mut core, now, 3);
+        core.forward_done(&result, now, |_| {});
+        assert_eq!(core.shake_started_ms, Some(expected));
+    }
+}
+
+#[test]
+fn failed_forward_and_retry_submission_do_not_start_receipt() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    let events = vec![receipt_event("1.000001"), receipt_event("1.000002")];
+    core.pending.extend(events.clone());
+    let mut result = submit_receipt_batch(&mut core, 100, 1);
+    result.outcome = Err("fixture failure".into());
+    core.forward_done(&result, 100, |_| panic!("failed delivery"));
+    assert_eq!(core.shake_started_ms, None);
+    assert_eq!(core.pending.iter().cloned().collect::<Vec<_>>(), events);
+    assert!(core.next_forward(30_099).is_none());
+    let result = submit_receipt_batch(&mut core, 30_100, 2);
+    assert_eq!(core.shake_started_ms, None);
+    core.forward_done(&result, 30_101, |_| {});
+    assert_eq!(core.shake_started_ms, Some(30_101));
+}
+
+#[test]
+fn filtered_backlog_and_duplicate_events_do_not_start_receipt() {
+    use crate::envoy::channel::Channel;
+    let dir = tempfile::tempdir().unwrap();
+    let bridge = dir.path().join("bridge");
+    std::fs::create_dir_all(bridge.join("channels")).unwrap();
+    std::fs::write(bridge.join("fixture-only"), "").unwrap();
+    let event = receipt_event("2.000001");
+    let mut inbox = Inbox::default();
+    inbox.first_enabled_ms = Some(2_000);
+    inbox.insert(event.clone());
+    let lines = ["1.000001", "2.000001"].map(|ts| {
+        json!({"type":"message", "channel":"C123", "ts":ts, "user":"U123", "text":"Fixture message"}).to_string()
+    }).join("\n");
+    std::fs::write(bridge.join("channels/C123.jsonl"), format!("{lines}\n")).unwrap();
+    let path = dir.path().join("inbox.json");
+    let mut channel = crate::envoy::slack::SlackChannel::new(
+        FakeSlack::default(),
+        inbox,
+        path.clone(),
+        bridge.clone(),
+        EnvoySettings {
+            channels: vec!["C123".into()],
+            ..Default::default()
+        },
+    );
+    let batch = channel.poll(3_000).unwrap();
+    assert!(
+        batch.events.is_empty(),
+        "backlog and duplicate are filtered"
+    );
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    core.merge_polled(Inbox::load(&path).unwrap(), batch.events);
+    assert!(core.next_forward(3_000).is_none());
+    assert_eq!(core.shake_started_ms, None);
+
+    let fresh = json!({"type":"message", "channel":"C123", "ts":"3.000001", "user":"U123", "text":"Fixture message"});
+    std::fs::write(
+        bridge.join("channels/C123.jsonl"),
+        format!("{lines}\n{fresh}\n"),
+    )
+    .unwrap();
+    let batch = channel.poll(3_001).unwrap();
+    assert_eq!(batch.events.len(), 1, "same channel accepts a fresh event");
+    assert_eq!(batch.events[0].ts, "3.000001");
+    core.merge_polled(Inbox::load(&path).unwrap(), batch.events);
+    assert!(core.next_forward(3_001).is_some());
+    assert_eq!(
+        core.shake_started_ms, None,
+        "fresh ingestion still is not delivery"
+    );
+}

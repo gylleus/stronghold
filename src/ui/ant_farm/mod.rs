@@ -187,6 +187,7 @@ pub struct AntFarmView {
     queen_focused: bool,
     envoy_health: Option<crate::envoy::EnvoyHealth>,
     envoy_pending: usize,
+    envoy_receipt: crate::ui::envoy_receipt::ReceiptCue,
     /// Messages carried between ants; see [`mail`].
     mail: crate::ui::envelope::Flights,
     /// The part of the farm on screen; see [`zoom`].
@@ -218,6 +219,10 @@ impl AntFarmView {
 
     pub fn set_envoy_pending(&mut self, pending: usize) {
         self.envoy_pending = pending;
+    }
+
+    pub fn set_envoy_receipt(&mut self, receipt: crate::ui::envoy_receipt::ReceiptCue) {
+        self.envoy_receipt = receipt;
     }
 
     pub fn pulse(&mut self, pulse: Pulse) {
@@ -272,6 +277,7 @@ impl AntFarmView {
             births: &self.births,
             queen_busy: self.queen_busy,
             queen_focused: self.queen_focused,
+            envoy_receipt: self.envoy_receipt,
         };
         let sprites = self.sprites.get_or_insert_with(|| Sprites::load(ui.ctx()));
         let painter = ui.painter_at(rect);
@@ -293,6 +299,7 @@ impl AntFarmView {
             daylight,
             pipe_stretch,
         );
+        self.envoy_receipt.repaint(ui.ctx());
         comms::paint(
             &painter,
             sprites,
@@ -300,6 +307,7 @@ impl AntFarmView {
             self.envoy_health
                 .unwrap_or(crate::envoy::EnvoyHealth::Stopped),
             now_s,
+            self.envoy_receipt,
         );
         paint_calls(&painter, sprites, &scene, &effects, now_s, true);
         let pointer = response.hover_pos().map(|p| self.camera.to_farm(rect, p));
@@ -321,7 +329,13 @@ impl AntFarmView {
         paint_falls(&painter, sprites, &scene, &self.falls, now_s);
         mail::paint(&painter, &scene, &placed, self.mail.tick(now_s), now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
-        comms::tray(&painter, &scene, self.envoy_pending, tray_hovered);
+        comms::tray(
+            &painter,
+            &scene,
+            self.envoy_pending,
+            tray_hovered,
+            self.envoy_receipt.offset,
+        );
         zoom::apply(
             ui.ctx(),
             painter.layer_id(),
@@ -777,6 +791,9 @@ fn paint_ants(
     for (ant, at) in scene.ants.iter().zip(placed) {
         let walking = at.heading.is_some();
         let mut cell = Rect::from_center_size(at.pos, Vec2::splat(ant.size));
+        if ant.kind == crate::model::NodeKind::Envoy {
+            cell = cell.translate(vec2(effects.envoy_receipt.offset, 0.0));
+        }
         let tpx = ant.size / layout::CELL;
         let facing_right = match at.heading {
             Some(h) if h.x.abs() > 0.1 => h.x > 0.0,
@@ -955,6 +972,7 @@ struct Effects<'a> {
     births: &'a [f64],
     queen_busy: bool,
     queen_focused: bool,
+    envoy_receipt: crate::ui::envoy_receipt::ReceiptCue,
 }
 
 /// Where the Queen sits.
