@@ -18,7 +18,8 @@ const ALL_STATES: [NodeState; 6] = [
     NodeState::Done,
     NodeState::Failed,
 ];
-const ALL_KINDS: [NodeKind; 5] = [
+const ALL_KINDS: [NodeKind; 6] = [
+    NodeKind::Envoy,
     NodeKind::Coordinator,
     NodeKind::Attendant,
     NodeKind::Worker,

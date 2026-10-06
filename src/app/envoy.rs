@@ -53,10 +53,35 @@ impl EnvoyIdentity for AppEnvoy {
 
 impl AppEnvoy {
     pub fn start(ctx: &egui::Context) -> Self {
-        Self::at(crate::claude::hook::data_dir(), ctx)
+        Self::at(
+            crate::claude::hook::data_dir(),
+            ctx,
+            crate::envoy::slack::SlackCli,
+            crate::envoy::slack::bridge_dir(),
+        )
     }
 
-    pub fn at(dir: PathBuf, ctx: &egui::Context) -> Self {
+    pub fn at(
+        dir: PathBuf,
+        ctx: &egui::Context,
+        io: impl crate::envoy::slack::SlackIo + 'static,
+        bridge: PathBuf,
+    ) -> Self {
+        let mut core = Self::load(dir.clone());
+        let wake = ctx.clone();
+        if core.error.is_none() {
+            core.worker = Some(Worker::spawn(
+                dir.join(crate::envoy::inbox::INBOX_FILE),
+                core.inbox.clone(),
+                io,
+                bridge,
+                move || wake.request_repaint(),
+            ));
+        }
+        core
+    }
+
+    fn load(dir: PathBuf) -> Self {
         let inbox_path = dir.join(crate::envoy::inbox::INBOX_FILE);
         let loaded = Inbox::load(&inbox_path);
         let drafts = DraftQueue::load(dir.join(crate::envoy::drafts::DRAFTS_FILE));
@@ -69,16 +94,12 @@ impl AppEnvoy {
             .or_else(|| drafts.as_ref().err().cloned())
             .or_else(|| relays.as_ref().err().cloned());
         let inbox = loaded.unwrap_or_default();
-        let wake = ctx.clone();
-        let worker = error
-            .is_none()
-            .then(|| Worker::spawn(inbox_path, inbox.clone(), move || wake.request_repaint()));
         Self {
             handle: None,
             settings: EnvoySettings::default(),
             inbox,
             drafts: drafts.ok(),
-            worker,
+            worker: None,
             bridge: BridgeStatus::Missing,
             bridge_seen: false,
             error_notified: None,
@@ -136,6 +157,30 @@ impl AppEnvoy {
         self.pending.clear();
     }
 
+    fn merge_polled(&mut self, mut inbox: Inbox, events: Vec<InboundEvent>) {
+        self.pending.retain(|e| inbox.get(&e.id()).is_some());
+        self.acknowledged.retain(|id| inbox.get(id).is_some());
+        inbox.mark_forwarded(&self.acknowledged.iter().cloned().collect::<Vec<_>>());
+        self.inbox = inbox;
+        self.error = None;
+        self.error_notified = None;
+        if self.handle.is_some() {
+            self.pending.extend(events);
+            while self.pending.len() > 2000 {
+                self.pending.pop_front();
+            }
+        }
+    }
+
+    fn acknowledge(&mut self, batch: &[InboundEvent]) {
+        let ids: Vec<_> = batch.iter().map(InboundEvent::id).collect();
+        self.acknowledged.extend(ids.iter().cloned());
+        self.inbox.mark_forwarded(&ids);
+        if let Some(worker) = &self.worker {
+            let _ = worker.submit(Work::Forwarded(ids));
+        }
+    }
+
     fn observe_bridge(&mut self, bridge: BridgeStatus) -> bool {
         let notify = self.handle.is_some()
             && (!self.bridge_seen || self.bridge != bridge)
@@ -147,8 +192,12 @@ impl AppEnvoy {
 
     pub fn apply_status(&self, status: &mut EnvoyStatus) {
         status.bridge = self.bridge;
-        status.pending_drafts = self.drafts.as_ref().map_or(0, DraftQueue::pending_count);
+        status.pending_drafts = self.pending_count();
         status.dry_run = self.settings.dry_run;
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.drafts.as_ref().map_or(0, DraftQueue::pending_count)
     }
 
     pub fn drafts(&self) -> &[Draft] {
@@ -178,6 +227,264 @@ impl AppEnvoy {
                 .unwrap_or("Envoy worker unavailable".into())
         })
     }
+    fn request(&mut self, command: &EnvoyCommand) -> Result<Value, String> {
+        crate::envoy::authorize(self, &command.origin)?;
+        let method = command.method.as_str();
+        let args = &command.args;
+        match method {
+            "envoy_inbox" => {
+                let since = optional(args, "since")?;
+                if let Some(ts) = since {
+                    crate::envoy::slack::validate_ts(ts)?;
+                }
+                let limit = match args.get("limit") {
+                    None => 100,
+                    Some(v) => v
+                        .as_u64()
+                        .filter(|n| (1..=2000).contains(n))
+                        .ok_or("limit must be between 1 and 2000")?
+                        as usize,
+                };
+                Ok(json!({"events":self.inbox.since(since, limit)}))
+            }
+            "envoy_drafts" => {
+                let status = optional(args, "status")?
+                    .map(|s| {
+                        serde_json::from_value::<DraftStatus>(json!(s))
+                            .map_err(|_| "Unknown draft status")
+                    })
+                    .transpose()?;
+                Ok(
+                    json!({"drafts":self.drafts().iter().filter(|d| status.is_none_or(|s| s==d.status)).collect::<Vec<_>>()}),
+                )
+            }
+            "envoy_draft" | "envoy_propose_task" => {
+                let draft = if method == "envoy_draft" {
+                    let target: ReplyTo = serde_json::from_value(args["in_reply_to"].clone())
+                        .map_err(|_| "in_reply_to requires conversation and ts")?;
+                    let event = self
+                        .inbox
+                        .get(&format!("{}:{}", target.conversation, target.ts))
+                        .ok_or("Draft must reply to a retained inbox event")?;
+                    let thread_ts = optional(args, "thread_ts")?
+                        .map(str::to_owned)
+                        .or_else(|| event.thread_ts.clone());
+                    let mut draft = Draft::reply(
+                        target,
+                        thread_ts,
+                        required(args, "text")?.into(),
+                        required(args, "rationale")?.into(),
+                        now_ms(),
+                    );
+                    draft.slack_link = event.permalink.clone();
+                    draft
+                } else {
+                    Draft::proposal(
+                        required(args, "summary")?.into(),
+                        optional(args, "repo")?.map(str::to_owned),
+                        required(args, "why")?.into(),
+                        required(args, "slack_link")?.into(),
+                        now_ms(),
+                    )
+                };
+                let draft = self.queue()?.create(draft)?;
+                Ok(json!({"draft":draft}))
+            }
+            _ => Err("Unknown Envoy method".into()),
+        }
+    }
+
+    fn envoy_approve(
+        &mut self,
+        id: &str,
+        edited_text: Option<&str>,
+        queen_ready: bool,
+        queen: impl FnOnce(&str) -> bool,
+    ) -> Result<bool, String> {
+        let proposal = self
+            .drafts()
+            .iter()
+            .any(|d| d.id == id && d.kind == DraftKind::TaskProposal);
+        if !self.settings.dry_run {
+            if proposal && !queen_ready {
+                return Err("Queen chat is busy; try approval when she is ready".into());
+            }
+            if !proposal {
+                self.worker()?;
+            }
+        }
+        let queue = self
+            .drafts
+            .as_mut()
+            .ok_or("Envoy draft store unavailable")?;
+        apply_approval(
+            queue,
+            id,
+            edited_text,
+            self.settings.dry_run,
+            now_ms(),
+            |draft| {
+                if draft.kind == DraftKind::TaskProposal {
+                    if queen(&draft.queen_request()) {
+                        Ok(true)
+                    } else {
+                        Err("Queen chat refused the request".into())
+                    }
+                } else {
+                    let worker = self.worker.as_ref().ok_or("Envoy worker unavailable")?;
+                    worker.submit(Work::Send {
+                        id: id.into(),
+                        message: draft.outbound()?,
+                    })?;
+                    if let Some(from) = &self.traffic_handle {
+                        self.outgoing.insert(id.into(), from.clone());
+                    }
+                    Ok(false)
+                }
+            },
+        )
+    }
+
+    fn poll_updates(&mut self) -> (Vec<Incoming>, Vec<AgentMessage>) {
+        let mut notifications = Vec::new();
+        let mut traffic = Vec::new();
+        let updates = self.worker.as_ref().map_or_else(Vec::new, Worker::updates);
+        for update in updates {
+            match update {
+                Update::Polled {
+                    inbox,
+                    events,
+                    bridge,
+                    notices,
+                } => {
+                    self.merge_polled(inbox, events);
+                    if self.observe_bridge(bridge) {
+                        notifications.push(Incoming::new(
+                            Source::Envoy,
+                            Severity::Warn,
+                            "Envoy bridge down",
+                            "Slack channel ingestion is falling back to polling.",
+                        ));
+                    }
+                    let current: HashSet<String> = notices.into_iter().collect();
+                    for notice in current
+                        .difference(&self.notices)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                    {
+                        notifications.push(Incoming::new(
+                            Source::Envoy,
+                            Severity::Warn,
+                            "Envoy ingestion",
+                            &notice,
+                        ));
+                    }
+                    self.notices = current;
+                }
+                Update::Sent { id, result } => {
+                    if let Err(error) = &result {
+                        notifications.push(
+                            Incoming::new(
+                                Source::Envoy,
+                                Severity::Warn,
+                                "Envoy reply failed",
+                                error,
+                            )
+                            .with_target(DRAFTS_TARGET),
+                        );
+                    }
+                    if let Some(from) = self.outgoing.remove(&id)
+                        && result.is_ok()
+                    {
+                        traffic.push(AgentMessage::new(from, "slack", MessageKind::Relay));
+                    }
+                    if let Err(e) = self.queue().and_then(|q| q.finish(&id, result, now_ms())) {
+                        self.error = Some(e);
+                    }
+                }
+                Update::Error(error) => {
+                    self.error = Some(error);
+                }
+            }
+        }
+        if self.error != self.error_notified {
+            if let Some(error) = self.error.clone() {
+                notifications.push(Incoming::new(
+                    Source::Envoy,
+                    Severity::Warn,
+                    "Envoy storage unavailable",
+                    &error,
+                ));
+            }
+            self.error_notified = self.error.clone();
+        }
+        (notifications, traffic)
+    }
+
+    fn next_forward(&mut self, now: i64) -> Option<(Action, Vec<InboundEvent>)> {
+        if self.pending.is_empty() || self.forwarding.is_some() || now < self.forward_after_ms {
+            return None;
+        }
+        let handle = self.handle.clone()?;
+        let batch: Vec<_> = self.pending.drain(..self.pending.len().min(20)).collect();
+        let text = batch
+            .iter()
+            .map(InboundEvent::summary)
+            .collect::<Vec<_>>()
+            .join(" | ");
+        Some((
+            Action::Send {
+                handle,
+                input: TerminalInput::line(text),
+            },
+            batch,
+        ))
+    }
+
+    fn reserve_relay(
+        &mut self,
+        request: RelayRequest,
+        ready: bool,
+    ) -> Result<crate::envoy::relay::RelayRecord, String> {
+        if !self.settings.dry_run && !ready {
+            return Err(
+                "Relay target must be idle at an empty agent prompt with no pending input".into(),
+            );
+        }
+        let mut limiter = self.relays.clone();
+        let record = limiter.reserve(request, self.settings.dry_run, now_ms())?;
+        limiter.save(&self.relay_path)?;
+        self.relays = limiter;
+        Ok(record)
+    }
+
+    fn envoy_edit(&mut self, id: &str, text: &str) -> Result<(), String> {
+        self.queue()?.edit(id, text, now_ms())
+    }
+
+    fn panel_action(
+        &mut self,
+        action: crate::ui::envoy::DraftAction,
+        queen_ready: bool,
+        queen: impl FnOnce(&str) -> bool,
+    ) -> (String, Result<bool, String>) {
+        match action {
+            crate::ui::envoy::DraftAction::Approve { id, text } => {
+                let result = self
+                    .envoy_edit(&id, &text)
+                    .and_then(|()| self.envoy_approve(&id, None, queen_ready, queen));
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::Reject(id) => {
+                let result = self
+                    .queue()
+                    .and_then(|q| q.reject(&id, now_ms()))
+                    .map(|()| false);
+                (id, result)
+            }
+        }
+    }
+
     fn queue(&mut self) -> Result<&mut DraftQueue, String> {
         self.drafts
             .as_mut()
@@ -186,60 +493,31 @@ impl AppEnvoy {
 }
 
 impl MyrstackApp {
-    pub fn envoy_approve(&mut self, id: &str, edited_text: Option<&str>) -> Result<(), String> {
-        let dry_run = self.envoy_core.settings.dry_run;
-        let proposal = self
-            .envoy_core
-            .drafts()
-            .iter()
-            .any(|d| d.id == id && d.kind == DraftKind::TaskProposal);
-        if !dry_run {
-            if proposal && !self.chat_ready() {
-                return Err("Queen chat is busy; try approval when she is ready".into());
-            }
-            if !proposal {
-                self.envoy_core.worker()?;
-            }
+    pub(super) fn envoy_drafts_button(&mut self, ui: &mut egui::Ui) {
+        if crate::ui::queen::envoy_drafts_button(ui, self.envoy_core.pending_count()) {
+            self.envoy_core.open_request = true;
         }
-        let core = &mut self.envoy_core;
-        let queue = core
-            .drafts
-            .as_mut()
-            .ok_or("Envoy draft store unavailable")?;
-        let chat = &mut self.chat;
-        let completed = apply_approval(queue, id, edited_text, dry_run, now_ms(), |draft| {
-            if draft.kind == DraftKind::TaskProposal {
-                if chat.session_mut().send(&draft.queen_request()) {
-                    Ok(true)
-                } else {
-                    Err("Queen chat refused the request".into())
-                }
-            } else {
-                let worker = core.worker.as_ref().ok_or("Envoy worker unavailable")?;
-                worker.submit(Work::Send {
-                    id: id.into(),
-                    message: draft.outbound()?,
-                })?;
-                if let Some(from) = &core.traffic_handle {
-                    core.outgoing.insert(id.into(), from.clone());
-                }
-                Ok(false)
-            }
-        })?;
-        if completed && proposal {
-            self.open_chat();
-        }
-        Ok(())
     }
 
-    pub fn envoy_reject(&mut self, id: &str) -> Result<(), String> {
-        self.envoy_core.queue()?.reject(id, now_ms())
-    }
-    pub fn envoy_edit(&mut self, id: &str, text: &str) -> Result<(), String> {
-        self.envoy_core.queue()?.edit(id, text, now_ms())
-    }
-    pub fn envoy_drafts(&self) -> &[Draft] {
-        self.envoy_core.drafts()
+    pub(super) fn envoy_pane(&mut self, ui: &mut egui::Ui) {
+        let action = self.envoy_panel.show(
+            ui,
+            self.envoy_core.drafts(),
+            self.envoy_core.inbox(),
+            self.envoy_core.settings().dry_run,
+            self.envoy_core.error.as_deref(),
+        );
+        if let Some(action) = action {
+            let ready = self.chat_ready();
+            let chat = &mut self.chat;
+            let (id, result) = self
+                .envoy_core
+                .panel_action(action, ready, |text| chat.session_mut().send(text));
+            if matches!(result, Ok(true)) {
+                self.open_chat();
+            }
+            self.envoy_panel.result(&id, result.map(|_| ()));
+        }
     }
 
     pub(super) fn control_envoy(
@@ -294,12 +572,9 @@ impl MyrstackApp {
                             .ok_or("Relay target has no live terminal")?
                             .into();
                     }
-                    let mut limiter = self.envoy_core.relays.clone();
-                    let record =
-                        limiter.reserve(request, self.envoy_core.settings.dry_run, now_ms())?;
-                    limiter.save(&self.envoy_core.relay_path)?;
-                    self.envoy_core.relays = limiter;
-                    Ok(record)
+                    let ready =
+                        request.to == "coordinators" || self.envoy_target_ready(&request.to);
+                    self.envoy_core.reserve_relay(request, ready)
                 });
             return match result {
                 Ok(record) if record.dry_run => {
@@ -315,8 +590,25 @@ impl MyrstackApp {
             };
         }
         let result = self
-            .envoy_request(&command.method, &command.args)
+            .envoy_core
+            .request(&command)
             .map_err(ControlError::invalid_params);
+        if result.is_ok()
+            && matches!(
+                command.method.as_str(),
+                "envoy_draft" | "envoy_propose_task"
+            )
+        {
+            self.raise(
+                Incoming::new(
+                    Source::Envoy,
+                    Severity::Info,
+                    "Envoy draft ready",
+                    "A draft is waiting for your approval.",
+                )
+                .with_target(DRAFTS_TARGET),
+            );
+        }
         let error = result.as_ref().err().cloned();
         reply.send(result);
         error.map_or(Ok(()), Err)
@@ -386,187 +678,20 @@ impl MyrstackApp {
         Ok(())
     }
 
-    fn envoy_request(&mut self, method: &str, args: &Value) -> Result<Value, String> {
-        match method {
-            "envoy_inbox" => {
-                let since = optional(args, "since")?;
-                if let Some(ts) = since {
-                    crate::envoy::slack::validate_ts(ts)?;
-                }
-                let limit = match args.get("limit") {
-                    None => 100,
-                    Some(v) => v
-                        .as_u64()
-                        .filter(|n| (1..=2000).contains(n))
-                        .ok_or("limit must be between 1 and 2000")?
-                        as usize,
-                };
-                Ok(json!({"events":self.envoy_core.inbox.since(since, limit)}))
-            }
-            "envoy_drafts" => {
-                let status = optional(args, "status")?
-                    .map(|s| {
-                        serde_json::from_value::<DraftStatus>(json!(s))
-                            .map_err(|_| "Unknown draft status")
-                    })
-                    .transpose()?;
-                Ok(
-                    json!({"drafts":self.envoy_core.drafts().iter().filter(|d| status.is_none_or(|s| s==d.status)).collect::<Vec<_>>()}),
-                )
-            }
-            "envoy_draft" | "envoy_propose_task" => {
-                let draft = if method == "envoy_draft" {
-                    let target: ReplyTo = serde_json::from_value(args["in_reply_to"].clone())
-                        .map_err(|_| "in_reply_to requires conversation and ts")?;
-                    let event = self
-                        .envoy_core
-                        .inbox
-                        .get(&format!("{}:{}", target.conversation, target.ts))
-                        .ok_or("Draft must reply to a retained inbox event")?;
-                    let thread_ts = optional(args, "thread_ts")?
-                        .map(str::to_owned)
-                        .or_else(|| event.thread_ts.clone());
-                    Draft::reply(
-                        target,
-                        thread_ts,
-                        required(args, "text")?.into(),
-                        required(args, "rationale")?.into(),
-                        now_ms(),
-                    )
-                } else {
-                    Draft::proposal(
-                        required(args, "summary")?.into(),
-                        optional(args, "repo")?.map(str::to_owned),
-                        required(args, "why")?.into(),
-                        required(args, "slack_link")?.into(),
-                        now_ms(),
-                    )
-                };
-                let draft = self.envoy_core.queue()?.create(draft)?;
-                self.raise(
-                    Incoming::new(
-                        Source::Envoy,
-                        Severity::Info,
-                        "Envoy draft ready",
-                        "A draft is waiting for your approval.",
-                    )
-                    .with_target(DRAFTS_TARGET),
-                );
-                Ok(json!({"draft":draft}))
-            }
-            _ => Err("Unknown Envoy method".into()),
-        }
-    }
-
     pub(super) fn poll_envoy(&mut self) {
-        let updates = self
-            .envoy_core
-            .worker
-            .as_ref()
-            .map_or_else(Vec::new, Worker::updates);
-        for update in updates {
-            match update {
-                Update::Polled {
-                    inbox,
-                    events,
-                    bridge,
-                    notices,
-                } => {
-                    self.envoy_core
-                        .pending
-                        .retain(|e| inbox.get(&e.id()).is_some());
-                    let mut inbox = inbox;
-                    self.envoy_core
-                        .acknowledged
-                        .retain(|id| inbox.get(id).is_some());
-                    inbox.mark_forwarded(
-                        &self
-                            .envoy_core
-                            .acknowledged
-                            .iter()
-                            .cloned()
-                            .collect::<Vec<_>>(),
-                    );
-                    self.envoy_core.inbox = inbox;
-                    self.envoy_core.error = None;
-                    self.envoy_core.error_notified = None;
-                    if self.envoy_core.handle.is_some() {
-                        self.envoy_core.pending.extend(events);
-                        while self.envoy_core.pending.len() > 2000 {
-                            self.envoy_core.pending.pop_front();
-                        }
-                    }
-                    if self.envoy_core.observe_bridge(bridge) {
-                        self.raise(Incoming::new(
-                            Source::Envoy,
-                            Severity::Warn,
-                            "Envoy bridge down",
-                            "Slack channel ingestion is falling back to polling.",
-                        ));
-                    }
-                    let current: HashSet<String> = notices.into_iter().collect();
-                    for notice in current
-                        .difference(&self.envoy_core.notices)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                    {
-                        self.raise(Incoming::new(
-                            Source::Envoy,
-                            Severity::Warn,
-                            "Envoy ingestion",
-                            &notice,
-                        ));
-                    }
-                    self.envoy_core.notices = current;
-                }
-                Update::Sent { id, result } => {
-                    if let Some(from) = self.envoy_core.outgoing.remove(&id)
-                        && result.is_ok()
-                    {
-                        self.traffic.sender().send(AgentMessage::new(
-                            from,
-                            "slack",
-                            MessageKind::Relay,
-                        ));
-                    }
-                    if let Err(e) = self
-                        .envoy_core
-                        .queue()
-                        .and_then(|q| q.finish(&id, result, now_ms()))
-                    {
-                        self.envoy_core.error = Some(e);
-                    }
-                }
-                Update::Error(error) => {
-                    self.envoy_core.error = Some(error);
-                }
-            }
+        let (notifications, traffic) = self.envoy_core.poll_updates();
+        for notice in notifications {
+            self.raise(notice);
         }
-        if self.envoy_core.error != self.envoy_core.error_notified {
-            if let Some(error) = self.envoy_core.error.clone() {
-                self.raise(Incoming::new(
-                    Source::Envoy,
-                    Severity::Warn,
-                    "Envoy storage unavailable",
-                    &error,
-                ));
-            }
-            self.envoy_core.error_notified = self.envoy_core.error.clone();
+        for message in traffic {
+            self.traffic.sender().send(message);
         }
         self.forward_envoy();
     }
 
-    fn forward_envoy(&mut self) {
-        let core = &mut self.envoy_core;
-        if core.pending.is_empty() || core.forwarding.is_some() || now_ms() < core.forward_after_ms
-        {
-            return;
-        }
-        let Some(handle) = core.handle.as_deref() else {
-            return;
-        };
+    fn envoy_target_ready(&self, handle: &str) -> bool {
         let Some(terminal) = self.data.as_ref().and_then(|d| d.terminal(handle)) else {
-            return;
+            return false;
         };
         let idle = self.snapshot.as_ref().is_some_and(|s| {
             s.nodes.iter().any(|n| {
@@ -575,26 +700,28 @@ impl MyrstackApp {
                     && n.state == crate::model::NodeState::Idle
             })
         });
-        if !can_forward(
+        can_forward(
             terminal,
             idle,
             self.input.text_pending(handle)
                 || self.control.typing_pending(handle)
                 || !self.input.draft(handle).is_empty(),
-        ) {
+        )
+    }
+
+    fn forward_envoy(&mut self) {
+        if !self
+            .envoy_core
+            .handle
+            .as_deref()
+            .is_some_and(|handle| self.envoy_target_ready(handle))
+        {
             return;
         }
-        let batch: Vec<_> = core.pending.drain(..core.pending.len().min(20)).collect();
-        let text = batch
-            .iter()
-            .map(InboundEvent::summary)
-            .collect::<Vec<_>>()
-            .join(" | ");
-        let id = self.actions.submit(Action::Send {
-            handle: handle.into(),
-            input: TerminalInput::line(text),
-        });
-        core.forwarding = Some((id, batch));
+        if let Some((action, batch)) = self.envoy_core.next_forward(now_ms()) {
+            let id = self.actions.submit(action);
+            self.envoy_core.forwarding = Some((id, batch));
+        }
     }
 
     pub(super) fn envoy_action_done(&mut self, result: &ActionResult) {
@@ -620,12 +747,7 @@ impl MyrstackApp {
                     MessageKind::Relay,
                 ));
             }
-            let ids: Vec<_> = batch.iter().map(InboundEvent::id).collect();
-            self.envoy_core.acknowledged.extend(ids.iter().cloned());
-            self.envoy_core.inbox.mark_forwarded(&ids);
-            if let Some(worker) = &self.envoy_core.worker {
-                let _ = worker.submit(Work::Forwarded(ids));
-            }
+            self.envoy_core.acknowledge(&batch);
         }
         if result.outcome.is_err() && self.envoy_core.handle.is_some() {
             for event in batch.into_iter().rev() {
@@ -699,104 +821,4 @@ fn optional<'a>(args: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::orca::{AgentIdentity, Terminal};
-    #[test]
-    fn forwarding_waits_for_idle_empty_composer_and_live_agent() {
-        let mut t = Terminal {
-            agent_identity: Some(AgentIdentity::Claude),
-            writable: true,
-            preview: Some("Claude Code\n❯ prior task\nResponse\n❯\n? for shortcuts".into()),
-            ..Terminal::default()
-        };
-        assert!(can_forward(&t, true, false));
-        assert!(!can_forward(&t, false, false));
-        assert!(!can_forward(&t, true, true));
-        t.preview = Some("Claude Code\n❯ unfinished user text".into());
-        assert!(!can_forward(&t, true, false));
-        t.preview = Some("Do you want to proceed?\n❯ 1. Yes\n  2. No".into());
-        assert!(!can_forward(&t, true, false));
-        t.preview = Some("Claude Code\nuser@host ~ %".into());
-        assert!(!can_forward(&t, true, false));
-        t.agent_identity = Some(AgentIdentity::Codex);
-        t.preview = Some("OpenAI Codex\n› prior task\nAnswer\n›".into());
-        assert!(can_forward(&t, true, false));
-        t.orphaned = true;
-        assert!(!can_forward(&t, true, false));
-    }
-    #[test]
-    fn production_approval_transaction_never_calls_delivery_for_dry_run_or_secrets() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut queue = DraftQueue::load(dir.path().join("drafts.json")).unwrap();
-        let reply = Draft::reply(
-            ReplyTo {
-                conversation: "C123".into(),
-                ts: "1.000001".into(),
-            },
-            None,
-            "Sample reply".into(),
-            "Requested".into(),
-            0,
-        );
-        let proposal = Draft::proposal(
-            "Sample task".into(),
-            None,
-            "Requested".into(),
-            "https://example.slack.com".into(),
-            0,
-        );
-        for draft in [reply.clone(), proposal] {
-            let draft = queue.create(draft).unwrap();
-            apply_approval(&mut queue, &draft.id, Some("Edited"), true, 1, |_| {
-                panic!("dry-run invoked live delivery")
-            })
-            .unwrap();
-            assert_eq!(
-                queue.get(&draft.id).unwrap().status,
-                DraftStatus::DryRunSent
-            );
-        }
-        let draft = queue.create(reply.clone()).unwrap();
-        assert!(
-            apply_approval(
-                &mut queue,
-                &draft.id,
-                Some("ghp_123456789012345678901234567890"),
-                false,
-                1,
-                |_| panic!("secret reached live delivery")
-            )
-            .is_err()
-        );
-        assert_eq!(queue.get(&draft.id).unwrap().status, DraftStatus::Pending);
-        apply_approval(&mut queue, &draft.id, None, false, 2, |d| {
-            assert_eq!(d.status, DraftStatus::Approved);
-            Ok(false)
-        })
-        .unwrap();
-        assert_eq!(queue.get(&draft.id).unwrap().status, DraftStatus::Approved);
-        let draft = queue.create(reply).unwrap();
-        assert!(
-            apply_approval(&mut queue, &draft.id, None, false, 3, |_| Err(
-                "offline".into()
-            ))
-            .is_err()
-        );
-        assert_eq!(queue.get(&draft.id).unwrap().status, DraftStatus::Failed);
-    }
-
-    #[test]
-    fn bridge_alerts_on_start_reenable_and_each_down_transition() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut core = AppEnvoy::at(dir.path().into(), &egui::Context::default());
-        assert!(!core.observe_bridge(BridgeStatus::Missing));
-        core.handle = Some("term_envoy".into());
-        assert!(core.observe_bridge(BridgeStatus::Missing));
-        assert!(!core.observe_bridge(BridgeStatus::Missing));
-        assert!(!core.observe_bridge(BridgeStatus::Ok));
-        assert!(core.observe_bridge(BridgeStatus::Stale));
-        core.bridge_seen = false;
-        assert!(core.observe_bridge(BridgeStatus::Stale));
-    }
-}
+mod tests;

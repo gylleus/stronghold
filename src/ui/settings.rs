@@ -4,6 +4,7 @@
 //! edited section replaced. Opened from the top bar's gear, the palette's "Settings…" and ⌘,;
 //! the "Whip…" button and "Whip settings…" open it on the Whip section.
 
+pub mod envoy;
 pub mod general;
 pub mod notifications;
 pub mod queen;
@@ -16,6 +17,7 @@ use eframe::egui::{self, RichText};
 
 use crate::chat::settings::QueenSettings;
 use crate::notify::{NotifySettings, Severity, Sound};
+use crate::spawn::SpawnSettings;
 use crate::voice::settings::VoiceSettings;
 use crate::whip::{Settings, WhipSettings, WhipStatus};
 
@@ -29,6 +31,7 @@ pub use voice::{ModelStatus, VoiceModel, VoiceStatus};
 pub enum Section {
     #[default]
     Queen,
+    Envoy,
     Whip,
     Notifications,
     Voice,
@@ -36,8 +39,9 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 5] = [
+    pub const ALL: [Section; 6] = [
         Section::Queen,
+        Section::Envoy,
         Section::Whip,
         Section::Notifications,
         Section::Voice,
@@ -47,6 +51,7 @@ impl Section {
     pub fn title(self) -> &'static str {
         match self {
             Section::Queen => "Queen",
+            Section::Envoy => "Envoy",
             Section::Whip => "Whip",
             Section::Notifications => "Notifications",
             Section::Voice => "Voice",
@@ -71,6 +76,8 @@ pub struct PaneContext<'a> {
 /// What the user changed this frame.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct PaneOutput {
+    /// Saved Envoy preferences; safety ON also applies to the current session.
+    pub envoy: Option<crate::envoy::settings::EnvoySettings>,
     /// Saved whip settings.
     pub whip: Option<WhipSettings>,
     /// Saved Queen settings (the Queen restarts when her model or effort changed).
@@ -106,6 +113,7 @@ pub struct SettingsPane {
     queen_draft: queen::QueenDraft,
     voice_draft: VoiceSettings,
     notify_draft: NotifySettings,
+    envoy_draft: envoy::EnvoyDraft,
     /// "Whip all stalled now" was clicked; see [`SettingsPane::take_whip_stalled`].
     whip_stalled: bool,
 }
@@ -130,6 +138,7 @@ impl SettingsPane {
             queen_draft: queen::QueenDraft::new(&applied.queen),
             voice_draft: applied.voice.clone(),
             notify_draft: applied.notifications.clone(),
+            envoy_draft: envoy::EnvoyDraft::new(&applied.envoy),
             applied,
             path,
             message,
@@ -147,8 +156,16 @@ impl SettingsPane {
         &self.applied.queen
     }
 
+    pub fn envoy(&self) -> &crate::envoy::settings::EnvoySettings {
+        &self.applied.envoy
+    }
+
     pub fn voice(&self) -> &VoiceSettings {
         &self.applied.voice
+    }
+
+    pub fn spawn(&self) -> &SpawnSettings {
+        &self.applied.spawn
     }
 
     pub fn path(&self) -> Option<&std::path::Path> {
@@ -161,6 +178,7 @@ impl SettingsPane {
         self.queen_draft = queen::QueenDraft::new(&self.applied.queen);
         self.voice_draft = self.applied.voice.clone();
         self.notify_draft = self.applied.notifications.clone();
+        self.envoy_draft = envoy::EnvoyDraft::new(&self.applied.envoy);
         self.section = section;
         self.open = true;
     }
@@ -256,6 +274,7 @@ impl SettingsPane {
         ui.add_space(4.0);
         match self.section {
             Section::Queen => queen::section(self, ui, &cx.queen, out),
+            Section::Envoy => envoy::section(self, ui, out),
             Section::Whip => {
                 out.whip = whip::form(self, ui);
                 ui.separator();
@@ -278,7 +297,13 @@ impl SettingsPane {
                     self.voice_draft = self.applied.voice.clone();
                 }
             }
-            Section::General => general::section(ui, cx.general, self.path.as_deref()),
+            Section::General => {
+                let focus_new = self.applied.spawn.focus_new;
+                if let Some(on) = general::section(ui, cx.general, self.path.as_deref(), focus_new)
+                {
+                    self.set_focus_new(on);
+                }
+            }
         }
         self.message_ui(ui);
     }
@@ -343,6 +368,14 @@ impl SettingsPane {
         self.commit(next);
         self.voice_draft.speak_replies = on;
         self.applied.voice.clone()
+    }
+
+    /// Saves "Focus new ants when they're spawned" at once.
+    pub fn set_focus_new(&mut self, on: bool) -> SpawnSettings {
+        let mut next = self.applied.clone();
+        next.spawn.focus_new = on;
+        self.commit(next);
+        self.applied.spawn.clone()
     }
 
     fn save_voice(&mut self) -> Option<VoiceSettings> {

@@ -269,6 +269,16 @@ pub fn run_plan(
     backend: &mut dyn SpawnBackend,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<SpawnOutcome, SpawnFailure> {
+    run_plan_observed(plan, backend, progress, &mut |_| Ok(()))
+}
+
+/// Publishes created handles before readiness checks, so long-lived sessions survive an app restart.
+pub fn run_plan_observed(
+    plan: &SpawnPlan,
+    backend: &mut dyn SpawnBackend,
+    progress: &mut dyn FnMut(Progress),
+    context: &mut dyn FnMut(&SpawnContext) -> Result<(), String>,
+) -> Result<SpawnOutcome, SpawnFailure> {
     let mut run = PlanRun {
         plan,
         ctx: plan.initial.clone(),
@@ -294,6 +304,13 @@ pub fn run_plan(
                 });
             }
         };
+        if let Err(message) = context(&run.ctx) {
+            return Err(SpawnFailure {
+                step: Some(index),
+                message,
+                context: Box::new(run.ctx),
+            });
+        }
         if let StepStatus::Warned(note) = &status {
             run.notes.push(note.clone());
         }
@@ -475,7 +492,10 @@ impl PlanRun<'_> {
                     )))),
                 }
             }
-            Step::Verify { expect } => self.verify(expect, backend),
+            Step::Verify {
+                expect,
+                allow_bypass,
+            } => self.verify(expect, *allow_bypass, backend),
             Step::CloseStartupShell => Ok(self.close_startup_shell(backend)),
         }
     }
@@ -539,6 +559,7 @@ impl PlanRun<'_> {
     fn verify(
         &mut self,
         expect: &Expect,
+        allow_bypass: bool,
         backend: &mut dyn SpawnBackend,
     ) -> Result<StepStatus, String> {
         let handle = self
@@ -559,6 +580,11 @@ impl PlanRun<'_> {
                 }
             };
             if let Some(lines) = screen {
+                if !allow_bypass
+                    && classify_screen(&lines, agent, expect) == ScreenVerdict::BypassModal
+                {
+                    return Err("Restricted launch refused the Bypass Permissions prompt".into());
+                }
                 match check.next(&lines) {
                     VerifyStep::Done => {
                         let summary = check.summary();

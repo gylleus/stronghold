@@ -100,6 +100,15 @@ pub fn node_radius(kind: NodeKind) -> f32 {
         NodeKind::Terminal => 9.0,
         NodeKind::Subagent => 6.0,
         NodeKind::Queen => 24.0,
+        NodeKind::Envoy => 13.0,
+    }
+}
+
+pub fn envoy_color(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgb(105, 208, 215)
+    } else {
+        Color32::from_rgb(20, 109, 121)
     }
 }
 
@@ -785,7 +794,12 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
         } else {
             alpha
         };
-        let fill = state_color(self.state, visuals.dark_mode).gamma_multiply(alpha);
+        let fill = if self.kind == NodeKind::Envoy {
+            envoy_color(visuals.dark_mode)
+        } else {
+            state_color(self.state, visuals.dark_mode)
+        }
+        .gamma_multiply(alpha);
         let outer = if self.kind == NodeKind::Coordinator {
             radius * 1.3
         } else {
@@ -805,6 +819,18 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
             shapes.extend(self.pulse_ring(waiting_s, center, outer, fill));
         }
         match self.kind {
+            NodeKind::Envoy => {
+                let points = (0..3)
+                    .map(|i| {
+                        center
+                            + Vec2::angled(
+                                -std::f32::consts::FRAC_PI_2
+                                    + i as f32 * std::f32::consts::TAU / 3.0,
+                            ) * radius
+                    })
+                    .collect();
+                shapes.push(Shape::convex_polygon(points, fill, stroke));
+            }
             NodeKind::Attendant => {
                 shapes.push(Shape::convex_polygon(
                     diamond(center, radius * 1.2),
@@ -857,7 +883,11 @@ impl<E: Clone, Ty: EdgeType, Ix: IndexType> DisplayNode<NodePayload, E, Ty, Ix> 
             ));
         }
         if radius >= DETAIL_MIN_PX {
-            let opaque = state_color(self.state, visuals.dark_mode);
+            let opaque = if self.kind == NodeKind::Envoy {
+                envoy_color(visuals.dark_mode)
+            } else {
+                state_color(self.state, visuals.dark_mode)
+            };
             let glyph = if self.parked {
                 StateGlyph(icons::MOON)
             } else {

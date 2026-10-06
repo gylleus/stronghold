@@ -133,7 +133,7 @@ pub(super) fn section(
     ));
 }
 
-fn model_picker(ui: &mut egui::Ui, draft: &mut QueenDraft) {
+pub(super) fn model_picker(ui: &mut egui::Ui, draft: &mut QueenDraft) {
     ui.vertical(|ui| {
         let selected = if draft.custom {
             CUSTOM.to_owned()

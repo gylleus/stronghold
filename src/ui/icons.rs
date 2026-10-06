@@ -10,6 +10,7 @@ const FONT: &[u8] = include_bytes!("../../assets/fonts/Phosphor-Bold.ttf");
 const FONT_NAME: &str = "phosphor-bold";
 const FAMILY_NAME: &str = "icons";
 
+pub const ENVELOPE: char = '\u{e214}';
 pub const CROWN: char = '\u{e614}';
 pub const TREE_STRUCTURE: char = '\u{e67c}';
 pub const HEADSET: char = '\u{e584}';
@@ -67,6 +68,7 @@ pub fn add_font(fonts: &mut egui::FontDefinitions) {
 
 pub fn kind_icon(kind: NodeKind) -> char {
     match kind {
+        NodeKind::Envoy => ENVELOPE,
         NodeKind::Queen => CROWN,
         NodeKind::Coordinator => TREE_STRUCTURE,
         NodeKind::Attendant => HEADSET,

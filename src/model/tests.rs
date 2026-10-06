@@ -991,3 +991,75 @@ fn a_parked_agent_leaves_the_queens_spokes_and_state() {
     );
     assert_eq!(snap.parked_nodes().count(), sleepers.len() - 1);
 }
+
+#[test]
+fn envoy_overlay_uses_handle_not_title_and_keeps_queen_edge() {
+    let data = scenario();
+    let mut snapshot = FleetSnapshot::build(&data, NOW);
+    let status = crate::envoy::EnvoyStatus {
+        session: crate::envoy::SessionState::Running,
+        bridge: crate::envoy::BridgeStatus::Ok,
+        pending_drafts: 2,
+        dry_run: true,
+    };
+    snapshot.mark_envoy(Some(LOOSE), status);
+    let envoy = snapshot
+        .nodes
+        .iter()
+        .find(|n| n.kind == NodeKind::Envoy)
+        .unwrap();
+    assert_eq!(envoy.terminal_handle.as_deref(), Some(LOOSE));
+    assert_eq!(envoy.label, "Envoy · waiting on approval");
+    assert!(
+        snapshot
+            .edges
+            .iter()
+            .any(|e| e.from == NodeId::queen() && e.to == envoy.id && e.kind == EdgeKind::Queen)
+    );
+    let mut fresh = FleetSnapshot::build(&data, NOW);
+    fresh.mark_envoy(Some("absent"), status);
+    assert!(!fresh.nodes.iter().any(|n| n.kind == NodeKind::Envoy));
+}
+
+#[test]
+fn idle_envoy_has_no_automatic_or_manual_whip() {
+    let data = FleetData {
+        terminals: vec![crate::orca::Terminal {
+            handle: "envoy".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let mut snapshot = FleetSnapshot::build(&data, NOW);
+    snapshot.mark_envoy(
+        Some("envoy"),
+        crate::envoy::EnvoyStatus {
+            session: crate::envoy::SessionState::Running,
+            bridge: crate::envoy::BridgeStatus::Missing,
+            pending_drafts: 0,
+            dry_run: true,
+        },
+    );
+    let plans = crate::whip::plan_manual_whip(&[NodeId::terminal("envoy")], &data, &snapshot, NOW);
+    assert!(crate::whip::manual::nudges(&plans).is_empty());
+    let mut engine = crate::whip::WhipEngine::new();
+    let settings = crate::whip::WhipSettings {
+        enabled: true,
+        ..Default::default()
+    };
+    assert!(
+        engine
+            .tick(&data, &Default::default(), &settings, NOW)
+            .is_empty()
+    );
+    assert!(
+        engine
+            .tick(
+                &data,
+                &Default::default(),
+                &settings,
+                NOW + 24 * 60 * MINUTE
+            )
+            .is_empty()
+    );
+}

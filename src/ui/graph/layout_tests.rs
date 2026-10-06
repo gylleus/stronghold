@@ -635,3 +635,56 @@ fn a_settled_layout_stays_settled() {
         .fold(0.0, f32::max);
     assert!(moved < 30.0, "a node moved {moved} after settling again");
 }
+
+#[test]
+fn envoy_sits_beside_queen_outside_repo_regions() {
+    let nodes = [
+        ClusterNode {
+            index: 0,
+            run: None,
+            kind: NodeKind::Queen,
+            parent: None,
+            repo: None,
+        },
+        ClusterNode {
+            index: 1,
+            run: None,
+            kind: NodeKind::Envoy,
+            parent: None,
+            repo: Some("myrstack"),
+        },
+    ];
+    let roles = memberships(&nodes);
+    assert_eq!(roles, [Some(Membership::Queen), Some(Membership::Envoy)]);
+    let repos = repo_indices(&nodes);
+    assert_eq!(repos, [None, None]);
+    let pos = [Pos2::ZERO, Pos2::new(100.0, 0.0)];
+    let mut displacement = [egui::Vec2::ZERO; 2];
+    let nodes = ForceNodes {
+        pos: &pos,
+        roles: &roles,
+        repos: &repos,
+        pinned: &[false, false],
+    };
+    apply_cluster_forces(
+        &RunClustersParams::default(),
+        &nodes,
+        &[(0, 1)],
+        &mut displacement,
+        Pos2::ZERO,
+        100.0,
+    );
+    assert_eq!(displacement[1], egui::Vec2::ZERO);
+}
+
+#[test]
+fn envoy_does_not_expand_its_repository_backdrop_to_the_queen() {
+    let mut snapshot = FleetSnapshot::default();
+    snapshot
+        .nodes
+        .push(in_repo(node("envoy", NodeKind::Envoy, None), "myrstack"));
+    snapshot.add_queen();
+    let mut view = GraphView::new();
+    view.sync(&snapshot);
+    assert!(view.repo_regions().is_empty());
+}

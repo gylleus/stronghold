@@ -867,6 +867,7 @@ fn kind_label(kind: NodeKind) -> &'static str {
         NodeKind::Attendant => "attendant",
         NodeKind::Worker => "worker",
         NodeKind::Terminal => "terminal",
+        NodeKind::Envoy => "envoy",
         NodeKind::Subagent => "subagent",
         NodeKind::Queen => "queen",
     }

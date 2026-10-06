@@ -107,6 +107,11 @@ pub struct QueenResponse {
     pub whip_stalled: bool,
 }
 
+/// The draft count stays visible even when the Envoy session is stopped.
+pub fn envoy_drafts_button(ui: &mut Ui, pending: usize) -> bool {
+    ui.button(format!("Envoy drafts ({pending})")).clicked()
+}
+
 /// Draws the Queen's details: her header with the fleet counts, then the fleet summary and the
 /// broadcast composer as collapsible sections. `make_sender` is called once, when the user
 /// confirms a broadcast.
@@ -430,5 +435,64 @@ mod tests {
             quick_actions(ui, Some("The Queen's chat is busy or not ready"))
         });
         assert_eq!(action, None);
+    }
+}
+
+#[cfg(test)]
+mod envoy_draft_tests {
+    #[test]
+    fn drafts_button_shows_pending_count_and_opens_on_click() {
+        assert!(crate::ui::test_util::click_label(
+            "Envoy drafts (3)",
+            |ui| super::envoy_drafts_button(ui, 3)
+        ));
+    }
+}
+
+/// `true` starts the Envoy; `false` opens its existing close confirmation.
+pub fn envoy_control(ui: &mut Ui, status: crate::envoy::EnvoyStatus) -> Option<bool> {
+    use crate::envoy::SessionState;
+    let stopped = status.session == SessionState::Stopped;
+    let clicked = ui
+        .add_enabled(
+            status.session != SessionState::Starting,
+            egui::Button::new(if stopped { "Start Envoy" } else { "Stop Envoy" }),
+        )
+        .clicked();
+    ui.weak(format!(
+        "{} · {}",
+        status.health().label(),
+        if status.dry_run { "dry run" } else { "live" }
+    ));
+    clicked.then_some(stopped)
+}
+
+#[cfg(test)]
+mod envoy_tests {
+    use super::*;
+    use crate::envoy::{BridgeStatus, EnvoyStatus, SessionState};
+
+    #[test]
+    fn start_stop_controls_reflect_session_state() {
+        let mut status = EnvoyStatus {
+            session: SessionState::Stopped,
+            bridge: BridgeStatus::Missing,
+            pending_drafts: 0,
+            dry_run: true,
+        };
+        assert_eq!(
+            crate::ui::test_util::click_label("Start Envoy", |ui| envoy_control(ui, status)),
+            Some(true)
+        );
+        status.session = SessionState::Running;
+        assert_eq!(
+            crate::ui::test_util::click_label("Stop Envoy", |ui| envoy_control(ui, status)),
+            Some(false)
+        );
+        status.session = SessionState::Starting;
+        assert_eq!(
+            crate::ui::test_util::click_label("Stop Envoy", |ui| envoy_control(ui, status)),
+            None
+        );
     }
 }

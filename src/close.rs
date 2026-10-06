@@ -137,7 +137,11 @@ pub fn plan_close(
     match node.kind {
         NodeKind::Subagent => return ClosePlan::refuse(node, SUBAGENT_REFUSAL),
         NodeKind::Queen => return ClosePlan::refuse(node, QUEEN_REFUSAL),
-        NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {}
+        NodeKind::Coordinator
+        | NodeKind::Attendant
+        | NodeKind::Worker
+        | NodeKind::Terminal
+        | NodeKind::Envoy => {}
     }
     let live_handle = node.terminal_handle.as_deref().filter(|_| node.live);
     let stop = node.kind == NodeKind::Worker && has_active_dispatch(node);
@@ -309,7 +313,7 @@ pub fn bulk_candidates<'a>(
         .filter(|n| match n.kind {
             NodeKind::Terminal | NodeKind::Worker => true,
             NodeKind::Coordinator | NodeKind::Attendant => include_coordinators,
-            NodeKind::Subagent | NodeKind::Queen => false,
+            NodeKind::Subagent | NodeKind::Queen | NodeKind::Envoy => false,
         })
         .filter(|n| {
             (n.live && n.terminal_handle.is_some())

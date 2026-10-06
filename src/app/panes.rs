@@ -30,6 +30,7 @@ impl TabViewer for Panes<'_> {
             Pane::Details => "Details".into(),
             Pane::Conversation => self.app.conversation_title().into(),
             Pane::Notifications => self.app.notifications_title().into(),
+            Pane::Envoy => "Envoy drafts".into(),
         }
     }
 
@@ -44,11 +45,12 @@ impl TabViewer for Panes<'_> {
                 self.app.conversation_contents(ui, now_ms);
             }
             Pane::Notifications => self.app.notifications_pane(ui, now_ms),
+            Pane::Envoy => self.app.envoy_pane(ui),
         }
     }
 
     fn is_closeable(&self, tab: &Pane) -> bool {
-        matches!(tab, Pane::Conversation | Pane::Notifications)
+        matches!(tab, Pane::Conversation | Pane::Notifications | Pane::Envoy)
     }
 
     /// Closing the conversation hides it as ⌘J does; it returns with the next selection.
@@ -73,6 +75,9 @@ impl TabViewer for Panes<'_> {
 impl MyrstackApp {
     /// The dock filling the window below the top bar.
     pub(super) fn panes(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+        if std::mem::take(&mut self.envoy_core.open_request) {
+            self.panes.open_envoy();
+        }
         self.panes.set_conversation(self.has_conversation());
         self.panes.sync_notifications();
         self.notifications_strip(ui);
@@ -235,6 +240,7 @@ impl MyrstackApp {
                     };
                     self.ant_farm.set_queen_busy(self.queen_thinking());
                     self.ant_farm.set_queen_focused(self.shows_chat());
+                    self.ant_farm.set_envoy_health(self.envoy_status().health());
                     let farm = egui::Rect::from_min_size(ui.cursor().min, ui.available_size());
                     let response = self.ant_farm.show(ui, snapshot, &self.graph);
                     self.worktrees.broom_in_farm(ui, farm);

@@ -11,6 +11,7 @@ pub mod exec;
 pub mod interrupted;
 pub mod pending;
 pub mod resolve;
+pub mod settings;
 pub mod verify;
 
 #[cfg(test)]
@@ -25,6 +26,7 @@ use crate::orca::spawn::{
 pub use catalog::Catalog;
 pub use exec::{SpawnEvent, SpawnOutcome, SpawnRunner, StepStatus};
 pub use resolve::{LiveAgent, ModeName, NameConflict, SpawnArgs, name_conflict, new_worktree_of};
+pub use settings::SpawnSettings;
 pub use verify::{Expect, ScreenVerdict, classify_screen, codex_approvals_on};
 
 /// How long `terminal wait --for tui-idle` waits after launch. An agent that took its prompt
@@ -142,9 +144,11 @@ pub enum Step {
     WaitIdle { timeout_ms: u64 },
     /// Read the screen until the agent visibly took its prompt, answering the Bypass
     /// Permissions and folder trust modals and submitting a parked prompt on the way.
-    /// Never types the prompt: the launch already handed it over, so typing it could run it
-    /// twice.
-    Verify { expect: Expect },
+    Verify {
+        expect: Expect,
+        /// Whether this launch permits accepting the bypass-permissions warning.
+        allow_bypass: bool,
+    },
     /// Close the plain shell Orca opens in a new worktree next to the agent's terminal, so no
     /// empty terminal is left behind.
     CloseStartupShell,
@@ -349,6 +353,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
         } else {
             Expect::Prompt(prompt.clone())
         },
+        allow_bypass: true,
     };
     let wait = Step::WaitIdle {
         timeout_ms: WAIT_IDLE_MS,
@@ -505,6 +510,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
             // Orca already waited for the agent and typed its preamble (with the spec).
             steps.push(Step::Verify {
                 expect: Expect::AnyInput,
+                allow_bypass: true,
             });
             if new_worktree {
                 steps.push(Step::CloseStartupShell);

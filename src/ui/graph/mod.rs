@@ -6,7 +6,7 @@ mod fit;
 mod fit_tests;
 mod layout;
 mod mail;
-mod nav;
+pub mod nav;
 mod regions;
 mod saved;
 #[cfg(test)]
@@ -15,6 +15,7 @@ mod select;
 #[cfg(test)]
 mod select_tests;
 mod shape;
+pub use shape::envoy_color;
 #[cfg(test)]
 mod tests;
 mod tooltip;
@@ -484,7 +485,7 @@ impl GraphView {
     pub fn repo_regions(&self) -> Vec<Region> {
         regions(self.index.iter().filter_map(|(id, &idx)| {
             let node = self.graph.node(idx)?;
-            if node.payload().kind == NodeKind::Queen {
+            if matches!(node.payload().kind, NodeKind::Queen | NodeKind::Envoy) {
                 return None;
             }
             Some((self.repos.get(id)?.as_str(), node.location()))
@@ -807,6 +808,7 @@ impl GraphView {
             ui.add(egui::Label::new(egui::RichText::new(&node.label).strong()).truncate());
             ui.separator();
             let refusal = match node.kind {
+                NodeKind::Envoy => None,
                 NodeKind::Subagent => Some(crate::close::SUBAGENT_REFUSAL),
                 NodeKind::Queen => Some(crate::close::QUEEN_REFUSAL),
                 NodeKind::Coordinator
@@ -815,6 +817,7 @@ impl GraphView {
                 | NodeKind::Terminal => None,
             };
             let whip_refusal = match node.kind {
+                NodeKind::Envoy => Some("The Envoy listens while idle."),
                 NodeKind::Subagent => Some("Subagents have no terminal to nudge."),
                 NodeKind::Queen => Some("The Queen is Myrstack itself."),
                 NodeKind::Coordinator

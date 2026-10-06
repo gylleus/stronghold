@@ -78,6 +78,18 @@ default; a real run takes the approved ids). ",
     lifecycle::rules_text!()
 );
 
+/// The complete tool catalog shared by discovery and session permissions.
+pub fn tool_definitions() -> Vec<Value> {
+    let mut all = tools::definitions();
+    all.extend(playbook::tool_definitions());
+    all.extend(review::definitions());
+    all.extend(notify::definitions());
+    all.extend(lifecycle::definitions());
+    all.extend(envoy::definitions());
+    all.extend(worktrees::definitions());
+    all
+}
+
 /// The MCP session state over one [`Control`].
 pub struct McpServer<C: Control> {
     control: C,
@@ -247,16 +259,7 @@ impl<C: Control> McpServer<C> {
         match method {
             "initialize" => Ok(self.initialize(params)),
             "ping" => Ok(json!({})),
-            "tools/list" => {
-                let mut all = tools::definitions();
-                all.extend(playbook::tool_definitions());
-                all.extend(review::definitions());
-                all.extend(notify::definitions());
-                all.extend(lifecycle::definitions());
-                all.extend(envoy::definitions());
-                all.extend(worktrees::definitions());
-                Ok(json!({ "tools": all }))
-            }
+            "tools/list" => Ok(json!({ "tools": tool_definitions() })),
             "tools/call" => self.call_tool(params),
             "prompts/list" => Ok(playbook::prompts_list()),
             "prompts/get" => {

@@ -4,6 +4,7 @@
 //! [`layout`] decides where everything goes, [`motion`] walks ants to new places and
 //! [`sprites`] draws them; this module ties them to egui and handles input.
 
+mod comms;
 pub mod death;
 pub mod layout;
 #[cfg(test)]
@@ -13,6 +14,9 @@ pub mod motion;
 pub mod nature;
 pub mod scenery;
 pub mod sprites;
+pub mod zoom;
+#[cfg(test)]
+mod zoom_tests;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::Duration;
@@ -22,10 +26,12 @@ use eframe::egui::{self, Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, 
 use crate::model::{FleetSnapshot, NodeId};
 use crate::ui::daylight;
 use crate::ui::graph::GraphView;
+use crate::ui::graph::nav::{self, ScrollAction, ScrollSource, route_scroll};
 use death::{Body, Fall};
 use layout::{FarmInput, Pose, Scene, Spot, layout};
 use motion::{Walk, route};
 use sprites::{AntLook, Item, Palette, Sprites};
+use zoom::Camera;
 
 /// Redraw interval while an ant walks.
 const WALK_FRAME: Duration = Duration::from_millis(33);
@@ -178,8 +184,13 @@ pub struct AntFarmView {
     queen_busy: bool,
     /// Her chat is the conversation shown: she gets the selection ring.
     queen_focused: bool,
+    envoy_health: Option<crate::envoy::EnvoyHealth>,
     /// Messages carried between ants; see [`mail`].
     mail: crate::ui::envelope::Flights,
+    /// The part of the farm on screen; see [`zoom`].
+    camera: Camera,
+    /// Device of the latest scroll over the farm; see [`ScrollSource`].
+    scroll_source: ScrollSource,
 }
 
 impl AntFarmView {
@@ -197,6 +208,10 @@ impl AntFarmView {
     /// Whether the Queen's chat is the conversation shown; she is ringed then.
     pub fn set_queen_focused(&mut self, focused: bool) {
         self.queen_focused = focused;
+    }
+
+    pub fn set_envoy_health(&mut self, health: crate::envoy::EnvoyHealth) {
+        self.envoy_health = Some(health);
     }
 
     pub fn pulse(&mut self, pulse: Pulse) {
@@ -219,6 +234,7 @@ impl AntFarmView {
         graph: &GraphView,
     ) -> AntFarmResponse {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        self.navigate(ui, &response);
         let now_s = ui.input(|i| i.time);
         let input = FarmInput {
             snapshot,
@@ -253,13 +269,25 @@ impl AntFarmView {
         };
         let sprites = self.sprites.get_or_insert_with(|| Sprites::load(ui.ctx()));
         let painter = ui.painter_at(rect);
+        let first_shape = ui
+            .ctx()
+            .graphics(|g| g.get(painter.layer_id()).map(|list| list.next_idx()))
+            .unwrap_or(egui::layers::ShapeIdx(0));
         let daylight = daylight::daylight();
         let palette = Palette::new(daylight);
         let selection = graph.selection();
 
         paint_ground(&painter, sprites, &scene, palette, now_s, daylight);
+        comms::paint(
+            &painter,
+            sprites,
+            &scene,
+            self.envoy_health
+                .unwrap_or(crate::envoy::EnvoyHealth::Stopped),
+            now_s,
+        );
         paint_calls(&painter, sprites, &scene, &effects, now_s, true);
-        let pointer = response.hover_pos();
+        let pointer = response.hover_pos().map(|p| self.camera.to_farm(rect, p));
         let hovered = pointer.and_then(|p| hit(&scene, &placed, p));
         paint_ants(
             &painter,
@@ -275,6 +303,16 @@ impl AntFarmView {
         paint_falls(&painter, sprites, &scene, &self.falls, now_s);
         mail::paint(&painter, &scene, &placed, self.mail.tick(now_s), now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
+        zoom::apply(
+            ui.ctx(),
+            painter.layer_id(),
+            first_shape,
+            self.camera.transform(rect),
+            painter.clip_rect(),
+        );
+        if response.double_clicked() && hovered.is_none() {
+            self.camera = Camera::default();
+        }
 
         // Smooth while ants walk or a call ripples; stepped while anyone digs, waves, sleeps
         // or is whipped (the Queen always breathes).
@@ -290,7 +328,7 @@ impl AntFarmView {
         });
         if walking {
             ui.ctx().request_repaint_after(WALK_FRAME);
-        } else if stepping {
+        } else if stepping || scene.comms.is_some() {
             ui.ctx().request_repaint_after(STEP_FRAME);
         }
         daylight::schedule_repaint(ui.ctx());
@@ -332,7 +370,8 @@ impl AntFarmView {
         let pointer = ui.input(|i| i.pointer.latest_pos());
         if response.drag_started_by(egui::PointerButton::Primary) {
             let origin = ui.input(|i| i.pointer.press_origin()).or(pointer);
-            self.box_origin = origin.filter(|o| hit(scene, placed, *o).is_none());
+            self.box_origin = origin
+                .filter(|o| hit(scene, placed, self.camera.to_farm(scene.rect, *o)).is_none());
         }
         let origin = self.box_origin?;
         let current = pointer.unwrap_or(origin);
@@ -342,7 +381,11 @@ impl AntFarmView {
         if released {
             self.box_origin = None;
             let additive = ui.input(|i| crate::ui::graph::is_additive(i.modifiers));
-            return Some((boxed_ants(scene, placed, rect), additive));
+            let farm = Rect::from_two_pos(
+                self.camera.to_farm(scene.rect, rect.min),
+                self.camera.to_farm(scene.rect, rect.max),
+            );
+            return Some((boxed_ants(scene, placed, farm), additive));
         }
         let stroke = ui.visuals().selection.stroke;
         let fill = ui.visuals().selection.bg_fill.gamma_multiply(0.2);
@@ -350,6 +393,45 @@ impl AntFarmView {
             .rect(rect, 2.0, fill, stroke, StrokeKind::Inside);
         ui.ctx().request_repaint();
         None
+    }
+
+    /// Zooms and pans on the wheel, pinch, trackpad swipes, right- or middle-drags and arrow
+    /// keys, per [`zoom`].
+    fn navigate(&mut self, ui: &Ui, response: &egui::Response) {
+        let rect = response.rect;
+        let (source, scroll, zoom_delta, ctrl) = ui.input(|i| {
+            (
+                ScrollSource::from_events(&i.events),
+                i.smooth_scroll_delta(),
+                i.zoom_delta(),
+                i.modifiers.ctrl,
+            )
+        });
+        if let Some(source) = source {
+            self.scroll_source = source;
+        }
+        if let Some(pointer) = response.hover_pos() {
+            if zoom_delta != 1.0 {
+                self.camera.zoom_at(rect, pointer, zoom_delta);
+            } else {
+                match route_scroll(self.scroll_source, scroll, ctrl) {
+                    Some(ScrollAction::Zoom(factor)) => self.camera.zoom_at(rect, pointer, factor),
+                    Some(ScrollAction::Pan(delta)) => self.camera.pan(rect, delta),
+                    None => {}
+                }
+            }
+        }
+        if response.dragged_by(egui::PointerButton::Secondary)
+            || response.dragged_by(egui::PointerButton::Middle)
+        {
+            self.camera.pan(rect, response.drag_delta());
+        }
+        if !self.camera.is_fit()
+            && let Some(delta) = nav::arrow_pan(ui.ctx())
+        {
+            self.camera.pan(rect, delta);
+            ui.ctx().request_repaint();
+        }
     }
 
     /// Starts a fall for every ant drawn last frame that has left the fleet: gone from
@@ -538,9 +620,6 @@ fn paint_ground(
     let up = |x: f32, top: f32| {
         Rect::from_min_max(egui::pos2(x - 0.6 * a, top), egui::pos2(x + 0.6 * a, gy))
     };
-    let dormitory_shaft = scene
-        .dormitory
-        .map(|room| up(room.center().x, room.bottom() - px));
     for shaft in [
         up(scene.landing.center().x, scene.surface_y - px),
         up(
@@ -548,10 +627,7 @@ fn paint_ground(
             scene.queen_chamber.bottom() - px,
         ),
         up(scene.storage.center().x, scene.storage.bottom() - px),
-    ]
-    .into_iter()
-    .chain(dormitory_shaft)
-    {
+    ] {
         sprites.passage(painter, shaft, px);
     }
     for tunnel in &scene.tunnels {
@@ -564,9 +640,6 @@ fn paint_ground(
     }
     sprites.passage(painter, scene.queen_chamber, px);
     sprites.passage(painter, scene.storage, px);
-    if let Some(room) = scene.dormitory {
-        sprites.passage(painter, room, px);
-    }
     for tunnel in &scene.tunnels {
         sprites.passage(painter, tunnel.chamber, px);
     }
@@ -611,23 +684,12 @@ fn paint_ground(
     }
     sprites.sign(
         painter,
-        egui::pos2(scene.rect.left() + 0.3 * a, scene.surface_y),
+        scene.karl_sign(),
         px,
         "Karl",
         FontId::monospace(10.0 + 2.0 * px),
         palette,
     );
-    if let Some(room) = scene.dormitory {
-        label(
-            painter,
-            room.left_top() + vec2(2.0 * px, 2.0 * px),
-            Align2::LEFT_TOP,
-            "Sleeping room",
-            font.clone(),
-            room.width(),
-            palette,
-        );
-    }
     label(
         painter,
         scene.storage.left_top() + vec2(2.0 * px, 2.0 * px),
@@ -757,6 +819,9 @@ fn paint_ants(
                 Vec2::splat(ant.size * 0.5),
             );
             sprites.item(painter, crumb, Item::Crumb, ant.alpha);
+        }
+        if ant.kind == crate::model::NodeKind::Envoy {
+            comms::headphones(painter, cell, tpx, facing_right, ant.alpha);
         }
         if !walking && ant.pose == Pose::Dig {
             let seed = (ant.pos.x * 0.37 + ant.pos.y * 0.11).rem_euclid(1.0);

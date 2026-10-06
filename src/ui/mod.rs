@@ -11,6 +11,7 @@ pub mod daylight;
 pub mod dictation;
 pub mod dock;
 pub mod envelope;
+pub mod envoy;
 pub mod frame_stats;
 pub mod graph;
 pub mod health;

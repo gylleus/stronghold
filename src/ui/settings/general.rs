@@ -1,5 +1,5 @@
-//! The General section: where Myrstack keeps its files, the control socket, the build and the
-//! playbook, with links to the docs.
+//! The General section: whether a spawn focuses the new ant, where Myrstack keeps its files, the
+//! control socket, the build and the playbook, with links to the docs.
 
 use std::path::{Path, PathBuf};
 
@@ -31,6 +31,8 @@ impl GeneralInfo {
     }
 }
 
+pub const FOCUS_NEW_LABEL: &str = "Focus new ants when they're spawned";
+
 /// Docs shipped in the source tree: `(title, path relative to the crate root)`.
 pub const DOCS: &[(&str, &str)] = &[
     ("README", "README.md"),
@@ -39,7 +41,21 @@ pub const DOCS: &[(&str, &str)] = &[
     ("MCP tools", "docs/mcp.md"),
 ];
 
-pub(super) fn section(ui: &mut egui::Ui, info: &GeneralInfo, settings_path: Option<&Path>) {
+/// Draws the section; returns the new "Focus new ants" value when it was toggled.
+pub(super) fn section(
+    ui: &mut egui::Ui,
+    info: &GeneralInfo,
+    settings_path: Option<&Path>,
+    mut focus_new: bool,
+) -> Option<bool> {
+    let toggled = ui
+        .checkbox(&mut focus_new, FOCUS_NEW_LABEL)
+        .on_hover_text(
+            "Select and zoom onto a new ant's node once it appears. Off: spawns leave the \
+             selection and the view alone.",
+        )
+        .changed();
+    ui.separator();
     egui::Grid::new("general_settings")
         .num_columns(2)
         .spacing([12.0, 6.0])
@@ -93,6 +109,7 @@ pub(super) fn section(ui: &mut egui::Ui, info: &GeneralInfo, settings_path: Opti
             }
         }
     });
+    toggled.then_some(focus_new)
 }
 
 fn path_row(ui: &mut egui::Ui, label: &str, path: &Path) {

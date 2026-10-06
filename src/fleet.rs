@@ -29,6 +29,8 @@ pub struct FleetData {
     pub fresh_at_ms: Option<i64>,
     /// Terminal list calls that failed in a row since it last succeeded.
     pub failed_polls: u32,
+    /// Start of the latest successful terminal-list poll.
+    pub terminals_polled_at_ms: Option<i64>,
     pub terminals: Vec<Terminal>,
     pub runs: Vec<Run>,
     pub workers: Vec<Worker>,

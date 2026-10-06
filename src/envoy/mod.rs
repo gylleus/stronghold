@@ -8,6 +8,7 @@ pub mod drafts;
 pub mod inbox;
 pub mod relay;
 pub mod secrets;
+pub mod session;
 pub mod settings;
 pub mod slack;
 pub mod worker;

@@ -71,6 +71,18 @@ Then ask Claude things like "what's the fleet status?" or "who needs my input?".
 are listed in [docs/mcp.md](docs/mcp.md); the local API it proxies to is in
 [docs/control-api.md](docs/control-api.md).
 
+## Envoy
+
+Start and stop the Envoy from the Queen controls. It uses one Claude session in the dedicated
+`envoy-home` worktree, with read-only fleet tools and the guarded `envoy_*` tools. Codex starts
+are unavailable until its MCP tools can be restricted. Sessions from before these restrictions
+must be stopped and restarted; if the identity file was lost, close the existing agent in
+`envoy-home` before starting another.
+
+In Settings → Envoy, saving **Dry run ON** takes effect immediately for subsequent approvals
+and relays, including a session still starting. Turning it off and other changes take effect
+on the next Start. Polling has a 30-second minimum, including values loaded from disk.
+
 ## Playbook
 
 Myrstack owns the fleet playbook, the rules coordinators, attendants and workers run by. The

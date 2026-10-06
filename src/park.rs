@@ -48,6 +48,7 @@ pub fn refusal(node: &Node) -> Option<&'static str> {
     match node.kind {
         NodeKind::Queen => Some("the Queen isn't a session; it stands for the whole fleet"),
         NodeKind::Subagent => Some("subagents run inside their parent session; park the parent"),
+        NodeKind::Envoy => Some("the Envoy is a standing session with its own room"),
         NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {
             match &node.terminal_handle {
                 Some(_) if node.live => None,

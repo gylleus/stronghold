@@ -2,8 +2,8 @@
 //! nudges, dry-run.
 //!
 //! Stored as JSON in the user's config dir (`~/Library/Application Support/Myrstack/settings.json`
-//! on macOS) with one top-level key per section (`whip`, `queen`, `voice`, `notifications`, `envoy`). Missing sections and
-//! fields take their defaults, so older files load. A missing file gives the defaults; an
+//! on macOS) with one top-level key per section (`whip`, `queen`, `voice`, `notifications`, `envoy`,
+//! `spawn`). Missing sections and fields take their defaults, so older files load. A missing file gives the defaults; an
 //! unreadable or invalid one gives the defaults plus a warning.
 
 use std::fs;
@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::chat::settings::QueenSettings;
 use crate::envoy::settings::EnvoySettings;
 use crate::notify::NotifySettings;
+use crate::spawn::SpawnSettings;
 use crate::voice::settings::VoiceSettings;
 use crate::whip::rules::{DEFAULT_ABANDON_AFTER_MS, DEFAULT_THRESHOLD_MS};
 
@@ -36,6 +37,8 @@ pub struct Settings {
     pub notifications: NotifySettings,
     /// The Envoy session and its channels.
     pub envoy: EnvoySettings,
+    /// What a new ant's spawn does to the dashboard.
+    pub spawn: SpawnSettings,
 }
 
 /// Global whip configuration. Durations are in ms.

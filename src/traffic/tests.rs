@@ -215,3 +215,26 @@ fn senders_on_other_threads_reach_the_queue() {
     assert_eq!(traffic.drain().len(), 2);
     assert!(traffic.drain().is_empty());
 }
+
+#[test]
+fn envoy_alias_tracks_the_live_identity_after_title_changes() {
+    let mut s = snapshot();
+    assert_eq!(resolve(&s, "envoy"), None);
+    let mut envoy = node(
+        NodeId::terminal("term_envoy"),
+        NodeKind::Envoy,
+        Some("term_envoy"),
+    );
+    envoy.label = "Rewritten by the agent".into();
+    s.nodes.push(envoy);
+    assert_eq!(resolve(&s, " Envoy "), Some(at("term_envoy")));
+    assert_eq!(
+        AgentMessage::new("slack", "envoy", MessageKind::Relay)
+            .resolve(&s)
+            .unwrap()
+            .to,
+        at("term_envoy")
+    );
+    s.nodes.last_mut().unwrap().live = false;
+    assert_eq!(resolve(&s, "envoy"), None);
+}

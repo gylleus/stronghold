@@ -423,13 +423,15 @@ pub fn kind_name(kind: NodeKind) -> &'static str {
         NodeKind::Attendant => "attendant",
         NodeKind::Worker => "worker",
         NodeKind::Terminal => "terminal",
+        NodeKind::Envoy => "envoy",
         NodeKind::Subagent => "subagent",
         NodeKind::Queen => "queen",
     }
 }
 
 pub fn parse_kind(s: &str) -> Option<NodeKind> {
-    const ALL: [NodeKind; 6] = [
+    const ALL: [NodeKind; 7] = [
+        NodeKind::Envoy,
         NodeKind::Coordinator,
         NodeKind::Attendant,
         NodeKind::Worker,
