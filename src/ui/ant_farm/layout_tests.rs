@@ -1188,6 +1188,10 @@ fn comms_room_fits_beside_entrance_at_small_and_large_fleets() {
             let room = scene.comms.unwrap();
             assert!(scene.rect.contains_rect(room.chamber));
             assert!(room.chamber.top() > scene.surface_y);
+            assert!(room.chamber.width() >= scene.queen_chamber.width());
+            assert!(room.chamber.height() >= scene.queen_chamber.height());
+            assert!(scene.landing.left() - room.chamber.right() >= scene.cell());
+            assert!(room.feed().y > scene.rect.top());
             assert!(!room.chamber.intersects(scene.queen_chamber));
             assert!(!room.chamber.intersects(scene.storage));
             let entrance = Rect::from_min_max(
@@ -1209,6 +1213,8 @@ fn comms_room_fits_beside_entrance_at_small_and_large_fleets() {
             assert!(room.shaft.intersects(room.chamber));
             assert_eq!(room.dish, pos2(room.chamber.center().x, scene.surface_y));
             let envoy = ant(&scene, "envoy");
+            assert_eq!(room.shaft.center().x, envoy.pos.x);
+            assert!(!room.shaft.intersects(scene.queen_chamber));
             assert!(
                 room.chamber
                     .contains_rect(Rect::from_center_size(envoy.pos, Vec2::splat(envoy.size)))
@@ -1227,4 +1233,46 @@ fn comms_room_disappears_with_envoy() {
     assert!(scene(&snapshot).comms.is_some());
     let hidden = BTreeSet::from([id("envoy")]);
     assert!(scene_with(&snapshot, &hidden, &[]).comms.is_none());
+}
+
+#[test]
+fn waiting_ants_keep_clear_of_the_comms_room() {
+    for (size, count) in [(vec2(640.0, 800.0), 8), (vec2(1280.0, 800.0), 24)] {
+        let mut snapshot = FleetSnapshot::default();
+        snapshot
+            .nodes
+            .push(node("queen", NodeKind::Queen, None, NodeState::Idle));
+        snapshot
+            .nodes
+            .push(node("envoy", NodeKind::Envoy, None, NodeState::Idle));
+        for i in 0..count {
+            snapshot.nodes.push(node(
+                &format!("waiting-{i}"),
+                NodeKind::Worker,
+                None,
+                NodeState::NeedsInput,
+            ));
+        }
+        let scene = layout(
+            &FarmInput {
+                snapshot: &snapshot,
+                hidden: &BTreeSet::new(),
+                pr_ready: &HashSet::new(),
+                building: &HashSet::new(),
+                now_ms: 0,
+            },
+            Rect::from_min_size(Pos2::ZERO, size),
+        );
+        let room = scene.comms.unwrap();
+        for ant in scene
+            .ants
+            .iter()
+            .filter(|ant| matches!(ant.spot, Spot::Landing(_)))
+        {
+            let cell = Rect::from_center_size(ant.pos, Vec2::splat(ant.size));
+            assert!(scene.landing.contains_rect(cell));
+            assert!(scene.rect.contains_rect(cell));
+            assert!(cell.left() - room.chamber.right() >= scene.cell());
+        }
+    }
 }

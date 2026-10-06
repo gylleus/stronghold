@@ -74,7 +74,13 @@ fn flight_path(
     let outgoing = *to == Endpoint::Outside && envoy(from);
     if let Some(room) = scene.comms.filter(|_| incoming || outgoing) {
         let at = if incoming { to_at.0 } else { from_at.0 };
-        let mut route = vec![room.feed(scene.px), room.dish, room.chamber.center(), at];
+        let mut route = vec![
+            room.feed(),
+            room.dish,
+            room.cable_elbow(),
+            room.cable_port(),
+            at,
+        ];
         if outgoing {
             route.reverse();
         }
@@ -122,9 +128,9 @@ mod tests {
         let envoy = Endpoint::Node(id("loose"));
         let incoming = flight_path(&scene, &placed, &Endpoint::Outside, &envoy).unwrap();
         let room = scene.comms.unwrap();
-        assert_eq!(incoming.first(), Some(&room.feed(scene.px)));
+        assert_eq!(incoming.first(), Some(&room.feed()));
         assert!(incoming.contains(&room.dish));
-        assert!(incoming.contains(&room.chamber.center()));
+        assert!(incoming.contains(&room.cable_port()));
         assert_eq!(incoming.last(), Some(&scene.ant(&id("loose")).unwrap().pos));
         let mut outgoing = flight_path(&scene, &placed, &envoy, &Endpoint::Outside).unwrap();
         outgoing.reverse();
@@ -137,6 +143,7 @@ mod tests {
         let internal = flight_path(&scene, &placed, &envoy, &worker).unwrap();
         assert!(internal.iter().any(|p| p.y == scene.gallery.center().y));
         assert!(!internal.contains(&room.dish));
+        assert!(internal.contains(&pos2(room.shaft.center().x, scene.gallery.center().y)));
         assert!(
             flight_path(
                 &scene,
