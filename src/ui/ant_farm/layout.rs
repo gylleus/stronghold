@@ -176,13 +176,20 @@ impl CommsRoom {
 
     pub fn console(&self) -> Pos2 {
         pos2(
-            self.chamber.right() - 22.0 * self.px,
+            self.chamber.right() - 32.0 * self.px,
             self.chamber.top() + 23.0 * self.px,
         )
     }
 
+    pub fn tray_rect(&self) -> Rect {
+        Rect::from_min_size(
+            self.chamber.min + vec2(61.0, 20.0) * self.px,
+            vec2(17.0, 25.0) * self.px,
+        )
+    }
+
     pub fn cable_port(&self) -> Pos2 {
-        self.console() + vec2(-15.0, 2.0) * self.px
+        self.console() + vec2(-8.0, 2.0) * self.px
     }
 
     pub fn cable_elbow(&self) -> Pos2 {

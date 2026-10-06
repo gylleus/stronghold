@@ -1265,6 +1265,18 @@ fn comms_room_fits_beside_entrance_at_small_and_large_fleets() {
             assert!(room.shaft.intersects(room.chamber));
             assert_eq!(room.dish, pos2(room.chamber.center().x, scene.surface_y));
             let envoy = ant(&scene, "envoy");
+            let ant_cell = Rect::from_center_size(envoy.pos, Vec2::splat(envoy.size));
+            let console = Rect::from_min_max(
+                room.console() + vec2(-10.0, -13.0) * room.px,
+                room.console() + vec2(10.0, 18.0) * room.px,
+            );
+            let tray = room.tray_rect();
+            assert!(room.chamber.contains_rect(tray));
+            assert!(room.chamber.contains_rect(console));
+            assert!(!tray.intersects(console));
+            assert!(!tray.intersects(ant_cell));
+            assert!(!tray.intersects(scene.queen_chamber));
+            assert!(!console.intersects(ant_cell));
             assert_eq!(room.shaft.center().x, envoy.pos.x);
             assert!(!room.shaft.intersects(scene.queen_chamber));
             assert!(

@@ -109,7 +109,7 @@ pub struct QueenResponse {
 
 /// The draft count stays visible even when the Envoy session is stopped.
 pub fn envoy_drafts_button(ui: &mut Ui, pending: usize) -> bool {
-    ui.button(format!("Envoy drafts ({pending})")).clicked()
+    ui.button(format!("Envoy inbox ({pending})")).clicked()
 }
 
 /// Draws the Queen's details: her header with the fleet counts, then the fleet summary and the
@@ -442,10 +442,9 @@ mod tests {
 mod envoy_draft_tests {
     #[test]
     fn drafts_button_shows_pending_count_and_opens_on_click() {
-        assert!(crate::ui::test_util::click_label(
-            "Envoy drafts (3)",
-            |ui| super::envoy_drafts_button(ui, 3)
-        ));
+        assert!(crate::ui::test_util::click_label("Envoy inbox (3)", |ui| {
+            super::envoy_drafts_button(ui, 3)
+        }));
     }
 }
 

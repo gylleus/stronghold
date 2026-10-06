@@ -127,6 +127,7 @@ pub struct AntFarmResponse {
     pub clicked: Option<NodeId>,
     /// Empty ground was clicked (clears the selection, as in the graph).
     pub clicked_empty: bool,
+    pub open_envoy: bool,
     pub hovered: Option<NodeId>,
     /// Ants inside a selection box dragged from empty ground, when it was released this
     /// frame, and whether Shift/Cmd was held (add to the selection rather than replace it).
@@ -185,6 +186,7 @@ pub struct AntFarmView {
     /// Her chat is the conversation shown: she gets the selection ring.
     queen_focused: bool,
     envoy_health: Option<crate::envoy::EnvoyHealth>,
+    envoy_pending: usize,
     /// Messages carried between ants; see [`mail`].
     mail: crate::ui::envelope::Flights,
     /// The part of the farm on screen; see [`zoom`].
@@ -212,6 +214,10 @@ impl AntFarmView {
 
     pub fn set_envoy_health(&mut self, health: crate::envoy::EnvoyHealth) {
         self.envoy_health = Some(health);
+    }
+
+    pub fn set_envoy_pending(&mut self, pending: usize) {
+        self.envoy_pending = pending;
     }
 
     pub fn pulse(&mut self, pulse: Pulse) {
@@ -288,7 +294,10 @@ impl AntFarmView {
         );
         paint_calls(&painter, sprites, &scene, &effects, now_s, true);
         let pointer = response.hover_pos().map(|p| self.camera.to_farm(rect, p));
-        let hovered = pointer.and_then(|p| hit(&scene, &placed, p));
+        let tray_hovered = pointer.is_some_and(|p| tray_hit(&scene, p));
+        let hovered = pointer
+            .filter(|_| !tray_hovered)
+            .and_then(|p| hit(&scene, &placed, p));
         paint_ants(
             &painter,
             sprites,
@@ -303,6 +312,7 @@ impl AntFarmView {
         paint_falls(&painter, sprites, &scene, &self.falls, now_s);
         mail::paint(&painter, &scene, &placed, self.mail.tick(now_s), now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
+        comms::tray(&painter, &scene, self.envoy_pending, tray_hovered);
         zoom::apply(
             ui.ctx(),
             painter.layer_id(),
@@ -310,7 +320,7 @@ impl AntFarmView {
             self.camera.transform(rect),
             painter.clip_rect(),
         );
-        if response.double_clicked() && hovered.is_none() {
+        if response.double_clicked() && hovered.is_none() && !tray_hovered {
             self.camera = Camera::default();
         }
 
@@ -333,6 +343,15 @@ impl AntFarmView {
         }
         daylight::schedule_repaint(ui.ctx());
 
+        if tray_hovered {
+            response
+                .clone()
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text_at_pointer(format!(
+                    "Envoy inbox: {} waiting · outbox",
+                    self.envoy_pending
+                ));
+        }
         if let Some(id) = &hovered {
             response
                 .clone()
@@ -348,7 +367,8 @@ impl AntFarmView {
         };
         AntFarmResponse {
             clicked: response.clicked().then(|| hovered.clone()).flatten(),
-            clicked_empty: response.clicked() && hovered.is_none(),
+            clicked_empty: response.clicked() && hovered.is_none() && !tray_hovered,
+            open_envoy: response.clicked() && tray_hovered,
             hovered,
             close_requested: menu.close,
             whip_requested: menu.whip,
@@ -370,8 +390,10 @@ impl AntFarmView {
         let pointer = ui.input(|i| i.pointer.latest_pos());
         if response.drag_started_by(egui::PointerButton::Primary) {
             let origin = ui.input(|i| i.pointer.press_origin()).or(pointer);
-            self.box_origin = origin
-                .filter(|o| hit(scene, placed, self.camera.to_farm(scene.rect, *o)).is_none());
+            self.box_origin = origin.filter(|o| {
+                let p = self.camera.to_farm(scene.rect, *o);
+                !tray_hit(scene, p) && hit(scene, placed, p).is_none()
+            });
         }
         let origin = self.box_origin?;
         let current = pointer.unwrap_or(origin);
@@ -568,6 +590,12 @@ pub fn boxed_ants(scene: &Scene, placed: &[Placed], rect: Rect) -> Vec<NodeId> {
         .filter(|(ant, at)| Rect::from_center_size(at.pos, Vec2::splat(ant.size)).intersects(rect))
         .map(|(ant, _)| ant.id.clone())
         .collect()
+}
+
+fn tray_hit(scene: &Scene, pointer: Pos2) -> bool {
+    scene
+        .comms
+        .is_some_and(|room| room.tray_rect().contains(pointer))
 }
 
 /// The ant under `pointer`, topmost first.
