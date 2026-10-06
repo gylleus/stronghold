@@ -29,6 +29,9 @@ pub enum ScreenVerdict {
     BypassModal,
     /// A "do you trust this folder" question: choose "1. Yes".
     TrustPrompt,
+    /// Codex's startup "Update available" menu, whose first option runs `brew upgrade`: skip
+    /// it with Esc, never Enter. A brief pasted into it is lost.
+    UpdatePrompt,
     /// The input box is empty and nothing is running: the prompt isn't submitted yet, or its
     /// echo scrolled away after a quick reply.
     IdleEmpty,
@@ -51,6 +54,9 @@ const TRUST_MARKERS: &[&str] = &[
     "trust this folder",
     "quick safety check",
 ];
+/// Lower-cased title and options of Codex's startup update menu.
+const UPDATE_MARKERS: &[&str] = &["update available"];
+const UPDATE_OPTIONS: &[&str] = &["update now", "skip until next version"];
 /// Lower-cased hints that the agent is working.
 const WORKING_MARKERS: &[&str] = &["esc to interrupt"];
 /// Lower-cased starts of an input box's placeholder text.
@@ -80,6 +86,9 @@ pub fn classify_screen(lines: &[String], agent: Agent, expect: &Expect) -> Scree
 
     if has(BYPASS_MARKERS) && lower.iter().any(|l| l.contains(BYPASS_ACCEPT)) {
         return ScreenVerdict::BypassModal;
+    }
+    if has(UPDATE_MARKERS) && has(UPDATE_OPTIONS) {
+        return ScreenVerdict::UpdatePrompt;
     }
     if has(TRUST_MARKERS) && lower.iter().any(|l| is_menu_row(l)) {
         return ScreenVerdict::TrustPrompt;

@@ -341,4 +341,33 @@ mod claude_session_live {
             assert!(!claude_session_live(&term(agent, preview)), "{preview:?}");
         }
     }
+
+    #[test]
+    fn the_title_settles_a_preview_without_claude_markers() {
+        let titled = |title: &str, preview: &str| Terminal {
+            title: Some(title.into()),
+            ..term(Some(AgentIdentity::Claude), preview)
+        };
+        let warning = "ule (../.claude/settings.json): Bash(rg --files -g '*.ts') has a wildcard";
+        for title in ["✳ Envoy listener ant", "◑ Recs eval", "⠙ Working"] {
+            assert!(claude_session_live(&titled(
+                title,
+                &format!("{warning}\n❯")
+            )));
+            assert!(claude_session_live(&titled(title, warning)));
+            assert!(!claude_session_live(&titled(title, "⏺ hi\n~/repo %")));
+        }
+        for title in ["..launch-health", "gylleus@mac: ~/repo", ""] {
+            assert!(!claude_session_live(&titled(
+                title,
+                &format!("{warning}\n❯")
+            )));
+            assert!(!claude_session_live(&titled(title, warning)));
+        }
+        let codex = Terminal {
+            title: Some("✳ odd".into()),
+            ..term(Some(AgentIdentity::Codex), "❯")
+        };
+        assert!(!claude_session_live(&codex));
+    }
 }

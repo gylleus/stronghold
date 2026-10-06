@@ -4,7 +4,9 @@
 //! forwarder does it for them at no token cost: each tick it picks the Run's real events out of
 //! the polled inbox (`worker_done`, `merge_ready`, `question`, `escalation`, never heartbeats)
 //! plus tasks Orca failed while their worker kept working, and types one line per batch into
-//! the coordinator's terminal. It types only into a live Claude session
+//! the coordinator's terminal (a long backlog becomes one digest line). A report Orca refused
+//! only because it revoked the dispatch after misreporting its start
+//! ([`FleetData::is_misreported_launch_report`]) is forwarded as the worker's report. It types only into a live Claude session
 //! ([`claude_session_live`]): a coordinator that exited leaves a shell, where the line would run
 //! as a command. If the coordinator stays unreachable, Karl gets one notification per Run.
 //!
@@ -46,6 +48,8 @@ pub const RETRY_MAX_MS: i64 = 10 * 60_000;
 pub const ALERT_AFTER_FAILURES: u32 = 3;
 /// File holding the forwarded set, next to `settings.json`.
 pub const FORWARDED_FILE: &str = "forwarded.json";
+/// Most events a forwarded line lists; a longer backlog is one digest line ending in a count.
+pub const MAX_LISTED: usize = 5;
 /// Prefix of every forwarded line.
 pub const EVENT_PREFIX: &str = "Fleet event:";
 
@@ -317,9 +321,17 @@ pub fn save_forwarded(path: &Path, sent: &BTreeMap<String, i64>) -> io::Result<(
     fs::rename(&tmp, path)
 }
 
-/// The line typed into the coordinator: every event, then how to read them in full.
+/// The line typed into the coordinator: the events (the first [`MAX_LISTED`] of a backlog, then
+/// a count), then how to read them in full.
 pub fn forward_text(batch: &[&Event], run_ids: &BTreeSet<String>) -> String {
-    let lines: Vec<&str> = batch.iter().map(|e| e.line.as_str()).collect();
+    let mut lines: Vec<String> = batch
+        .iter()
+        .take(MAX_LISTED)
+        .map(|e| e.line.clone())
+        .collect();
+    if batch.len() > MAX_LISTED {
+        lines.push(format!("and {} more", batch.len() - MAX_LISTED));
+    }
     let read: Vec<String> = run_ids
         .iter()
         .map(|r| format!("`orca orchestration check --run {r} --all`"))
@@ -392,7 +404,8 @@ pub fn collect_events(
 
 fn message_event(data: &FleetData, m: &InboxMessage, now_ms: i64) -> Option<Event> {
     let kind = m.message_type.as_ref().filter(|k| FORWARDED.contains(k))?;
-    if is_rejected(m) {
+    let revoked = data.is_misreported_launch_report(m);
+    if is_rejected(m) && !revoked {
         return None;
     }
     let run_id = m.run_id.clone()?;
@@ -409,11 +422,22 @@ fn message_event(data: &FleetData, m: &InboxMessage, now_ms: i64) -> Option<Even
         .and_then(|p| p.task_id)
         .map(|t| task_label(data, &run_id, &t))
         .unwrap_or_else(|| from.to_string());
-    let subject = m
+    let mut subject = m
         .subject
         .as_deref()
         .map(|s| s.replace(['\n', '\r'], " "))
         .unwrap_or_default();
+    if revoked {
+        let original = subject.strip_prefix("Rejected ").unwrap_or(&subject);
+        let original = original
+            .split_once(": ")
+            .map_or(original, |(_, rest)| rest)
+            .to_string();
+        subject = format!(
+            "{original} (rejected by Orca on a dispatch it revoked after a misreported launch; \
+             the report stands, its body has the original)"
+        );
+    }
     Some(Event {
         key: m.id.clone(),
         run_id,
@@ -433,7 +457,7 @@ fn task_label(data: &FleetData, run_id: &str, task_id: &str) -> String {
 fn is_rejected(m: &InboxMessage) -> bool {
     m.payload
         .as_deref()
-        .is_some_and(|p| p.contains("_orcaLifecycleRejection"))
+        .is_some_and(|p| p.contains(crate::orca::REJECTION_KEY))
         || m.subject
             .as_deref()
             .is_some_and(|s| s.starts_with("Rejected "))
@@ -442,7 +466,7 @@ fn is_rejected(m: &InboxMessage) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orca::{AgentIdentity, Run, Task, Terminal, Worker};
+    use crate::orca::{AgentIdentity, Run, Task, TaskStatus, Terminal, Worker};
     use crate::whip::progress::ProgressTracker;
     use serde_json::json;
 
@@ -603,6 +627,63 @@ mod tests {
             vec![msg("m1", COORD, "question", NOW - MIN, "my own"), rejected],
         );
         assert!(tick(&mut Forwarder::new(), &data, NOW).is_empty());
+    }
+
+    #[test]
+    fn forwards_a_report_rejected_on_a_revoked_dispatch() {
+        let mut revoked = msg(
+            "m1",
+            WORKER,
+            "worker_done",
+            NOW - MIN,
+            "Rejected worker_done: PR 8118 open",
+        );
+        revoked.payload = Some(
+            json!({"taskId": "t1", "dispatchId": "ctx_1", "_orcaLifecycleRejection": {
+                "code": "dispatch_capability_invalid",
+                "reason": "Dispatch ctx_1 capability is revoked."}})
+            .to_string(),
+        );
+        let mut data = fleet(CLAUDE_IDLE, vec![revoked]);
+        let task = &mut data.tasks.get_mut(RUN).unwrap()[0];
+        task.status = TaskStatus::Failed;
+        task.dispatch_id = Some("ctx_1".into());
+        let out = forwards(&tick(&mut Forwarder::new(), &data, NOW));
+        assert_eq!(out.len(), 1);
+        assert!(
+            out[0].contains(": PR 8118 open (rejected by Orca"),
+            "{}",
+            out[0]
+        );
+        assert!(out[0].contains("the report stands"));
+
+        // A dispatch the coordinator replaced stays ignored.
+        data.tasks.get_mut(RUN).unwrap()[0].dispatch_id = Some("ctx_2".into());
+        assert!(tick(&mut Forwarder::new(), &data, NOW).is_empty());
+    }
+
+    #[test]
+    fn a_backlog_is_one_digest_line() {
+        let inbox = (0..8)
+            .map(|i| {
+                let id = format!("m{i}");
+                msg(
+                    &id,
+                    WORKER,
+                    "worker_done",
+                    NOW - MIN + i,
+                    &format!("done {i}"),
+                )
+            })
+            .collect();
+        let out = forwards(&tick(
+            &mut Forwarder::new(),
+            &fleet(CLAUDE_IDLE, inbox),
+            NOW,
+        ));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].matches("worker_done from").count(), MAX_LISTED);
+        assert!(out[0].contains("| and 3 more."), "{}", out[0]);
     }
 
     #[test]

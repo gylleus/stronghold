@@ -4,8 +4,8 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::exec::{
-    Job, Progress, SpawnBackend, SpawnEvent, VERIFY_DEADLINE, Verifier, VerifyStep, run_job,
-    run_plan,
+    Job, MISREPORTED_LAUNCH, Progress, SpawnBackend, SpawnEvent, VERIFY_DEADLINE, Verifier,
+    VerifyStep, run_job, run_plan,
 };
 use super::pending::{PENDING_SELECT_MS, PendingSelect, node_for_handle, take_ready};
 use super::resolve::LiveAgent;
@@ -691,6 +691,26 @@ fn classifies_codex_launch_screens() {
 }
 
 #[test]
+fn classifies_the_codex_update_screen() {
+    let update = screen!("spawn_codex_update_prompt.txt");
+    for expect in [
+        Expect::AnyInput,
+        Expect::Prompt(PROMPT.into()),
+        Expect::Ready,
+    ] {
+        assert_eq!(
+            classify_screen(&update, Agent::Codex, &expect),
+            ScreenVerdict::UpdatePrompt
+        );
+    }
+    let mut check = Verifier::new(Agent::Codex, &Expect::AnyInput);
+    assert_eq!(
+        check.next(&update),
+        VerifyStep::Send(TerminalInput::key(Key::Escape), "skip the update screen")
+    );
+}
+
+#[test]
 fn flags_a_codex_session_that_asks_for_approval() {
     assert!(codex_approvals_on(&screen!("spawn_codex_approvals_on.txt")));
     assert!(!codex_approvals_on(&screen!("spawn_codex_yolo.txt")));
@@ -1098,6 +1118,51 @@ fn worker_run_creates_task_starts_worker_and_checks_the_preamble() {
     );
     assert!(outcome.verified);
     assert_eq!(fake.direnv_calls.len(), 1);
+}
+
+#[test]
+fn a_misreported_worker_start_succeeds_when_the_agent_took_its_brief() {
+    let plan = build_plan(&request(worker(WorkerPlacement::Worktree {
+        worktree_id: WT_ID.into(),
+    })))
+    .unwrap();
+    let fake = || {
+        Fake::default()
+            .reply(
+                "orchestration task-create",
+                Ok(result(orca_fixture!("task_create.json"))),
+            )
+            .reply(
+                "orchestration worker-start",
+                Ok(result(orca_fixture!(
+                    "worker_start_dispatch_input_failed.json"
+                ))),
+            )
+    };
+    let mut working = fake().screens(vec![screen!("claude_working_synthetic.txt")]);
+    let (result, _) = run(&plan, &mut working);
+    let outcome = result.unwrap();
+    assert!(outcome.verified);
+    assert_eq!(
+        outcome.context.handle.as_deref(),
+        Some("term_6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c")
+    );
+    let notes = outcome.notes.join(" / ");
+    assert!(notes.contains(MISREPORTED_LAUNCH), "{notes}");
+    assert!(notes.contains("agent_prompt_blocked"), "{notes}");
+
+    // The brief never showed up: the start fails with Orca's words.
+    let mut idle = fake().screens(vec![screen!("spawn_claude_idle_empty_synthetic.txt")]);
+    let (result, _) = run(&plan, &mut idle);
+    let failure = result.unwrap_err();
+    assert!(
+        failure
+            .message
+            .contains("worker failed at dispatch_input: agent_prompt_blocked"),
+        "{}",
+        failure.message
+    );
+    assert!(failure.message.contains("never showed the brief taken"));
 }
 
 #[test]

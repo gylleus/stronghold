@@ -33,6 +33,10 @@ pub const VERIFY_DEADLINE: Duration = Duration::from_secs(45);
 pub const VERIFY_POLL: Duration = Duration::from_millis(1500);
 /// Most times each fix is tried.
 const MAX_MODAL_ANSWERS: u32 = 2;
+/// Note on a worker that took its brief although Orca failed its start.
+pub const MISREPORTED_LAUNCH: &str = "the worker is running although Orca failed its start and \
+     revoked the dispatch: its worker_done/merge_ready arrive as \"Rejected …\" messages, which \
+     Myrstack forwards to the coordinator as the worker's report";
 const MAX_ENTERS: u32 = 3;
 /// The note when a Codex session came up asking for approval.
 pub const CODEX_APPROVALS_ON: &str = "Codex started with approvals on (its header lacks \
@@ -284,6 +288,7 @@ pub fn run_plan_observed(
         ctx: plan.initial.clone(),
         notes: Vec::new(),
         verified: false,
+        misreported: None,
     };
     for (index, step) in plan.steps.iter().enumerate() {
         progress(Progress::Step {
@@ -328,6 +333,9 @@ struct PlanRun<'a> {
     ctx: SpawnContext,
     notes: Vec<String>,
     verified: bool,
+    /// Orca's failure report for a worker start whose brief may still have landed; the screen
+    /// check must then see the agent take it, or the spawn fails with this.
+    misreported: Option<String>,
 }
 
 fn orca_error(e: OrcaError) -> String {
@@ -438,7 +446,16 @@ impl PlanRun<'_> {
                     }
                 }
                 if !started.is_ready() {
-                    return Err(started.failure());
+                    if !started.input_unconfirmed() || self.ctx.handle.is_none() {
+                        return Err(started.failure());
+                    }
+                    // Orca often fails this stage while the agent takes the brief anyway; the
+                    // screen check decides.
+                    let failure = started.failure();
+                    self.misreported = Some(failure.clone());
+                    return Ok(StepStatus::Warned(format!(
+                        "Orca reported {failure}; checking the agent's screen"
+                    )));
                 }
                 let mut note = format!(
                     "dispatch {} ready in {}",
@@ -587,7 +604,11 @@ impl PlanRun<'_> {
                 }
                 match check.next(&lines) {
                     VerifyStep::Done => {
-                        let summary = check.summary();
+                        let mut summary = check.summary();
+                        if let Some(failure) = &self.misreported {
+                            summary = format!("{summary}, although Orca reported {failure}");
+                            self.notes.push(format!("{MISREPORTED_LAUNCH} ({failure})"));
+                        }
                         self.verified = true;
                         self.notes.append(&mut check.notes);
                         if check.approvals_on {
@@ -607,6 +628,13 @@ impl PlanRun<'_> {
                 }
             }
             if backend.elapsed() >= deadline {
+                if let Some(failure) = self.misreported.take() {
+                    return Err(format!(
+                        "{failure}; the agent's screen never showed the brief taken (last screen: \
+                         {})",
+                        check.last_label()
+                    ));
+                }
                 if check.approvals_on {
                     check.notes.push(CODEX_APPROVALS_ON.into());
                 }
@@ -661,6 +689,7 @@ pub struct Verifier {
     expect: Expect,
     bypass: u32,
     trust: u32,
+    updates: u32,
     enters: u32,
     /// Codex's header showed it asking for approval (no "YOLO mode").
     pub approvals_on: bool,
@@ -675,6 +704,7 @@ impl Verifier {
             expect: expect.clone(),
             bypass: 0,
             trust: 0,
+            updates: 0,
             enters: 0,
             approvals_on: false,
             last: None,
@@ -703,6 +733,11 @@ impl Verifier {
                 self.trust += 1;
                 self.note("trusted the folder (1)");
                 VerifyStep::Send(TerminalInput::key(Key::Digit(1)), "trust the folder")
+            }
+            ScreenVerdict::UpdatePrompt if self.updates < MAX_MODAL_ANSWERS => {
+                self.updates += 1;
+                self.note("skipped the agent's update screen (Esc)");
+                VerifyStep::Send(TerminalInput::key(Key::Escape), "skip the update screen")
             }
             ScreenVerdict::Parked if self.enters < MAX_ENTERS => {
                 self.enters += 1;
@@ -738,6 +773,7 @@ impl Verifier {
             Some(ScreenVerdict::Parked) => "prompt still in the input box",
             Some(ScreenVerdict::BypassModal) => "Bypass Permissions warning",
             Some(ScreenVerdict::TrustPrompt) => "folder trust question",
+            Some(ScreenVerdict::UpdatePrompt) => "update screen",
             Some(ScreenVerdict::IdleEmpty) => "idle with an empty input box",
             Some(ScreenVerdict::Booting) => "agent not drawn yet",
         }
