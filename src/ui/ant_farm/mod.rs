@@ -721,6 +721,7 @@ fn paint_ground(
             &tunnel.label,
             font.clone(),
             width,
+            px,
             palette,
         );
         // The run's task progress: a bar filling as tasks complete, and the count.
@@ -729,7 +730,7 @@ fn paint_ground(
             let small = FontId::monospace(8.0 + 1.5 * px);
             let bar_w = width.min(text.width().max(3.0 * a));
             let bar = Rect::from_center_size(
-                egui::pos2(top.x, text.bottom() + 3.0 * px),
+                egui::pos2(top.x, text.bottom() + 4.0 * px),
                 vec2(bar_w, 2.0 * px),
             );
             painter.rect_filled(bar.expand(px), 0.0, palette.label_shadow);
@@ -743,6 +744,7 @@ fn paint_ground(
                 &count,
                 small,
                 width,
+                px,
                 palette,
             );
         }
@@ -757,11 +759,12 @@ fn paint_ground(
     );
     label(
         painter,
-        scene.storage.left_top() + vec2(2.0 * px, 2.0 * px),
+        scene.storage.left_top() + vec2(4.0 * px, 3.0 * px),
         Align2::LEFT_TOP,
         "Ready for review",
         font,
         scene.storage.width(),
+        px,
         palette,
     );
     // PR-ready crumbs pile up in storage, left of the ants.
@@ -989,6 +992,9 @@ fn paint_falls(
 /// Lines a name tag wraps onto before it is cut.
 const TAG_ROWS: usize = 2;
 
+/// Opacity of the plate behind a room's label.
+const LABEL_PLATE_ALPHA: f32 = 0.78;
+
 /// The sleep bubble's float, in texels per step.
 const SLEEP_BOB: [f32; 4] = [0.0, 1.0, 2.0, 1.0];
 
@@ -1112,7 +1118,9 @@ fn paint_calls(
     }
 }
 
-/// Text with a hard pixel shadow, cut to `width`; returns where it went.
+/// A room's label: light text on a rounded dark plate so it reads over any soil or sky, cut to
+/// `width`; returns where the text went.
+#[allow(clippy::too_many_arguments)]
 fn label(
     painter: &egui::Painter,
     pos: Pos2,
@@ -1120,18 +1128,22 @@ fn label(
     text: &str,
     font: FontId,
     width: f32,
+    px: f32,
     palette: Palette,
 ) -> Rect {
-    let galley = |color| {
-        let mut job =
-            egui::text::LayoutJob::simple_singleline(text.to_string(), font.clone(), color);
-        job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(8.0));
-        painter.layout_job(job)
-    };
-    let shadow = galley(palette.label_shadow);
-    let rect = align.anchor_size(pos, shadow.size());
-    painter.galley(rect.min + vec2(1.0, 1.0), shadow, palette.label_shadow);
-    painter.galley(rect.min, galley(palette.label), palette.label);
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, palette.label);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(8.0));
+    let galley = painter.layout_job(job);
+    let rect = align.anchor_size(pos, galley.size());
+    let plate = rect.expand2(vec2(2.0 * px + 1.0, 0.5 * px + 1.0));
+    painter.rect(
+        plate,
+        2.0 * px,
+        palette.label_shadow.gamma_multiply(LABEL_PLATE_ALPHA),
+        Stroke::new(1.0, palette.label.gamma_multiply(0.18)),
+        StrokeKind::Inside,
+    );
+    painter.galley(rect.min, galley, palette.label);
     rect
 }
 
