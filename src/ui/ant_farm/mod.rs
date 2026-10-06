@@ -207,6 +207,9 @@ pub struct AntFarmView {
     /// Each room's shape last frame, and the rooms gliding to a new one.
     room_shapes: HashMap<TunnelKey, RoomShape>,
     room_glides: HashMap<TunnelKey, RoomGlide>,
+    /// The scale and the rooms of the surface band last frame, and their glide to new ones.
+    frame_shape: Option<FrameShape>,
+    frame_glide: Option<FrameGlide>,
     /// The rect of the last frame drawn and of the last ants placed: a move in an unchanged
     /// rect glides, a resize does not.
     shown_rect: Option<Rect>,
@@ -275,6 +278,85 @@ impl RoomGlide {
 
     fn done(&self, now_s: f64) -> bool {
         now_s >= self.start_s + GLIDE_S
+    }
+}
+
+/// The scale and what the surface band holds: they change when the plan is laid out afresh.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FrameShape {
+    px: f32,
+    surface_y: f32,
+    gallery: Rect,
+    landing: Rect,
+    queen_chamber: Rect,
+    storage: Rect,
+    comms: Option<layout::CommsRoom>,
+}
+
+impl FrameShape {
+    fn of(scene: &Scene) -> Self {
+        Self {
+            px: scene.px,
+            surface_y: scene.surface_y,
+            gallery: scene.gallery,
+            landing: scene.landing,
+            queen_chamber: scene.queen_chamber,
+            storage: scene.storage,
+            comms: scene.comms,
+        }
+    }
+
+    fn lerp(self, to: Self, t: f32) -> Self {
+        let rect =
+            |a: Rect, b: Rect| Rect::from_min_max(a.min.lerp(b.min, t), a.max.lerp(b.max, t));
+        let num = |a: f32, b: f32| a + (b - a) * t;
+        Self {
+            px: num(self.px, to.px),
+            surface_y: num(self.surface_y, to.surface_y),
+            gallery: rect(self.gallery, to.gallery),
+            landing: rect(self.landing, to.landing),
+            queen_chamber: rect(self.queen_chamber, to.queen_chamber),
+            storage: rect(self.storage, to.storage),
+            comms: match (self.comms, to.comms) {
+                (Some(a), Some(b)) => Some(layout::CommsRoom {
+                    chamber: rect(a.chamber, b.chamber),
+                    shaft: rect(a.shaft, b.shaft),
+                    dish: a.dish.lerp(b.dish, t),
+                    px: num(a.px, b.px),
+                }),
+                (_, to) => to,
+            },
+        }
+    }
+
+    /// Draws `scene` with this scale and band, its ants resized to the scale.
+    fn apply(self, scene: &mut Scene) {
+        let ratio = self.px / scene.px;
+        for ant in &mut scene.ants {
+            ant.size *= ratio;
+        }
+        scene.px = self.px;
+        scene.surface_y = self.surface_y;
+        scene.gallery = self.gallery;
+        scene.landing = self.landing;
+        scene.queen_chamber = self.queen_chamber;
+        scene.storage = self.storage;
+        scene.comms = self.comms;
+    }
+}
+
+/// The scale and band gliding from `from` to the scene's since `start_s`: the camera moving
+/// in or out as the farm is laid out afresh.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FrameGlide {
+    from: FrameShape,
+    start_s: f64,
+}
+
+impl FrameGlide {
+    fn at(&self, to: FrameShape, now_s: f64) -> FrameShape {
+        let t = ((now_s - self.start_s) / GLIDE_S) as f32;
+        self.from.lerp(to, motion::ease(t))
     }
 }
 
@@ -463,7 +545,8 @@ impl AntFarmView {
             || !self.falls.is_empty()
             || !self.mail.is_empty()
             || !self.beams.is_empty()
-            || !self.room_glides.is_empty();
+            || !self.room_glides.is_empty()
+            || self.frame_glide.is_some();
         let stepping = scene.ants.iter().any(|a| {
             matches!(a.pose, Pose::Dig | Pose::Build | Pose::Wait | Pose::Sleep)
                 || (a.pose == Pose::Queen && self.queen_busy)
@@ -590,16 +673,42 @@ impl AntFarmView {
     }
 
     /// Glides rooms whose place changed while the view kept its size (a rearrange, or a room
-    /// grown or deepened) from where they were drawn, and draws `scene` with them where they
-    /// are on the way. A resize, a return to the farm or Reduce motion moves them at once.
+    /// dug deeper) from where they were drawn, and the scale and surface band with them, and
+    /// draws `scene` with them where they are on the way. A resize, a return to the farm or
+    /// Reduce motion moves them at once.
     pub fn glide_rooms(&mut self, scene: &mut Scene, now_s: f64) {
         let rect = scene.rect;
         let steady = !self.away && self.shown_rect == Some(rect);
         self.shown_rect = Some(rect);
         if !steady {
             self.room_glides.clear();
+            self.frame_glide = None;
         }
         let mut still = None;
+        let target = FrameShape::of(scene);
+        if let Some(last) = self.frame_shape
+            && steady
+            && last != target
+        {
+            self.frame_glide = (!*still.get_or_insert_with(|| self.still())).then(|| {
+                let from = match self.frame_glide {
+                    Some(glide) => glide.at(last, now_s),
+                    None => last,
+                };
+                FrameGlide {
+                    from,
+                    start_s: now_s,
+                }
+            });
+        }
+        self.frame_shape = Some(target);
+        if let Some(glide) = self.frame_glide {
+            if now_s >= glide.start_s + GLIDE_S {
+                self.frame_glide = None;
+            } else {
+                glide.at(target, now_s).apply(scene);
+            }
+        }
         let mut shapes = HashMap::new();
         for tunnel in &mut scene.tunnels {
             let target = RoomShape::of(tunnel, rect);

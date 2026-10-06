@@ -4,7 +4,7 @@
 //! `cargo run --example ant_farm [--light] [--graph] [--sweep] [--shot out.png]`.
 //! `--receipt-at-ms 31` freezes a receipt mid-shake; `--reduced-motion` shows its flash.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
-//! terminals in the resting area. `--graph`
+//! terminals in the resting area; `--ants N` keeps only the first N agents. `--graph`
 //! shows the same fleet as the graph; `--sweep` flies the worktree cleanup's broom around the
 //! farm. Every few seconds one worker
 //! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
@@ -52,6 +52,10 @@ fn main() -> eframe::Result {
     let show_graph = args.iter().any(|a| a == "--graph");
     let sweep = args.iter().any(|a| a == "--sweep").then(sweep_marker);
     let parked = args.iter().any(|a| a == "--parked");
+    let ants = args
+        .iter()
+        .position(|a| a == "--ants")
+        .map(|i| args[i + 1].parse::<usize>().expect("a number of ants"));
     eframe::run_native(
         "ant farm",
         eframe::NativeOptions {
@@ -66,6 +70,9 @@ fn main() -> eframe::Result {
                 egui::Theme::Dark
             });
             let mut snapshot = fleet();
+            if let Some(n) = ants {
+                keep_ants(&mut snapshot, n);
+            }
             if parked {
                 for name in ["sleepy", "dozy", "napper"] {
                     let mut n = node(name, NodeKind::Terminal, None, NodeState::Idle, "myrstack");
@@ -369,6 +376,21 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState, repo: &
         released_at_ms: None,
         parked_at_ms: None,
     }
+}
+
+/// Keeps the Envoy, the Queen and the first `n` other agents of `s`.
+fn keep_ants(s: &mut FleetSnapshot, n: usize) {
+    let mut kept = 0;
+    s.nodes.retain(|node| {
+        if matches!(node.kind, NodeKind::Queen | NodeKind::Envoy) {
+            return true;
+        }
+        kept += 1;
+        kept <= n
+    });
+    let ids: HashSet<NodeId> = s.nodes.iter().map(|n| n.id.clone()).collect();
+    s.edges
+        .retain(|e| ids.contains(&e.from) && ids.contains(&e.to));
 }
 
 /// The Queen, 6 runs of a coordinator and 3–5 workers, loose terminals in two repos, and

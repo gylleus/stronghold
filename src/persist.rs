@@ -127,7 +127,6 @@ mod tests {
                     key: crate::ui::ant_farm::layout::TunnelKey::Repo("myrstack".into()),
                     level: 1,
                     col: 2,
-                    span: 1,
                     rows: 3,
                     empty_since_ms: Some(1_000),
                 }];
