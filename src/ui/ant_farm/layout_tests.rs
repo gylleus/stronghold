@@ -1129,7 +1129,7 @@ fn subagent_trails_take_room_in_the_chamber() {
 }
 
 #[test]
-fn envoy_has_an_entrance_post_without_a_work_tunnel() {
+fn envoy_stays_in_its_comms_room_without_a_work_tunnel() {
     let mut snapshot = FleetSnapshot::default();
     snapshot
         .nodes
@@ -1141,11 +1141,89 @@ fn envoy_has_an_entrance_post_without_a_work_tunnel() {
         snapshot.nodes[1].state = state;
         let scene = scene(&snapshot);
         let envoy = ant(&scene, "envoy");
-        assert_eq!(envoy.spot, Spot::Entrance);
+        assert_eq!(envoy.spot, Spot::Comms);
         assert_eq!(envoy.pose, Pose::Stand);
         assert_eq!(envoy.mark, None);
-        assert!(envoy.pos.y < scene.surface_y);
-        assert!((envoy.pos.x - scene.queen_chamber.center().x).abs() < 1.0);
+        assert!(scene.comms.unwrap().chamber.contains(envoy.pos));
+        assert!(envoy.pos.x < scene.queen_chamber.left());
         assert!(scene.tunnels.is_empty());
     }
+}
+
+#[test]
+fn comms_room_fits_beside_entrance_at_small_and_large_fleets() {
+    for size in [
+        vec2(320.0, 400.0),
+        vec2(640.0, 400.0),
+        vec2(1280.0, 800.0),
+        vec2(2560.0, 1600.0),
+    ] {
+        for count in [0, 1, 8, 40, 100] {
+            let mut snapshot = FleetSnapshot::default();
+            snapshot
+                .nodes
+                .push(node("queen", NodeKind::Queen, None, NodeState::Idle));
+            snapshot
+                .nodes
+                .push(node("envoy", NodeKind::Envoy, None, NodeState::Idle));
+            for i in 0..count {
+                snapshot.nodes.push(node(
+                    &format!("w{i}"),
+                    NodeKind::Worker,
+                    Some(&format!("r{}", i % 8)),
+                    NodeState::Working,
+                ));
+            }
+            let scene = layout(
+                &FarmInput {
+                    snapshot: &snapshot,
+                    hidden: &BTreeSet::new(),
+                    pr_ready: &HashSet::new(),
+                    building: &HashSet::new(),
+                    now_ms: 0,
+                },
+                Rect::from_min_size(pos2(13.0, 29.0), size),
+            );
+            let room = scene.comms.unwrap();
+            assert!(scene.rect.contains_rect(room.chamber));
+            assert!(room.chamber.top() > scene.surface_y);
+            assert!(!room.chamber.intersects(scene.queen_chamber));
+            assert!(!room.chamber.intersects(scene.storage));
+            let entrance = Rect::from_min_max(
+                pos2(
+                    scene.landing.center().x - 0.6 * scene.cell(),
+                    scene.surface_y,
+                ),
+                pos2(
+                    scene.landing.center().x + 0.6 * scene.cell(),
+                    scene.gallery.center().y,
+                ),
+            );
+            assert!(!room.chamber.intersects(entrance));
+            for tunnel in &scene.tunnels {
+                assert!(!room.chamber.intersects(tunnel.chamber));
+                assert!(!room.chamber.intersects(tunnel.shaft));
+            }
+            assert!(room.shaft.intersects(scene.gallery));
+            assert!(room.shaft.intersects(room.chamber));
+            assert_eq!(room.dish, pos2(room.chamber.center().x, scene.surface_y));
+            let envoy = ant(&scene, "envoy");
+            assert!(
+                room.chamber
+                    .contains_rect(Rect::from_center_size(envoy.pos, Vec2::splat(envoy.size)))
+            );
+        }
+    }
+}
+
+#[test]
+fn comms_room_disappears_with_envoy() {
+    let mut snapshot = snapshot();
+    assert!(scene(&snapshot).comms.is_none());
+    snapshot
+        .nodes
+        .push(node("envoy", NodeKind::Envoy, None, NodeState::Idle));
+    assert!(scene(&snapshot).comms.is_some());
+    let hidden = BTreeSet::from([id("envoy")]);
+    assert!(scene_with(&snapshot, &hidden, &[]).comms.is_none());
 }

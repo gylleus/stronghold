@@ -45,7 +45,7 @@ pub enum TunnelKey {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Spot {
     Queen,
-    Entrance,
+    Comms,
     /// On the surface waiting for Karl, the nth in line.
     Landing(usize),
     /// In the storage chamber with its crumb, the nth on the pile.
@@ -62,6 +62,7 @@ pub enum Spot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Area {
     Queen,
+    Comms,
     Landing,
     Storage,
     Tunnel(usize),
@@ -72,7 +73,7 @@ impl Spot {
     pub fn area(&self) -> Area {
         match self {
             Spot::Queen => Area::Queen,
-            Spot::Entrance => Area::Landing,
+            Spot::Comms => Area::Comms,
             Spot::Landing(_) => Area::Landing,
             Spot::Storage(_) => Area::Storage,
             Spot::Mouth(t, _) | Spot::Chamber(t, _) => Area::Tunnel(*t),
@@ -152,6 +153,20 @@ pub struct Tunnel {
     pub tasks: Option<(usize, usize)>,
 }
 
+/// The Envoy's post and its link to the surface.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CommsRoom {
+    pub chamber: Rect,
+    pub shaft: Rect,
+    pub dish: Pos2,
+}
+
+impl CommsRoom {
+    pub fn feed(&self, px: f32) -> Pos2 {
+        self.dish + vec2(0.0, -9.0 * px)
+    }
+}
+
 /// The farm laid out in a rect.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Scene {
@@ -164,6 +179,7 @@ pub struct Scene {
     /// Where ants waiting on Karl stand, on the surface.
     pub landing: Rect,
     pub queen_chamber: Rect,
+    pub comms: Option<CommsRoom>,
     pub storage: Rect,
     pub tunnels: Vec<Tunnel>,
     /// In draw order: parents before the subagents trailing them.
@@ -176,6 +192,15 @@ impl Scene {
     /// Side of a normal ant's cell in points.
     pub fn cell(&self) -> f32 {
         CELL * self.px
+    }
+
+    pub fn karl_sign(&self) -> Pos2 {
+        let left = if self.comms.is_some() {
+            self.landing.right()
+        } else {
+            self.rect.left()
+        };
+        pos2(left + 0.3 * self.cell(), self.surface_y)
     }
 
     pub fn ant(&self, id: &NodeId) -> Option<&Ant> {
@@ -293,7 +318,7 @@ pub fn pixel_scale(size: Vec2, crowd: Crowd) -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Home {
     Queen,
-    Entrance,
+    Comms,
     Landing,
     Storage,
     Mouth,
@@ -308,7 +333,7 @@ pub enum Home {
 pub fn home(kind: NodeKind, state: NodeState, pr_ready: bool) -> Home {
     match kind {
         NodeKind::Queen => return Home::Queen,
-        NodeKind::Envoy => return Home::Entrance,
+        NodeKind::Envoy => return Home::Comms,
         NodeKind::Subagent => return Home::Trail,
         NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {}
     }
@@ -461,7 +486,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
     // Tunnels: runs in run-list order, then runs the list lacks, then repos by name.
     let mut keys: Vec<TunnelKey> = Vec::new();
     for n in &visible {
-        if matches!(homes[&n.id], Home::Queen | Home::Entrance | Home::Trail) {
+        if matches!(homes[&n.id], Home::Queen | Home::Comms | Home::Trail) {
             continue;
         }
         let key = tunnel_key(n, &repos);
@@ -515,7 +540,12 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         landing: count(Home::Landing),
         storage: count(Home::Storage),
     };
-    let px = pixel_scale(rect.size(), crowd);
+    let has_envoy = count(Home::Comms) > 0;
+    let mut px = pixel_scale(rect.size(), crowd);
+    if has_envoy {
+        // Leave a chamber left of the entrance without touching the Queen's room.
+        px = px.min((rect.width() / (11.0 * CELL)).floor().max(1.0));
+    }
     let a = CELL * px;
     let sub = (CELL * (px - 1.0).max(1.0)).min(a);
 
@@ -545,6 +575,21 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         pos2(rect.left() + 0.5 * a, gallery_top),
         pos2(rect.right() - 0.5 * a, gallery_top + 1.2 * a),
     );
+
+    let comms = has_envoy.then(|| {
+        let chamber = Rect::from_min_size(
+            pos2(rect.left() + 0.5 * a, surface_y + 0.4 * a),
+            vec2(2.4 * a, chamber_h),
+        );
+        CommsRoom {
+            chamber,
+            shaft: Rect::from_min_max(
+                pos2(chamber.center().x - 0.4 * a, chamber.bottom() - px),
+                pos2(chamber.center().x + 0.4 * a, gallery.center().y),
+            ),
+            dish: pos2(chamber.center().x, surface_y),
+        }
+    });
 
     // Each tunnel's chamber needs a row per chamber-full of its ants.
     let n = keys.len().max(1);
@@ -640,9 +685,9 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
                 continue;
             }
             Home::Chamber => continue,
-            Home::Entrance => (
-                Spot::Entrance,
-                pos2(queen_chamber.center().x, surface_y - 0.5 * a),
+            Home::Comms => (
+                Spot::Comms,
+                comms.expect("Envoy has a room").chamber.center() + vec2(0.0, 0.2 * a),
             ),
             Home::Queen => (Spot::Queen, queen_chamber.center() + vec2(0.0, 0.2 * a)),
             Home::Landing => {
@@ -747,6 +792,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
         gallery,
         landing,
         queen_chamber,
+        comms,
         storage,
         tunnels,
         ants,
@@ -776,7 +822,8 @@ fn ant(node: &Node, spot: Spot, pos: Pos2, size: f32, home: Home, pr: bool, now_
         },
         facing_right: pose == Pose::Dig,
         tag: match node.kind {
-            NodeKind::Worker | NodeKind::Terminal | NodeKind::Envoy => Some(node.label.clone()),
+            NodeKind::Envoy => Some("Envoy".into()),
+            NodeKind::Worker | NodeKind::Terminal => Some(node.label.clone()),
             NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Subagent | NodeKind::Queen => {
                 None
             }

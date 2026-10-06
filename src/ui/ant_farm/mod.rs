@@ -4,6 +4,7 @@
 //! [`layout`] decides where everything goes, [`motion`] walks ants to new places and
 //! [`sprites`] draws them; this module ties them to egui and handles input.
 
+mod comms;
 pub mod death;
 pub mod layout;
 #[cfg(test)]
@@ -180,6 +181,7 @@ pub struct AntFarmView {
     queen_busy: bool,
     /// Her chat is the conversation shown: she gets the selection ring.
     queen_focused: bool,
+    envoy_health: Option<crate::envoy::EnvoyHealth>,
     /// Messages carried between ants; see [`mail`].
     mail: crate::ui::envelope::Flights,
     /// The part of the farm on screen; see [`zoom`].
@@ -203,6 +205,10 @@ impl AntFarmView {
     /// Whether the Queen's chat is the conversation shown; she is ringed then.
     pub fn set_queen_focused(&mut self, focused: bool) {
         self.queen_focused = focused;
+    }
+
+    pub fn set_envoy_health(&mut self, health: crate::envoy::EnvoyHealth) {
+        self.envoy_health = Some(health);
     }
 
     pub fn pulse(&mut self, pulse: Pulse) {
@@ -269,6 +275,14 @@ impl AntFarmView {
         let selection = graph.selection();
 
         paint_ground(&painter, sprites, &scene, palette, now_s, daylight);
+        comms::paint(
+            &painter,
+            sprites,
+            &scene,
+            self.envoy_health
+                .unwrap_or(crate::envoy::EnvoyHealth::Stopped),
+            now_s,
+        );
         paint_calls(&painter, sprites, &scene, &effects, now_s, true);
         let pointer = response.hover_pos().map(|p| self.camera.to_farm(rect, p));
         let hovered = pointer.and_then(|p| hit(&scene, &placed, p));
@@ -311,7 +325,7 @@ impl AntFarmView {
         });
         if walking {
             ui.ctx().request_repaint_after(WALK_FRAME);
-        } else if stepping {
+        } else if stepping || scene.comms.is_some() {
             ui.ctx().request_repaint_after(STEP_FRAME);
         }
         daylight::schedule_repaint(ui.ctx());
@@ -665,7 +679,7 @@ fn paint_ground(
     }
     sprites.sign(
         painter,
-        egui::pos2(scene.rect.left() + 0.3 * a, scene.surface_y),
+        scene.karl_sign(),
         px,
         "Karl",
         FontId::monospace(10.0 + 2.0 * px),
@@ -802,14 +816,7 @@ fn paint_ants(
             sprites.item(painter, crumb, Item::Crumb, ant.alpha);
         }
         if ant.kind == crate::model::NodeKind::Envoy {
-            let envelope =
-                Rect::from_center_size(cell.center(), vec2(ant.size * 0.55, ant.size * 0.35));
-            let color =
-                crate::ui::graph::envoy_color(painter.ctx().global_style().visuals.dark_mode);
-            painter.rect_filled(envelope, 0.0, color);
-            let ink = egui::Stroke::new(tpx, egui::Color32::from_rgb(20, 45, 50));
-            painter.line_segment([envelope.left_top(), envelope.center()], ink);
-            painter.line_segment([envelope.right_top(), envelope.center()], ink);
+            comms::headphones(painter, cell, tpx, facing_right, ant.alpha);
         }
         if !walking && ant.pose == Pose::Dig {
             let seed = (ant.pos.x * 0.37 + ant.pos.y * 0.11).rem_euclid(1.0);
