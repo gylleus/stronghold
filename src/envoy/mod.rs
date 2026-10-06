@@ -6,6 +6,7 @@ pub mod channel;
 pub mod control;
 pub mod drafts;
 pub mod inbox;
+pub mod matching;
 pub mod relay;
 pub mod requests;
 pub mod secrets;

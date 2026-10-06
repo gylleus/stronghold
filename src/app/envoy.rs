@@ -8,14 +8,16 @@ use std::path::PathBuf;
 use super::{MyrstackApp, now_ms};
 use crate::actions::{Action, ActionId, ActionResult};
 use crate::control::{ControlError, ErrorCode, Reply};
-use crate::envoy::channel::InboundEvent;
+use crate::envoy::channel::{EventKind, InboundEvent};
 use crate::envoy::control::EnvoyCommand;
 use crate::envoy::drafts::{Draft, DraftKind, DraftQueue, DraftStatus, ReplyTo};
-use crate::envoy::inbox::Inbox;
+use crate::envoy::inbox::{Inbox, timestamp_us};
+use crate::envoy::matching::{self, Ant};
 use crate::envoy::relay::{RelayLimiter, RelayRequest};
 use crate::envoy::settings::EnvoySettings;
 use crate::envoy::worker::{Update, Work, Worker};
 use crate::envoy::{BridgeStatus, EnvoyIdentity, EnvoyStatus};
+use crate::model::NodeKind;
 use crate::notify::{Incoming, Severity, Source};
 use crate::orca::TerminalInput;
 use crate::traffic::{AgentMessage, MessageKind};
@@ -26,6 +28,8 @@ use gateway::GatewayAction;
 
 pub const DRAFTS_TARGET: &str = "envoy:drafts";
 const SHAKE_COOLDOWN_MS: i64 = 8_000;
+/// Events older than this at forwarding time collapse into one backlog line.
+const BACKLOG_AFTER_MS: i64 = 30 * 60_000;
 
 pub struct AppEnvoy {
     handle: Option<String>,
@@ -54,6 +58,7 @@ pub struct AppEnvoy {
     traffic_handle: Option<String>,
     forward_after_ms: i64,
     notices: HashSet<String>,
+    blocked: Option<&'static str>,
     pub shake_started_ms: Option<i64>,
     pub open_request: bool,
     pub error: Option<String>,
@@ -140,6 +145,7 @@ impl AppEnvoy {
             traffic_handle: None,
             forward_after_ms: 0,
             notices: HashSet::new(),
+            blocked: None,
             shake_started_ms: None,
             open_request: false,
             error,
@@ -346,7 +352,7 @@ impl AppEnvoy {
                     crate::envoy::slack::validate_ts(ts)?;
                 }
                 let limit = match args.get("limit") {
-                    None => 100,
+                    None => 20,
                     Some(v) => v
                         .as_u64()
                         .filter(|n| (1..=2000).contains(n))
@@ -665,21 +671,58 @@ impl AppEnvoy {
         (notifications, traffic)
     }
 
-    fn next_forward(&mut self, now: i64) -> Option<(Action, Vec<InboundEvent>)> {
+    fn next_forward(&mut self, now: i64, ants: &[Ant]) -> Option<(Action, Vec<InboundEvent>)> {
         if self.pending.is_empty() || self.forwarding.is_some() || now < self.forward_after_ms {
             return None;
         }
         let handle = self.handle.clone()?;
-        let batch: Vec<_> = self.pending.drain(..self.pending.len().min(20)).collect();
-        let text = batch
+        // A pin's ts is the pinned message's, so its age says nothing.
+        let stale = |e: &InboundEvent| {
+            e.kind != EventKind::Pin
+                && timestamp_us(&e.ts).is_none_or(|ts| ts / 1000 < now - BACKLOG_AFTER_MS)
+        };
+        let (old, fresh): (Vec<_>, Vec<_>) = self.pending.drain(..).partition(|e| stale(e));
+        self.pending = fresh.into();
+        let mut batch: Vec<_> = self.pending.drain(..self.pending.len().min(20)).collect();
+        let mut lines: Vec<String> = batch
             .iter()
-            .map(InboundEvent::summary)
-            .collect::<Vec<_>>()
-            .join(" | ");
+            .map(|e| {
+                let root = e.thread_ts.as_deref().unwrap_or(&e.ts);
+                let thread: Vec<&InboundEvent> = self
+                    .inbox
+                    .events()
+                    .iter()
+                    .filter(|t| {
+                        t.conversation == e.conversation
+                            && t.ts != e.ts
+                            && t.thread_ts.as_deref().unwrap_or(&t.ts) == root
+                    })
+                    .collect();
+                let thread = &thread[thread.len().saturating_sub(20)..];
+                e.summary()
+                    + &matching::annotation(&matching::candidates(
+                        e,
+                        thread,
+                        ants,
+                        &self.inbox.pr_heads,
+                    ))
+            })
+            .collect();
+        if !old.is_empty() {
+            lines.insert(
+                0,
+                format!(
+                    "Envoy backlog: {} event(s) older than {} min were not typed; envoy_inbox has them if you need them",
+                    old.len(),
+                    BACKLOG_AFTER_MS / 60_000
+                ),
+            );
+            batch.extend(old);
+        }
         Some((
             Action::Send {
                 handle,
-                input: TerminalInput::line(text),
+                input: TerminalInput::line(lines.join(" | ")),
             },
             batch,
         ))
@@ -1078,8 +1121,13 @@ impl MyrstackApp {
     }
 
     fn envoy_target_ready(&self, handle: &str) -> bool {
+        self.target_blocked(handle).is_none()
+    }
+
+    /// Why `handle` can't take typed input now, or `None` when it can.
+    fn target_blocked(&self, handle: &str) -> Option<&'static str> {
         let Some(terminal) = self.data.as_ref().and_then(|d| d.terminal(handle)) else {
-            return false;
+            return Some("terminal not listed");
         };
         let idle = self.snapshot.as_ref().is_some_and(|s| {
             s.nodes.iter().any(|n| {
@@ -1088,31 +1136,110 @@ impl MyrstackApp {
                     && n.state == crate::model::NodeState::Idle
             })
         });
-        can_forward(
-            terminal,
-            idle,
-            self.input.text_pending(handle)
-                || self.control.typing_pending(handle)
-                || !self.input.draft(handle).is_empty(),
-        )
+        if !idle {
+            return Some("not idle");
+        }
+        if self.input.text_pending(handle)
+            || self.control.typing_pending(handle)
+            || !self.input.draft(handle).is_empty()
+        {
+            return Some("input pending");
+        }
+        (!can_forward(terminal, true, false)).then_some("no empty agent prompt")
     }
 
     fn forward_envoy(&mut self) {
-        if !self.envoy_core.gateway_actions.is_empty() {
+        let blocked = match self.envoy_core.handle.as_deref() {
+            None => Some("no Envoy session"),
+            Some(_) if !self.envoy_core.gateway_actions.is_empty() => {
+                Some("gateway send in flight")
+            }
+            Some(_) if self.envoy_core.forwarding.is_some() => Some("batch in flight"),
+            Some(handle) => self.target_blocked(handle),
+        };
+        if self.envoy_core.pending.is_empty() || blocked.is_some() {
+            if !self.envoy_core.pending.is_empty() && blocked != self.envoy_core.blocked {
+                log::info!(
+                    "envoy: {} event(s) waiting: {}",
+                    self.envoy_core.pending.len(),
+                    blocked.unwrap_or_default()
+                );
+            }
+            self.envoy_core.blocked = blocked;
             return;
         }
-        if !self
-            .envoy_core
-            .handle
-            .as_deref()
-            .is_some_and(|handle| self.envoy_target_ready(handle))
-        {
-            return;
-        }
-        if let Some((action, batch)) = self.envoy_core.next_forward(now_ms()) {
+        self.envoy_core.blocked = None;
+        let ants = self.envoy_ants();
+        if let Some((action, batch)) = self.envoy_core.next_forward(now_ms(), &ants) {
+            log::info!("envoy: typing {} event(s)", batch.len());
             let id = self.actions.submit(action);
             self.envoy_core.forwarding = Some((id, batch));
         }
+    }
+
+    /// Live ants the Envoy may relay to, with what identifies their work.
+    fn envoy_ants(&self) -> Vec<Ant> {
+        let Some(snapshot) = &self.snapshot else {
+            return Vec::new();
+        };
+        snapshot
+            .nodes
+            .iter()
+            .filter(|n| {
+                n.live
+                    && !n.is_parked()
+                    && matches!(
+                        n.kind,
+                        NodeKind::Coordinator
+                            | NodeKind::Attendant
+                            | NodeKind::Worker
+                            | NodeKind::Terminal
+                    )
+            })
+            .map(|n| {
+                let handle = n.terminal_handle.as_deref();
+                let mine = |origin: &crate::review::mark::Origin| {
+                    handle.is_some() && origin.terminal_handle.as_deref() == handle
+                };
+                let mut context = Vec::new();
+                if let Some(run) = n.run_id.as_deref() {
+                    context.extend(snapshot.run(run).and_then(|r| r.objective.clone()));
+                    // A coordinator answers for every task in its run, a worker for its own.
+                    let lead = matches!(n.kind, NodeKind::Coordinator | NodeKind::Attendant);
+                    let tasks = self.data.as_ref().and_then(|d| d.tasks.get(run));
+                    context.extend(
+                        tasks
+                            .into_iter()
+                            .flatten()
+                            .filter(|t| lead || Some(&t.id) == n.task_id.as_ref())
+                            .filter_map(|t| t.task_title.clone()),
+                    );
+                }
+                let mut prs = Vec::new();
+                for entry in self.review.entries().filter(|e| mine(&e.origin)) {
+                    prs.push(format!("{}#{}", entry.pr.repo, entry.pr.number));
+                    context.extend(entry.title.clone());
+                }
+                let threads = self
+                    .envoy_core
+                    .requests()
+                    .iter()
+                    .filter(|r| !r.settled && r.bound_requester().is_some_and(|q| mine(&q.origin)))
+                    .filter_map(|r| r.thread.as_ref())
+                    .map(|t| format!("{}:{}", t.conversation, t.ts))
+                    .collect();
+                let repo = crate::model::node_repo(n, snapshot);
+                Ant {
+                    id: n.id.0.clone(),
+                    label: n.label.clone(),
+                    repo: (repo != crate::model::NO_REPO).then_some(repo),
+                    branch: n.branch.clone().filter(|b| !b.is_empty()),
+                    context,
+                    prs,
+                    threads,
+                }
+            })
+            .collect()
     }
 
     pub(super) fn envoy_action_done(&mut self, result: &ActionResult) {

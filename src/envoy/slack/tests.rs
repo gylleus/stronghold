@@ -6,6 +6,7 @@ use std::io::Write;
 #[derive(Default)]
 struct Fake {
     replies: VecDeque<Value>,
+    pins: VecDeque<Value>,
     methods: Vec<String>,
     subscriptions: Vec<(PathBuf, String)>,
     subscribe_error: Option<String>,
@@ -16,12 +17,20 @@ impl SlackSender for Fake {
     }
 }
 impl SlackIo for Fake {
-    fn api(&mut self, method: &str, _: &[(&str, String)]) -> Result<Value, String> {
+    fn pr_head(&mut self, repo: &str, number: u64) -> Result<Option<String>, String> {
+        self.methods.push(format!("pr_head {repo}#{number}"));
+        Ok((number != 404).then(|| format!("gylleus/{repo}-{number}")))
+    }
+    fn api(&mut self, method: &str, params: &[(&str, String)]) -> Result<Value, String> {
         self.methods.push(method.into());
-        Ok(self
-            .replies
-            .pop_front()
-            .unwrap_or_else(|| json!({"ok":true,"messages":{"matches":[],"paging":{"pages":1}}})))
+        let pins = params.iter().any(|(k, v)| *k == "query" && v == "has:pin");
+        Ok(if pins {
+            &mut self.pins
+        } else {
+            &mut self.replies
+        }
+        .pop_front()
+        .unwrap_or_else(|| json!({"ok":true,"messages":{"matches":[],"paging":{"pages":1}}})))
     }
     fn subscribe(&mut self, dir: &Path, channel: &str) -> Result<(), String> {
         self.subscriptions.push((dir.into(), channel.into()));
@@ -142,6 +151,7 @@ fn pagination_and_fallback_history() {
     assert_eq!(
         c.io.methods,
         [
+            "search.messages",
             "search.messages",
             "search.messages",
             "search.messages",
@@ -399,4 +409,64 @@ fn recovered_feed_read_does_not_need_a_message_or_clear_a_bridge_error() {
     c.poll(NOW + 2).unwrap();
     assert_eq!(c.health(), BridgeStatus::Stale);
     assert!(c.errors.contains_key("C123"));
+}
+
+#[test]
+fn only_pins_added_after_the_first_poll_become_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    let pinned = |ts: &str| {
+        json!({"ok":true,"messages":{"paging":{"pages":1},"matches":[
+            {"ts":ts,"user":"U321","username":"avery","text":"Pinned plan","channel":{"id":"C777"}}
+        ]}})
+    };
+    c.io.pins = [pinned("1700000000.000001"), pinned("1700000000.000001")].into();
+    assert!(
+        c.poll(NOW + 10).unwrap().events.is_empty(),
+        "existing pins seed"
+    );
+    let mut both = pinned("1700000000.000001");
+    both["messages"]["matches"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"ts":"1600000000.000002","user":"U321","text":"Old message, new pin","channel":{"id":"C777"}}));
+    c.io.pins = [both].into();
+    c.next_poll_ms = 0;
+    let events = c.poll(NOW + 20).unwrap().events;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].kind, EventKind::Pin);
+    assert_eq!(events[0].id(), "C777:1600000000.000002");
+    c.io.pins = [pinned("1600000000.000002")].into();
+    c.next_poll_ms = 0;
+    assert!(
+        c.poll(NOW + 30).unwrap().events.is_empty(),
+        "a pin is reported once"
+    );
+}
+
+#[test]
+fn pr_refs_resolve_to_head_branches_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    let mut e = parse_search(
+        &serde_json::from_str(include_str!("../../../tests/fixtures/envoy/search.json")).unwrap(),
+        EventKind::Mention,
+        "U111",
+    )
+    .unwrap()
+    .remove(0);
+    e.text = "realtime#694 and realtime#404, also #12 and VROOM-1".into();
+    c.resolve_prs(std::slice::from_ref(&e));
+    assert_eq!(c.inbox.pr_heads["realtime#694"], "gylleus/realtime-694");
+    assert_eq!(
+        c.inbox.pr_heads["realtime#404"], "",
+        "a missing PR is cached too"
+    );
+    assert_eq!(
+        c.inbox.pr_heads.len(),
+        2,
+        "bare #N and tickets need no lookup"
+    );
+    c.resolve_prs(std::slice::from_ref(&e));
+    assert_eq!(c.io.methods.len(), 2, "cached refs are not looked up again");
 }

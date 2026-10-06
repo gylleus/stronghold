@@ -46,13 +46,13 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_inbox",
-            "Read new inbound Slack events; since is a Slack timestamp.",
+            "Read recent inbound Slack events, newest first (default 20); since is a Slack timestamp. New events are typed into your terminal, so you rarely need this.",
             json!({"since":string,"limit":{"type":"integer","minimum":1,"maximum":2000}}),
             vec![],
         ),
         (
             "envoy_event",
-            "Read an event and its full Slack thread context.",
+            "Read an event and its Slack thread: the root and the latest 15 messages, each cut to 1,500 characters; omitted counts the rest.",
             json!({"id":string}),
             vec!["id"],
         ),
