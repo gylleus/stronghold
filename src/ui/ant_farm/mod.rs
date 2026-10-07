@@ -481,7 +481,7 @@ impl AntFarmView {
         self.bury(&scene, snapshot, now_s, death::reduce_motion);
         let placed = self.advance(&scene, now_s);
         let still = self.still();
-        let trees = self.forest.layout(&scene, now_s, away);
+        let trees = self.forest.layout(&scene, now_s, away, still);
         let pops = self.pops.frames(now_s);
         let effects = Effects {
             ripples: &self.ripples,
@@ -522,16 +522,7 @@ impl AntFarmView {
             &self.forest,
             &trees,
         );
-        self.forest.paint(
-            &painter,
-            sprites,
-            &scene,
-            &trees,
-            tree_hovered.as_ref().map(|t| t.grove.id.as_str()),
-            palette,
-            now_s,
-            still,
-        );
+
         self.envoy_receipt.repaint(ui.ctx());
         comms::paint(
             &painter,
@@ -557,6 +548,15 @@ impl AntFarmView {
         );
         pops::paint(&painter, sprites, &scene, &placed, &pops, false);
         paint_falls(&painter, sprites, &scene, &self.falls, now_s);
+        self.forest.paint_overlay(
+            &painter,
+            sprites,
+            &scene,
+            &trees,
+            tree_hovered.as_ref().map(|t| t.grove.id.as_str()),
+            palette,
+            now_s,
+        );
         mail::paint(&painter, &scene, &placed, self.mail.tick(now_s), now_s);
         beams::paint(&painter, &scene, &placed, self.beams.tick(now_s), now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
@@ -1004,6 +1004,8 @@ fn paint_ground(
         };
         sprites.deco(painter, piece.deco, piece.foot, px, alpha);
     }
+    // The forest stands behind everything else on the surface.
+    forest_view.paint_trees(painter, sprites, scene, trees, palette, now_s);
     let plants = scenery::surface(scene);
     for (i, plant) in plants.iter().enumerate() {
         if plant.deco.rooted() {
