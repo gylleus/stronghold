@@ -1,5 +1,6 @@
 //! The Queen section: her model and effort (saving restarts her `claude` process on the same
-//! conversation), auto mode, and speaking her replies aloud.
+//! conversation), auto mode, speaking her replies aloud, and the default model and effort of
+//! the ants she (or Karl) spawns.
 
 use eframe::egui;
 
@@ -77,11 +78,11 @@ pub(super) fn section(
         .spacing([12.0, 8.0])
         .show(ui, |ui| {
             ui.label("Model");
-            model_picker(ui, &mut pane.queen_draft);
+            model_picker(ui, "queen", &mut pane.queen_draft);
             ui.end_row();
 
             ui.label("Effort");
-            effort_picker(ui, &mut pane.queen_draft.settings.effort);
+            effort_picker(ui, "queen", &mut pane.queen_draft.settings.effort);
             ui.end_row();
 
             ui.label("Running");
@@ -110,6 +111,9 @@ pub(super) fn section(
     ui.weak("Saving restarts her claude process and resumes the same conversation.");
 
     ui.separator();
+    ants_section(pane, ui, out);
+
+    ui.separator();
     let mut auto = status.auto_mode;
     if ui
         .checkbox(&mut auto, "Auto mode: her actions run without asking")
@@ -133,7 +137,44 @@ pub(super) fn section(
     ));
 }
 
-pub(super) fn model_picker(ui: &mut egui::Ui, draft: &mut QueenDraft) {
+/// The ants' default model and effort: what every new Claude ant gets when its spawn names no
+/// model, from the "New ant…" dialog, `spawn_session` or a coordinator starting workers.
+fn ants_section(pane: &mut SettingsPane, ui: &mut egui::Ui, out: &mut PaneOutput) {
+    ui.strong("Ants");
+    ui.label(
+        "The default model and effort of new ants: new sessions, workers, and the workers \
+         coordinators start. Switch the whole fleet here; an explicit model on a spawn still \
+         wins. Claude ants only; Codex keeps its own default.",
+    );
+    ui.add_space(4.0);
+    egui::Grid::new("ants_settings")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label("Model");
+            model_picker(ui, "ants", &mut pane.ants_draft);
+            ui.end_row();
+
+            ui.label("Effort");
+            effort_picker(ui, "ants", &mut pane.ants_draft.settings.effort);
+            ui.end_row();
+        });
+    let changed = pane.ants_draft.settings.normalized() != pane.applied.ants.as_queen();
+    let (save, revert) = save_row(ui, pane, changed, "Save for new ants");
+    if revert {
+        pane.ants_draft = QueenDraft::new(&pane.applied.ants.as_queen());
+    }
+    if save {
+        out.ants = pane.save_ants();
+    }
+    ui.weak(format!(
+        "New ants get: {}. Running ants are not changed.",
+        pane.applied.ants.describe()
+    ));
+}
+
+/// `id` keeps the Queen's and the ants' combo boxes apart on one screen.
+pub(super) fn model_picker(ui: &mut egui::Ui, id: &str, draft: &mut QueenDraft) {
     ui.vertical(|ui| {
         let selected = if draft.custom {
             CUSTOM.to_owned()
@@ -144,7 +185,7 @@ pub(super) fn model_picker(ui: &mut egui::Ui, draft: &mut QueenDraft) {
                 .clone()
                 .unwrap_or_else(|| CLI_DEFAULT.to_owned())
         };
-        egui::ComboBox::from_id_salt("queen_model")
+        egui::ComboBox::from_id_salt(format!("{id}_model"))
             .selected_text(selected)
             .width(220.0)
             .show_ui(ui, |ui| {
@@ -187,8 +228,8 @@ pub(super) fn model_picker(ui: &mut egui::Ui, draft: &mut QueenDraft) {
     });
 }
 
-fn effort_picker(ui: &mut egui::Ui, effort: &mut Option<String>) {
-    egui::ComboBox::from_id_salt("queen_effort")
+fn effort_picker(ui: &mut egui::Ui, id: &str, effort: &mut Option<String>) {
+    egui::ComboBox::from_id_salt(format!("{id}_effort"))
         .selected_text(effort.clone().unwrap_or_else(|| CLI_DEFAULT.to_owned()))
         .width(220.0)
         .show_ui(ui, |ui| {

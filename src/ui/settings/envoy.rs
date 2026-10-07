@@ -67,7 +67,9 @@ pub(super) fn section(pane: &mut SettingsPane, ui: &mut egui::Ui, out: &mut supe
                 });
             ui.end_row();
             ui.label("Model");
-            ui.push_id("envoy", |ui| queen::model_picker(ui, &mut draft.model));
+            ui.push_id("envoy", |ui| {
+                queen::model_picker(ui, "envoy", &mut draft.model)
+            });
             ui.end_row();
             ui.label("Poll interval (seconds)");
             ui.add(
