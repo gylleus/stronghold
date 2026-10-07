@@ -1001,6 +1001,8 @@ fn envoy_overlay_uses_handle_not_title_and_keeps_queen_edge() {
         bridge: crate::envoy::BridgeStatus::Ok,
         pending_drafts: 2,
         dry_run: true,
+        stuck_events: 0,
+        poll_stale: false,
     };
     snapshot.mark_envoy(Some(LOOSE), status);
     let envoy = snapshot
@@ -1038,6 +1040,8 @@ fn idle_envoy_has_no_automatic_or_manual_whip() {
             bridge: crate::envoy::BridgeStatus::Missing,
             pending_drafts: 0,
             dry_run: true,
+            stuck_events: 0,
+            poll_stale: false,
         },
     );
     let plans = crate::whip::plan_manual_whip(&[NodeId::terminal("envoy")], &data, &snapshot, NOW);

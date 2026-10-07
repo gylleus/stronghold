@@ -102,6 +102,52 @@ pub fn detect_in_preview(preview: &str) -> Option<PromptKind> {
     classify(&rows)
 }
 
+/// What the agent's composer on a rendered screen holds. Orca's terminal preview is not a
+/// screen tail (a stale banner plus the last redrawn fragment), so only a screen read answers
+/// whether typed text would land in an empty composer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComposerState {
+    /// The bare input line (`❯`, `›`): typed text goes to the agent.
+    Empty,
+    /// The input line holds text the user has not submitted.
+    Text,
+    /// No input line on the screen: a prompt, a shell, or the agent mid-turn with no composer.
+    Absent,
+}
+
+/// The composer on the bottom [`SCREEN_WINDOW`] rows of a rendered screen: the last input
+/// line of `agent` (Claude `❯`, Codex `›`, either when unknown), empty or holding text, or
+/// absent. A spinner row below the input line means the agent is working, so the composer
+/// counts as absent.
+pub fn composer_state(lines: &[String], agent: Option<&AgentIdentity>) -> ComposerState {
+    let rows: Vec<&str> = lines.iter().map(|l| l.trim_end()).collect();
+    let Some(end) = rows.iter().rposition(|l| !is_blank(l)).map(|i| i + 1) else {
+        return ComposerState::Absent;
+    };
+    let window = &rows[end.saturating_sub(SCREEN_WINDOW)..end];
+    let Some(at) = window.iter().rposition(|l| is_input_line(l, agent)) else {
+        return ComposerState::Absent;
+    };
+    if window[..at].iter().rev().take(3).any(|l| is_spinner_row(l)) {
+        return ComposerState::Absent;
+    }
+    let text = window[at]
+        .trim_start()
+        .trim_start_matches(['❯', '›'])
+        .trim_matches(|c: char| c.is_whitespace() || c == '\u{a0}');
+    if text.is_empty() || is_composer_placeholder(text) {
+        ComposerState::Empty
+    } else {
+        ComposerState::Text
+    }
+}
+
+/// The dim hint an empty composer shows: Codex's "Ask Codex to do anything", Claude's
+/// `Try "fix lint errors"` on a fresh session.
+fn is_composer_placeholder(text: &str) -> bool {
+    text == "Ask Codex to do anything" || (text.starts_with("Try \"") && text.ends_with('"'))
+}
+
 fn is_blank(line: &str) -> bool {
     line.chars().all(|c| c.is_whitespace())
 }

@@ -45,6 +45,10 @@ pub struct FleetData {
     /// `Some` when the screen showed a prompt, `None` when it did not. A terminal that was not
     /// sampled, or has produced output since, is absent.
     pub needs_input: BTreeMap<String, Option<PromptKind>>,
+    /// What the sampled screen's composer held, by handle, kept and pruned with
+    /// [`FleetData::needs_input`]: the preview cannot tell (see
+    /// [`crate::detect::composer_state`]).
+    pub composers: BTreeMap<String, crate::detect::ComposerState>,
     /// Terminals each Claude terminal forwarded input to with `orca terminal send`, read from
     /// its transcript by the Claude worker, by sender handle. Only declared coordinators are
     /// scanned; see [`FleetData::run_roles`].
@@ -89,6 +93,11 @@ impl FleetData {
     /// when the terminal has no current sample.
     pub fn screen_needs_input(&self, handle: &str) -> Option<bool> {
         self.needs_input.get(handle).map(Option::is_some)
+    }
+
+    /// The sampled screen's composer, when the terminal has a current sample.
+    pub fn screen_composer(&self, handle: &str) -> Option<crate::detect::ComposerState> {
+        self.composers.get(handle).copied()
     }
 
     pub fn run(&self, run_id: &str) -> Option<&Run> {

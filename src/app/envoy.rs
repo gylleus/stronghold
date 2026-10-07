@@ -18,7 +18,7 @@ use crate::envoy::notes::ThreadNotes;
 use crate::envoy::relay::{RelayLimiter, RelayRequest};
 use crate::envoy::settings::EnvoySettings;
 use crate::envoy::worker::{Update, Work, Worker};
-use crate::envoy::{BridgeStatus, EnvoyIdentity, EnvoyStatus};
+use crate::envoy::{BridgeStatus, EnvoyIdentity, EnvoyStatus, POLL_STALE_MS, STUCK_AFTER_MS};
 use crate::model::NodeKind;
 use crate::notify::{Incoming, Severity, Source};
 use crate::orca::TerminalInput;
@@ -30,6 +30,8 @@ use gateway::GatewayAction;
 
 pub const DRAFTS_TARGET: &str = "envoy:drafts";
 const SHAKE_COOLDOWN_MS: i64 = 8_000;
+/// A stuck or stale warning is repeated this often while the condition lasts.
+const RENOTIFY_MS: i64 = 30 * 60_000;
 /// Events older than this at forwarding time collapse into one backlog line.
 const BACKLOG_AFTER_MS: i64 = 30 * 60_000;
 
@@ -67,6 +69,12 @@ pub struct AppEnvoy {
     forward_after_ms: i64,
     notices: HashSet<String>,
     blocked: Option<&'static str>,
+    /// Since when events have waited with nothing typed (see [`STUCK_AFTER_MS`]).
+    pending_since_ms: Option<i64>,
+    /// The last poll result's time, or the session's enabling; a silent loop is stale.
+    last_polled_ms: Option<i64>,
+    stuck_notified_ms: Option<i64>,
+    stale_notified_ms: Option<i64>,
     pub shake_started_ms: Option<i64>,
     pub open_request: bool,
     pub error: Option<String>,
@@ -162,6 +170,10 @@ impl AppEnvoy {
             forward_after_ms: 0,
             notices: HashSet::new(),
             blocked: None,
+            pending_since_ms: None,
+            last_polled_ms: None,
+            stuck_notified_ms: None,
+            stale_notified_ms: None,
             shake_started_ms: None,
             open_request: false,
             error,
@@ -182,6 +194,10 @@ impl AppEnvoy {
             // A new session starts from its launch prompt: nothing to clear yet.
             self.context = ContextBudget::default();
             self.resetting = None;
+            self.last_polled_ms = Some(now_ms());
+            self.pending_since_ms = None;
+            self.stuck_notified_ms = None;
+            self.stale_notified_ms = None;
         }
         if self.handle.is_none() {
             self.bridge_seen = false;
@@ -214,6 +230,80 @@ impl AppEnvoy {
         self.pending.clear();
         self.context = ContextBudget::default();
         self.resetting = None;
+        self.pending_since_ms = None;
+        self.last_polled_ms = None;
+    }
+
+    /// Starts or clears the stuck clock as events wait or stop waiting.
+    fn note_pending(&mut self, now: i64) {
+        if self.pending.is_empty() {
+            self.pending_since_ms = None;
+        } else if self.pending_since_ms.is_none() {
+            self.pending_since_ms = Some(now);
+        }
+    }
+
+    /// Events that have waited past [`STUCK_AFTER_MS`] with nothing typed in between.
+    pub fn stuck_events(&self, now: i64) -> usize {
+        if self.handle.is_none() {
+            return 0;
+        }
+        match self.pending_since_ms {
+            Some(since) if now.saturating_sub(since) >= STUCK_AFTER_MS => self.pending.len(),
+            _ => 0,
+        }
+    }
+
+    /// No poll result for [`POLL_STALE_MS`] while the Envoy is enabled.
+    pub fn poll_stale(&self, now: i64) -> bool {
+        self.handle.is_some()
+            && self
+                .last_polled_ms
+                .is_some_and(|at| now.saturating_sub(at) >= POLL_STALE_MS)
+    }
+
+    /// Warnings for a stall, once when it starts and again every [`RENOTIFY_MS`].
+    fn stall_notices(&mut self, now: i64) -> Vec<Incoming> {
+        let mut out = Vec::new();
+        let due = |notified: Option<i64>| notified.is_none_or(|at| now - at >= RENOTIFY_MS);
+        let stuck = self.stuck_events(now);
+        if stuck > 0 {
+            if due(self.stuck_notified_ms) {
+                let waited = now.saturating_sub(self.pending_since_ms.unwrap_or(now)) / 60_000;
+                let why = self.blocked.unwrap_or("waiting for the terminal");
+                out.push(
+                    Incoming::new(
+                        Source::Envoy,
+                        Severity::Warn,
+                        "Envoy events stuck",
+                        &format!(
+                            "{stuck} event(s) have waited {waited} min without reaching the Envoy terminal: {why}."
+                        ),
+                    )
+                    .with_target(DRAFTS_TARGET),
+                );
+                self.stuck_notified_ms = Some(now);
+            }
+        } else {
+            self.stuck_notified_ms = None;
+        }
+        if self.poll_stale(now) {
+            if due(self.stale_notified_ms) {
+                let quiet = now.saturating_sub(self.last_polled_ms.unwrap_or(now)) / 60_000;
+                out.push(Incoming::new(
+                    Source::Envoy,
+                    Severity::Warn,
+                    "Envoy poll stale",
+                    &format!(
+                        "No Slack poll result for {quiet} min: the Envoy's ingestion loop is wedged, so mentions, DMs and channel events are not being read."
+                    ),
+                ));
+                self.stale_notified_ms = Some(now);
+            }
+        } else {
+            self.stale_notified_ms = None;
+        }
+        out
     }
 
     pub fn context(&self) -> &ContextBudget {
@@ -319,6 +409,7 @@ impl AppEnvoy {
                 self.pending.pop_front();
             }
         }
+        self.note_pending(now_ms());
     }
 
     fn acknowledge(&mut self, batch: &[InboundEvent]) {
@@ -346,6 +437,8 @@ impl AppEnvoy {
         let (_, batch) = self.forwarding.take().expect("matching action");
         if result.outcome.is_ok() {
             self.context.forwarded(batch.len(), now);
+            // Progress: whatever still waits is measured from now.
+            self.pending_since_ms = None;
             if self
                 .shake_started_ms
                 .is_none_or(|start| now - start >= SHAKE_COOLDOWN_MS)
@@ -367,6 +460,7 @@ impl AppEnvoy {
             }
             self.forward_after_ms = now + 30_000;
         }
+        self.note_pending(now);
     }
 
     fn observe_bridge(&mut self, bridge: BridgeStatus) -> bool {
@@ -382,6 +476,9 @@ impl AppEnvoy {
         status.bridge = self.bridge;
         status.pending_drafts = self.pending_count();
         status.dry_run = self.settings.dry_run;
+        let now = now_ms();
+        status.stuck_events = self.stuck_events(now);
+        status.poll_stale = self.poll_stale(now);
     }
 
     pub fn pending_count(&self) -> usize {
@@ -640,7 +737,11 @@ impl AppEnvoy {
                     events,
                     bridge,
                     notices,
+                    polled_at_ms,
                 } => {
+                    if self.handle.is_some() {
+                        self.last_polled_ms = Some(polled_at_ms);
+                    }
                     if let Err(e) = self.record_replies(&inbox) {
                         self.error = Some(e);
                         continue;
@@ -789,6 +890,7 @@ impl AppEnvoy {
         if let Err(e) = self.auto_approve(now_ms()) {
             self.error = Some(e);
         }
+        notifications.extend(self.stall_notices(now_ms()));
         if self.error != self.error_notified {
             if let Some(error) = self.error.clone() {
                 notifications.push(Incoming::new(
@@ -1279,7 +1381,8 @@ impl MyrstackApp {
         {
             return Some("input pending");
         }
-        (!can_forward(terminal, true, false)).then_some("no empty agent prompt")
+        let composer = self.data.as_ref().and_then(|d| d.screen_composer(handle));
+        (!can_forward(terminal, true, false, composer)).then_some("no empty agent prompt")
     }
 
     fn forward_envoy(&mut self) {
@@ -1445,9 +1548,21 @@ fn apply_approval(
     }
 }
 
-pub fn can_forward(terminal: &crate::orca::Terminal, idle: bool, typing: bool) -> bool {
+/// Whether typed text would land in the agent's empty composer. `composer` is the sampled
+/// screen's verdict and settles it; without one, the preview is read, which Orca builds from
+/// a stale banner and the last redrawn fragment, so the composer line is often missing from
+/// it and the answer errs towards `false`.
+pub fn can_forward(
+    terminal: &crate::orca::Terminal,
+    idle: bool,
+    typing: bool,
+    composer: Option<crate::detect::ComposerState>,
+) -> bool {
     if !idle || typing || terminal.orphaned || !terminal.writable {
         return false;
+    }
+    if let Some(composer) = composer {
+        return composer == crate::detect::ComposerState::Empty;
     }
     let Some(preview) = terminal.preview.as_deref() else {
         return false;
