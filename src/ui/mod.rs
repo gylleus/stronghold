@@ -4,7 +4,6 @@ pub mod ant_farm;
 pub mod art;
 pub mod beam;
 pub mod broadcast;
-pub mod chainsaw;
 pub mod chat;
 pub mod close;
 pub mod columns;

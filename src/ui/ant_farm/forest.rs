@@ -4,8 +4,9 @@
 //! worktree cleanup is a chainsaw that cuts the trees of the worktrees it removes; a tree whose
 //! worktree goes away falls and leaves a stump for a moment.
 //!
-//! [`groves`] and [`place`] are pure, so a worktree keeps its spot from frame to frame and
-//! across launches: its preferred slot comes from a hash of its id.
+//! The forest fills the surface from the left like a loading bar, oldest worktree first, so
+//! how far right it reaches shows how much is open. [`groves`] and [`place`] are pure, and a
+//! tree's size comes from a hash of its id, so the wood looks the same every frame.
 
 use std::collections::{HashMap, HashSet};
 
@@ -21,15 +22,21 @@ use crate::orca::spawn::Worktree;
 const FALL_S: f64 = 1.0;
 const LIE_S: f64 = 0.9;
 const FADE_S: f64 = 0.8;
-/// Neighbouring slots are this much of a tree's width apart: trees overlap, in two rows.
-const PITCH: f32 = 0.6;
-/// Texels of a map per farm texel: a full-size tree, and one in a crowd.
+/// Worktrees that fill the surface's strip end to end: the forest grows from the left like
+/// a loading bar, and past this many it only gets denser.
+pub const FILL_AT: usize = 40;
+/// Most trees drawn; the rest go on a "+N" sign.
+pub const MAX_TREES: usize = 160;
+/// Texels of a map per farm texel of the biggest tree.
 pub const FULL: f32 = 3.0;
-pub const CROWDED: f32 = 2.0;
+/// The biggest tree spans at most this many trees' spacing.
+const DENSE_SPAN: f32 = 4.0;
+/// The smallest tree, as a share of the biggest.
+const SMALLEST: f32 = 0.5;
 /// Sky kept clear above the tallest tree, in farm texels.
 const HEADROOM: f32 = 6.0;
 /// The back row is drawn darker.
-const BACK_TINT: u8 = 196;
+const BACK_TINT: u8 = 165;
 
 /// What is in a worktree, as its tree shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -180,67 +187,65 @@ pub fn texel(scene: &Scene, scale: f32) -> f32 {
     (scale * scene.px).min(sky / tree_h as f32).max(scene.px)
 }
 
-/// Where each grove's tree stands. Trees are full size while they fit, then smaller; past
-/// that the newest go uncounted into a "+N" sign. Each prefers the slot its id hashes to and
-/// takes the next free one when that is taken, oldest first, so trees keep their spots as
-/// others come and go.
+/// Where each grove's tree stands: oldest at the left, the forest reaching further right the
+/// more worktrees there are (all the way at [`FILL_AT`]), each tree a size and a nudge of its
+/// own from a hash of its id, so they cluster like a wood. Past [`MAX_TREES`] the newest go
+/// uncounted into a "+N" sign at the right end.
 pub fn place(scene: &Scene, groves: &[Grove]) -> Forest {
     let (start, end) = strip(scene);
     let [tree_w, _] = Deco::Tree.size();
-    let slots_at = |k: f32| -> usize {
-        let w = tree_w as f32 * k;
-        if end - start < w {
-            return 0;
-        }
-        ((end - start - w) / (w * PITCH)) as usize + 1
-    };
-    let full = texel(scene, FULL);
-    let k = if groves.len() <= slots_at(full) {
-        full
+    let room = groves.len().min(MAX_TREES);
+    // A dense wood is drawn smaller, so its trees stay apart enough to count.
+    let spacing = (end - start) / room.max(FILL_AT) as f32;
+    let full = texel(scene, FULL).min((spacing * DENSE_SPAN / tree_w as f32).max(2.0 * scene.px));
+    let more = groves.len() - room;
+    let sign = (more > 0).then(|| pos2(end - 1.5 * scene.cell(), scene.surface_y + scene.px));
+    let right_end = if more > 0 {
+        end - 3.0 * scene.cell()
     } else {
-        texel(scene, CROWDED).min(full)
+        end
     };
-    let slots = slots_at(k);
-    if slots == 0 {
+    if room == 0 || right_end <= start {
         return Forest {
             more: groves.len(),
+            sign,
             ..Forest::default()
         };
     }
-    let (room, sign_slot) = if groves.len() > slots {
-        (slots - 1, Some(slots - 1))
-    } else {
-        (slots, None)
-    };
-    let w = tree_w as f32 * k;
-    let x_of = |slot: usize| start + w / 2.0 + slot as f32 * w * PITCH;
-    let mut taken = vec![false; slots];
-    if let Some(s) = sign_slot {
-        taken[s] = true;
-    }
-    let mut trees = Vec::new();
-    for grove in groves.iter().take(room) {
-        let mut slot = hash(&grove.id) as usize % slots;
-        while taken[slot] {
-            slot = (slot + 1) % slots;
-        }
-        taken[slot] = true;
-        trees.push((slot, grove));
-    }
-    trees.sort_by_key(|(slot, _)| (slot % 2 == 0, *slot));
-    Forest {
-        trees: trees
-            .into_iter()
-            .map(|(slot, grove)| Tree {
+    // Trunks run from where the biggest tree's crown clears the strip's left end.
+    let left = (start + tree_w as f32 * full / 2.0).min(right_end);
+    let fill = (room as f32 / FILL_AT as f32).min(1.0);
+    let reach = left + (right_end - tree_w as f32 * full * SMALLEST / 2.0 - left).max(0.0) * fill;
+    let gap = (reach - left) / room as f32;
+    let mut trees: Vec<Tree> = groves
+        .iter()
+        .take(room)
+        .enumerate()
+        .map(|(i, grove)| {
+            let h = hash(&grove.id);
+            let size = SMALLEST + (1.0 - SMALLEST) * (h % 1000) as f32 / 999.0;
+            let k = full * size;
+            let half = tree_w as f32 * k / 2.0;
+            let nudge = ((h >> 10) % 1000) as f32 / 999.0 - 0.5;
+            let x = left + (i as f32 + 0.5 + 0.6 * nudge) * gap;
+            Tree {
                 grove: grove.clone(),
-                foot: pos2(x_of(slot), scene.surface_y + scene.px),
+                foot: pos2(
+                    x.clamp(start + half, (right_end - half).max(start + half)),
+                    scene.surface_y + scene.px,
+                ),
                 k,
-                back: slot % 2 == 1,
-            })
-            .collect(),
-        more: groves.len().saturating_sub(room),
-        sign: sign_slot.map(|s| pos2(x_of(s), scene.surface_y + scene.px)),
-    }
+                back: (h >> 20).is_multiple_of(3),
+            }
+        })
+        .collect();
+    // Back row first, then the big ones behind the small.
+    trees.sort_by(|a, b| {
+        (!a.back, b.k, a.foot.x)
+            .partial_cmp(&(!b.back, a.k, b.foot.x))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Forest { trees, more, sign }
 }
 
 /// The tree under `pointer`, front row first.
@@ -252,7 +257,7 @@ pub fn hit(forest: &Forest, pointer: Pos2) -> Option<&Tree> {
         .find(|t| t.rect().shrink2(vec2(2.0 * t.k, 0.0)).contains(pointer))
 }
 
-/// FNV-1a, so a worktree's slot is the same on every launch.
+/// FNV-1a, so a worktree's tree looks the same on every launch.
 fn hash(id: &str) -> u32 {
     id.bytes().fold(0x811c_9dc5, |h, b| {
         (h ^ u32::from(b)).wrapping_mul(0x0100_0193)

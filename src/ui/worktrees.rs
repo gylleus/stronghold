@@ -80,8 +80,6 @@ pub struct WorktreePanel {
     reduced_motion: Arc<AtomicBool>,
     /// The chainsaw's pixel art, for the menu and the floor.
     saw: egui::TextureHandle,
-    /// The cut last announced by [`WorktreePanel::take_new_cut`]: worktree and progress.
-    last_cut: Option<(Option<String>, usize)>,
 }
 
 impl WorktreePanel {
@@ -111,7 +109,6 @@ impl WorktreePanel {
                 Deco::Saw.image(),
                 egui::TextureOptions::NEAREST,
             ),
-            last_cut: None,
         }
     }
 
@@ -318,20 +315,6 @@ impl WorktreePanel {
             }),
             _ => None,
         }
-    }
-
-    /// True once each time the saw starts on another worktree, for its sound.
-    pub fn take_new_cut(&mut self) -> bool {
-        let Some(job) = self.saw_job() else {
-            self.last_cut = None;
-            return false;
-        };
-        let key = (job.current, job.done);
-        if key.0.is_none() || self.last_cut.as_ref() == Some(&key) {
-            return false;
-        }
-        self.last_cut = Some(key);
-        true
     }
 
     // -----------------------------------------------------------------------

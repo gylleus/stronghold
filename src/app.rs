@@ -1020,7 +1020,7 @@ impl MyrstackApp {
     }
 
     /// Draws the dialog and submits a confirmed plan's steps, in order.
-    /// The worktree cleanup window, and the saw and its sound while it removes.
+    /// The worktree cleanup window, and the saw while it removes.
     fn worktree_cleanup(&mut self, ctx: &egui::Context, now_ms: i64) {
         let worktrees = self.data.as_ref().map(|d| &d.worktrees[..]);
         if self.worktrees.tick(worktrees, now_ms) {
@@ -1029,12 +1029,6 @@ impl MyrstackApp {
         self.worktrees.window(ctx);
         if !std::mem::take(&mut self.saw_in_farm) {
             self.worktrees.saw(ctx);
-        }
-        if self.worktrees.take_new_cut() {
-            let settings = self.whip_window.notifications();
-            if !settings.quiet {
-                ui::chainsaw::play(f32::from(settings.volume_percent.min(100)) / 100.0);
-            }
         }
     }
 
