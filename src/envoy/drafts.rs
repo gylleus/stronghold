@@ -87,6 +87,22 @@ pub struct Draft {
 }
 
 impl Draft {
+    /// Whether this draft went out (or would have, in dry-run) in `conversation`'s thread
+    /// `root`: a reply in it, or the post that started it.
+    pub fn posted_in(&self, conversation: &str, root: &str) -> bool {
+        if !matches!(self.status, DraftStatus::Sent | DraftStatus::DryRunSent) {
+            return false;
+        }
+        let same = |c: &str| c == conversation;
+        let reply = self.in_reply_to.as_ref();
+        (reply.is_some_and(|r| same(&r.conversation))
+            || self.conversation.as_deref().is_some_and(same)
+            || self.receipt.as_ref().is_some_and(|r| same(&r.conversation)))
+            && (self.thread_ts.as_deref() == Some(root)
+                || reply.is_some_and(|r| r.ts == root)
+                || self.receipt.as_ref().is_some_and(|r| r.ts == root))
+    }
+
     pub fn reply(
         in_reply_to: ReplyTo,
         thread_ts: Option<String>,
@@ -555,6 +571,35 @@ mod tests {
             "Requested status".into(),
             1,
         )
+    }
+    #[test]
+    fn posted_in_knows_sent_replies_by_thread_root() {
+        let mut draft = reply();
+        assert!(
+            !draft.posted_in("C123", "1.000001"),
+            "pending drafts posted nothing"
+        );
+        draft.status = DraftStatus::Sent;
+        assert!(draft.posted_in("C123", "1.000001"));
+        assert!(!draft.posted_in("C999", "1.000001"));
+        assert!(!draft.posted_in("C123", "2.000001"));
+        draft.status = DraftStatus::DryRunSent;
+        assert!(draft.posted_in("C123", "1.000001"), "dry-run sends count");
+        let mut started = reply();
+        started.status = DraftStatus::Sent;
+        started.thread_ts = None;
+        started.receipt = Some(SendReceipt {
+            conversation: "C123".into(),
+            ts: "5.000001".into(),
+        });
+        assert!(
+            started.posted_in("C123", "5.000001"),
+            "a root post owns its thread"
+        );
+        assert!(
+            started.posted_in("C123", "1.000001"),
+            "so does a top-level reply"
+        );
     }
     #[test]
     fn attribution_inside_original_ask_remains_byte_identical() {

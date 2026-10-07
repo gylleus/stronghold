@@ -147,6 +147,16 @@ stating the dry-run mode. A failed `/clear` is logged, batches go into the old c
 the next reset is tried after ten minutes. Settings → Envoy holds all three thresholds; they
 apply on the next Start.
 
+Every typed event line also carries an addressee verdict, ` — addressee: Karl | not Karl |
+unclear (<why>)`, computed from the message's mentions (`src/envoy/addressee.rs`): a DM or a
+`<@KARL>` mention is for Karl; another person, agent or group tagged without Karl is not for
+Karl, unless the thread is Karl's (an ant's `reach_out` thread, a watched thread, one the Envoy
+posted in, or one whose earlier messages mention Karl), which leaves it unclear for the Envoy
+to judge; no mention is unclear. Karl's id is the `envoy.karl_user_id` setting until the
+worker's `auth.test` call (what `slackmsg whoami` prints) answers, on every configure; the
+resolved id then drives drops, searches and the verdict. The playbook's _Who it's for_ section
+tells the Envoy what to do with each verdict.
+
 Thread notes are the Envoy's memory across resets. `envoy_note {conversation, thread_ts?,
 text}` replaces the note for a thread root (or, without `thread_ts`, a conversation), at most
 600 characters, one line; empty text removes it. Notes live in `envoy-notes.json` (500 kept,

@@ -2,6 +2,7 @@
 //! protocols later). The app ingests channel events, keeps the drafts Karl approves and sends
 //! only on his approval; the Envoy session reads, triages and drafts.
 
+pub mod addressee;
 pub mod channel;
 pub mod context;
 pub mod control;

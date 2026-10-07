@@ -143,6 +143,8 @@ fn bridge_alerts_on_start_reenable_and_each_down_transition() {
 #[derive(Clone, Default)]
 struct FakeSlack {
     sent: std::sync::Arc<std::sync::Mutex<Vec<crate::envoy::channel::OutboundMessage>>>,
+    /// What `auth.test` answers; `None` answers like any other search.
+    karl_id: Option<&'static str>,
 }
 impl crate::envoy::slack::SlackSender for FakeSlack {
     fn send(
@@ -157,7 +159,12 @@ impl crate::envoy::slack::SlackSender for FakeSlack {
     }
 }
 impl crate::envoy::slack::SlackIo for FakeSlack {
-    fn api(&mut self, _: &str, _: &[(&str, String)]) -> Result<Value, String> {
+    fn api(&mut self, method: &str, _: &[(&str, String)]) -> Result<Value, String> {
+        if method == "auth.test"
+            && let Some(id) = self.karl_id
+        {
+            return Ok(json!({"ok":true,"user":"karl126","user_id":id,"team":"Depict"}));
+        }
         Ok(json!({"ok":true,"messages":{"matches":[],"paging":{"pages":1}}}))
     }
     fn subscribe(&mut self, dir: &std::path::Path, _: &str) -> Result<(), String> {
@@ -1210,4 +1217,124 @@ fn a_silent_poll_loop_turns_the_status_stale_until_the_next_result() {
     assert_eq!(status.health(), crate::envoy::EnvoyHealth::PollStale);
     core.stop();
     assert!(!core.poll_stale(now + 2 * POLL_STALE_MS));
+}
+
+#[test]
+fn batches_say_who_each_event_is_for() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    let now = 1_791_300_000_000;
+    let karl = core.karl().to_owned();
+    assert_eq!(karl, "U0AMMLGSFL0");
+    let mut ant_root = receipt_event("1791299800.000001");
+    ant_root.text = "Request from Recs rollout: who owns the wheat index?".into();
+    let mut envoy_root = receipt_event("1791299850.000001");
+    envoy_root.text = "Anyone know the recs rollout status?".into();
+    let mut tagged_other = receipt_event("1791299900.000001");
+    tagged_other.text = "<@U0177NR3GG4> can your search agent reindex wheat?".into();
+    let mut tagged_karl = receipt_event("1791299910.000001");
+    tagged_karl.text = format!("<@{karl}> is realtime#694 ready?");
+    let mut in_ant_thread = receipt_event("1791299920.000001");
+    in_ant_thread.thread_ts = Some(ant_root.ts.clone());
+    in_ant_thread.text = "<@U0177NR3GG4> your agent should answer this".into();
+    let mut in_envoy_thread = receipt_event("1791299930.000001");
+    in_envoy_thread.thread_ts = Some(envoy_root.ts.clone());
+    in_envoy_thread.text = "@depict-search-agent take it from here".into();
+    let mut chatter = receipt_event("1791299960.000001");
+    chatter.text = "lunch?".into();
+    let mut inbox = Inbox::default();
+    for event in [&ant_root, &envoy_root] {
+        inbox.insert(event.clone());
+    }
+    let batch = vec![
+        tagged_other,
+        tagged_karl,
+        in_ant_thread,
+        in_envoy_thread,
+        chatter,
+    ];
+    for event in &batch {
+        inbox.insert(event.clone());
+    }
+    core.merge_polled(inbox, batch);
+    let mut sent = Draft::reply(
+        ReplyTo {
+            conversation: "C123".into(),
+            ts: envoy_root.ts.clone(),
+        },
+        Some(envoy_root.ts.clone()),
+        "Rolling out now. (Karl's AI agent)".into(),
+        "status question".into(),
+        now,
+    );
+    sent.status = DraftStatus::Sent;
+    core.queue().unwrap().create(sent).unwrap();
+    let ants = [Ant {
+        id: "term:term_ant".into(),
+        label: "Recs rollout".into(),
+        threads: vec![format!("C123:{}", ant_root.ts)],
+        ..Ant::default()
+    }];
+    let (action, _) = core.next_forward(now, &ants).expect("batch");
+    let Action::Send { input, .. } = action else {
+        panic!("typed batch")
+    };
+    let text = input.text.unwrap();
+    let lines: Vec<&str> = text.split(" | ").collect();
+    assert_eq!(lines.len(), 5, "{text}");
+    assert!(
+        lines[0].contains("— addressee: not Karl (tags <@U0177NR3GG4>, not Karl) — no ant match"),
+        "{}",
+        lines[0]
+    );
+    assert!(
+        lines[1].contains("— addressee: Karl (mentions Karl) —"),
+        "{}",
+        lines[1]
+    );
+    assert!(
+        lines[2].contains(
+            "— addressee: unclear (tags <@U0177NR3GG4> in Karl's thread) — ants: Recs rollout (term:term_ant, its thread)"
+        ),
+        "{}",
+        lines[2]
+    );
+    assert!(
+        lines[3].contains("— addressee: unclear (tags @depict-search-agent in Karl's thread) —"),
+        "a thread the Envoy replied in is Karl's: {}",
+        lines[3]
+    );
+    assert!(
+        lines[4].contains("— addressee: unclear (no mention) — no ant match"),
+        "{}",
+        lines[4]
+    );
+}
+
+#[test]
+fn karls_id_comes_from_slack_when_it_answers() {
+    let dir = tempfile::tempdir().unwrap();
+    let bridge = dir.path().join("bridge");
+    std::fs::create_dir_all(bridge.join("channels")).unwrap();
+    std::fs::write(bridge.join("fixture-only"), "").unwrap();
+    let fake = FakeSlack {
+        karl_id: Some("W0RESOLVED"),
+        ..FakeSlack::default()
+    };
+    let mut core = AppEnvoy::at(dir.path().into(), &egui::Context::default(), fake, bridge);
+    assert_eq!(
+        core.karl(),
+        "U0AMMLGSFL0",
+        "the settings' id until Slack answers"
+    );
+    core.set_enabled(
+        "term_envoy".into(),
+        EnvoySettings {
+            channels: vec!["C123".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    wait_for(&mut core, |c| c.karl() == "W0RESOLVED");
 }

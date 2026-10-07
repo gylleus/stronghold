@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use super::{MyrstackApp, now_ms};
 use crate::actions::{Action, ActionId, ActionResult};
 use crate::control::{ControlError, ErrorCode, Reply};
+use crate::envoy::addressee::{self, Verdict};
 use crate::envoy::channel::{EventKind, InboundEvent};
 use crate::envoy::context::{CLEAR_COMMAND, ContextBudget, ResetReason, handoff_preamble};
 use crate::envoy::control::EnvoyCommand;
@@ -68,6 +69,8 @@ pub struct AppEnvoy {
     traffic_handle: Option<String>,
     forward_after_ms: i64,
     notices: HashSet<String>,
+    /// Karl's member id as Slack reported it; the settings' id until then.
+    karl_user_id: Option<String>,
     blocked: Option<&'static str>,
     /// Since when events have waited with nothing typed (see [`STUCK_AFTER_MS`]).
     pending_since_ms: Option<i64>,
@@ -169,6 +172,7 @@ impl AppEnvoy {
             traffic_handle: None,
             forward_after_ms: 0,
             notices: HashSet::new(),
+            karl_user_id: None,
             blocked: None,
             pending_since_ms: None,
             last_polled_ms: None,
@@ -485,6 +489,12 @@ impl AppEnvoy {
         self.drafts.as_ref().map_or(0, DraftQueue::pending_count)
     }
 
+    /// Whose mentions and DMs are for Karl: resolved from Slack, else the settings' id.
+    pub fn karl(&self) -> &str {
+        self.karl_user_id
+            .as_deref()
+            .unwrap_or(&self.settings.karl_user_id)
+    }
     pub fn drafts(&self) -> &[Draft] {
         self.drafts.as_ref().map_or(&[], DraftQueue::drafts)
     }
@@ -882,6 +892,9 @@ impl AppEnvoy {
                     }
                     reply.send(result.map_err(ControlError::invalid_params));
                 }
+                Update::KarlId(id) => {
+                    self.karl_user_id = Some(id);
+                }
                 Update::Error(error) => {
                     self.error = Some(error);
                 }
@@ -903,6 +916,22 @@ impl AppEnvoy {
             self.error_notified = self.error.clone();
         }
         (notifications, traffic)
+    }
+
+    /// Who `event` is for. Karl's side owns a thread when an ant opened it (`reach_out`), the
+    /// app watches it, or the Envoy posted in it.
+    fn addressee(&self, event: &InboundEvent, thread: &[&InboundEvent], ants: &[Ant]) -> Verdict {
+        let root = event.thread_ts.as_deref().unwrap_or(&event.ts);
+        let key = format!("{}:{root}", event.conversation);
+        let karls_thread = ants.iter().any(|a| a.threads.contains(&key))
+            || self.inbox.thread_watches.values().any(|w| {
+                w.watch.thread.conversation == event.conversation && w.watch.thread.ts == root
+            })
+            || self
+                .drafts()
+                .iter()
+                .any(|d| d.posted_in(&event.conversation, root));
+        addressee::classify(event, thread, self.karl(), karls_thread)
     }
 
     fn next_forward(&mut self, now: i64, ants: &[Ant]) -> Option<(Action, Vec<InboundEvent>)> {
@@ -934,6 +963,7 @@ impl AppEnvoy {
                     .collect();
                 let thread = &thread[thread.len().saturating_sub(20)..];
                 e.summary()
+                    + &self.addressee(e, thread, ants).annotation()
                     + &matching::annotation(&matching::candidates(
                         e,
                         thread,
