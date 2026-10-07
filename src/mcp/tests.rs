@@ -470,6 +470,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "envoy_drafts",
         "envoy_relay",
         "envoy_propose_task",
+        "envoy_note",
         "clean_worktrees",
     ];
     assert_eq!(names, expected);

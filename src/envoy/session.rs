@@ -8,8 +8,15 @@ use crate::fleet::FleetData;
 use crate::spawn::{Agent, Catalog, SpawnPlan, SpawnRequest, SpawnTarget, Step, shell_quote};
 
 pub const HOME: &str = "envoy-home";
+/// The playbook rendered for `--append-system-prompt-file`, in the app's data dir.
+pub const SYSTEM_PROMPT_FILE: &str = "envoy-system-prompt.md";
 
-pub fn plan(catalog: &Catalog, settings: &EnvoySettings) -> Result<SpawnPlan, String> {
+/// The launch plan; `system_prompt` is the file the playbook was written to.
+pub fn plan(
+    catalog: &Catalog,
+    settings: &EnvoySettings,
+    system_prompt: &Path,
+) -> Result<SpawnPlan, String> {
     if settings.agent != "claude" {
         return Err("Envoy requires Claude: Codex MCP tool restrictions are not supported".into());
     }
@@ -51,6 +58,7 @@ pub fn plan(catalog: &Catalog, settings: &EnvoySettings) -> Result<SpawnPlan, St
         plan.request.model.as_deref(),
         &plan.request.prompt,
         &executable,
+        system_prompt,
     );
     let mut needs_terminal = false;
     for step in &mut plan.steps {
@@ -121,7 +129,7 @@ fn denied_tools() -> Vec<String> {
         .collect()
 }
 
-fn command(model: Option<&str>, prompt: &str, executable: &Path) -> String {
+fn command(model: Option<&str>, prompt: &str, executable: &Path, system_prompt: &Path) -> String {
     let mut args = vec!["claude".to_owned()];
     if let Some(model) = model {
         args.extend(["--model".into(), shell_quote(model)]);
@@ -143,6 +151,9 @@ fn command(model: Option<&str>, prompt: &str, executable: &Path) -> String {
         .map(str::to_owned),
     );
     args.push(shell_quote(&mcp.to_string()));
+    // The playbook rides in the system prompt: part of the cached prefix, kept by `/clear`.
+    args.push("--append-system-prompt-file".into());
+    args.push(shell_quote(&system_prompt.to_string_lossy()));
     args.push("--allowedTools".into());
     args.extend(allowed_tools());
     args.push("--disallowedTools".into());
@@ -151,12 +162,29 @@ fn command(model: Option<&str>, prompt: &str, executable: &Path) -> String {
     args.join(" ")
 }
 
+/// Writes the playbook the session's system prompt is read from.
+pub(crate) fn write_system_prompt(
+    dir: &Path,
+    playbook: &crate::playbook::Playbook,
+) -> Result<PathBuf, String> {
+    let text = crate::playbook::envoy_system_prompt(playbook).map_err(|e| format!("{e:#}"))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("Cannot create {}: {e}", dir.display()))?;
+    let path = dir.join(SYSTEM_PROMPT_FILE);
+    let temp = path.with_extension("md.tmp");
+    std::fs::write(&temp, text)
+        .and_then(|()| std::fs::rename(&temp, &path))
+        .map_err(|e| format!("Cannot write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
 /// Refuse a second session even when its identity file was lost.
 pub(crate) fn prepare(
     backend: &mut dyn crate::spawn::exec::SpawnBackend,
     settings: &EnvoySettings,
 ) -> Result<SpawnPlan, String> {
-    let plan = plan(&backend.catalog()?, settings)?;
+    let playbook = crate::playbook::Playbook::locate().map_err(|e| format!("{e:#}"))?;
+    let system_prompt = write_system_prompt(&crate::claude::hook::data_dir(), &playbook)?;
+    let plan = plan(&backend.catalog()?, settings, &system_prompt)?;
     let value = backend
         .orca(
             &crate::orca::commands::terminal_list_args(),
@@ -483,6 +511,35 @@ mod tests {
         spawn::{Repo, Worktree},
     };
 
+    fn prompt_file() -> PathBuf {
+        PathBuf::from("/data/envoy-system-prompt.md")
+    }
+
+    #[test]
+    fn system_prompt_file_holds_the_envoy_playbook() {
+        let dir = tempfile::tempdir().unwrap();
+        let playbook = dir.path().join("playbook");
+        std::fs::create_dir_all(&playbook).unwrap();
+        std::fs::write(
+            playbook.join(crate::playbook::ENVOY),
+            "# Envoy playbook\n\n## Who you are\n\nThe diplomat.\n",
+        )
+        .unwrap();
+        let data = dir.path().join("data");
+        let path = write_system_prompt(&data, &crate::playbook::Playbook::at(&playbook)).unwrap();
+        assert_eq!(path, data.join(SYSTEM_PROMPT_FILE));
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.starts_with("# Envoy standing rules\n\n"));
+        assert!(text.contains("The diplomat."));
+        assert!(
+            write_system_prompt(
+                &data,
+                &crate::playbook::Playbook::at(dir.path().join("none"))
+            )
+            .is_err()
+        );
+    }
+
     fn catalog() -> Catalog {
         Catalog {
             repos: vec![Repo {
@@ -504,7 +561,7 @@ mod tests {
             display_name: Some("Rewritten title".into()),
             ..Default::default()
         });
-        let plan = plan(&catalog, &EnvoySettings::default()).unwrap();
+        let plan = plan(&catalog, &EnvoySettings::default(), &prompt_file()).unwrap();
         assert!(
             matches!(&plan.request.target, SpawnTarget::Worktree { worktree_id, .. } if worktree_id == "home")
         );
@@ -515,7 +572,7 @@ mod tests {
                 .any(|s| matches!(s, Step::CreateWorktree(_)))
         );
         catalog.worktrees[0].is_main_worktree = true;
-        assert!(super::plan(&catalog, &EnvoySettings::default()).is_err());
+        assert!(super::plan(&catalog, &EnvoySettings::default(), &prompt_file()).is_err());
     }
 
     #[test]
@@ -525,7 +582,7 @@ mod tests {
                 model,
                 ..Default::default()
             };
-            let plan = plan(&catalog(), &settings).unwrap();
+            let plan = plan(&catalog(), &settings, &prompt_file()).unwrap();
             assert!(
                 matches!(&plan.request.target, SpawnTarget::NewWorktree { name, base_branch, .. } if name == HOME && base_branch.as_deref() == Some("main"))
             );
@@ -556,6 +613,7 @@ mod tests {
                 agent: "codex".into(),
                 ..Default::default()
             },
+            &prompt_file(),
         )
         .unwrap_err();
         assert!(error.contains("Codex MCP tool restrictions"));
@@ -564,11 +622,16 @@ mod tests {
     #[test]
     fn launch_pins_tools_permissions_and_the_matching_mcp_binary() {
         let executable = Path::new("/Applications/Myrstack App/Contents/MacOS/myrstack");
-        let command = command(Some("sonnet"), "load envoy", executable);
+        let system_prompt = Path::new("/data dir/envoy-system-prompt.md");
+        let command = command(Some("sonnet"), "load envoy", executable, system_prompt);
         assert!(command.starts_with("claude --model sonnet --setting-sources user --permission-mode dontAsk --tools Read,Grep,Glob --strict-mcp-config --mcp-config "));
         let mcp =
             serde_json::json!({"mcpServers":{"myrstack":{"command":executable,"args":["mcp"]}}});
         assert!(command.contains(&shell_quote(&mcp.to_string())));
+        assert!(command.contains(&format!(
+            " --append-system-prompt-file {} --allowedTools ",
+            shell_quote("/data dir/envoy-system-prompt.md")
+        )));
         assert!(!command.contains("--dangerously"));
         let allowed = command
             .split("--allowedTools ")
@@ -795,12 +858,12 @@ mod tests {
                 dry_run,
                 ..Default::default()
             };
-            let plan = plan(&catalog(), &settings).unwrap();
+            let plan = plan(&catalog(), &settings, &prompt_file()).unwrap();
             assert_eq!(
                 plan.request.prompt,
                 crate::playbook::envoy_launch_prompt(dry_run)
             );
-            assert!(plan.request.prompt.contains("role=envoy"));
+            assert!(plan.request.prompt.contains("system prompt"));
             let expected = if dry_run {
                 "Dry-run is ON"
             } else {

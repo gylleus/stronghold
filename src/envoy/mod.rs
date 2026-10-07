@@ -3,10 +3,12 @@
 //! only on his approval; the Envoy session reads, triages and drafts.
 
 pub mod channel;
+pub mod context;
 pub mod control;
 pub mod drafts;
 pub mod inbox;
 pub mod matching;
+pub mod notes;
 pub mod relay;
 pub mod requests;
 pub mod secrets;

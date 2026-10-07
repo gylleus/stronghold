@@ -9,10 +9,12 @@ use super::{MyrstackApp, now_ms};
 use crate::actions::{Action, ActionId, ActionResult};
 use crate::control::{ControlError, ErrorCode, Reply};
 use crate::envoy::channel::{EventKind, InboundEvent};
+use crate::envoy::context::{CLEAR_COMMAND, ContextBudget, ResetReason, handoff_preamble};
 use crate::envoy::control::EnvoyCommand;
 use crate::envoy::drafts::{Draft, DraftKind, DraftQueue, DraftStatus, ReplyTo};
 use crate::envoy::inbox::{Inbox, timestamp_us};
 use crate::envoy::matching::{self, Ant};
+use crate::envoy::notes::ThreadNotes;
 use crate::envoy::relay::{RelayLimiter, RelayRequest};
 use crate::envoy::settings::EnvoySettings;
 use crate::envoy::worker::{Update, Work, Worker};
@@ -37,6 +39,12 @@ pub struct AppEnvoy {
     inbox: Inbox,
     drafts: Option<DraftQueue>,
     requests: Option<Requests>,
+    notes: Option<ThreadNotes>,
+    notes_path: PathBuf,
+    /// What the session's context holds since its last fresh start.
+    context: ContextBudget,
+    /// The `/clear` in flight.
+    resetting: Option<ActionId>,
     watches: Option<Vec<crate::envoy::slack::threads::Watch>>,
     watches_pending: bool,
     watch_retry_ms: i64,
@@ -110,13 +118,17 @@ impl AppEnvoy {
         let requests = Requests::load(dir.join(crate::envoy::requests::REQUESTS_FILE));
         let relay_path = dir.join("envoy-relays.json");
         let relays = RelayLimiter::load(&relay_path);
+        let notes_path = dir.join(crate::envoy::notes::NOTES_FILE);
+        let notes = ThreadNotes::load(&notes_path)
+            .map_err(|e| format!("Cannot read {}: {e}", notes_path.display()));
         let error = loaded
             .as_ref()
             .err()
             .map(|e| e.to_string())
             .or_else(|| drafts.as_ref().err().cloned())
             .or_else(|| relays.as_ref().err().cloned())
-            .or_else(|| requests.as_ref().err().cloned());
+            .or_else(|| requests.as_ref().err().cloned())
+            .or_else(|| notes.as_ref().err().cloned());
         let inbox = loaded.unwrap_or_default();
         Self {
             handle: None,
@@ -124,6 +136,10 @@ impl AppEnvoy {
             inbox,
             drafts: drafts.ok(),
             requests: requests.ok(),
+            notes: notes.ok(),
+            notes_path,
+            context: ContextBudget::default(),
+            resetting: None,
             watches: None,
             watches_pending: false,
             watch_retry_ms: 0,
@@ -162,6 +178,11 @@ impl AppEnvoy {
         }
         self.worker()?
             .submit(Work::Configure(Some(settings.clone())))?;
+        if self.handle.as_deref() != Some(&handle) {
+            // A new session starts from its launch prompt: nothing to clear yet.
+            self.context = ContextBudget::default();
+            self.resetting = None;
+        }
         if self.handle.is_none() {
             self.bridge_seen = false;
             self.pending = self
@@ -191,6 +212,98 @@ impl AppEnvoy {
             let _ = worker.submit(Work::Configure(None));
         }
         self.pending.clear();
+        self.context = ContextBudget::default();
+        self.resetting = None;
+    }
+
+    pub fn context(&self) -> &ContextBudget {
+        &self.context
+    }
+
+    /// The note for an event's thread, else its conversation.
+    pub(super) fn note_for(
+        &self,
+        event: &InboundEvent,
+    ) -> Option<&crate::envoy::notes::ThreadNote> {
+        self.notes.as_ref()?.for_event(event)
+    }
+
+    /// ` — note: …` for a typed event line, when its thread has one.
+    fn note_suffix(&self, event: &InboundEvent) -> String {
+        self.note_for(event)
+            .map(|n| format!(" — note: {}", n.text))
+            .unwrap_or_default()
+    }
+
+    /// The first line typed after a reset, so a fresh context knows where it stands.
+    pub(super) fn handoff(&self, text: String) -> String {
+        if self.context.fresh {
+            format!("{} | {text}", handoff_preamble(self.settings.dry_run))
+        } else {
+            text
+        }
+    }
+
+    /// Why the context must not be cleared right now, or `None`.
+    pub(super) fn in_flight(&self) -> Option<&'static str> {
+        if self.forwarding.is_some() {
+            Some("batch in flight")
+        } else if !self.gateway_actions.is_empty() {
+            Some("gateway send in flight")
+        } else if !self.relay_actions.is_empty() {
+            Some("relay in flight")
+        } else if !self.outgoing.is_empty() {
+            Some("Slack send in flight")
+        } else if self
+            .drafts()
+            .iter()
+            .any(|d| d.status == DraftStatus::Approved)
+        {
+            Some("approved draft being sent")
+        } else {
+            None
+        }
+    }
+
+    /// The `/clear` to type before the next batch when a reset is due and nothing is in
+    /// flight. `context_tokens` is the session's context size as of its last turn.
+    pub(super) fn reset_action(
+        &self,
+        now: i64,
+        context_tokens: Option<u64>,
+    ) -> Option<(Action, ResetReason)> {
+        if self.resetting.is_some() || self.in_flight().is_some() {
+            return None;
+        }
+        let handle = self.handle.clone()?;
+        let reason = self
+            .context
+            .reset_due(now, &self.settings, context_tokens)?;
+        Some((
+            Action::Send {
+                handle,
+                input: TerminalInput::line(CLEAR_COMMAND),
+            },
+            reason,
+        ))
+    }
+
+    /// The `/clear` finished: a cleared context gets the handoff with its next batch, a
+    /// failed one is retried after a backoff while batches go into the old context.
+    pub(super) fn reset_done(&mut self, result: &ActionResult, now: i64) {
+        if self.resetting != Some(result.id) {
+            return;
+        }
+        self.resetting = None;
+        let ok = result.outcome.is_ok();
+        self.context.reset_done(ok, now);
+        // Let the cleared prompt settle before the batch, or hold back after a failure.
+        let delay = if ok { 2_000 } else { 30_000 };
+        self.forward_after_ms = self.forward_after_ms.max(now + delay);
+        self.gateway_retry_ms = self.gateway_retry_ms.max(now + delay);
+        if let Err(error) = &result.outcome {
+            log::warn!("envoy: context reset failed, keeping the old context: {error}");
+        }
     }
 
     fn merge_polled(&mut self, mut inbox: Inbox, events: Vec<InboundEvent>) {
@@ -232,6 +345,7 @@ impl AppEnvoy {
         }
         let (_, batch) = self.forwarding.take().expect("matching action");
         if result.outcome.is_ok() {
+            self.context.forwarded(batch.len(), now);
             if self
                 .shake_started_ms
                 .is_none_or(|start| now - start >= SHAKE_COOLDOWN_MS)
@@ -359,7 +473,25 @@ impl AppEnvoy {
                         .ok_or("limit must be between 1 and 2000")?
                         as usize,
                 };
-                Ok(json!({"events":self.inbox.since(since, limit)}))
+                let events = self.inbox.since(since, limit);
+                let mut notes: Vec<_> = events.iter().filter_map(|e| self.note_for(e)).collect();
+                notes.sort_by_key(|n| n.key());
+                notes.dedup_by_key(|n| n.key());
+                Ok(json!({"events":events, "notes":notes}))
+            }
+            "envoy_note" => {
+                let conversation = required(args, "conversation")?;
+                let thread_ts = optional(args, "thread_ts")?.filter(|s| !s.trim().is_empty());
+                let text = args
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .ok_or("text must be a string")?;
+                let notes = self.notes.as_mut().ok_or("Envoy note store unavailable")?;
+                let note = notes.set(conversation, thread_ts, text, now_ms())?;
+                notes
+                    .save(&self.notes_path)
+                    .map_err(|e| format!("Cannot save {}: {e}", self.notes_path.display()))?;
+                Ok(json!({"note":note, "notes":notes.len()}))
             }
             "envoy_drafts" => {
                 let status = optional(args, "status")?
@@ -706,6 +838,7 @@ impl AppEnvoy {
                         ants,
                         &self.inbox.pr_heads,
                     ))
+                    + &self.note_suffix(e)
             })
             .collect();
         if !old.is_empty() {
@@ -722,7 +855,7 @@ impl AppEnvoy {
         Some((
             Action::Send {
                 handle,
-                input: TerminalInput::line(lines.join(" | ")),
+                input: TerminalInput::line(self.handoff(lines.join(" | "))),
             },
             batch,
         ))
@@ -972,7 +1105,8 @@ impl MyrstackApp {
             match result {
                 Ok(event) => match self.envoy_core.worker() {
                     Ok(worker) => {
-                        let _ = worker.submit(Work::Thread { event, reply });
+                        let note = self.envoy_core.note_for(&event).cloned();
+                        let _ = worker.submit(Work::Thread { event, note, reply });
                     }
                     Err(error) => reply.send(Err(ControlError::new(ErrorCode::Unavailable, error))),
                 },
@@ -1155,6 +1289,7 @@ impl MyrstackApp {
                 Some("gateway send in flight")
             }
             Some(_) if self.envoy_core.forwarding.is_some() => Some("batch in flight"),
+            Some(_) if self.envoy_core.resetting.is_some() => Some("context reset in flight"),
             Some(handle) => self.target_blocked(handle),
         };
         if self.envoy_core.pending.is_empty() || blocked.is_some() {
@@ -1169,12 +1304,39 @@ impl MyrstackApp {
             return;
         }
         self.envoy_core.blocked = None;
+        if self.envoy_reset() {
+            return;
+        }
         let ants = self.envoy_ants();
         if let Some((action, batch)) = self.envoy_core.next_forward(now_ms(), &ants) {
             log::info!("envoy: typing {} event(s)", batch.len());
             let id = self.actions.submit(action);
             self.envoy_core.forwarding = Some((id, batch));
         }
+    }
+
+    /// Clears the Envoy's context when a reset is due before what is about to be typed;
+    /// true when the `/clear` was submitted and the batch must wait.
+    pub(super) fn envoy_reset(&mut self) -> bool {
+        let now = now_ms();
+        let tokens = self
+            .envoy_core
+            .handle
+            .as_deref()
+            .and_then(|h| self.claude_data.as_ref()?.context_for_handle(h));
+        let Some((action, reason)) = self.envoy_core.reset_action(now, tokens) else {
+            return false;
+        };
+        log::info!(
+            "envoy: fresh context ({}): {} event(s) typed since the last one, context {} tokens, {} pending",
+            reason.label(),
+            self.envoy_core.context.events_since_reset,
+            tokens.map_or("unknown".to_owned(), |t| t.to_string()),
+            self.envoy_core.pending.len()
+        );
+        let id = self.actions.submit(action);
+        self.envoy_core.resetting = Some(id);
+        true
     }
 
     /// Live ants the Envoy may relay to, with what identifies their work.
@@ -1253,6 +1415,7 @@ impl MyrstackApp {
             .gateway_done(result, |message| traffic.send(message));
         self.envoy_core
             .forward_done(result, now_ms(), |message| traffic.send(message));
+        self.envoy_core.reset_done(result, now_ms());
     }
 }
 

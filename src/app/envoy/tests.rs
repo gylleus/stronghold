@@ -703,3 +703,339 @@ fn batches_name_candidate_ants_and_fold_the_backlog() {
     );
     assert!(lines[3].ends_with("— no ant match"));
 }
+
+fn envoy_command(method: &str, args: Value) -> EnvoyCommand {
+    EnvoyCommand {
+        method: method.into(),
+        args,
+        origin: crate::review::mark::Origin {
+            terminal_handle: Some("term_envoy".into()),
+            ..Default::default()
+        },
+    }
+}
+
+fn clear_action(core: &AppEnvoy, now: i64, tokens: Option<u64>) -> Option<ResetReason> {
+    let (action, reason) = core.reset_action(now, tokens)?;
+    assert_eq!(
+        action,
+        Action::Send {
+            handle: "term_envoy".into(),
+            input: TerminalInput::line(CLEAR_COMMAND),
+        }
+    );
+    Some(reason)
+}
+
+fn typed(action: &Action) -> String {
+    let Action::Send { input, .. } = action else {
+        panic!("typed line")
+    };
+    input.text.clone().unwrap()
+}
+
+#[test]
+fn quiet_period_clears_the_context_and_hands_pending_events_over_with_a_preamble() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    let settings = EnvoySettings::default();
+    core.settings = settings.clone();
+    let quiet_ms = settings.fresh_after_secs as i64 * 1_000;
+    let events = vec![receipt_event("1.000001"), receipt_event("1.000002")];
+    let mut inbox = Inbox::default();
+    for event in &events {
+        inbox.insert(event.clone());
+    }
+    core.merge_polled(inbox, events);
+    assert_eq!(
+        clear_action(&core, 100, Some(1_000_000)),
+        None,
+        "the launch context has had no batch: nothing to clear"
+    );
+    let result = submit_receipt_batch(&mut core, 100, 1);
+    assert!(
+        !typed(&result.action).starts_with("Fresh context"),
+        "the launch prompt already introduced the session"
+    );
+    core.forward_done(&result, 100, |_| {});
+    assert_eq!(core.context().events_since_reset, 2);
+
+    // A burst shares the context; after the quiet period a new batch starts clean.
+    core.inbox.insert(receipt_event("2.000001"));
+    core.pending.push_back(receipt_event("2.000001"));
+    assert_eq!(clear_action(&core, 100 + quiet_ms - 1, None), None);
+    let now = 100 + quiet_ms;
+    assert_eq!(clear_action(&core, now, None), Some(ResetReason::Quiet));
+    core.resetting = Some(7);
+    assert_eq!(clear_action(&core, now, None), None, "one reset at a time");
+    assert_eq!(
+        core.pending.len(),
+        1,
+        "pending events wait across the reset"
+    );
+    core.reset_done(
+        &ActionResult {
+            id: 7,
+            action: Action::Send {
+                handle: "term_envoy".into(),
+                input: TerminalInput::line(CLEAR_COMMAND),
+            },
+            outcome: Ok(()),
+            note: None,
+        },
+        now,
+    );
+    assert!(core.resetting.is_none());
+    assert!(core.context().fresh);
+    assert_eq!(core.context().events_since_reset, 0);
+    assert_eq!(core.context().resets, 1);
+    assert_eq!(core.pending.len(), 1);
+    assert_eq!(
+        core.inbox.unforwarded().len(),
+        1,
+        "nothing is acknowledged by a reset"
+    );
+    assert!(
+        core.next_forward(now + 1_999, &[]).is_none(),
+        "the cleared prompt gets a moment to settle"
+    );
+    assert_eq!(clear_action(&core, now + 2_000, Some(1_000_000)), None);
+    let result = submit_receipt_batch(&mut core, now + 2_000, 8);
+    let line = typed(&result.action);
+    assert!(
+        line.starts_with("Fresh context: your earlier conversation was cleared."),
+        "{line}"
+    );
+    assert!(line.contains("Dry-run is ON"), "{line}");
+    assert!(
+        line.contains(
+            " | Envoy event: agent_comms from Avery in C123: Fixture message — id C123:2.000001"
+        ),
+        "{line}"
+    );
+    core.forward_done(&result, now + 2_000, |_| {});
+    assert!(!core.context().fresh);
+    assert_eq!(core.context().events_since_reset, 1);
+    assert!(core.inbox.unforwarded().is_empty());
+    core.pending.push_back(receipt_event("3.000001"));
+    let result = submit_receipt_batch(&mut core, now + 3_000, 9);
+    assert!(
+        typed(&result.action).starts_with("Envoy event:"),
+        "only the first batch after a reset carries the preamble"
+    );
+}
+
+#[test]
+fn size_guards_reset_mid_burst_but_never_while_a_send_is_in_flight() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    core.settings = EnvoySettings {
+        reset_after_events: 3,
+        reset_after_tokens: 50_000,
+        ..Default::default()
+    };
+    core.pending.push_back(receipt_event("1.000001"));
+    let result = submit_receipt_batch(&mut core, 100, 1);
+    core.forward_done(&result, 100, |_| {});
+    core.pending.push_back(receipt_event("2.000001"));
+    assert_eq!(clear_action(&core, 200, Some(49_999)), None);
+    assert_eq!(
+        clear_action(&core, 200, Some(50_000)),
+        Some(ResetReason::Tokens)
+    );
+    core.pending.push_back(receipt_event("3.000001"));
+    let result = submit_receipt_batch(&mut core, 200, 2);
+    core.forward_done(&result, 200, |_| {});
+    assert_eq!(core.context().events_since_reset, 3);
+    core.pending.push_back(receipt_event("4.000001"));
+    assert_eq!(clear_action(&core, 300, None), Some(ResetReason::Events));
+
+    core.outgoing.insert("draft-1".into(), "term_envoy".into());
+    assert_eq!(core.in_flight(), Some("Slack send in flight"));
+    assert_eq!(clear_action(&core, 300, None), None);
+    core.outgoing.clear();
+    core.relay_actions.insert(
+        5,
+        AgentMessage::new("term_envoy", "term_ant", MessageKind::Relay),
+    );
+    assert_eq!(core.in_flight(), Some("relay in flight"));
+    assert_eq!(clear_action(&core, 300, None), None);
+    core.relay_actions.clear();
+    let mut draft = Draft::reply(
+        ReplyTo {
+            conversation: "C123".into(),
+            ts: "1.000001".into(),
+        },
+        None,
+        "On it".into(),
+        "asked".into(),
+        0,
+    );
+    draft.status = DraftStatus::Approved;
+    let draft = core.queue().unwrap().create(draft).unwrap();
+    assert_eq!(core.in_flight(), Some("approved draft being sent"));
+    assert_eq!(clear_action(&core, 300, None), None);
+    core.queue()
+        .unwrap()
+        .finish(&draft.id, Ok(()), 301)
+        .unwrap();
+    assert_eq!(core.in_flight(), None);
+    assert_eq!(clear_action(&core, 300, None), Some(ResetReason::Events));
+}
+
+#[test]
+fn a_failed_clear_keeps_the_batch_in_the_old_context_and_retries_later() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    core.settings = EnvoySettings {
+        fresh_after_secs: 0,
+        ..Default::default()
+    };
+    core.pending.push_back(receipt_event("1.000001"));
+    let result = submit_receipt_batch(&mut core, 100, 1);
+    core.forward_done(&result, 100, |_| {});
+    core.pending.push_back(receipt_event("2.000001"));
+    assert_eq!(clear_action(&core, 200, None), Some(ResetReason::Quiet));
+    core.resetting = Some(2);
+    core.reset_done(
+        &ActionResult {
+            id: 2,
+            action: Action::Send {
+                handle: "term_envoy".into(),
+                input: TerminalInput::line(CLEAR_COMMAND),
+            },
+            outcome: Err("terminal busy".into()),
+            note: None,
+        },
+        200,
+    );
+    assert!(core.resetting.is_none());
+    assert!(!core.context().fresh);
+    assert_eq!(core.context().events_since_reset, 1);
+    assert_eq!(core.pending.len(), 1);
+    assert_eq!(clear_action(&core, 200 + 29_999, None), None, "backing off");
+    assert!(core.next_forward(200 + 29_999, &[]).is_none());
+    let result = submit_receipt_batch(&mut core, 200 + 30_000, 3);
+    assert!(
+        typed(&result.action).starts_with("Envoy event:"),
+        "no preamble: the context was not cleared"
+    );
+    core.forward_done(&result, 200 + 30_000, |_| {});
+    assert_eq!(core.context().events_since_reset, 2);
+    assert_eq!(
+        clear_action(&core, 200 + crate::envoy::context::RESET_BACKOFF_MS, None),
+        Some(ResetReason::Quiet)
+    );
+}
+
+#[test]
+fn stop_and_a_new_session_forget_the_context_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, _commands, _updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    core.set_enabled("term_envoy".into(), EnvoySettings::default())
+        .unwrap();
+    core.pending.push_back(receipt_event("1.000001"));
+    let result = submit_receipt_batch(&mut core, 100, 1);
+    core.forward_done(&result, 100, |_| {});
+    core.resetting = Some(2);
+    core.set_enabled("term_envoy".into(), EnvoySettings::default())
+        .unwrap();
+    assert_eq!(core.context().events_since_reset, 1, "same session: kept");
+    core.set_enabled("term_envoy_2".into(), EnvoySettings::default())
+        .unwrap();
+    assert_eq!(core.context(), &ContextBudget::default());
+    assert!(core.resetting.is_none());
+    core.pending.push_back(receipt_event("2.000001"));
+    let result = submit_receipt_batch(&mut core, 200, 3);
+    core.forward_done(&result, 200, |_| {});
+    core.stop();
+    assert_eq!(core.context(), &ContextBudget::default());
+}
+
+#[test]
+fn thread_notes_are_written_by_tool_and_typed_with_every_event_in_the_thread() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    let mut root = receipt_event("10.000001");
+    root.text = "Can Karl's agent review realtime#694?".into();
+    let mut reply = receipt_event("11.000001");
+    reply.thread_ts = Some(root.ts.clone());
+    reply.text = "ping".into();
+    let other = receipt_event("12.000001");
+    let mut dm = receipt_event("13.000001");
+    dm.conversation = "D1".into();
+    let events = vec![root.clone(), reply.clone(), other.clone(), dm.clone()];
+    let mut inbox = Inbox::default();
+    for event in &events {
+        inbox.insert(event.clone());
+    }
+    core.merge_polled(inbox, events);
+    assert!(
+        core.request(&envoy_command(
+            "envoy_note",
+            json!({"conversation":"C123","thread_ts":"10.000001","text":"Avery asked for a realtime#694 review;\npromised an answer today; waiting on the Recs ant"})
+        ))
+        .is_ok()
+    );
+    let stored = core
+        .request(&envoy_command(
+            "envoy_note",
+            json!({"conversation":"D1","text":"Daniel: wants the rollout date"}),
+        ))
+        .unwrap();
+    assert_eq!(stored["note"]["text"], "Daniel: wants the rollout date");
+    assert_eq!(stored["notes"], 2);
+    for args in [
+        json!({"conversation":"nope","text":"x"}),
+        json!({"conversation":"C123","thread_ts":"later","text":"x"}),
+        json!({"conversation":"C123","text":"x".repeat(601)}),
+        json!({"conversation":"C123"}),
+    ] {
+        assert!(core.request(&envoy_command("envoy_note", args)).is_err());
+    }
+    let (action, _) = core.next_forward(20_000, &[]).unwrap();
+    let lines: Vec<String> = typed(&action).split(" | ").map(str::to_owned).collect();
+    assert_eq!(lines.len(), 4);
+    let note = "— note: Avery asked for a realtime#694 review; promised an answer today; waiting on the Recs ant";
+    assert!(lines[0].ends_with(note), "root: {}", lines[0]);
+    assert!(lines[1].ends_with(note), "reply: {}", lines[1]);
+    assert!(
+        lines[2].ends_with("— no ant match"),
+        "no note: {}",
+        lines[2]
+    );
+    assert!(
+        lines[3].ends_with("— note: Daniel: wants the rollout date"),
+        "conversation note: {}",
+        lines[3]
+    );
+    let inbox = core
+        .request(&envoy_command("envoy_inbox", json!({})))
+        .unwrap();
+    assert_eq!(inbox["events"].as_array().unwrap().len(), 4);
+    let notes = inbox["notes"].as_array().unwrap();
+    assert_eq!(notes.len(), 2, "one per thread, not per event: {notes:?}");
+    assert!(
+        core.request(&envoy_command(
+            "envoy_note",
+            json!({"conversation":"D1","text":""})
+        ))
+        .unwrap()["note"]
+            .is_null()
+    );
+    assert_eq!(
+        AppEnvoy::load(dir.path().into())
+            .notes
+            .as_ref()
+            .unwrap()
+            .len(),
+        1,
+        "notes persist"
+    );
+}
