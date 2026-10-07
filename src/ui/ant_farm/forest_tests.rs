@@ -77,7 +77,7 @@ fn a_tree_per_linked_worktree_looking_like_its_agents() {
     assert_eq!(got, want);
 }
 
-/// Every tree stands in the grass on the strip past the landing, sized by its id, the same
+/// Every tree stands in the grass across the farm, sized by its id, the same
 /// every frame.
 #[test]
 fn trees_stand_on_the_surface() {
@@ -96,7 +96,7 @@ fn trees_stand_on_the_surface() {
         );
         assert_eq!(tree.foot.y, scene.surface_y + scene.px, "in the grass");
         let rect = tree.rect();
-        assert!(rect.left() >= scene.landing.right(), "past the landing");
+        assert!(rect.left() >= scene.rect.left(), "inside the farm");
         assert!(rect.right() <= scene.rect.right());
         assert!(rect.top() >= scene.rect.top(), "under the top");
     }
@@ -185,13 +185,13 @@ fn closed_worktrees_fall() {
     let scene = farm();
     let mut view = ForestView::default();
     view.set(groves(3), None);
-    assert_eq!(view.layout(&scene, 0.0, false).trees.len(), 3);
+    assert_eq!(view.layout(&scene, 0.0, false, false).trees.len(), 3);
     assert!(!view.animating());
     view.set(groves(2), None);
-    assert_eq!(view.layout(&scene, 1.0, false).trees.len(), 2);
+    assert_eq!(view.layout(&scene, 1.0, false, false).trees.len(), 2);
     assert!(view.animating(), "the closed one falls");
     assert!(!{
-        view.layout(&scene, 10.0, false);
+        view.layout(&scene, 10.0, false, false);
         view.animating()
     });
 
@@ -202,14 +202,14 @@ fn closed_worktrees_fall() {
         felled: vec![grove("wt-0").id],
     };
     view.set(groves(2), Some(job));
-    let forest = view.layout(&scene, 11.0, false);
+    let forest = view.layout(&scene, 11.0, false, false);
     assert!(forest.tree(&grove("wt-0").id).is_none(), "felled at once");
     assert!(forest.tree(&grove("wt-1").id).is_some(), "still being cut");
 
     let mut away = ForestView::default();
     away.set(groves(3), None);
-    away.layout(&scene, 0.0, false);
+    away.layout(&scene, 0.0, false, false);
     away.set(groves(1), None);
-    away.layout(&scene, 60.0, true);
+    away.layout(&scene, 60.0, true, false);
     assert!(!away.animating());
 }

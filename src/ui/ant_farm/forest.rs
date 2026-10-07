@@ -172,12 +172,10 @@ impl Forest {
     }
 }
 
-/// The strip of surface the forest grows on: past the landing (and Karl's pipe) to the right
-/// edge, as the other scenery.
+/// The strip of surface the forest grows on: the whole width, behind everything else there.
 fn strip(scene: &Scene) -> (f32, f32) {
     let a = scene.cell();
-    let start = scene.landing.right() + if scene.comms.is_some() { 4.0 * a } else { a };
-    (start, scene.rect.right() - 0.5 * a)
+    (scene.rect.left() + 0.5 * a, scene.rect.right() - 0.5 * a)
 }
 
 /// Points per map texel of a tree at `scale` farm texels each, shrunk so it fits under the sky.
@@ -289,6 +287,8 @@ pub struct ForestView {
     felled: Vec<Felled>,
     /// The tree whose name was clicked to stay up.
     pinned: Option<String>,
+    /// Reduce motion: no shiver, fall or sawing stroke.
+    still: bool,
 }
 
 impl ForestView {
@@ -299,7 +299,8 @@ impl ForestView {
 
     /// This frame's trees, without those the saw has felled. Trees gone since the last frame
     /// start falling (not after a gap, `away`, when the farm was off screen).
-    pub fn layout(&mut self, scene: &Scene, now_s: f64, away: bool) -> Forest {
+    pub fn layout(&mut self, scene: &Scene, now_s: f64, away: bool, still: bool) -> Forest {
+        self.still = still;
         let felled: HashSet<&str> = self
             .saw
             .iter()
@@ -363,19 +364,17 @@ impl ForestView {
         }
     }
 
-    /// The trees, the falling ones, the "+N" sign and the saw.
-    #[allow(clippy::too_many_arguments)]
-    pub fn paint(
+    /// The trees, the falling ones and the "+N" sign: behind everything else on the surface.
+    pub fn paint_trees(
         &self,
         painter: &egui::Painter,
         sprites: &Sprites,
         scene: &Scene,
         forest: &Forest,
-        hovered: Option<&str>,
         palette: Palette,
         now_s: f64,
-        still: bool,
     ) {
+        let still = self.still;
         let cutting = self.saw.as_ref().and_then(|s| s.current.as_deref());
         for tree in &forest.trees {
             let tint = if tree.back {
@@ -404,6 +403,21 @@ impl ForestView {
         if let Some(at) = forest.sign {
             paint_sign(painter, scene, at, forest.more, palette);
         }
+    }
+
+    /// The hovered or pinned tree's name, and the saw: over everything else.
+    #[allow(clippy::too_many_arguments)]
+    pub fn paint_overlay(
+        &self,
+        painter: &egui::Painter,
+        sprites: &Sprites,
+        scene: &Scene,
+        forest: &Forest,
+        hovered: Option<&str>,
+        palette: Palette,
+        now_s: f64,
+    ) {
+        let still = self.still;
         for tree in &forest.trees {
             let id = tree.grove.id.as_str();
             if hovered == Some(id) || self.pinned.as_deref() == Some(id) {
