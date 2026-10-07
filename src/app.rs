@@ -144,10 +144,11 @@ pub struct MyrstackApp {
     control: control::AppControl,
     /// "Close session" confirmation dialog and the log of closes.
     close: ui::close::CloseDialog,
-    /// Worktree count in the top bar, the cleanup window and its broom.
+    /// Worktree count in the top bar, the cleanup window and its saw.
     worktrees: ui::worktrees::WorktreePanel,
-    /// The ant farm drew the broom this frame, so it skips the window's bottom edge.
-    broom_in_farm: bool,
+    /// The ant farm drew the forest (and the saw cutting it) this frame, so the saw skips the
+    /// window's bottom edge.
+    saw_in_farm: bool,
     /// Who fetched which playbook version, re-read off the UI thread.
     playbook_watch: playbook::PlaybookWatch,
     /// The Queen's chat, drawn in the conversation column.
@@ -256,7 +257,7 @@ impl MyrstackApp {
             frame_stats: ui::frame_stats::FrameStats::default(),
             close: ui::close::CloseDialog::default(),
             worktrees: ui::worktrees::WorktreePanel::new(ctx),
-            broom_in_farm: false,
+            saw_in_farm: false,
             playbook_watch: playbook::PlaybookWatch::spawn(repaint_once(ctx)),
             chat,
             whip_now: whip_now::WhipNowState::default(),
@@ -1019,15 +1020,21 @@ impl MyrstackApp {
     }
 
     /// Draws the dialog and submits a confirmed plan's steps, in order.
-    /// The worktree cleanup window and the broom while it removes.
+    /// The worktree cleanup window, and the saw and its sound while it removes.
     fn worktree_cleanup(&mut self, ctx: &egui::Context, now_ms: i64) {
         let worktrees = self.data.as_ref().map(|d| &d.worktrees[..]);
         if self.worktrees.tick(worktrees, now_ms) {
             self.poller.send(PollerCommand::RefreshNow);
         }
         self.worktrees.window(ctx);
-        if !std::mem::take(&mut self.broom_in_farm) {
-            self.worktrees.broom(ctx);
+        if !std::mem::take(&mut self.saw_in_farm) {
+            self.worktrees.saw(ctx);
+        }
+        if self.worktrees.take_new_cut() {
+            let settings = self.whip_window.notifications();
+            if !settings.quiet {
+                ui::chainsaw::play(f32::from(settings.volume_percent.min(100)) / 100.0);
+            }
         }
     }
 

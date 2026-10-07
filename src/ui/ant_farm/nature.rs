@@ -7,8 +7,16 @@ use eframe::egui::{Color32, ColorImage};
 /// Something growing or lying on the surface, or hanging in the sky.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Deco {
+    /// A worktree with an agent at work in it (see [`super::forest`]).
     Tree,
-    Pine,
+    /// A worktree whose agents are idle, done or parked.
+    AutumnTree,
+    /// A worktree with no agent in it: likely one the saw can take.
+    BareTree,
+    /// What a sawn tree leaves.
+    Stump,
+    /// The chainsaw of the worktree cleanup, bar pointing right.
+    Saw,
     Bush,
     FlowerRed,
     FlowerYellow,
@@ -22,9 +30,12 @@ pub enum Deco {
 }
 
 impl Deco {
-    pub const ALL: [Deco; 12] = [
+    pub const ALL: [Deco; 15] = [
         Deco::Tree,
-        Deco::Pine,
+        Deco::AutumnTree,
+        Deco::BareTree,
+        Deco::Stump,
+        Deco::Saw,
         Deco::Bush,
         Deco::FlowerRed,
         Deco::FlowerYellow,
@@ -40,7 +51,15 @@ impl Deco {
     /// Texels per farm texel: big things are drawn twice as chunky as the ants.
     pub fn scale(self) -> f32 {
         match self {
-            Deco::Tree | Deco::Pine | Deco::Bush | Deco::Cloud | Deco::Moon | Deco::Sun => 2.0,
+            Deco::Tree
+            | Deco::AutumnTree
+            | Deco::BareTree
+            | Deco::Stump
+            | Deco::Saw
+            | Deco::Bush
+            | Deco::Cloud
+            | Deco::Moon
+            | Deco::Sun => 2.0,
             _ => 1.0,
         }
     }
@@ -54,13 +73,18 @@ impl Deco {
 
     /// Whether it puts roots into the soil below it.
     pub fn rooted(self) -> bool {
-        matches!(self, Deco::Tree | Deco::Pine | Deco::Bush)
+        matches!(
+            self,
+            Deco::Tree | Deco::AutumnTree | Deco::BareTree | Deco::Stump | Deco::Bush
+        )
     }
 
     fn map(self) -> &'static [&'static str] {
         match self {
-            Deco::Tree => TREE,
-            Deco::Pine => PINE,
+            Deco::Tree | Deco::AutumnTree => TREE,
+            Deco::BareTree => BARE_TREE,
+            Deco::Stump => STUMP,
+            Deco::Saw => SAW,
             Deco::Bush => BUSH,
             Deco::FlowerRed | Deco::FlowerYellow | Deco::FlowerPurple => FLOWER,
             Deco::Tuft => TUFT,
@@ -81,6 +105,19 @@ impl Deco {
         }
     }
 
+    /// An autumn tree's leaves in place of the greens.
+    fn leaves(self, c: char) -> Option<Color32> {
+        if self != Deco::AutumnTree {
+            return None;
+        }
+        match c {
+            'G' => Some(rgb(0x8a3a1c)),
+            'g' => Some(rgb(0xc8682a)),
+            'l' => Some(rgb(0xf0b048)),
+            _ => None,
+        }
+    }
+
     /// Size in texels.
     pub fn size(self) -> [usize; 2] {
         let map = self.map();
@@ -95,7 +132,7 @@ impl Deco {
         let mut image = ColorImage::filled([w, h], Color32::TRANSPARENT);
         for (y, row) in map.iter().enumerate() {
             for (x, c) in row.chars().enumerate() {
-                image[(x, y)] = color(c, self.petals());
+                image[(x, y)] = self.leaves(c).unwrap_or_else(|| color(c, self.petals()));
             }
         }
         image
@@ -150,21 +187,38 @@ const TREE: &[&str] = &[
     "....bb..BB.....",
 ];
 
-const PINE: &[&str] = &[
-    "....k....",
-    "...kGk...",
-    "..kGlgk..",
-    "..kGggk..",
-    ".kGglggk.",
-    "..kGggk..",
-    ".kGgglgk.",
-    "kGggglggk",
-    ".kGggggk.",
-    "kGgglgggk",
-    "kGgggglgk",
-    "kkkkbkkkk",
-    "....b....",
-    "...bB....",
+const BARE_TREE: &[&str] = &[
+    "..b.....b...b..",
+    "...b...b...b...",
+    ".b..b..b..b..b.",
+    "..b..b.b.b..b..",
+    "...bb..bbb.bb..",
+    "b....b.bBb.b...",
+    ".bb...bbB.b....",
+    "...bb.bbBbb..b.",
+    ".....bbbB..bb..",
+    "..b...bbB.b....",
+    "...bbb.bBb.....",
+    "......bbB......",
+    "......bbB......",
+    "......bB.......",
+    "......bB.......",
+    "......bB.......",
+    ".....bbBB......",
+    "....bb..BB.....",
+];
+
+const STUMP: &[&str] = &[".kkkk.", "kywwyk", "kbBbBk", "kbBbBk", "bbBbBB"];
+
+const SAW: &[&str] = &[
+    "...kkkkk..............",
+    "..k.....k.............",
+    "..k..kkkkkk...........",
+    ".kkkkoooooook.h.h.h.h.",
+    "koooooooowook.sssssssh",
+    "kooooooooooook.ssssssh",
+    ".kooooooooook.h.h.h.h.",
+    "..kkkkkkkkkk..........",
 ];
 
 const BUSH: &[&str] = &[
