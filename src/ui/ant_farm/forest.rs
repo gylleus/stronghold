@@ -23,6 +23,11 @@ const LIE_S: f64 = 0.9;
 const FADE_S: f64 = 0.8;
 /// Neighbouring slots are this much of a tree's width apart: trees overlap, in two rows.
 const PITCH: f32 = 0.6;
+/// Texels of a map per farm texel: a full-size tree, and one in a crowd.
+pub const FULL: f32 = 3.0;
+pub const CROWDED: f32 = 2.0;
+/// Sky kept clear above the tallest tree, in farm texels.
+const HEADROOM: f32 = 6.0;
 /// The back row is drawn darker.
 const BACK_TINT: u8 = 196;
 
@@ -168,7 +173,14 @@ fn strip(scene: &Scene) -> (f32, f32) {
     (start, scene.rect.right() - 0.5 * a)
 }
 
-/// Where each grove's tree stands. Trees are full size while they fit, then half size; past
+/// Points per map texel of a tree at `scale` farm texels each, shrunk so it fits under the sky.
+pub fn texel(scene: &Scene, scale: f32) -> f32 {
+    let [_, tree_h] = Deco::Tree.size();
+    let sky = scene.surface_y - scene.rect.top() - HEADROOM * scene.px;
+    (scale * scene.px).min(sky / tree_h as f32).max(scene.px)
+}
+
+/// Where each grove's tree stands. Trees are full size while they fit, then smaller; past
 /// that the newest go uncounted into a "+N" sign. Each prefers the slot its id hashes to and
 /// takes the next free one when that is taken, oldest first, so trees keep their spots as
 /// others come and go.
@@ -182,11 +194,11 @@ pub fn place(scene: &Scene, groves: &[Grove]) -> Forest {
         }
         ((end - start - w) / (w * PITCH)) as usize + 1
     };
-    let full = 2.0 * scene.px;
+    let full = texel(scene, FULL);
     let k = if groves.len() <= slots_at(full) {
         full
     } else {
-        scene.px
+        texel(scene, CROWDED).min(full)
     };
     let slots = slots_at(k);
     if slots == 0 {

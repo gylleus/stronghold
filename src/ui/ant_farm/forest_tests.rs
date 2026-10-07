@@ -92,7 +92,7 @@ fn trees_stand_on_the_surface() {
     assert_eq!((forest.more, forest.sign), (0, None));
     assert_eq!(forest, forest::place(&scene, &groves), "deterministic");
     for tree in &forest.trees {
-        assert_eq!(tree.k, 2.0 * scene.px, "full size");
+        assert_eq!(tree.k, forest::texel(&scene, forest::FULL), "full size");
         assert_eq!(tree.foot.y, scene.surface_y + scene.px, "in the grass");
         let rect = tree.rect();
         assert!(rect.left() >= scene.landing.right(), "past the landing");
@@ -138,12 +138,13 @@ fn a_crowd_shrinks_then_counts_the_rest() {
     for n in 1..200 {
         let forest = forest::place(&scene, &groves(n));
         assert_eq!(forest.trees.len() + forest.more, n, "{n} worktrees");
-        if forest.trees[0].k == 2.0 * scene.px {
+        if forest.trees[0].k == forest::texel(&scene, forest::FULL) {
             full = n;
         }
         assert_eq!(forest.sign.is_some(), forest.more > 0);
         if forest.more > 0 {
-            assert!(forest.trees.iter().all(|t| t.k == scene.px), "half size");
+            let crowded = forest::texel(&scene, forest::CROWDED);
+            assert!(forest.trees.iter().all(|t| t.k == crowded), "smaller");
             assert!(
                 forest.tree(&format!("repo::/w/wt-{}", n - 1)).is_none(),
                 "the newest has no tree"
