@@ -83,6 +83,7 @@ fn request(target: SpawnTarget) -> SpawnRequest {
         target,
         agent: Agent::Claude,
         model: None,
+        effort: None,
         prompt: PROMPT.into(),
         label: None,
     }
@@ -526,15 +527,15 @@ fn shell_quoting_matches_orca() {
     assert_eq!(shell_quote("$HOME `x`"), "'$HOME `x`'");
     assert_eq!(shell_quote("two\nlines"), "'two\nlines'");
     assert_eq!(
-        launch_command(Agent::Claude, None, "--help me"),
+        launch_command(Agent::Claude, None, None, "--help me"),
         "claude -- '--help me'"
     );
     assert_eq!(
-        launch_command(Agent::Claude, Some("sonnet"), "go"),
+        launch_command(Agent::Claude, Some("sonnet"), None, "go"),
         "claude --model sonnet go"
     );
     assert_eq!(
-        launch_command(Agent::Codex, None, ""),
+        launch_command(Agent::Codex, None, None, ""),
         "codex --dangerously-bypass-approvals-and-sandbox"
     );
 }
@@ -996,7 +997,12 @@ fn api_error(bytes: &[u8]) -> OrcaError {
 
 #[test]
 fn existing_worktree_run_accepts_bypass_and_submits_the_parked_prompt() {
-    let plan = build_plan(&request(existing())).unwrap();
+    let plan = build_plan(&SpawnRequest {
+        model: Some("fable".into()),
+        effort: Some("high".into()),
+        ..request(existing())
+    })
+    .unwrap();
     let timeout = OrcaError::Api(crate::orca::ApiError {
         code: "timeout".into(),
         message: "timeout".into(),
@@ -1019,6 +1025,9 @@ fn existing_worktree_run_accepts_bypass_and_submits_the_parked_prompt() {
     let handle = "term_9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
     assert_eq!(outcome.context.handle.as_deref(), Some(handle));
     assert!(outcome.verified);
+    // The outcome reports what the ant was launched with, for the spawn_session result.
+    assert_eq!(outcome.model.as_deref(), Some("fable"));
+    assert_eq!(outcome.effort.as_deref(), Some("high"));
     assert_eq!(
         outcome.notes,
         vec![
@@ -1933,4 +1942,140 @@ fn envoy_preflight_refuses_a_live_home_agent_without_a_saved_identity() {
             .unwrap_err()
             .contains("Cannot check")
     );
+}
+
+// ---------------------------------------------------------------------------
+// The ants' default model and effort (Settings → `ants`)
+
+#[test]
+fn ants_default_fills_a_claude_ant_without_a_model() {
+    let ants = AntSettings {
+        model: Some(" fable ".into()),
+        effort: Some("high".into()),
+    };
+    let fill = |agent, model: Option<&str>, effort: Option<&str>| {
+        let (mut m, mut e) = (model.map(str::to_owned), effort.map(str::to_owned));
+        ants.fill(agent, &mut m, &mut e);
+        (m, e)
+    };
+    assert_eq!(
+        fill(Agent::Claude, None, None),
+        (Some("fable".into()), Some("high".into()))
+    );
+    // An explicit model wins, and the saved effort belongs to the saved model.
+    assert_eq!(
+        fill(Agent::Claude, Some("opus"), None),
+        (Some("opus".into()), None)
+    );
+    assert_eq!(
+        fill(Agent::Claude, Some("opus"), Some("low")),
+        (Some("opus".into()), Some("low".into()))
+    );
+    // The setting is for Claude ants; Codex keeps its own default.
+    assert_eq!(fill(Agent::Codex, None, None), (None, None));
+    // Nothing saved: nothing filled.
+    let (mut m, mut e) = (None, None);
+    AntSettings::default().fill(Agent::Claude, &mut m, &mut e);
+    assert_eq!((m, e), (None, None));
+
+    assert_eq!(ants.describe(), "fable (effort high)");
+    assert_eq!(
+        AntSettings {
+            model: Some("opus".into()),
+            effort: None
+        }
+        .describe(),
+        "opus"
+    );
+    assert_eq!(AntSettings::default().describe(), "CLI default");
+    assert!(ants.normalized().validate().is_ok());
+    assert!(
+        AntSettings {
+            model: None,
+            effort: Some("turbo".into())
+        }
+        .validate()
+        .is_err()
+    );
+}
+
+#[test]
+fn effort_reaches_claude_launches_and_worker_start() {
+    let mut req = request(existing());
+    req.model = Some("fable".into());
+    req.effort = Some(" high ".into());
+    let plan = build_plan(&req).unwrap();
+    assert_eq!(plan.request.effort.as_deref(), Some("high"));
+    let Step::CreateTerminal { command, .. } = &plan.steps[0] else {
+        panic!()
+    };
+    assert_eq!(
+        command,
+        &format!("claude --model fable --effort high '{PROMPT}'")
+    );
+
+    // A worker: Orca takes --effort only with --model.
+    let mut worker_req = request(worker(WorkerPlacement::Worktree {
+        worktree_id: WT_ID.into(),
+    }));
+    worker_req.model = Some("fable".into());
+    worker_req.effort = Some("high".into());
+    let plan = build_plan(&worker_req).unwrap();
+    let ctx = SpawnContext {
+        task_id: Some("t".into()),
+        ..SpawnContext::default()
+    };
+    let start = plan.steps[1].orca_args(&ctx).unwrap().unwrap();
+    assert!(start.contains(&"--model=fable".to_string()), "{start:?}");
+    assert!(start.contains(&"--effort=high".to_string()), "{start:?}");
+    worker_req.model = None;
+    let plan = build_plan(&worker_req).unwrap();
+    let start = plan.steps[1].orca_args(&ctx).unwrap().unwrap();
+    assert!(
+        !start.iter().any(|a| a.starts_with("--effort")),
+        "{start:?}"
+    );
+    assert_eq!(plan.request.effort.as_deref(), Some("high"));
+
+    // Codex takes no effort.
+    req.agent = Agent::Codex;
+    let plan = build_plan(&req).unwrap();
+    assert_eq!(plan.request.effort, None);
+    let Step::CreateTerminal { command, .. } = &plan.steps[0] else {
+        panic!()
+    };
+    assert!(!command.contains("--effort"), "{command}");
+
+    req.agent = Agent::Claude;
+    req.effort = Some("turbo".into());
+    let err = build_plan(&req).unwrap_err().0;
+    assert!(err.contains("effort must be one of"), "{err}");
+
+    assert_eq!(
+        launch_command(Agent::Claude, Some("fable"), Some("max"), "go"),
+        "claude --model fable --effort max go"
+    );
+}
+
+#[test]
+fn api_args_carry_effort() {
+    let a = SpawnArgs::parse(
+        &json!({"mode": "worktree", "worktree": WT_PATH, "prompt": "go",
+                                     "model": "fable", "effort": "high"}),
+    )
+    .unwrap();
+    assert_eq!(a.effort.as_deref(), Some("high"));
+    assert_eq!(SpawnArgs::parse(&a.to_params()).unwrap(), a, "round trip");
+    let req = a.resolve(&catalog(), &runs(), &terminals()).unwrap();
+    assert_eq!(req.effort.as_deref(), Some("high"));
+    let outcome = SpawnOutcome {
+        context: SpawnContext::default(),
+        verified: true,
+        notes: vec![],
+        model: Some("fable".into()),
+        effort: Some("high".into()),
+    };
+    let json = super::resolve::outcome_json(&outcome);
+    assert_eq!(json["model"], "fable");
+    assert_eq!(json["effort"], "high");
 }

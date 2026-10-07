@@ -41,6 +41,7 @@ pub fn plan(catalog: &Catalog, settings: &EnvoySettings) -> Result<SpawnPlan, St
         target,
         agent: Agent::Claude,
         model: settings.model.clone(),
+        effort: None,
         prompt: crate::playbook::envoy_launch_prompt(settings.dry_run),
         label: Some("Envoy".into()),
     })

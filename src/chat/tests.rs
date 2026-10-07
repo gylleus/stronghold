@@ -9,6 +9,7 @@ use serde_json::Value;
 use super::protocol::{
     self, HostRequest, Incoming, PermissionAnswer, PermissionRequest, parse_line,
 };
+use super::settings::{EFFORT_LEVELS, QueenSettings};
 use super::transcript::{ChatItem, Decision, Transcript};
 use super::*;
 
@@ -990,4 +991,40 @@ fn fake_claude_resumed_session_shows_its_history() {
     assert_eq!(items[turns * 2], ChatItem::User("ping".into()));
     assert_eq!(chat.transcript.assistant_text().last(), Some(&"pong"));
     assert!(fake.args_log()[0].contains(&format!("--resume {id}")));
+}
+
+/// The ants' default model and effort follow the Queen's rules: same lists, same checks.
+#[test]
+fn ants_default_shares_the_queens_model_rules() {
+    use crate::spawn::AntSettings;
+    let ants = AntSettings {
+        model: Some("  fable ".into()),
+        effort: Some("high".into()),
+    };
+    assert_eq!(
+        ants.as_queen().normalized(),
+        QueenSettings {
+            model: Some("fable".into()),
+            effort: Some("high".into()),
+        }
+    );
+    for level in EFFORT_LEVELS {
+        let ants = AntSettings {
+            model: None,
+            effort: Some((*level).into()),
+        };
+        assert!(ants.validate().is_ok(), "{level}");
+    }
+    assert_eq!(
+        AntSettings {
+            model: Some("claude fable".into()),
+            effort: None
+        }
+        .validate(),
+        QueenSettings {
+            model: Some("claude fable".into()),
+            effort: None
+        }
+        .validate()
+    );
 }
