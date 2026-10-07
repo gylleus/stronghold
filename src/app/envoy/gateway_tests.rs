@@ -256,8 +256,8 @@ fn gateway_mcp_to_event_route_approval_fast_reply_and_safe_terminal_delivery() {
         preview: Some("OpenAI Codex\n›".into()),
         ..Default::default()
     };
-    assert!(!can_forward(&terminal, false, false));
-    assert!(can_forward(&terminal, true, false));
+    assert!(!can_forward(&terminal, false, false, None));
+    assert!(can_forward(&terminal, true, false, None));
     let (action, record) = core.reply_action(&id, &delivery, "ant").unwrap();
     assert!(
         matches!(&action,Action::Send{handle,input} if handle=="ant" && input.text.as_ref().unwrap().contains("not Karl's instruction") && input.text.as_ref().unwrap().contains(fake.event.permalink.as_ref().unwrap()))

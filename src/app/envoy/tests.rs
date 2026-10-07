@@ -8,20 +8,20 @@ fn forwarding_waits_for_idle_empty_composer_and_live_agent() {
         preview: Some("Claude Code\n❯ prior task\nResponse\n❯\n? for shortcuts".into()),
         ..Terminal::default()
     };
-    assert!(can_forward(&t, true, false));
-    assert!(!can_forward(&t, false, false));
-    assert!(!can_forward(&t, true, true));
+    assert!(can_forward(&t, true, false, None));
+    assert!(!can_forward(&t, false, false, None));
+    assert!(!can_forward(&t, true, true, None));
     t.preview = Some("Claude Code\n❯ unfinished user text".into());
-    assert!(!can_forward(&t, true, false));
+    assert!(!can_forward(&t, true, false, None));
     t.preview = Some("Do you want to proceed?\n❯ 1. Yes\n  2. No".into());
-    assert!(!can_forward(&t, true, false));
+    assert!(!can_forward(&t, true, false, None));
     t.preview = Some("Claude Code\nuser@host ~ %".into());
-    assert!(!can_forward(&t, true, false));
+    assert!(!can_forward(&t, true, false, None));
     t.agent_identity = Some(AgentIdentity::Codex);
     t.preview = Some("OpenAI Codex\n› prior task\nAnswer\n›".into());
-    assert!(can_forward(&t, true, false));
+    assert!(can_forward(&t, true, false, None));
     t.orphaned = true;
-    assert!(!can_forward(&t, true, false));
+    assert!(!can_forward(&t, true, false, None));
 }
 #[test]
 fn production_approval_transaction_never_calls_delivery_for_dry_run_or_secrets() {
@@ -110,6 +110,7 @@ fn queued_snapshot_after_forward_ack_does_not_replay_on_stop_start() {
             events: vec![],
             bridge: BridgeStatus::Ok,
             notices: vec![],
+            polled_at_ms: now_ms(),
         })
         .unwrap();
     core.acknowledge(&[event]);
@@ -342,22 +343,22 @@ fn refused_prompt_relays_do_not_spend_budget_and_text_stays_one_line() {
         why: "Related\twork".into(),
     };
     assert!(
-        core.reserve_relay(request.clone(), can_forward(&terminal, true, false))
+        core.reserve_relay(request.clone(), can_forward(&terminal, true, false, None))
             .is_err()
     );
     terminal.preview = Some("Claude Code\n❯\n? for shortcuts".into());
     assert!(
-        core.reserve_relay(request.clone(), can_forward(&terminal, false, false))
+        core.reserve_relay(request.clone(), can_forward(&terminal, false, false, None))
             .is_err()
     );
     assert!(
-        core.reserve_relay(request.clone(), can_forward(&terminal, true, true))
+        core.reserve_relay(request.clone(), can_forward(&terminal, true, true, None))
             .is_err()
     );
     assert!(core.relays().is_empty());
     assert!(!core.relay_path.exists());
     let record = core
-        .reserve_relay(request, can_forward(&terminal, true, false))
+        .reserve_relay(request, can_forward(&terminal, true, false, None))
         .unwrap();
     assert_eq!(core.relays().len(), 1);
     let text = record.request.text();
@@ -651,7 +652,7 @@ fn idle_envoy_with_a_bare_composer_preview_takes_events() {
         ),
         ..Terminal::default()
     };
-    assert!(can_forward(&terminal, true, false));
+    assert!(can_forward(&terminal, true, false, None));
 }
 
 #[test]
@@ -1038,4 +1039,175 @@ fn thread_notes_are_written_by_tool_and_typed_with_every_event_in_the_thread() {
         1,
         "notes persist"
     );
+}
+
+#[test]
+fn orca_preview_without_the_composer_defers_to_the_sampled_screen() {
+    use crate::detect::ComposerState;
+    // Orca's preview of the live Envoy during the stall: the stale startup banner, then the
+    // hint Claude Code draws under the composer. No `❯` anywhere.
+    let terminal = Terminal {
+        agent_identity: Some(AgentIdentity::Claude),
+        writable: true,
+        title: Some("\u{2733} Envoy MCP tool setup".into()),
+        preview: Some(
+            "approves them without a prompt. Replace that * with the exact value you mean, or only use * after the subcommand.\nnew task? /clear to save 101.9k tokens"
+                .into(),
+        ),
+        ..Terminal::default()
+    };
+    assert!(
+        !can_forward(&terminal, true, false, None),
+        "the preview alone cannot show an empty composer"
+    );
+    assert!(can_forward(
+        &terminal,
+        true,
+        false,
+        Some(ComposerState::Empty)
+    ));
+    assert!(!can_forward(
+        &terminal,
+        true,
+        false,
+        Some(ComposerState::Text)
+    ));
+    assert!(!can_forward(
+        &terminal,
+        true,
+        false,
+        Some(ComposerState::Absent)
+    ));
+    assert!(
+        !can_forward(&terminal, false, false, Some(ComposerState::Empty)),
+        "the screen never overrides a busy node"
+    );
+    let bare = Terminal {
+        preview: Some("banner\n\u{276f}".into()),
+        ..terminal
+    };
+    assert!(can_forward(&bare, true, false, None));
+    assert!(
+        !can_forward(&bare, true, false, Some(ComposerState::Text)),
+        "a stale bare-composer preview loses to the screen"
+    );
+}
+
+#[test]
+fn events_waiting_too_long_turn_the_status_stuck_and_warn_once_per_half_hour() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, _commands, updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    assert_eq!(core.stuck_events(now_ms()), 0);
+    core.set_enabled("term_envoy".into(), EnvoySettings::default())
+        .unwrap();
+    let now = now_ms();
+    let mut inbox = Inbox::default();
+    inbox.insert(receipt_event("1.000001"));
+    inbox.insert(receipt_event("1.000002"));
+    updates
+        .send(Update::Polled {
+            inbox,
+            events: vec![receipt_event("1.000001"), receipt_event("1.000002")],
+            bridge: BridgeStatus::Ok,
+            notices: vec![],
+            polled_at_ms: now,
+        })
+        .unwrap();
+    let (notices, _) = core.poll_updates();
+    assert!(notices.iter().all(|n| n.title != "Envoy events stuck"));
+    assert_eq!(core.pending.len(), 2);
+    assert_eq!(core.stuck_events(now + STUCK_AFTER_MS - 1), 0);
+    assert_eq!(core.stuck_events(now + STUCK_AFTER_MS), 2);
+    core.blocked = Some("no empty agent prompt");
+    // The poll loop stays fresh here; the stale signal has its own test.
+    core.last_polled_ms = Some(now + STUCK_AFTER_MS);
+    let notices = core.stall_notices(now + STUCK_AFTER_MS);
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].title, "Envoy events stuck");
+    assert!(
+        notices[0].message.contains("2 event(s) have waited 10 min")
+            && notices[0].message.contains("no empty agent prompt"),
+        "{}",
+        notices[0].message
+    );
+    assert!(core.stall_notices(now + STUCK_AFTER_MS + 1_000).is_empty());
+    core.last_polled_ms = Some(now + STUCK_AFTER_MS + RENOTIFY_MS);
+    assert_eq!(
+        core.stall_notices(now + STUCK_AFTER_MS + RENOTIFY_MS).len(),
+        1,
+        "repeated while it lasts"
+    );
+    let mut status = EnvoyStatus {
+        session: crate::envoy::SessionState::Running,
+        bridge: BridgeStatus::Ok,
+        pending_drafts: 0,
+        dry_run: true,
+        stuck_events: 0,
+        poll_stale: false,
+    };
+    core.pending_since_ms = Some(now - STUCK_AFTER_MS);
+    core.apply_status(&mut status);
+    assert_eq!(status.stuck_events, 2);
+    assert_eq!(status.health(), crate::envoy::EnvoyHealth::EventsStuck);
+
+    // Typing a batch is progress: the clock restarts for whatever still waits.
+    let result = submit_receipt_batch(&mut core, now + STUCK_AFTER_MS, 1);
+    core.pending.push_back(receipt_event("1.000003"));
+    core.forward_done(&result, now + STUCK_AFTER_MS, |_| {});
+    assert_eq!(core.pending_since_ms, Some(now + STUCK_AFTER_MS));
+    assert_eq!(core.stuck_events(now + STUCK_AFTER_MS + 1), 0);
+    assert!(core.stall_notices(now + STUCK_AFTER_MS + 1).is_empty());
+    assert_eq!(core.stuck_notified_ms, None, "a new stall warns afresh");
+    core.pending.clear();
+    core.note_pending(now);
+    assert_eq!(core.pending_since_ms, None);
+}
+
+#[test]
+fn a_silent_poll_loop_turns_the_status_stale_until_the_next_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, _commands, updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    let now = now_ms();
+    assert!(
+        !core.poll_stale(now + POLL_STALE_MS),
+        "stopped: nothing to poll"
+    );
+    core.set_enabled("term_envoy".into(), EnvoySettings::default())
+        .unwrap();
+    assert!(!core.poll_stale(now + POLL_STALE_MS - 1));
+    assert!(core.poll_stale(now + POLL_STALE_MS + 1_000));
+    let notices = core.stall_notices(now + POLL_STALE_MS + 1_000);
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].title, "Envoy poll stale");
+    assert!(core.stall_notices(now + POLL_STALE_MS + 2_000).is_empty());
+    updates
+        .send(Update::Polled {
+            inbox: Inbox::default(),
+            events: vec![],
+            bridge: BridgeStatus::Ok,
+            notices: vec![],
+            polled_at_ms: now + POLL_STALE_MS + 3_000,
+        })
+        .unwrap();
+    core.poll_updates();
+    assert!(!core.poll_stale(now + POLL_STALE_MS + 4_000));
+    assert_eq!(core.stale_notified_ms, None);
+    let mut status = EnvoyStatus {
+        session: crate::envoy::SessionState::Running,
+        bridge: BridgeStatus::Stale,
+        pending_drafts: 1,
+        dry_run: true,
+        stuck_events: 0,
+        poll_stale: false,
+    };
+    core.last_polled_ms = Some(now - POLL_STALE_MS);
+    core.apply_status(&mut status);
+    assert!(status.poll_stale);
+    assert_eq!(status.health(), crate::envoy::EnvoyHealth::PollStale);
+    core.stop();
+    assert!(!core.poll_stale(now + 2 * POLL_STALE_MS));
 }

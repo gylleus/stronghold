@@ -195,6 +195,8 @@ impl eframe::App for Tour {
                             bridge: myrstack::envoy::BridgeStatus::Ok,
                             pending_drafts: 0,
                             dry_run: true,
+                            stuck_events: 0,
+                            poll_stale: false,
                         },
                     );
                 });

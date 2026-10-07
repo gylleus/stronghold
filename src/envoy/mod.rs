@@ -59,7 +59,17 @@ pub struct EnvoyStatus {
     pub pending_drafts: usize,
     /// Approval records a would-be send instead of posting.
     pub dry_run: bool,
+    /// Events that have waited longer than [`STUCK_AFTER_MS`] without being typed to the
+    /// Envoy: the app has them, the Envoy has not seen them.
+    pub stuck_events: usize,
+    /// No Slack poll result for longer than [`POLL_STALE_MS`]: ingestion is wedged.
+    pub poll_stale: bool,
 }
+
+/// Pending events older than this with nothing typed since are stuck.
+pub const STUCK_AFTER_MS: i64 = 10 * 60_000;
+/// A poll loop silent for this long (it reports at least every minute) is stale.
+pub const POLL_STALE_MS: i64 = 5 * 60_000;
 
 /// The one-word health shown on the Envoy's node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,16 +77,23 @@ pub enum EnvoyHealth {
     Stopped,
     Starting,
     Listening,
+    /// Events the app ingested are not reaching the Envoy terminal.
+    EventsStuck,
+    /// The Slack poll loop has gone quiet: nothing is being ingested.
+    PollStale,
     BridgeDown,
     AwaitingApproval,
 }
 
 impl EnvoyStatus {
-    /// A down bridge outranks pending drafts: Karl must know the Envoy is half-deaf.
+    /// Events not reaching the Envoy, then a dead poll loop, then a down bridge, all outrank
+    /// pending drafts: Karl must know when the Envoy is deaf.
     pub fn health(&self) -> EnvoyHealth {
         match self.session {
             SessionState::Stopped => EnvoyHealth::Stopped,
             SessionState::Starting => EnvoyHealth::Starting,
+            SessionState::Running if self.stuck_events > 0 => EnvoyHealth::EventsStuck,
+            SessionState::Running if self.poll_stale => EnvoyHealth::PollStale,
             SessionState::Running if self.bridge != BridgeStatus::Ok => EnvoyHealth::BridgeDown,
             SessionState::Running if self.pending_drafts > 0 => EnvoyHealth::AwaitingApproval,
             SessionState::Running => EnvoyHealth::Listening,
@@ -90,6 +107,8 @@ impl EnvoyHealth {
             EnvoyHealth::Stopped => "stopped",
             EnvoyHealth::Starting => "starting",
             EnvoyHealth::Listening => "listening",
+            EnvoyHealth::EventsStuck => "events stuck",
+            EnvoyHealth::PollStale => "poll stale",
             EnvoyHealth::BridgeDown => "bridge down",
             EnvoyHealth::AwaitingApproval => "waiting on approval",
         }
@@ -106,6 +125,8 @@ mod tests {
             bridge,
             pending_drafts: pending,
             dry_run: true,
+            stuck_events: 0,
+            poll_stale: false,
         }
     }
 
@@ -124,6 +145,33 @@ mod tests {
             EnvoyHealth::AwaitingApproval
         );
         assert_eq!(status(Running, Ok, 0).health(), EnvoyHealth::Listening);
+    }
+
+    #[test]
+    fn stuck_events_and_a_stale_poll_outrank_the_bridge_and_drafts() {
+        use BridgeStatus::*;
+        use SessionState::*;
+        let stuck = EnvoyStatus {
+            stuck_events: 3,
+            ..status(Running, Missing, 2)
+        };
+        assert_eq!(stuck.health(), EnvoyHealth::EventsStuck);
+        assert_eq!(stuck.health().label(), "events stuck");
+        let stale = EnvoyStatus {
+            poll_stale: true,
+            ..status(Running, Stale, 2)
+        };
+        assert_eq!(stale.health(), EnvoyHealth::PollStale);
+        assert_eq!(
+            EnvoyStatus {
+                stuck_events: 3,
+                poll_stale: true,
+                ..status(Stopped, Ok, 0)
+            }
+            .health(),
+            EnvoyHealth::Stopped,
+            "a stopped Envoy is just stopped"
+        );
     }
 }
 

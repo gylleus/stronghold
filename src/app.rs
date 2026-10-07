@@ -1128,10 +1128,14 @@ impl eframe::App for MyrstackApp {
             }
             if let Some(screen) = &self.screen
                 && let Some(old) = &self.data
-                && let Some(verdict) = old.needs_input.get(&screen.handle)
             {
-                data.needs_input
-                    .insert(screen.handle.clone(), verdict.clone());
+                if let Some(verdict) = old.needs_input.get(&screen.handle) {
+                    data.needs_input
+                        .insert(screen.handle.clone(), verdict.clone());
+                }
+                if let Some(composer) = old.composers.get(&screen.handle) {
+                    data.composers.insert(screen.handle.clone(), *composer);
+                }
             }
             self.envoy_session.reconcile(&data);
             for message in self.traffic.inbox.update(&data.inbox, now_ms()) {
@@ -1161,10 +1165,15 @@ impl eframe::App for MyrstackApp {
             if let Some(data) = &mut self.data {
                 let agent = data
                     .terminal(&update.handle)
-                    .and_then(|t| t.agent_identity.as_ref());
-                let verdict = detect_prompt(&update.lines, agent);
+                    .and_then(|t| t.agent_identity.clone());
+                let verdict = detect_prompt(&update.lines, agent.as_ref());
                 if data.needs_input.get(&update.handle) != Some(&verdict) {
                     data.needs_input.insert(update.handle.clone(), verdict);
+                    rebuild = true;
+                }
+                let composer = crate::detect::composer_state(&update.lines, agent.as_ref());
+                if data.composers.get(&update.handle) != Some(&composer) {
+                    data.composers.insert(update.handle.clone(), composer);
                     rebuild = true;
                 }
             }

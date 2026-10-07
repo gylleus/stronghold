@@ -360,6 +360,8 @@ impl Session {
             bridge: BridgeStatus::Missing,
             pending_drafts: 0,
             dry_run: self.settings.dry_run,
+            stuck_events: 0,
+            poll_stale: false,
         }
     }
 

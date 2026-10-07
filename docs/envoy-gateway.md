@@ -101,6 +101,23 @@ Close removes its subscription only after a real send and after all active reque
 dry-run records that removal intent. Threadless simulations settle locally. The one-week direct-post
 detector is deferred to migration after Karl picks its start date.
 
+## Delivery gate and stall signals
+
+Events and request turns are typed only when the Envoy node is idle, nothing is queued for
+its terminal, and its composer is empty. The composer verdict comes from the rendered screen:
+the background prompt sampler (idle agents, every ten seconds, five per round) and the
+selected terminal's screen watch both record [`composer_state`] beside the needs-input
+verdict in `FleetData.composers`, pruned when the terminal produces output. Orca's terminal
+`preview` is the stale startup banner plus the last redrawn fragment, so it often lacks the
+composer line; it is read only while no screen sample exists, and errs towards not typing.
+
+Two stall signals sit on the Envoy node and raise a warning (repeated every 30 minutes
+while they last): **events stuck**, when pending events have waited ten minutes with
+nothing typed (the message names the gate's reason, as the log's `envoy: N event(s)
+waiting: …` line does), and **poll stale**, when the Slack worker has reported nothing for
+five minutes (it reports an unchanged poll at least once a minute). Both outrank the bridge
+status in the node's health.
+
 ## Context resets and thread notes
 
 The Envoy session is one Claude terminal, but its conversation is not kept for long: the app
