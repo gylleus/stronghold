@@ -27,6 +27,14 @@ pub struct EnvoySettings {
     #[serde(deserialize_with = "poll_secs")]
     pub poll_secs: u64,
     pub policies: Vec<Policy>,
+    /// A batch typed after this much quiet since the last one starts a fresh context; `0`
+    /// resets before every batch. Bursts share one context.
+    pub fresh_after_secs: u64,
+    /// Reset at the next idle point once this many events went into the context; `0` is off.
+    pub reset_after_events: u64,
+    /// Reset at the next idle point once the session's context (the last turn's input and
+    /// cached tokens) passes this; `0` is off.
+    pub reset_after_tokens: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +103,9 @@ impl Default for EnvoySettings {
             karl_user_id: KARL_USER_ID.into(),
             poll_secs: 120,
             policies: Vec::new(),
+            fresh_after_secs: 300,
+            reset_after_events: 40,
+            reset_after_tokens: 80_000,
         }
     }
 }
@@ -109,6 +120,22 @@ mod tests {
         assert_eq!(s.model.as_deref(), Some("opus"));
         assert!(s.dry_run);
         assert_eq!(s.channels, vec![AGENT_COMMS.to_string()]);
+        assert_eq!(s.fresh_after_secs, 300);
+        assert_eq!(s.reset_after_events, 40);
+        assert_eq!(s.reset_after_tokens, 80_000);
+        let s: EnvoySettings = serde_json::from_str(
+            r#"{"fresh_after_secs":0,"reset_after_events":0,"reset_after_tokens":0}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                s.fresh_after_secs,
+                s.reset_after_events,
+                s.reset_after_tokens
+            ),
+            (0, 0, 0),
+            "zero is a valid setting: every batch, or a guard off"
+        );
     }
 
     #[test]

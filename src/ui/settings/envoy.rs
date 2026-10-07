@@ -80,6 +80,22 @@ pub(super) fn section(pane: &mut SettingsPane, ui: &mut egui::Ui, out: &mut supe
             ui.label("Channels (IDs, one per line)");
             ui.add(egui::TextEdit::multiline(&mut draft.channels).desired_rows(3));
             ui.end_row();
+            ui.label("Fresh context after quiet (seconds)")
+                .on_hover_text("A batch typed after this much quiet starts from a cleared context; 0 clears before every batch. Bursts share one context.");
+            ui.add(egui::DragValue::new(&mut draft.settings.fresh_after_secs).range(0..=86400));
+            ui.end_row();
+            ui.label("Reset after events")
+                .on_hover_text("Clear the context at the next idle point once this many events went into it; 0 turns the guard off.");
+            ui.add(egui::DragValue::new(&mut draft.settings.reset_after_events).range(0..=10_000));
+            ui.end_row();
+            ui.label("Reset after tokens")
+                .on_hover_text("Clear the context at the next idle point once the last turn's context passed this many tokens; 0 turns the guard off.");
+            ui.add(
+                egui::DragValue::new(&mut draft.settings.reset_after_tokens)
+                    .range(0..=1_000_000)
+                    .speed(1_000),
+            );
+            ui.end_row();
         });
     ui.separator();
     ui.strong("Approval policies");

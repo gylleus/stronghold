@@ -34,6 +34,7 @@ pub enum Work {
     },
     Thread {
         event: InboundEvent,
+        note: Option<super::notes::ThreadNote>,
         reply: Reply,
     },
 }
@@ -162,17 +163,17 @@ impl Worker {
                         }
                         wake();
                     }
-                    Ok(Work::Thread { event, reply }) => {
+                    Ok(Work::Thread { event, note, reply }) => {
                         let cached = slack.inbox.thread(&event);
                         let result = slack.thread(&event);
                         reply.send(Ok(match result {
                             Ok(thread) => {
                                 let (thread, omitted) = trim_thread(thread);
-                                json!({"event": event, "thread": thread, "omitted": omitted, "complete": true})
+                                json!({"event": event, "note": note, "thread": thread, "omitted": omitted, "complete": true})
                             }
                             Err(error) => {
                                 let (thread, omitted) = trim_thread(cached);
-                                json!({"event": event, "thread": thread, "omitted": omitted, "complete": false, "error": error})
+                                json!({"event": event, "note": note, "thread": thread, "omitted": omitted, "complete": false, "error": error})
                             }
                         }));
                     }

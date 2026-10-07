@@ -282,12 +282,23 @@ fn workers_and_coordinators_are_told_to_reach_people_through_the_envoy() {
 }
 
 #[test]
-fn envoy_launch_prompt_loads_the_role_and_states_dry_run() {
+fn envoy_launch_prompt_points_at_the_system_prompt_and_states_dry_run() {
     for (dry_run, mode) in [(true, "Dry-run is ON"), (false, "Dry-run is OFF")] {
         let prompt = envoy_launch_prompt(dry_run);
-        assert!(prompt.contains("get_playbook (role=envoy)"), "{prompt}");
+        assert!(prompt.contains("system prompt"), "{prompt}");
+        assert!(!prompt.contains("get_playbook"), "{prompt}");
         assert!(prompt.contains(mode), "{prompt}");
     }
+}
+
+#[test]
+fn envoy_system_prompt_is_the_served_envoy_role_under_its_version() {
+    let pb = Playbook::at(BAKED_DIR);
+    let text = envoy_system_prompt(&pb).unwrap();
+    let served = pb.get(&Target::Role(Role::Envoy), None).unwrap();
+    assert!(text.starts_with("# Envoy standing rules\n\n"));
+    assert!(text.contains(&served.version.header()));
+    assert!(text.ends_with(&served.body));
 }
 
 #[test]

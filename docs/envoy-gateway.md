@@ -101,6 +101,43 @@ Close removes its subscription only after a real send and after all active reque
 dry-run records that removal intent. Threadless simulations settle locally. The one-week direct-post
 detector is deferred to migration after Karl picks its start date.
 
+## Context resets and thread notes
+
+The Envoy session is one Claude terminal, but its conversation is not kept for long: the app
+owns the durable state (inbox, drafts, requests, thread watches, notes), so the history only
+costs tokens and sharpness. The playbook is the session's appended system prompt
+(`--append-system-prompt-file`, rendered to `envoy-system-prompt.md` in the data dir at
+launch), so the cached prefix (system prompt, playbook, tools) survives a reset. The launch
+prompt no longer loads it with `get_playbook`.
+
+When the Envoy is idle at an empty prompt with events or request turns to type, the app first
+decides whether to clear the context by typing `/clear`:
+
+- **Quiet period** (`fresh_after_secs`, default 300): the last batch was typed at least this
+  long ago. `0` clears before every batch. Bursts within the window share one context.
+- **Event guard** (`reset_after_events`, default 40): that many events and request turns went
+  into the context since its last fresh start. `0` is off.
+- **Token guard** (`reset_after_tokens`, default 80,000): the session's context as of its last
+  turn (the last assistant message's input, cached and fresh, read from the transcript)
+  passed this. `0` is off.
+
+Guards trip at the next idle point even mid-burst. A context with no batch since the launch
+or the last clear is never cleared, and nothing is cleared while a batch, a gateway send, a
+relay, a Slack send or an approved draft is in flight, or while the terminal is busy or has
+text in its composer. Pending events stay queued across the clear and are acknowledged only
+when their batch is typed. The first batch after a clear starts with a `Fresh context:` line
+stating the dry-run mode. A failed `/clear` is logged, batches go into the old context, and
+the next reset is tried after ten minutes. Settings → Envoy holds all three thresholds; they
+apply on the next Start.
+
+Thread notes are the Envoy's memory across resets. `envoy_note {conversation, thread_ts?,
+text}` replaces the note for a thread root (or, without `thread_ts`, a conversation), at most
+600 characters, one line; empty text removes it. Notes live in `envoy-notes.json` (500 kept,
+the least recently updated evicted). Every typed event line ends with ` — note: …` when its
+thread (else its conversation) has one; request lines do the same for their bound thread;
+`envoy_inbox` returns the `notes` of the events it lists, `envoy_event` and `envoy_request`
+return `note`.
+
 ## Development verification
 
 `cargo test` uses fake Slack senders, temporary bridge/data directories and fake terminal
