@@ -17,7 +17,7 @@ use eframe::egui::{self, RichText};
 
 use crate::chat::settings::QueenSettings;
 use crate::notify::{NotifySettings, Severity, Sound};
-use crate::spawn::SpawnSettings;
+use crate::spawn::{AntSettings, SpawnSettings};
 use crate::voice::settings::VoiceSettings;
 use crate::whip::{Settings, WhipSettings, WhipStatus};
 
@@ -82,6 +82,8 @@ pub struct PaneOutput {
     pub whip: Option<WhipSettings>,
     /// Saved Queen settings (the Queen restarts when her model or effort changed).
     pub queen: Option<QueenSettings>,
+    /// Saved default model and effort of new ants (applies to the next spawn).
+    pub ants: Option<AntSettings>,
     /// The Queen's auto mode switch was flipped (applies at once, like the chat header's).
     pub auto_mode: Option<bool>,
     /// Saved voice settings (from the Voice section, or the Queen's "Speak replies").
@@ -111,6 +113,7 @@ pub struct SettingsPane {
     message: Option<(bool, String)>,
     whip_draft: WhipSettings,
     queen_draft: queen::QueenDraft,
+    ants_draft: queen::QueenDraft,
     voice_draft: VoiceSettings,
     notify_draft: NotifySettings,
     envoy_draft: envoy::EnvoyDraft,
@@ -136,6 +139,7 @@ impl SettingsPane {
             section: Section::default(),
             whip_draft: applied.whip.clone(),
             queen_draft: queen::QueenDraft::new(&applied.queen),
+            ants_draft: queen::QueenDraft::new(&applied.ants.as_queen()),
             voice_draft: applied.voice.clone(),
             notify_draft: applied.notifications.clone(),
             envoy_draft: envoy::EnvoyDraft::new(&applied.envoy),
@@ -168,6 +172,11 @@ impl SettingsPane {
         &self.applied.spawn
     }
 
+    /// The saved default model and effort of new ants.
+    pub fn ants(&self) -> &AntSettings {
+        &self.applied.ants
+    }
+
     pub fn path(&self) -> Option<&std::path::Path> {
         self.path.as_deref()
     }
@@ -176,6 +185,7 @@ impl SettingsPane {
     pub fn open_section(&mut self, section: Section) {
         self.whip_draft = self.applied.whip.clone();
         self.queen_draft = queen::QueenDraft::new(&self.applied.queen);
+        self.ants_draft = queen::QueenDraft::new(&self.applied.ants.as_queen());
         self.voice_draft = self.applied.voice.clone();
         self.notify_draft = self.applied.notifications.clone();
         self.envoy_draft = envoy::EnvoyDraft::new(&self.applied.envoy);
@@ -358,6 +368,23 @@ impl SettingsPane {
         self.commit(next);
         self.queen_draft = queen::QueenDraft::new(&self.applied.queen);
         Some(self.applied.queen.clone())
+    }
+
+    /// Validates and writes the ants draft, then makes it the applied settings.
+    fn save_ants(&mut self) -> Option<AntSettings> {
+        let queen = self.ants_draft.settings.normalized();
+        if let Err(e) = queen.validate() {
+            self.message = Some((true, e));
+            return None;
+        }
+        let mut next = self.applied.clone();
+        next.ants = AntSettings {
+            model: queen.model,
+            effort: queen.effort,
+        };
+        self.commit(next);
+        self.ants_draft = queen::QueenDraft::new(&self.applied.ants.as_queen());
+        Some(self.applied.ants.clone())
     }
 
     /// Saves "Speak replies" at once (the Queen section's switch and the palette), keeping

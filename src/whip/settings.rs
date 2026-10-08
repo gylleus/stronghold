@@ -3,7 +3,7 @@
 //!
 //! Stored as JSON in the user's config dir (`~/Library/Application Support/Myrstack/settings.json`
 //! on macOS) with one top-level key per section (`whip`, `queen`, `voice`, `notifications`, `envoy`,
-//! `spawn`). Missing sections and fields take their defaults, so older files load. A missing file gives the defaults; an
+//! `spawn`, `ants`). Missing sections and fields take their defaults, so older files load. A missing file gives the defaults; an
 //! unreadable or invalid one gives the defaults plus a warning.
 
 use std::fs;
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::chat::settings::QueenSettings;
 use crate::envoy::settings::EnvoySettings;
 use crate::notify::NotifySettings;
-use crate::spawn::SpawnSettings;
+use crate::spawn::{AntSettings, SpawnSettings};
 use crate::voice::settings::VoiceSettings;
 use crate::whip::rules::{DEFAULT_ABANDON_AFTER_MS, DEFAULT_THRESHOLD_MS};
 
@@ -39,6 +39,8 @@ pub struct Settings {
     pub envoy: EnvoySettings,
     /// What a new ant's spawn does to the dashboard.
     pub spawn: SpawnSettings,
+    /// The default model and effort of new ants.
+    pub ants: AntSettings,
 }
 
 /// Global whip configuration. Durations are in ms.
@@ -153,6 +155,7 @@ impl Settings {
         let checks = [
             ("whip", settings.whip.validate()),
             ("queen", settings.queen.validate()),
+            ("ants", settings.ants.validate()),
             ("voice", settings.voice.validate()),
             ("notifications", settings.notifications.validate()),
         ];
@@ -321,12 +324,16 @@ mod tests {
         let mut s = Settings::default();
         s.queen.model = Some("opus".into());
         s.queen.effort = Some("high".into());
+        s.ants.model = Some("fable".into());
+        s.ants.effort = Some("max".into());
         s.whip.dry_run = false;
         s.save_to(&path).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         let json: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(json["queen"]["model"], "opus");
         assert_eq!(json["queen"]["effort"], "high");
+        assert_eq!(json["ants"]["model"], "fable");
+        assert_eq!(json["ants"]["effort"], "max");
         assert!(json["voice"].is_object());
         assert_eq!(Settings::load_from(&path).settings, s);
     }
@@ -347,6 +354,7 @@ mod tests {
         assert_eq!(loaded.warning, None);
         assert!(!loaded.settings.whip.dry_run);
         assert_eq!(loaded.settings.queen, QueenSettings::default());
+        assert_eq!(loaded.settings.ants, AntSettings::default());
         assert_eq!(loaded.settings.voice, VoiceSettings::default());
 
         // A queen section with only some fields.
@@ -368,6 +376,8 @@ mod tests {
             r#"{"whip": {"tick_ms": -5}}"#,
             r#"{"whip": {"abandon_after_ms": 0}}"#,
             r#"{"queen": {"effort": "turbo"}}"#,
+            r#"{"ants": {"effort": "turbo"}}"#,
+            r#"{"ants": {"model": "claude fable"}}"#,
             r#"{"queen": {"model": 5}}"#,
         ] {
             fs::write(&path, bad).unwrap();

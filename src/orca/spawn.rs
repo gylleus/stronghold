@@ -328,6 +328,8 @@ pub struct WorkerStart {
     /// Agent for a fresh terminal (ignored for [`WorkerPlacement::Terminal`]).
     pub agent: String,
     pub model: Option<String>,
+    /// `--effort`; Orca only takes it together with `--model`.
+    pub effort: Option<String>,
     pub timeout_ms: Option<u64>,
 }
 
@@ -433,6 +435,9 @@ pub fn worker_start_args(req: &WorkerStart) -> Vec<String> {
         args.push(flag("agent", &req.agent));
         if let Some(model) = &req.model {
             args.push(flag("model", model));
+            if let Some(effort) = &req.effort {
+                args.push(flag("effort", effort));
+            }
         }
     }
     if let Some(timeout) = req.timeout_ms {

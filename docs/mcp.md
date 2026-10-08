@@ -143,7 +143,8 @@ removes only the `ids` passed that a fresh evaluation still finds removable, re-
 right before removal, copies its notes to `~/Documents/agents/notes/<repo>/<worktree>/`
 (checked, never overwriting) and deletes its logs, then runs `orca worktree rm` (no
 `--force`), and logs every attempt to `worktree-cleanup.jsonl` in the data dir. While it runs,
-`worktree-sweep.json` there makes the app show its broom. Folders under `~/orca/workspaces`
+`worktree-sweep.json` there makes the app show its chainsaw, cutting down the removed
+worktrees' trees in the ant farm (one tree grows on its surface per open worktree). Folders under `~/orca/workspaces`
 that Orca doesn't list are reported, never touched.
 
 All tools set `openWorldHint: false`. Agent ids are node ids from `list_agents` or

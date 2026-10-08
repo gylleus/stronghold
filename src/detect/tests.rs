@@ -371,3 +371,60 @@ mod claude_session_live {
         assert!(!claude_session_live(&codex));
     }
 }
+
+#[test]
+fn composer_state_reads_the_input_line_off_a_rendered_screen() {
+    use crate::detect::{ComposerState, composer_state};
+    for text in [
+        screen!("claude_idle_bypass.txt"),
+        screen!("claude_idle_user_message.txt"),
+        screen!("claude_idle_after_clear.txt"),
+        screen!("claude_idle_numbered_list.txt"),
+        screen!("claude_idle_fresh_session.txt"),
+    ] {
+        assert_eq!(
+            composer_state(&lines(text), CLAUDE),
+            ComposerState::Empty,
+            "idle:\n{text}"
+        );
+        assert_eq!(composer_state(&lines(text), None), ComposerState::Empty);
+    }
+    for text in [
+        screen!("claude_working_synthetic.txt"),
+        screen!("claude_permission_bash_synthetic.txt"),
+        screen!("claude_choice_ask_user_question.txt"),
+    ] {
+        assert_eq!(
+            composer_state(&lines(text), CLAUDE),
+            ComposerState::Absent,
+            "busy or prompting:\n{text}"
+        );
+    }
+    // The live Envoy's screen during the stall: the finished-turn line, the composer and the
+    // hint under it that Orca's preview kept instead of the composer.
+    let envoy = "⏺ Ignoring this one. It doesn't mention Karl or ask him for anything.\n\n✻ Cooked for 2s · done 3:12 PM\n\n────────\n❯\n────────\n  ⏵⏵ don't ask on (shift+tab to cycle) · ← for agents\nnew task? /clear to save 101.9k tokens\n";
+    assert_eq!(composer_state(&lines(envoy), CLAUDE), ComposerState::Empty);
+    let typed = envoy.replace("\n❯\n", "\n❯ half-written reply\n");
+    assert_eq!(composer_state(&lines(&typed), CLAUDE), ComposerState::Text);
+    assert_eq!(
+        composer_state(&lines("user@host ~ %"), CLAUDE),
+        ComposerState::Absent
+    );
+    assert_eq!(composer_state(&[], CLAUDE), ComposerState::Absent);
+    assert_eq!(
+        composer_state(&lines(screen!("codex_idle.txt")), CODEX),
+        ComposerState::Empty,
+        "Codex's placeholder is an empty composer"
+    );
+    assert_eq!(
+        composer_state(
+            &lines("❯ Try \"fix lint errors\"\n  ? for shortcuts"),
+            CLAUDE
+        ),
+        ComposerState::Empty
+    );
+    assert_eq!(
+        composer_state(&lines("❯ Try harder\n  ? for shortcuts"), CLAUDE),
+        ComposerState::Text
+    );
+}

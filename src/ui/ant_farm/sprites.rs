@@ -235,6 +235,31 @@ impl Sprites {
         );
     }
 
+    /// A piece of scenery at `k` points per map texel (rather than its own scale), standing on
+    /// `foot`, turned `angle` radians about `pivot`, multiplied by `tint`.
+    pub fn deco_turned(
+        &self,
+        painter: &Painter,
+        deco: Deco,
+        foot: Pos2,
+        k: f32,
+        (angle, pivot): (f32, Pos2),
+        tint: Color32,
+    ) {
+        let Some(texture) = self.nature.get(&deco) else {
+            return;
+        };
+        let [w, h] = deco.size();
+        let size = vec2(w as f32 * k, h as f32 * k);
+        let rect = Rect::from_min_size(foot - vec2(size.x / 2.0, size.y), size);
+        let mut mesh = egui::Mesh::with_texture(texture.id());
+        mesh.add_rect_with_uv(rect, unit_uv(), tint);
+        if angle != 0.0 {
+            mesh.rotate(egui::emath::Rot2::from_angle(angle), pivot);
+        }
+        painter.add(mesh);
+    }
+
     /// Roots spreading into the soil under a plant `width` points wide at `foot`.
     pub fn roots(&self, painter: &Painter, foot: Pos2, width: f32, px: f32, seed: usize) {
         let color = Color32::from_rgb(0x5a, 0x38, 0x1c);

@@ -284,6 +284,46 @@ fn clicking_save_reports_the_queen_settings() {
 }
 
 #[test]
+fn ants_default_saves_in_the_queen_section_and_keeps_the_queens_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    let mut pane = SettingsPane::load(Some(path.clone()));
+    pane.queen_draft.pick(Some("opus"));
+    pane.save_queen().unwrap();
+    assert_eq!(pane.ants(), &AntSettings::default(), "off until chosen");
+
+    pane.open_section(Section::Queen);
+    pane.ants_draft.pick(Some("fable"));
+    pane.ants_draft.settings.effort = Some("high".into());
+    let status = WhipStatus::default();
+    let info = general();
+    let out = click_label("Save for new ants", |ui| {
+        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+    });
+    let ants = out.ants.unwrap();
+    assert_eq!(ants.model.as_deref(), Some("fable"));
+    assert_eq!(ants.effort.as_deref(), Some("high"));
+    assert_eq!(out.queen, None, "the Queen's own save row was not clicked");
+    assert_eq!(pane.ants(), &ants);
+    assert_eq!(pane.queen().model.as_deref(), Some("opus"));
+    let on_disk = Settings::load_from(&path).settings;
+    assert_eq!(on_disk.ants, ants);
+    assert_eq!(on_disk.queen.model.as_deref(), Some("opus"));
+
+    // Back to the CLI default; an invalid effort saves nothing.
+    pane.ants_draft.pick(None);
+    pane.ants_draft.settings.effort = None;
+    assert_eq!(pane.save_ants().unwrap(), AntSettings::default());
+    pane.ants_draft.settings.effort = Some("turbo".into());
+    assert_eq!(pane.save_ants(), None);
+    assert!(pane.message.as_ref().unwrap().0);
+    assert_eq!(
+        SettingsPane::load(Some(path)).ants(),
+        &AntSettings::default()
+    );
+}
+
+#[test]
 fn abandon_window_validation() {
     let ok = WhipSettings::default();
     let cases: Vec<(&str, WhipSettings, bool)> = vec![

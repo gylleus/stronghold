@@ -94,6 +94,9 @@ pub struct SessionUsage {
     pub subagents: BTreeMap<String, Usage>,
     /// The main agent is editing or building (see [`ToolActivity::building`]).
     pub building: bool,
+    /// The main transcript's context as of its last assistant message: that turn's input
+    /// tokens, cached and fresh. What the next turn re-reads.
+    pub context: u64,
 }
 
 /// "950 tok", "12k tok", "1.2M tok", "3.4B tok".
@@ -177,6 +180,9 @@ fn update(cache: &mut SessionCache, session: &SessionInfo) {
                 return;
             }
             usage.total.add(&model, &counts);
+            if agent.is_none() {
+                usage.context = counts.input + counts.cache_read + counts.cache_creation;
+            }
             if let Some(agent) = &agent {
                 usage
                     .subagents
@@ -267,6 +273,12 @@ impl ClaudeData {
         }
         let session = self.session_by_handle.get(handle)?.session()?;
         Some(&self.usage.get(&session.session_id)?.total)
+    }
+
+    /// The context size of the Claude session a terminal is mapped to, as of its last turn.
+    pub fn context_for_handle(&self, handle: &str) -> Option<u64> {
+        let session = self.session_by_handle.get(handle)?.session()?;
+        Some(self.usage.get(&session.session_id)?.context)
     }
 
     /// A subagent node's own usage, or its terminal's session usage.
@@ -398,6 +410,41 @@ mod tests {
         assert_eq!(usage.total.by_model.len(), 2);
         assert_eq!(usage.total.by_model["claude-opus-5"].output, 100);
         assert!(usage.subagents.is_empty());
+        assert_eq!(
+            usage.context, 501,
+            "the last turn's input, cached and fresh"
+        );
+    }
+
+    #[test]
+    fn context_follows_the_main_transcript_only() {
+        let fake = Fake::new();
+        append(
+            &fake.main(),
+            &[assistant("msg_1", "claude-opus-5", [10, 1, 40_000, 2_000])],
+        );
+        append(
+            &fake.agent("a1"),
+            &[assistant("msg_a", "claude-haiku-4-5", [5, 20, 90_000, 0])],
+        );
+        let mut tracker = UsageTracker::new();
+        let session = SessionInfo {
+            dir: Some(fake.tmp.path().join(SESSION)),
+            ..fake.session()
+        };
+        assert_eq!(
+            tracker.refresh(std::slice::from_ref(&session))[SESSION].context,
+            42_010
+        );
+        append(
+            &fake.main(),
+            &[assistant("msg_2", "claude-opus-5", [3, 1, 100, 0])],
+        );
+        assert_eq!(
+            tracker.refresh(&[session])[SESSION].context,
+            103,
+            "a cleared context shows in the next turn"
+        );
     }
 
     fn tool(name: &str, at: &str) -> Value {

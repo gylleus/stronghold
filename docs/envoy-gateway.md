@@ -101,6 +101,70 @@ Close removes its subscription only after a real send and after all active reque
 dry-run records that removal intent. Threadless simulations settle locally. The one-week direct-post
 detector is deferred to migration after Karl picks its start date.
 
+## Delivery gate and stall signals
+
+Events and request turns are typed only when the Envoy node is idle, nothing is queued for
+its terminal, and its composer is empty. The composer verdict comes from the rendered screen:
+the background prompt sampler (idle agents, every ten seconds, five per round) and the
+selected terminal's screen watch both record [`composer_state`] beside the needs-input
+verdict in `FleetData.composers`, pruned when the terminal produces output. Orca's terminal
+`preview` is the stale startup banner plus the last redrawn fragment, so it often lacks the
+composer line; it is read only while no screen sample exists, and errs towards not typing.
+
+Two stall signals sit on the Envoy node and raise a warning (repeated every 30 minutes
+while they last): **events stuck**, when pending events have waited ten minutes with
+nothing typed (the message names the gate's reason, as the log's `envoy: N event(s)
+waiting: …` line does), and **poll stale**, when the Slack worker has reported nothing for
+five minutes (it reports an unchanged poll at least once a minute). Both outrank the bridge
+status in the node's health.
+
+## Context resets and thread notes
+
+The Envoy session is one Claude terminal, but its conversation is not kept for long: the app
+owns the durable state (inbox, drafts, requests, thread watches, notes), so the history only
+costs tokens and sharpness. The playbook is the session's appended system prompt
+(`--append-system-prompt-file`, rendered to `envoy-system-prompt.md` in the data dir at
+launch), so the cached prefix (system prompt, playbook, tools) survives a reset. The launch
+prompt no longer loads it with `get_playbook`.
+
+When the Envoy is idle at an empty prompt with events or request turns to type, the app first
+decides whether to clear the context by typing `/clear`:
+
+- **Quiet period** (`fresh_after_secs`, default 300): the last batch was typed at least this
+  long ago. `0` clears before every batch. Bursts within the window share one context.
+- **Event guard** (`reset_after_events`, default 40): that many events and request turns went
+  into the context since its last fresh start. `0` is off.
+- **Token guard** (`reset_after_tokens`, default 80,000): the session's context as of its last
+  turn (the last assistant message's input, cached and fresh, read from the transcript)
+  passed this. `0` is off.
+
+Guards trip at the next idle point even mid-burst. A context with no batch since the launch
+or the last clear is never cleared, and nothing is cleared while a batch, a gateway send, a
+relay, a Slack send or an approved draft is in flight, or while the terminal is busy or has
+text in its composer. Pending events stay queued across the clear and are acknowledged only
+when their batch is typed. The first batch after a clear starts with a `Fresh context:` line
+stating the dry-run mode. A failed `/clear` is logged, batches go into the old context, and
+the next reset is tried after ten minutes. Settings → Envoy holds all three thresholds; they
+apply on the next Start.
+
+Every typed event line also carries an addressee verdict, ` — addressee: Karl | not Karl |
+unclear (<why>)`, computed from the message's mentions (`src/envoy/addressee.rs`): a DM or a
+`<@KARL>` mention is for Karl; another person, agent or group tagged without Karl is not for
+Karl, unless the thread is Karl's (an ant's `reach_out` thread, a watched thread, one the Envoy
+posted in, or one whose earlier messages mention Karl), which leaves it unclear for the Envoy
+to judge; no mention is unclear. Karl's id is the `envoy.karl_user_id` setting until the
+worker's `auth.test` call (what `slackmsg whoami` prints) answers, on every configure; the
+resolved id then drives drops, searches and the verdict. The playbook's _Who it's for_ section
+tells the Envoy what to do with each verdict.
+
+Thread notes are the Envoy's memory across resets. `envoy_note {conversation, thread_ts?,
+text}` replaces the note for a thread root (or, without `thread_ts`, a conversation), at most
+600 characters, one line; empty text removes it. Notes live in `envoy-notes.json` (500 kept,
+the least recently updated evicted). Every typed event line ends with ` — note: …` when its
+thread (else its conversation) has one; request lines do the same for their bound thread;
+`envoy_inbox` returns the `notes` of the events it lists, `envoy_event` and `envoy_request`
+return `note`.
+
 ## Development verification
 
 `cargo test` uses fake Slack senders, temporary bridge/data directories and fake terminal

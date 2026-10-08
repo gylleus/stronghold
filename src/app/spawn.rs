@@ -46,7 +46,8 @@ impl MyrstackApp {
             return;
         }
         let fleet = SpawnFleet::from_data(self.data.as_ref()).with_agents(self.snapshot.as_ref());
-        if let Some(plan) = self.spawn.dialog.show(ctx, &fleet) {
+        let ants = self.whip_window.ants().clone();
+        if let Some(plan) = self.spawn.dialog.show(ctx, &fleet, &ants) {
             log::info!("spawn: launching {:?}", plan.steps);
             let job = self.spawn.runner.submit(Job::Plan(plan.clone()));
             self.spawn.dialog.started(job, plan);
@@ -125,6 +126,9 @@ impl MyrstackApp {
                 }
             }
         }
+        self.whip_window
+            .ants()
+            .fill(args.agent, &mut args.model, &mut args.effort);
         let job = Job::Args {
             args,
             runs: data.runs.clone(),
