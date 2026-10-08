@@ -84,6 +84,8 @@ pub struct Draft {
     pub auto_at_ms: Option<i64>,
     #[serde(default)]
     pub automatic: bool,
+    #[serde(default)]
+    pub manual_approval: bool,
 }
 
 impl Draft {
@@ -113,6 +115,7 @@ impl Draft {
             confirmed_send: false,
             auto_at_ms: None,
             automatic: false,
+            manual_approval: false,
         }
     }
 
@@ -142,6 +145,7 @@ impl Draft {
             confirmed_send: false,
             auto_at_ms: None,
             automatic: false,
+            manual_approval: false,
         }
     }
 
@@ -169,7 +173,8 @@ impl Draft {
     }
 
     pub fn allows_auto(&self) -> bool {
-        self.kind != DraftKind::TaskProposal
+        !self.manual_approval
+            && self.kind != DraftKind::TaskProposal
             && self
                 .request
                 .as_ref()
@@ -224,7 +229,7 @@ impl Draft {
 
     fn validate(&self) -> Result<(), String> {
         if self.automatic && !self.allows_auto() {
-            return Err("Rewritten requests require manual approval".into());
+            return Err("This draft requires manual approval".into());
         }
         if let Some(link) = &self.request
             && link.agent
@@ -469,7 +474,7 @@ impl DraftQueue {
         let old = self.saved.clone();
         let d = self.pending_mut(id)?;
         if at.is_some() && !d.allows_auto() {
-            return Err("Rewritten requests require manual approval".into());
+            return Err("This draft requires manual approval".into());
         }
         d.auto_at_ms = at;
         d.automatic = at.is_some();
@@ -556,6 +561,33 @@ mod tests {
             1,
         )
     }
+    #[test]
+    fn manual_decisions_stay_manual_after_edit_and_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(DRAFTS_FILE);
+        let mut queue = DraftQueue::load(&path).unwrap();
+        let mut decision = reply();
+        decision.manual_approval = true;
+        let draft = queue.create(decision).unwrap();
+        assert!(queue.schedule(&draft.id, Some(2)).is_err());
+        queue
+            .edit(&draft.id, "Use settings for the alert.", 2)
+            .unwrap();
+        let mut queue = DraftQueue::load(&path).unwrap();
+        assert!(queue.get(&draft.id).unwrap().manual_approval);
+        assert!(queue.schedule(&draft.id, Some(3)).is_err());
+        let approved = queue.begin_approval(&draft.id, None, false, 3).unwrap();
+        assert_eq!(approved.status, DraftStatus::Approved);
+        assert!(!approved.automatic);
+        assert!(approved.outbound().unwrap().text.ends_with(ATTRIBUTION));
+
+        let mut legacy = serde_json::to_value(reply()).unwrap();
+        legacy.as_object_mut().unwrap().remove("manual_approval");
+        let legacy: Draft = serde_json::from_value(legacy).unwrap();
+        let legacy = queue.create(legacy).unwrap();
+        queue.schedule(&legacy.id, Some(4)).unwrap();
+    }
+
     #[test]
     fn attribution_inside_original_ask_remains_byte_identical() {
         for automatic in [false, true] {

@@ -93,6 +93,7 @@ fn allowed_tools() -> Vec<String> {
                 "fleet_status",
                 "list_agents",
                 "get_agent",
+                "ask_karl",
             ]
             .into_iter()
             .chain(super::control::METHODS.iter().copied())
@@ -586,6 +587,7 @@ mod tests {
                 "fleet_status",
                 "list_agents",
                 "get_agent",
+                "ask_karl",
             ]
             .map(|n| format!("mcp__myrstack__{n}")),
         );

@@ -58,8 +58,8 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_draft",
-            "Queue a reply under Karl's destination approval policy; auto policies send after their veto window.",
-            json!({"in_reply_to":{"type":"object","properties":{"conversation":string,"ts":string},"required":["conversation","ts"]},"thread_ts":string,"text":string,"rationale":string}),
+            "Queue an answer under Karl's destination approval policy. Set manual_approval for a recommended decision Karl hasn't made; it cannot auto-send. Rationale stays private.",
+            json!({"in_reply_to":{"type":"object","properties":{"conversation":string,"ts":string},"required":["conversation","ts"]},"thread_ts":string,"text":string,"rationale":string,"manual_approval":{"type":"boolean"}}),
             vec!["in_reply_to", "text", "rationale"],
         ),
         (

@@ -223,6 +223,10 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
             EnvoySettings {
                 dry_run,
                 channels: vec!["C123".into()],
+                policies: vec![crate::envoy::settings::Policy {
+                    destination: "C123".into(),
+                    mode: crate::envoy::settings::ApprovalMode::Auto { veto_secs: 0 },
+                }],
                 ..Default::default()
             },
         )
@@ -241,7 +245,7 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
                 .contains("Envoy event: agent_comms from Avery in C123: The build is ready.")
         );
         core.acknowledge(&batch);
-        let args = json!({"in_reply_to":{"conversation":"C123","ts":event["ts"]},"text":"I will check the build.","rationale":"Avery requested a check."});
+        let args = json!({"in_reply_to":{"conversation":"C123","ts":event["ts"]},"text":"Use the checked build.","rationale":"Recommend this build; Karl has not decided.","manual_approval":true});
         let origin = Origin {
             terminal_handle: Some("term_envoy".into()),
             ..Default::default()
@@ -257,6 +261,10 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
         drop(server);
         assert_eq!(core.drafts().len(), 1);
         let id = core.drafts()[0].id.clone();
+        core.auto_approve(i64::MAX).unwrap();
+        assert_eq!(core.drafts()[0].status, DraftStatus::Pending);
+        assert!(core.drafts()[0].auto_at_ms.is_none());
+        assert!(sent.lock().unwrap().is_empty());
         let mut panel = DraftsPanel::default();
         let edited = if secret {
             "ghp_123456789012345678901234567890"
