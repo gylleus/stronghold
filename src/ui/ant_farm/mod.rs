@@ -889,6 +889,7 @@ impl AntFarmView {
             };
             let falls = ant.pose != Pose::Queen && ant.kind != crate::model::NodeKind::Subagent;
             track.body = falls.then(|| Body {
+                kind: ant.kind,
                 at: motion::to_unit(at.pos, scene.rect),
                 size: ant.size,
                 facing_right: match at.heading {
@@ -1154,6 +1155,7 @@ fn paint_ants(
             cell = cell.translate(vec2(0.0, -layout::SLEEPER_LIFT * tpx));
         }
         let look = AntLook {
+            kind: ant.kind,
             coat: Coat::new(ant.agent.as_ref(), ant.pose == Pose::Failed),
             frame,
             facing_right,
@@ -1271,6 +1273,7 @@ fn paint_falls(
             continue;
         };
         let look = AntLook {
+            kind: fall.body.kind,
             coat: fall.body.coat,
             frame: 0,
             facing_right: fall.body.facing_right,
