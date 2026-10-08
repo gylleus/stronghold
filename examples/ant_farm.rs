@@ -4,10 +4,11 @@
 //! `cargo run --example ant_farm [--light] [--graph] [--saw] [--trees N] [--shot out.png]`.
 //! `--receipt-at-ms 31` freezes a receipt mid-shake; `--reduced-motion` shows its flash.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
-//! terminals in the resting area; `--ants N` keeps only the first N agents. `--graph`
-//! shows the same fleet as the graph. The surface grows a tree per worktree: the agents' own
-//! and a few with nobody in them, or `--trees N` of them; `--saw` runs the worktree cleanup's
-//! chainsaw on one. Every few seconds one worker
+//! terminals in the resting area; `--ants N` keeps only the first N agents.
+//! `--taskmasters` shows coordinators in every state, plus a parked coordinator and attendant.
+//! `--graph` shows the same fleet as the graph. The surface grows a tree per worktree: the
+//! agents' own and a few with nobody in them, or `--trees N` of them; `--saw` runs the worktree
+//! cleanup's chainsaw on one. Every few seconds one worker
 //! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
 //! report, N hatches a new worker, M sends a burst of messages between ants, T toggles the
 //! Queen thinking and X closes a worktree (its tree falls). With `--shot`, it saves a
@@ -78,6 +79,9 @@ fn main() -> eframe::Result {
                 egui::Theme::Dark
             });
             let mut snapshot = fleet();
+            if args.iter().any(|a| a == "--taskmasters") {
+                taskmasters(&mut snapshot);
+            }
             if let Some(n) = ants {
                 keep_ants(&mut snapshot, n);
             }
@@ -462,6 +466,41 @@ fn keep_ants(s: &mut FleetSnapshot, n: usize) {
     let ids: HashSet<NodeId> = s.nodes.iter().map(|n| n.id.clone()).collect();
     s.edges
         .retain(|e| ids.contains(&e.from) && ids.contains(&e.to));
+}
+
+fn taskmasters(s: &mut FleetSnapshot) {
+    let states = [
+        NodeState::Working,
+        NodeState::Idle,
+        NodeState::NeedsInput,
+        NodeState::Stalled,
+        NodeState::Done,
+        NodeState::Failed,
+    ];
+    for (coordinator, state) in s
+        .nodes
+        .iter_mut()
+        .filter(|n| n.kind == NodeKind::Coordinator)
+        .zip(states)
+    {
+        coordinator.state = state;
+    }
+    let mut parked = node(
+        "Off duty",
+        NodeKind::Coordinator,
+        Some("run0"),
+        NodeState::Idle,
+        "myrstack",
+    );
+    parked.parked_at_ms = Some(1);
+    s.nodes.push(parked);
+    s.nodes.push(node(
+        "Attendant",
+        NodeKind::Attendant,
+        Some("run0"),
+        NodeState::Working,
+        "myrstack",
+    ));
 }
 
 /// The Queen, 6 runs of a coordinator and 3–5 workers, loose terminals in two repos, and
