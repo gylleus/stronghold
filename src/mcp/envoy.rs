@@ -46,7 +46,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_inbox",
-            "Read recent inbound Slack events, newest first (default 20); since is a Slack timestamp. New events are typed into your terminal, so you rarely need this.",
+            "Read open inbound Slack events (default 20); since is a Slack timestamp. New events are typed into your terminal, so you rarely need this.",
             json!({"since":string,"limit":{"type":"integer","minimum":1,"maximum":2000}}),
             vec![],
         ),
@@ -64,7 +64,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_drafts",
-            "Read drafts, optionally filtered by status.",
+            "Read open drafts by default; specify status to include handled drafts.",
             json!({"status":{"type":"string","enum":["pending","approved","sent","failed","rejected","dry_run_sent"]}}),
             vec![],
         ),

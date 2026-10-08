@@ -1,6 +1,6 @@
 //! Karl's review surface; draft actions are returned to the app for persistence and delivery.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 use eframe::egui::{self, PointerButton, Ui};
 
@@ -16,6 +16,10 @@ pub enum DraftAction {
         text: String,
     },
     Reject(String),
+    DismissEvent(String),
+    DismissRequest(String),
+    DismissDraft(String),
+    ClearHandled,
     Pause(String),
     Adopt,
     Keep(String),
@@ -39,12 +43,28 @@ pub struct DraftsPanel {
     errors: HashMap<String, String>,
     last_action_at: Option<f64>,
     tab: Option<Tab>,
-    dismissed_failures: HashSet<String>,
+    dismissed_failures: BTreeSet<String>,
+    dismissed_requests: BTreeSet<String>,
     recorded_task: Option<String>,
     requests: Vec<crate::envoy::requests::Request>,
 }
 
 impl DraftsPanel {
+    pub fn set_dismissed_requests(&mut self, requests: BTreeSet<String>) {
+        self.dismissed_requests = requests;
+    }
+
+    pub fn set_cleanup(&mut self, drafts: &BTreeSet<String>) {
+        self.dismissed_failures.clone_from(drafts);
+        if self
+            .recorded_task
+            .as_ref()
+            .is_some_and(|id| drafts.contains(id))
+        {
+            self.recorded_task = None;
+        }
+    }
+
     pub fn set_requests(&mut self, requests: &[crate::envoy::requests::Request]) {
         self.requests = requests.to_vec();
     }
@@ -56,7 +76,10 @@ impl DraftsPanel {
 
     pub fn open(&mut self, drafts: &[Draft]) {
         self.tab = Some(
-            if self.requests.iter().any(|r| !r.settled)
+            if self
+                .requests
+                .iter()
+                .any(|r| request_inbox(r, &self.dismissed_requests))
                 || drafts.iter().any(|d| {
                     d.status == DraftStatus::Pending
                         || (d.status == DraftStatus::Failed
@@ -101,6 +124,8 @@ impl DraftsPanel {
         self.errors.retain(|id, _| {
             drafts.iter().any(|d| d.id == *id)
                 || self.requests.iter().any(|r| r.id == *id)
+                || inbox.get(id).is_some()
+                || id == "cleanup"
                 || id == "adopt"
         });
         let mut action = None;
@@ -132,12 +157,26 @@ impl DraftsPanel {
             ui.selectable_value(&mut self.tab, Some(Tab::Inbox), "Inbox");
             ui.selectable_value(&mut self.tab, Some(Tab::Outbox), "Outbox");
         });
+        if self.tab == Some(Tab::Inbox) {
+            if ui.button("Clear handled / stale").on_hover_text(
+                "Dismiss handled drafts and messages older than 30 minutes, including queued events. Pending approvals are kept."
+            ).clicked() {
+                action = Some(DraftAction::ClearHandled);
+            }
+            if let Some(error) = self.errors.get("cleanup") {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            }
+        }
         ui.separator();
         egui::ScrollArea::vertical()
             .id_salt(("envoy", self.tab == Some(Tab::Inbox)))
             .show(ui, |ui| {
                 let inbox_tab = self.tab == Some(Tab::Inbox);
-                for request in self.requests.iter().filter(|r| r.settled != inbox_tab) {
+                for request in self
+                    .requests
+                    .iter()
+                    .filter(|r| request_inbox(r, &self.dismissed_requests) == inbox_tab)
+                {
                     ui.push_id(&request.id, |ui| {
                         egui::Frame::group(ui.style()).show(ui, |ui| {
                             ui.strong(format!(
@@ -209,6 +248,9 @@ impl DraftsPanel {
                                         action = Some(DraftAction::Keep(request.id.clone()));
                                     }
                                 }
+                                if ui.button("Dismiss").clicked() {
+                                    action = Some(DraftAction::DismissRequest(request.id.clone()));
+                                }
                                 if ui
                                     .button(if request.bound_requester().is_none() {
                                         "Close"
@@ -245,12 +287,11 @@ impl DraftsPanel {
                                     }
                                 } else {
                                     decided_card(ui, draft, inbox);
+                                    if let Some(error) = self.errors.get(&draft.id) {
+                                        ui.colored_label(ui.visuals().error_fg_color, error);
+                                    }
                                     if ui.button("Dismiss").clicked() {
-                                        if failed {
-                                            self.dismissed_failures.insert(draft.id.clone());
-                                        } else {
-                                            self.recorded_task = None;
-                                        }
+                                        action = Some(DraftAction::DismissDraft(draft.id.clone()));
                                     }
                                 }
                             });
@@ -260,7 +301,9 @@ impl DraftsPanel {
                     if cards == 0 {
                         ui.weak("No decisions waiting for you.");
                     }
-                    recent_messages(ui, inbox);
+                    if let Some(next) = recent_messages(ui, inbox, &self.errors) {
+                        action = Some(next);
+                    }
                 } else {
                     let mut history: Vec<_> = drafts
                         .iter()
@@ -403,15 +446,34 @@ fn decided_card(ui: &mut Ui, draft: &Draft, inbox: &Inbox) {
     }
 }
 
-fn recent_messages(ui: &mut Ui, inbox: &Inbox) {
+fn request_inbox(request: &crate::envoy::requests::Request, dismissed: &BTreeSet<String>) -> bool {
+    use crate::envoy::requests::Status;
+    !request.settled
+        && !dismissed.contains(&request.id)
+        && (request.binding_proposal.is_some()
+            || request.status != Status::Declined
+            || request.turns.iter().any(|t| {
+                matches!(
+                    t.status,
+                    Status::Queued | Status::Drafted | Status::Approved | Status::Failed
+                )
+            }))
+}
+
+fn recent_messages(
+    ui: &mut Ui,
+    inbox: &Inbox,
+    errors: &HashMap<String, String>,
+) -> Option<DraftAction> {
+    let mut action = None;
     egui::CollapsingHeader::new("Recent messages")
         .id_salt("envoy_recent_messages")
         .default_open(false)
         .show(ui, |ui| {
-            if inbox.events().is_empty() {
+            if inbox.open_events().next().is_none() {
                 ui.weak("No incoming messages yet.");
             }
-            for event in inbox.events().iter().rev().take(20) {
+            for event in inbox.open_events().rev() {
                 let time = crate::envoy::inbox::timestamp_us(&event.ts)
                     .and_then(|us| jiff::Timestamp::from_microsecond(us).ok())
                     .map(|t| {
@@ -434,9 +496,18 @@ fn recent_messages(ui: &mut Ui, inbox: &Inbox) {
                     .collect();
                 ui.label(first_line);
                 slack_link(ui, event.permalink.as_deref());
+                if let Some(error) = errors.get(&event.id()) {
+                    ui.colored_label(ui.visuals().error_fg_color, error);
+                }
+                ui.push_id(event.id(), |ui| {
+                    if ui.button("Dismiss").clicked() {
+                        action = Some(DraftAction::DismissEvent(event.id()));
+                    }
+                });
                 ui.separator();
             }
         });
+    action
 }
 
 fn deliberate_click(response: &egui::Response) -> bool {
@@ -922,7 +993,12 @@ mod tests {
         assert!(!h.visible("Approve"));
         h.panel.open(&h.drafts);
         assert!(h.visible("Network unavailable"));
-        h.click("Dismiss");
+        assert_eq!(
+            h.click("Dismiss"),
+            Some(DraftAction::DismissDraft(h.drafts[0].id.clone()))
+        );
+        h.panel
+            .set_cleanup(&BTreeSet::from([h.drafts[0].id.clone()]));
         assert!(!h.visible("Network unavailable"));
         assert!(h.visible("No decisions waiting for you."));
         h.panel.open(&h.drafts);
@@ -951,7 +1027,11 @@ mod tests {
         h.drafts[0].status = DraftStatus::DryRunSent;
         h.panel.result("task-1", Ok(()));
         assert!(h.visible("Task recorded in dry run; not sent to the Queen."));
-        h.click("Dismiss");
+        assert_eq!(
+            h.click("Dismiss"),
+            Some(DraftAction::DismissDraft("task-1".into()))
+        );
+        h.panel.set_cleanup(&BTreeSet::from(["task-1".into()]));
         assert!(!h.visible("Task recorded in dry run; not sent to the Queen."));
         h.click("Outbox");
         assert!(h.visible("Task recorded in dry run; not sent to the Queen."));
@@ -1024,5 +1104,30 @@ mod tests {
         assert!(h.visible("Open Slack message"));
         assert!(!h.visible("Approve"));
         assert!(!h.visible("Accept task"));
+    }
+
+    #[test]
+    fn inbox_cleanup_buttons_return_persistable_actions() {
+        let mut h = Harness::new(vec![]);
+        let event: crate::envoy::channel::InboundEvent =
+            serde_json::from_value(serde_json::json!({
+                "channel_kind":"slack", "conversation":"C123", "ts":"1.000001",
+                "user":"U123", "user_name":"Avery", "text":"Queued event", "kind":"agent_comms"
+            }))
+            .unwrap();
+        h.inbox.insert(event.clone());
+        h.click("Inbox");
+        assert_eq!(
+            h.click("Clear handled / stale"),
+            Some(DraftAction::ClearHandled)
+        );
+        h.click("Recent messages");
+        assert!(h.visible("Queued event"));
+        assert_eq!(
+            h.click("Dismiss"),
+            Some(DraftAction::DismissEvent(event.id()))
+        );
+        h.inbox.resolve([event.id()]);
+        assert!(!h.visible("Queued event"));
     }
 }
