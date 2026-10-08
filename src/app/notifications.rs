@@ -353,6 +353,21 @@ impl MyrstackApp {
         }
     }
 
+    pub(super) fn resolve_envoy_notifications(&mut self) {
+        let notes = &mut self.notifications;
+        let ids: Vec<_> = notes
+            .entries()
+            .iter()
+            .filter(|e| !e.read && self.envoy_core.notice_resolved(e))
+            .map(|e| e.id)
+            .collect();
+        for id in ids {
+            notes.dirty |= notes.center.history.mark_read(id);
+            notes.toasts.remove(id);
+        }
+        notes.save();
+    }
+
     /// Selecting a node marks the notifications about it read.
     fn mark_selected_read(&mut self) {
         if self.selected == self.notifications.last_selected {

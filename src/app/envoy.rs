@@ -25,6 +25,7 @@ use crate::notify::{Incoming, Severity, Source};
 use crate::orca::TerminalInput;
 use crate::traffic::{AgentMessage, MessageKind};
 
+mod cleanup;
 mod gateway;
 use crate::envoy::requests::{Requester, Requests};
 use gateway::GatewayAction;
@@ -40,6 +41,8 @@ pub struct AppEnvoy {
     handle: Option<String>,
     settings: EnvoySettings,
     inbox: Inbox,
+    cleanup: cleanup::Cleanup,
+    cleanup_path: PathBuf,
     drafts: Option<DraftQueue>,
     requests: Option<Requests>,
     notes: Option<ThreadNotes>,
@@ -125,6 +128,8 @@ impl AppEnvoy {
     fn load(dir: PathBuf) -> Self {
         let inbox_path = dir.join(crate::envoy::inbox::INBOX_FILE);
         let loaded = Inbox::load(&inbox_path);
+        let cleanup_path = dir.join("envoy-inbox-cleanup.json");
+        let cleanup = crate::envoy::inbox::load::<cleanup::Cleanup>(&cleanup_path);
         let drafts = DraftQueue::load(dir.join(crate::envoy::drafts::DRAFTS_FILE));
         let requests = Requests::load(dir.join(crate::envoy::requests::REQUESTS_FILE));
         let relay_path = dir.join("envoy-relays.json");
@@ -139,10 +144,13 @@ impl AppEnvoy {
             .or_else(|| drafts.as_ref().err().cloned())
             .or_else(|| relays.as_ref().err().cloned())
             .or_else(|| requests.as_ref().err().cloned())
+            .or_else(|| cleanup.as_ref().err().map(ToString::to_string))
             .or_else(|| notes.as_ref().err().cloned());
         let inbox = loaded.unwrap_or_default();
-        Self {
+        let mut core = Self {
             handle: None,
+            cleanup: cleanup.unwrap_or_default(),
+            cleanup_path,
             settings: EnvoySettings::default(),
             inbox,
             drafts: drafts.ok(),
@@ -181,7 +189,9 @@ impl AppEnvoy {
             shake_started_ms: None,
             open_request: false,
             error,
-        }
+        };
+        core.resolve_handled();
+        core
     }
 
     /// The lifecycle owner supplies the handle after persisting it.
@@ -401,14 +411,16 @@ impl AppEnvoy {
     }
 
     fn merge_polled(&mut self, mut inbox: Inbox, events: Vec<InboundEvent>) {
-        self.pending.retain(|e| inbox.get(&e.id()).is_some());
+        inbox.resolve(self.cleanup.events.iter().cloned());
         self.acknowledged.retain(|id| inbox.get(id).is_some());
         inbox.mark_forwarded(&self.acknowledged.iter().cloned().collect::<Vec<_>>());
         self.inbox = inbox;
+        self.resolve_handled();
         self.error = None;
         self.error_notified = None;
         if self.handle.is_some() {
-            self.pending.extend(events);
+            self.pending
+                .extend(events.into_iter().filter(|e| self.inbox.is_open(&e.id())));
             while self.pending.len() > 2000 {
                 self.pending.pop_front();
             }
@@ -459,7 +471,11 @@ impl AppEnvoy {
             self.acknowledge(&batch);
         }
         if result.outcome.is_err() && self.handle.is_some() {
-            for event in batch.into_iter().rev() {
+            for event in batch
+                .into_iter()
+                .rev()
+                .filter(|e| self.inbox.is_open(&e.id()))
+            {
                 self.pending.push_front(event);
             }
             self.forward_after_ms = now + 30_000;
@@ -608,7 +624,7 @@ impl AppEnvoy {
                     })
                     .transpose()?;
                 Ok(
-                    json!({"drafts":self.drafts().iter().filter(|d| status.is_none_or(|s| s==d.status)).collect::<Vec<_>>()}),
+                    json!({"drafts":self.drafts().iter().filter(|d| status.map_or_else(|| self.cleanup.draft_open(d), |s| s==d.status)).collect::<Vec<_>>()}),
                 )
             }
             "envoy_draft" | "envoy_propose_task" => {
@@ -854,16 +870,8 @@ impl AppEnvoy {
                     let result = crate::envoy::authorize(self, &command.origin)
                         .and(result)
                         .and_then(|destination| self.route(&command.args, &destination));
-                    if result.is_ok() {
-                        notifications.push(
-                            Incoming::new(
-                                Source::Envoy,
-                                Severity::Info,
-                                "Envoy draft ready",
-                                "A draft is waiting for your approval.",
-                            )
-                            .with_target(DRAFTS_TARGET),
-                        );
+                    if let Ok(value) = &result {
+                        notifications.push(cleanup::draft_notice(&value["draft"]));
                     }
                     reply.send(result.map_err(ControlError::invalid_params));
                 }
@@ -903,6 +911,7 @@ impl AppEnvoy {
         if let Err(e) = self.auto_approve(now_ms()) {
             self.error = Some(e);
         }
+        self.resolve_handled();
         notifications.extend(self.stall_notices(now_ms()));
         if self.error != self.error_notified {
             if let Some(error) = self.error.clone() {
@@ -1021,6 +1030,21 @@ impl AppEnvoy {
         queen: impl FnOnce(&str) -> bool,
     ) -> (String, Result<bool, String>) {
         match action {
+            crate::ui::envoy::DraftAction::DismissRequest(id) => {
+                let result = self.dismiss_request(&id).map(|()| false);
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::DismissEvent(id) => {
+                let result = self.dismiss_event(&id).map(|()| false);
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::DismissDraft(id) => {
+                let result = self.dismiss_draft(&id).map(|()| false);
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::ClearHandled => {
+                ("cleanup".into(), self.clear_handled().map(|()| false))
+            }
             crate::ui::envoy::DraftAction::Pause(id) => {
                 let result = self
                     .queue()
@@ -1097,6 +1121,7 @@ impl AppEnvoy {
                 let result = self
                     .queue()
                     .and_then(|q| q.reject(&id, now_ms()))
+                    .map(|()| self.resolve_handled())
                     .map(|()| false);
                 (id, result)
             }
@@ -1118,6 +1143,10 @@ impl MyrstackApp {
     }
 
     pub(super) fn envoy_pane(&mut self, ui: &mut egui::Ui) {
+        self.envoy_panel
+            .set_cleanup(&self.envoy_core.cleanup.drafts);
+        self.envoy_panel
+            .set_dismissed_requests(self.envoy_core.dismissed_requests());
         self.envoy_panel.set_requests(self.envoy_core.requests());
         let action = self.envoy_panel.show(
             ui,
@@ -1136,6 +1165,7 @@ impl MyrstackApp {
             if matches!(result, Ok(true)) {
                 self.open_chat();
             }
+            self.resolve_envoy_notifications();
             if !pause || result.is_err() {
                 self.envoy_panel.result(&id, result.map(|_| ()));
             }
@@ -1289,22 +1319,16 @@ impl MyrstackApp {
             .envoy_core
             .request(&command)
             .map_err(ControlError::invalid_params);
-        if result.is_ok()
+        if let Ok(value) = &result
             && matches!(
                 command.method.as_str(),
                 "envoy_draft" | "envoy_propose_task"
             )
         {
-            self.raise(
-                Incoming::new(
-                    Source::Envoy,
-                    Severity::Info,
-                    "Envoy draft ready",
-                    "A draft is waiting for your approval.",
-                )
-                .with_target(DRAFTS_TARGET),
-            );
+            self.raise(cleanup::draft_notice(&value["draft"]));
         }
+        self.envoy_core.resolve_handled();
+        self.resolve_envoy_notifications();
         let error = result.as_ref().err().cloned();
         reply.send(result);
         error.map_or(Ok(()), Err)
@@ -1382,6 +1406,7 @@ impl MyrstackApp {
         for message in traffic {
             self.traffic.sender().send(message);
         }
+        self.resolve_envoy_notifications();
         self.forward_envoy();
         self.forward_gateway();
     }

@@ -1500,6 +1500,94 @@ fn binding_worker_preview_persists_proposal_and_notifies_without_assigning_owner
 }
 
 #[test]
+fn decline_hides_the_draft_and_resolves_its_notification_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "Review");
+    let draft = route(&mut core, &id);
+    let mut notices =
+        crate::notify::NotificationCenter::new(crate::notify::history::History::default());
+    notices.dispatch(
+        cleanup::draft_notice(&json!(draft)),
+        &crate::notify::NotifySettings::default(),
+        1,
+    );
+    core.request(&command(
+        "envoy",
+        "envoy_decline",
+        json!({"id": id, "reason":"No thanks"}),
+    ))
+    .unwrap();
+    let mut reloaded = AppEnvoy::load(dir.path().into());
+    reloaded.handle = Some("envoy".into());
+    assert!(
+        reloaded
+            .request(&command("envoy", "envoy_drafts", json!({})))
+            .unwrap()["drafts"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(reloaded.requests()[0].settled);
+    assert!(reloaded.notice_resolved(&notices.history.entries()[0]));
+}
+
+#[test]
+fn request_dismissal_persists_without_closing_the_thread_and_new_replies_reopen_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, commands, _updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "Review");
+    let draft = route(&mut core, &id);
+    core.queue()
+        .unwrap()
+        .begin_approval(&draft.id, None, false, 0)
+        .unwrap();
+    core.queue()
+        .unwrap()
+        .finish_receipt(
+            &draft.id,
+            Ok(SendReceipt {
+                conversation: "C123".into(),
+                ts: "1.000001".into(),
+            }),
+            1,
+        )
+        .unwrap();
+    core.reconcile_requests().unwrap();
+    core.panel_action(
+        crate::ui::envoy::DraftAction::DismissRequest(id.clone()),
+        false,
+        |_| panic!("dismiss must not send"),
+    )
+    .1
+    .unwrap();
+    assert!(!commands.try_iter().any(|w| matches!(w, Work::Remove(_))));
+    let mut reloaded = AppEnvoy::load(dir.path().into());
+    assert!(reloaded.dismissed_requests().contains(&id));
+    assert!(!reloaded.requests()[0].settled);
+    reloaded
+        .requests_mut()
+        .unwrap()
+        .change(&id, |r| {
+            r.deliveries.push(crate::envoy::requests::Delivery {
+                id: "new-reply".into(),
+                text: "Hello".into(),
+                event: None,
+                delivered: false,
+                dry_run: false,
+                inbox: true,
+            });
+            Ok(())
+        })
+        .unwrap();
+    assert!(!reloaded.dismissed_requests().contains(&id));
+}
+
+#[test]
 fn request_lines_and_envoy_request_carry_the_bound_threads_note() {
     let dir = tempfile::tempdir().unwrap();
     let fake = fixture(dir.path());

@@ -92,8 +92,16 @@ terminal incarnation ids. Dry-run records would-be terminal delivery instead of 
 Relayed reply text is capped at 2,000 Unicode characters plus a truncation notice; status keeps the full event text. Terminal delivery is acknowledged after Orca succeeds; a crash between terminal execution
 and saving that acknowledgment may replay a reply.
 
-Inbox shows open/answered requests and unresolved orphan threads. Outbox shows settled
-requests and draft decisions. Adopt open threads reads `slack-sub list`, skips channel feeds
+Inbox shows open/answered requests and unresolved orphan threads. Rejected drafts and
+fully declined requests leave the Inbox; deciding a draft reads its draft-ready alert.
+Dismiss hides an individual message, handled draft or request. Clear handled / stale hides
+handled items and messages older than 30 minutes (including stuck queued events), while
+keeping pending approvals. Cleanup persists separately from ingestion checkpoints, so polls
+and restarts cannot restore dismissed items. Request dismissal keeps reply subscriptions;
+a new turn or reply makes the request visible again. Outbox keeps dismissed/settled requests
+and draft decisions. `envoy_inbox` lists open events; `envoy_event` can still read retained
+thread context. `envoy_drafts` lists open drafts by default; an explicit `status` includes
+handled drafts. Adopt open threads reads `slack-sub list`, skips channel feeds
 and expired subscriptions, `envoy:` labels and threads already owned through confirmed requests, and creates unknown/sent requests idempotently. Adopted subscriptions are borrowed: watches start subscribed and never add, relabel or
 remove their registry entries, even when an ant request already references that thread.
 Keep retains an orphan; Close only settles its app request. For a thread the Envoy owns,

@@ -579,6 +579,9 @@ fn failed_forward_and_retry_submission_do_not_start_receipt() {
     let mut core = AppEnvoy::load(dir.path().into());
     core.handle = Some("term_envoy".into());
     let events = vec![receipt_event("1.000001"), receipt_event("1.000002")];
+    for event in &events {
+        core.inbox.insert(event.clone());
+    }
     core.pending.extend(events.clone());
     let mut result = submit_receipt_batch(&mut core, 100, 1);
     result.outcome = Err("fixture failure".into());
@@ -710,6 +713,230 @@ fn batches_name_candidate_ants_and_fold_the_backlog() {
         lines[2]
     );
     assert!(lines[3].ends_with("— no ant match"));
+}
+
+#[test]
+fn reject_removes_the_item_from_the_inbox() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let event: InboundEvent = serde_json::from_value(json!({
+        "channel_kind":"slack", "conversation":"C123", "ts":"1.000001",
+        "user":"U123", "user_name":"Avery", "text":"Please reply",
+        "kind":"agent_comms"
+    }))
+    .unwrap();
+    core.inbox.insert(event.clone());
+    core.inbox
+        .save(&dir.path().join(crate::envoy::inbox::INBOX_FILE))
+        .unwrap();
+    let draft = core
+        .queue()
+        .unwrap()
+        .create(Draft::reply(
+            ReplyTo {
+                conversation: event.conversation.clone(),
+                ts: event.ts.clone(),
+            },
+            None,
+            "No thanks".into(),
+            "Requested".into(),
+            0,
+        ))
+        .unwrap();
+    let (_, result) = core.panel_action(
+        crate::ui::envoy::DraftAction::Reject(draft.id.clone()),
+        false,
+        |_| panic!("reject must not send"),
+    );
+    result.unwrap();
+    assert!(
+        core.inbox.since(None, 20).is_empty(),
+        "rejected source remains in the open inbox"
+    );
+    let reloaded = AppEnvoy::load(dir.path().into());
+    assert!(reloaded.inbox.since(None, 20).is_empty());
+}
+
+#[test]
+fn dismissed_events_survive_poll_restart_and_failed_forwarding() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let event = receipt_event("1.000001");
+    core.inbox.insert(event.clone());
+    core.inbox
+        .save(&dir.path().join(crate::envoy::inbox::INBOX_FILE))
+        .unwrap();
+    let snapshot = core.inbox.clone();
+    core.pending.push_back(event.clone());
+    let mut result = submit_receipt_batch(&mut core, 100, 1);
+    result.outcome = Err("offline".into());
+    core.panel_action(
+        crate::ui::envoy::DraftAction::DismissEvent(event.id()),
+        false,
+        |_| panic!("dismiss must not send"),
+    )
+    .1
+    .unwrap();
+    core.merge_polled(snapshot, vec![event.clone()]);
+    core.forward_done(&result, 100, |_| panic!("failed delivery"));
+    assert!(core.pending.is_empty());
+    assert!(core.inbox.unforwarded().is_empty());
+    assert!(core.inbox.since(None, 20).is_empty());
+    assert!(
+        core.inbox.get(&event.id()).is_some(),
+        "retain thread context and deduplication"
+    );
+    let mut reloaded = AppEnvoy::load(dir.path().into());
+    assert!(reloaded.inbox.unforwarded().is_empty());
+    assert!(!reloaded.inbox.insert(event));
+}
+
+#[test]
+fn clear_handled_persists_failed_dismissal_and_keeps_pending_approvals_and_fresh_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let stale = receipt_event("1.000001");
+    let active = receipt_event("2.000001");
+    let fresh = receipt_event(&format!("{}.000001", now_ms() / 1000));
+    for event in [&stale, &active, &fresh] {
+        core.inbox.insert(event.clone());
+        core.pending.push_back(event.clone());
+    }
+    core.inbox
+        .save(&dir.path().join(crate::envoy::inbox::INBOX_FILE))
+        .unwrap();
+    let draft = core
+        .queue()
+        .unwrap()
+        .create(Draft::reply(
+            ReplyTo {
+                conversation: active.conversation.clone(),
+                ts: active.ts.clone(),
+            },
+            None,
+            "Pending".into(),
+            "Requested".into(),
+            0,
+        ))
+        .unwrap();
+    let failed = core
+        .queue()
+        .unwrap()
+        .create(Draft::proposal(
+            "Failed task".into(),
+            None,
+            "Requested".into(),
+            String::new(),
+            0,
+        ))
+        .unwrap();
+    core.queue()
+        .unwrap()
+        .begin_approval(&failed.id, None, false, 0)
+        .unwrap();
+    core.queue()
+        .unwrap()
+        .finish(&failed.id, Err("Offline".into()), 1)
+        .unwrap();
+    core.panel_action(crate::ui::envoy::DraftAction::ClearHandled, false, |_| {
+        panic!("cleanup must not send")
+    })
+    .1
+    .unwrap();
+    let mut reloaded = AppEnvoy::load(dir.path().into());
+    assert!(!reloaded.inbox.is_open(&stale.id()));
+    assert!(reloaded.inbox.is_open(&active.id()));
+    assert!(reloaded.inbox.is_open(&fresh.id()));
+    assert_eq!(reloaded.pending_count(), 1);
+    assert!(
+        !reloaded.cleanup.draft_open(
+            reloaded
+                .drafts()
+                .iter()
+                .find(|d| d.id == failed.id)
+                .unwrap()
+        )
+    );
+    reloaded.handle = Some("envoy".into());
+    let command = |args| EnvoyCommand {
+        method: "envoy_drafts".into(),
+        args,
+        origin: crate::review::mark::Origin {
+            terminal_handle: Some("envoy".into()),
+            ..Default::default()
+        },
+    };
+    let open = reloaded.request(&command(json!({}))).unwrap();
+    assert_eq!(open["drafts"].as_array().unwrap().len(), 1);
+    assert_eq!(open["drafts"][0]["id"], draft.id);
+    let history = reloaded
+        .request(&command(json!({"status":"failed"})))
+        .unwrap();
+    assert_eq!(history["drafts"][0]["id"], failed.id);
+}
+
+#[test]
+fn cleanup_save_failure_keeps_the_item_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let event = receipt_event("1.000001");
+    core.inbox.insert(event.clone());
+    std::fs::create_dir(&core.cleanup_path).unwrap();
+    assert!(
+        core.panel_action(
+            crate::ui::envoy::DraftAction::DismissEvent(event.id()),
+            false,
+            |_| false
+        )
+        .1
+        .is_err()
+    );
+    assert!(core.inbox.is_open(&event.id()));
+}
+
+#[test]
+fn rejection_resolves_its_alert_without_reading_another_pending_drafts_alert() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let mut notices =
+        crate::notify::NotificationCenter::new(crate::notify::history::History::default());
+    let mut drafts = Vec::new();
+    for text in ["One", "Two"] {
+        let draft = core
+            .queue()
+            .unwrap()
+            .create(Draft::proposal(
+                text.into(),
+                None,
+                "Requested".into(),
+                String::new(),
+                0,
+            ))
+            .unwrap();
+        notices.dispatch(
+            cleanup::draft_notice(&json!(draft)),
+            &crate::notify::NotifySettings::default(),
+            1,
+        );
+        drafts.push(draft);
+    }
+    core.panel_action(
+        crate::ui::envoy::DraftAction::Reject(drafts[0].id.clone()),
+        false,
+        |_| false,
+    )
+    .1
+    .unwrap();
+    assert_eq!(
+        notices.history.mark_read_where(|e| core.notice_resolved(e)),
+        1
+    );
+    let path = dir.path().join("notifications.json");
+    notices.history.save(&path).unwrap();
+    let loaded = crate::notify::history::History::load(&path);
+    assert!(loaded.entries()[0].read);
+    assert!(!loaded.entries()[1].read);
 }
 
 fn envoy_command(method: &str, args: Value) -> EnvoyCommand {
@@ -1125,6 +1352,9 @@ fn events_waiting_too_long_turn_the_status_stuck_and_warn_once_per_half_hour() {
     let (notices, _) = core.poll_updates();
     assert!(notices.iter().all(|n| n.title != "Envoy events stuck"));
     assert_eq!(core.pending.len(), 2);
+    let now = core
+        .pending_since_ms
+        .expect("ingestion starts the wait clock");
     assert_eq!(core.stuck_events(now + STUCK_AFTER_MS - 1), 0);
     assert_eq!(core.stuck_events(now + STUCK_AFTER_MS), 2);
     core.blocked = Some("no empty agent prompt");
@@ -1337,4 +1567,31 @@ fn karls_id_comes_from_slack_when_it_answers() {
     )
     .unwrap();
     wait_for(&mut core, |c| c.karl() == "W0RESOLVED");
+}
+
+#[test]
+fn clearing_stuck_events_resolves_warning_and_resets_the_wait_clock() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let event = receipt_event("1.000001");
+    core.inbox.insert(event.clone());
+    core.pending.push_back(event);
+    core.pending_since_ms = Some(now_ms() - STUCK_AFTER_MS);
+    let mut notices =
+        crate::notify::NotificationCenter::new(crate::notify::history::History::default());
+    for notice in core.stall_notices(now_ms()) {
+        notices.dispatch(notice, &crate::notify::NotifySettings::default(), now_ms());
+    }
+    assert_eq!(notices.history.entries().len(), 1);
+    assert!(!core.notice_resolved(&notices.history.entries()[0]));
+    core.panel_action(crate::ui::envoy::DraftAction::ClearHandled, false, |_| {
+        panic!("cleanup must not send")
+    })
+    .1
+    .unwrap();
+    assert_eq!(core.stuck_events(now_ms()), 0);
+    assert!(core.pending_since_ms.is_none());
+    assert!(core.notice_resolved(&notices.history.entries()[0]));
+    assert!(core.stall_notices(now_ms() + RENOTIFY_MS).is_empty());
 }
