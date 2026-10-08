@@ -26,7 +26,7 @@ use crate::orca::spawn::{
 pub use catalog::Catalog;
 pub use exec::{SpawnEvent, SpawnOutcome, SpawnRunner, StepStatus};
 pub use resolve::{LiveAgent, ModeName, NameConflict, SpawnArgs, name_conflict, new_worktree_of};
-pub use settings::SpawnSettings;
+pub use settings::{AntSettings, SpawnSettings};
 pub use verify::{Expect, ScreenVerdict, classify_screen, codex_approvals_on};
 
 /// How long `terminal wait --for tui-idle` waits after launch. An agent that took its prompt
@@ -101,8 +101,11 @@ pub enum SpawnTarget {
 pub struct SpawnRequest {
     pub target: SpawnTarget,
     pub agent: Agent,
-    /// Model alias or id (`--model`); `None` for the agent's default.
+    /// Model alias or id (`--model`); `None` for the agent's default. The app fills a Claude
+    /// ant's missing model from the `ants` settings ([`AntSettings::fill`]) before planning.
     pub model: Option<String>,
+    /// `--effort` level (Claude only, and only with a model for a worker).
+    pub effort: Option<String>,
     /// Initial prompt; for a worker, the task spec.
     pub prompt: String,
     /// Short name Myrstack shows for the agent: the worktree's Orca display name (new or
@@ -345,8 +348,20 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
         Some(m) if valid_model(m) => Some(m.to_string()),
         Some(m) => return err(&format!("model {m:?} has characters a model id can't have")),
     };
+    let effort = match request.effort.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(e) if crate::chat::settings::EFFORT_LEVELS.contains(&e) => Some(e.to_string()),
+        Some(e) => {
+            return err(&format!(
+                "effort must be one of {} (got {e:?})",
+                crate::chat::settings::EFFORT_LEVELS.join(", ")
+            ));
+        }
+    };
     let agent = request.agent;
-    let launch = || launch_command(agent, model.as_deref(), &prompt);
+    // Codex takes no --effort; `worker-start --effort` needs --model.
+    let effort = effort.filter(|_| agent == Agent::Claude);
+    let launch = || launch_command(agent, model.as_deref(), effort.as_deref(), &prompt);
     let verify = || Step::Verify {
         expect: if prompt.is_empty() {
             Expect::Ready
@@ -501,6 +516,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
                     placement,
                     agent: agent.as_str().to_string(),
                     model: model.clone(),
+                    effort: effort.clone().filter(|_| model.is_some()),
                     timeout_ms: Some(WORKER_START_TIMEOUT_MS),
                 }),
             ];
@@ -543,6 +559,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
             label,
             prompt,
             model,
+            effort,
             ..request.clone()
         },
         steps,
@@ -554,10 +571,15 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
 /// every Codex command Myrstack builds carries it itself.
 pub const CODEX_NEVER_ASK: &str = "--dangerously-bypass-approvals-and-sandbox";
 
-/// The command `terminal create` runs: `claude [--model m] '<prompt>'` (Codex also gets
-/// [`CODEX_NEVER_ASK`]), quoted for the login shell. A prompt starting with `-` goes after `--`
-/// so it isn't read as a flag.
-pub fn launch_command(agent: Agent, model: Option<&str>, prompt: &str) -> String {
+/// The command `terminal create` runs: `claude [--model m] [--effort e] '<prompt>'` (Codex
+/// also gets [`CODEX_NEVER_ASK`] and no effort), quoted for the login shell. A prompt starting
+/// with `-` goes after `--` so it isn't read as a flag.
+pub fn launch_command(
+    agent: Agent,
+    model: Option<&str>,
+    effort: Option<&str>,
+    prompt: &str,
+) -> String {
     let mut parts = vec![agent.as_str().to_string()];
     if agent == Agent::Codex {
         parts.push(CODEX_NEVER_ASK.into());
@@ -565,6 +587,10 @@ pub fn launch_command(agent: Agent, model: Option<&str>, prompt: &str) -> String
     if let Some(model) = model {
         parts.push("--model".into());
         parts.push(shell_quote(model));
+    }
+    if let Some(effort) = effort.filter(|_| agent == Agent::Claude) {
+        parts.push("--effort".into());
+        parts.push(shell_quote(effort));
     }
     let prompt = prompt.trim();
     if !prompt.is_empty() {

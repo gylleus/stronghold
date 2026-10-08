@@ -1,16 +1,19 @@
 //! The ant farm on a synthetic fleet of 6 runs, loose terminals and subagents (about 30
 //! agents), one of each state, to check how it looks.
 //!
-//! `cargo run --example ant_farm [--light] [--graph] [--sweep] [--shot out.png]`.
+//! `cargo run --example ant_farm [--light] [--graph] [--saw] [--trees N] [--shot out.png]`.
 //! `--receipt-at-ms 31` freezes a receipt mid-shake; `--reduced-motion` shows its flash.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
-//! terminals in the resting area; `--ants N` keeps only the first N agents. `--graph`
-//! shows the same fleet as the graph; `--sweep` flies the worktree cleanup's broom around the
-//! farm. Every few seconds one worker
+//! terminals in the resting area; `--ants N` keeps only the first N agents.
+//! `--taskmasters` shows coordinators in every state, plus a parked coordinator and attendant.
+//! `--graph` shows the same fleet as the graph. The surface grows a tree per worktree: the
+//! agents' own and a few with nobody in them, or `--trees N` of them; `--saw` runs the worktree
+//! cleanup's chainsaw on one. Every few seconds one worker
 //! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
-//! report, N hatches a new worker, M sends a burst of messages between ants and T toggles the
-//! Queen thinking. With `--shot`, it saves a screenshot once settled and another while a worker
-//! walks, a new one emerges, a broadcast ripples and messages fly (`-walk`), then exits.
+//! report, N hatches a new worker, M sends a burst of messages between ants, T toggles the
+//! Queen thinking and X closes a worktree (its tree falls). With `--shot`, it saves a
+//! screenshot once settled and another while a worker walks, a new one emerges, a broadcast
+//! ripples, messages fly and a tree falls (`-walk`), then exits.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -19,7 +22,9 @@ use eframe::egui;
 use myrstack::model::{
     Edge, EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
 };
+use myrstack::orca::spawn::Worktree;
 use myrstack::traffic::{AgentMessage, MessageKind};
+use myrstack::ui::ant_farm::forest;
 use myrstack::ui::ant_farm::{AntFarmView, Pulse};
 use myrstack::ui::envoy_receipt::ReceiptCue;
 use myrstack::ui::graph::GraphView;
@@ -50,7 +55,11 @@ fn main() -> eframe::Result {
     });
     let reduced_motion = args.iter().any(|a| a == "--reduced-motion");
     let show_graph = args.iter().any(|a| a == "--graph");
-    let sweep = args.iter().any(|a| a == "--sweep").then(sweep_marker);
+    let trees = args
+        .iter()
+        .position(|a| a == "--trees")
+        .map(|i| args[i + 1].parse::<usize>().expect("a number of trees"));
+    let saw = args.iter().any(|a| a == "--saw").then(sweep_marker);
     let parked = args.iter().any(|a| a == "--parked");
     let ants = args
         .iter()
@@ -70,6 +79,9 @@ fn main() -> eframe::Result {
                 egui::Theme::Dark
             });
             let mut snapshot = fleet();
+            if args.iter().any(|a| a == "--taskmasters") {
+                taskmasters(&mut snapshot);
+            }
             if let Some(n) = ants {
                 keep_ants(&mut snapshot, n);
             }
@@ -95,7 +107,8 @@ fn main() -> eframe::Result {
                 id("run5-w5"),
             ]));
             graph.set_selected(Some(&id("run2-coord")));
-            let sweep = sweep.map(|data| (WorktreePanel::new(&cc.egui_ctx), data));
+            let saw = saw.map(|data| (WorktreePanel::new(&cc.egui_ctx), data));
+            let worktrees = worktrees(&snapshot, trees);
             Ok(Box::new(Demo {
                 snapshot,
                 graph,
@@ -117,7 +130,8 @@ fn main() -> eframe::Result {
                 flipped_at: Instant::now(),
                 stage: 0,
                 thinking: false,
-                sweep,
+                saw,
+                worktrees,
             }))
         }),
     )
@@ -136,8 +150,57 @@ struct Demo {
     thinking: bool,
     /// 0 settling, 1 waiting for the settled shot, 2 walking, 3 waiting for the walk shot.
     stage: u8,
-    /// The cleanup panel drawing the broom, and the temporary data dir holding its marker.
-    sweep: Option<(WorktreePanel, tempfile::TempDir)>,
+    /// The cleanup panel running the saw, and the temporary data dir holding its marker.
+    saw: Option<(WorktreePanel, tempfile::TempDir)>,
+    /// One tree each on the surface.
+    worktrees: Vec<Worktree>,
+}
+
+/// Worktrees for the coordinators' and loose terminals' own, then empty ones up to `count`
+/// (four empty ones by default).
+fn worktrees(snapshot: &FleetSnapshot, count: Option<usize>) -> Vec<Worktree> {
+    let mut out: Vec<Worktree> = snapshot
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.kind, NodeKind::Coordinator | NodeKind::Terminal))
+        .filter_map(|n| n.worktree_path.clone())
+        .map(|path| worktree(&path))
+        .collect();
+    let count = count.unwrap_or(out.len() + 4);
+    out.truncate(count);
+    for i in 0..count.saturating_sub(out.len()) {
+        out.push(worktree(&format!(
+            "/x/orca/workspaces/myrstack/{}",
+            STALE[i % STALE.len()]
+        )));
+    }
+    if let Some(i) = out
+        .iter()
+        .position(|w| w.path.ends_with("graph-trackpad-pan"))
+    {
+        out[i].display_name = Some("graph-trackpad-pan".into());
+    }
+    out
+}
+
+/// Names for worktrees nobody works in any more.
+const STALE: [&str; 6] = [
+    "graph-trackpad-pan",
+    "ant-farm-view",
+    "recs-pool-dedupe",
+    "docs-recs-custom-css",
+    "serving-field",
+    "rperf",
+];
+
+fn worktree(path: &str) -> Worktree {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    Worktree {
+        id: format!("myrstack::{name}"),
+        path: path.into(),
+        branch: Some(format!("refs/heads/gylleus/{name}")),
+        ..Worktree::default()
+    }
 }
 
 /// A running sweep's marker in a temporary data dir, as when the Queen runs `clean_worktrees`.
@@ -154,6 +217,7 @@ fn sweep_marker() -> tempfile::TempDir {
         total: 4,
         done: 1,
         current: Some("graph-trackpad-pan".into()),
+        current_id: Some("myrstack::graph-trackpad-pan".into()),
     };
     std::fs::write(
         myrstack::worktrees::default_marker_path(),
@@ -203,6 +267,11 @@ impl Demo {
         }
     }
 
+    /// Closes the newest worktree: its tree falls.
+    fn fell(&mut self) {
+        self.worktrees.pop();
+    }
+
     fn flip(&mut self) {
         let node = self
             .snapshot
@@ -249,15 +318,16 @@ impl eframe::App for Demo {
                     self.graph.show(ui);
                     return;
                 }
-                let farm = egui::Rect::from_min_size(ui.cursor().min, ui.available_size());
-                let response = self.farm.show(ui, &self.snapshot, &self.graph);
-                if let Some((panel, _)) = &mut self.sweep {
+                let saw = self.saw.as_mut().and_then(|(panel, _)| {
                     let now_ms = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(0, |d| d.as_millis() as i64);
                     panel.tick(None, now_ms);
-                    panel.broom_in_farm(ui, farm);
-                }
+                    panel.saw_job()
+                });
+                self.farm
+                    .set_forest(forest::groves(&self.worktrees, &self.snapshot.nodes), saw);
+                let response = self.farm.show(ui, &self.snapshot, &self.graph);
                 if let Some(id) = &response.clicked {
                     self.graph.click_node(id, false);
                 }
@@ -266,15 +336,19 @@ impl eframe::App for Demo {
             if self.flipped_at.elapsed() >= FLIP_EVERY {
                 self.flip();
             }
-            let (b, st, n, t, m) = ui.input(|i| {
+            let (b, st, n, t, m, x) = ui.input(|i| {
                 (
                     i.key_pressed(egui::Key::B),
                     i.key_pressed(egui::Key::S),
                     i.key_pressed(egui::Key::N),
                     i.key_pressed(egui::Key::T),
                     i.key_pressed(egui::Key::M),
+                    i.key_pressed(egui::Key::X),
                 )
             });
+            if x {
+                self.fell();
+            }
             if m {
                 self.mail(ui.input(|i| i.time));
             }
@@ -316,6 +390,7 @@ impl eframe::App for Demo {
                     self.hatch();
                     self.farm.pulse(Pulse::Broadcast);
                     self.mail(ui.input(|i| i.time));
+                    self.fell();
                     self.stage = 2;
                 }
             }
@@ -391,6 +466,41 @@ fn keep_ants(s: &mut FleetSnapshot, n: usize) {
     let ids: HashSet<NodeId> = s.nodes.iter().map(|n| n.id.clone()).collect();
     s.edges
         .retain(|e| ids.contains(&e.from) && ids.contains(&e.to));
+}
+
+fn taskmasters(s: &mut FleetSnapshot) {
+    let states = [
+        NodeState::Working,
+        NodeState::Idle,
+        NodeState::NeedsInput,
+        NodeState::Stalled,
+        NodeState::Done,
+        NodeState::Failed,
+    ];
+    for (coordinator, state) in s
+        .nodes
+        .iter_mut()
+        .filter(|n| n.kind == NodeKind::Coordinator)
+        .zip(states)
+    {
+        coordinator.state = state;
+    }
+    let mut parked = node(
+        "Off duty",
+        NodeKind::Coordinator,
+        Some("run0"),
+        NodeState::Idle,
+        "myrstack",
+    );
+    parked.parked_at_ms = Some(1);
+    s.nodes.push(parked);
+    s.nodes.push(node(
+        "Attendant",
+        NodeKind::Attendant,
+        Some("run0"),
+        NodeState::Working,
+        "myrstack",
+    ));
 }
 
 /// The Queen, 6 runs of a coordinator and 3–5 workers, loose terminals in two repos, and

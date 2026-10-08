@@ -42,6 +42,10 @@ impl AppEnvoy {
         self.inbox.resolve(resolved);
         let open: BTreeSet<_> = self.inbox.open_events().map(InboundEvent::id).collect();
         self.pending.retain(|e| open.contains(&e.id()));
+        if self.pending.is_empty() {
+            self.pending_since_ms = None;
+            self.stuck_notified_ms = None;
+        }
     }
 
     pub(super) fn dismiss_event(&mut self, id: &str) -> Result<(), String> {

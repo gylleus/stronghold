@@ -252,10 +252,12 @@ impl MyrstackApp {
                     self.ant_farm.set_envoy_health(self.envoy_status().health());
                     self.ant_farm
                         .set_envoy_pending(self.envoy_core.pending_count());
-                    let farm = egui::Rect::from_min_size(ui.cursor().min, ui.available_size());
+                    let groves = self.data.as_ref().map_or_else(Vec::new, |d| {
+                        ui::ant_farm::forest::groves(&d.worktrees, &snapshot.nodes)
+                    });
+                    self.ant_farm.set_forest(groves, self.worktrees.saw_job());
                     let response = self.ant_farm.show(ui, snapshot, &self.graph);
-                    self.worktrees.broom_in_farm(ui, farm);
-                    self.broom_in_farm = true;
+                    self.saw_in_farm = true;
                     if response.open_envoy {
                         self.envoy_core.open_request = true;
                     }

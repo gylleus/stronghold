@@ -83,7 +83,9 @@ pub fn paint(
     let light = match health {
         EnvoyHealth::Listening => Color32::from_rgb(100, 230, 207),
         EnvoyHealth::AwaitingApproval if blink => Color32::from_rgb(255, 192, 65),
-        EnvoyHealth::BridgeDown => Color32::from_rgb(243, 77, 66),
+        EnvoyHealth::BridgeDown | EnvoyHealth::PollStale => Color32::from_rgb(243, 77, 66),
+        EnvoyHealth::EventsStuck if blink => Color32::from_rgb(243, 77, 66),
+        EnvoyHealth::EventsStuck => ink,
         EnvoyHealth::Starting => steel,
         EnvoyHealth::Stopped | EnvoyHealth::AwaitingApproval => ink,
     };
@@ -109,7 +111,10 @@ pub fn paint(
             }
         }
     }
-    if health == EnvoyHealth::BridgeDown {
+    if matches!(
+        health,
+        EnvoyHealth::BridgeDown | EnvoyHealth::PollStale | EnvoyHealth::EventsStuck
+    ) {
         pixel(room.dish, -14.0, -24.0, 10.0, 13.0, ink);
         pixel(room.dish, -12.0, -22.0, 6.0, 6.0, light);
         pixel(room.dish, -12.0, -14.0, 6.0, 2.0, light);

@@ -17,6 +17,7 @@ pub const METHODS: &[&str] = &[
     "envoy_drafts",
     "envoy_relay",
     "envoy_propose_task",
+    "envoy_note",
 ];
 
 #[derive(Clone, PartialEq, Eq)]

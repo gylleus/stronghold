@@ -7,6 +7,9 @@
 mod beams;
 mod comms;
 pub mod death;
+pub mod forest;
+#[cfg(test)]
+mod forest_tests;
 pub mod layout;
 #[cfg(test)]
 mod layout_tests;
@@ -219,6 +222,8 @@ pub struct AntFarmView {
     advanced_rect: Option<Rect>,
     /// Reduce motion as set for tests; the system's setting otherwise.
     reduce_motion: Option<bool>,
+    /// A tree per open worktree on the surface, and the saw; see [`forest`].
+    forest: forest::ForestView,
 }
 
 /// A room's chamber, shaft and label relative to the farm's rect (see [`motion::to_unit`]).
@@ -388,6 +393,11 @@ impl AntFarmView {
         self.envoy_pending = pending;
     }
 
+    /// The open worktrees' trees and the cleanup cutting them, if one runs.
+    pub fn set_forest(&mut self, groves: Vec<forest::Grove>, saw: Option<forest::SawJob>) {
+        self.forest.set(groves, saw);
+    }
+
     pub fn set_envoy_receipt(&mut self, receipt: crate::ui::envoy_receipt::ReceiptCue) {
         self.envoy_receipt = receipt;
     }
@@ -470,6 +480,8 @@ impl AntFarmView {
         self.falls.retain(|f| now_s - f.start_s < f.duration());
         self.bury(&scene, snapshot, now_s, death::reduce_motion);
         let placed = self.advance(&scene, now_s);
+        let still = self.still();
+        let trees = self.forest.layout(&scene, now_s, away, still);
         let pops = self.pops.frames(now_s);
         let effects = Effects {
             ripples: &self.ripples,
@@ -489,6 +501,15 @@ impl AntFarmView {
         let palette = Palette::new(daylight);
         let selection = graph.selection();
 
+        let pointer = response.hover_pos().map(|p| self.camera.to_farm(rect, p));
+        let tray_hovered = pointer.is_some_and(|p| tray_hit(&scene, p));
+        let hovered = pointer
+            .filter(|_| !tray_hovered)
+            .and_then(|p| hit(&scene, &placed, p));
+        let tree_hovered = pointer
+            .filter(|_| !tray_hovered && hovered.is_none())
+            .and_then(|p| forest::hit(&trees, p))
+            .cloned();
         let pipe_stretch = mail::pipe_stretch(self.mail.tick(now_s), now_s);
         paint_ground(
             &painter,
@@ -498,7 +519,10 @@ impl AntFarmView {
             now_s,
             daylight,
             pipe_stretch,
+            &self.forest,
+            &trees,
         );
+
         self.envoy_receipt.repaint(ui.ctx());
         comms::paint(
             &painter,
@@ -510,11 +534,6 @@ impl AntFarmView {
             self.envoy_receipt,
         );
         paint_calls(&painter, sprites, &scene, &effects, now_s, true);
-        let pointer = response.hover_pos().map(|p| self.camera.to_farm(rect, p));
-        let tray_hovered = pointer.is_some_and(|p| tray_hit(&scene, p));
-        let hovered = pointer
-            .filter(|_| !tray_hovered)
-            .and_then(|p| hit(&scene, &placed, p));
         pops::paint(&painter, sprites, &scene, &placed, &pops, true);
         paint_ants(
             &painter,
@@ -529,6 +548,15 @@ impl AntFarmView {
         );
         pops::paint(&painter, sprites, &scene, &placed, &pops, false);
         paint_falls(&painter, sprites, &scene, &self.falls, now_s);
+        self.forest.paint_overlay(
+            &painter,
+            sprites,
+            &scene,
+            &trees,
+            tree_hovered.as_ref().map(|t| t.grove.id.as_str()),
+            palette,
+            now_s,
+        );
         mail::paint(&painter, &scene, &placed, self.mail.tick(now_s), now_s);
         beams::paint(&painter, &scene, &placed, self.beams.tick(now_s), now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
@@ -560,7 +588,8 @@ impl AntFarmView {
             || !self.beams.is_empty()
             || !self.pops.is_empty()
             || !self.room_glides.is_empty()
-            || self.frame_glide.is_some();
+            || self.frame_glide.is_some()
+            || (self.forest.animating() && !still);
         let stepping = scene.ants.iter().any(|a| {
             matches!(a.pose, Pose::Dig | Pose::Build | Pose::Wait | Pose::Sleep)
                 || (a.pose == Pose::Queen && self.queen_busy)
@@ -587,6 +616,14 @@ impl AntFarmView {
                 .clone()
                 .on_hover_ui_at_pointer(|ui| graph.node_tooltip_ui(ui, id));
         }
+        if let Some(tree) = &tree_hovered {
+            response
+                .clone()
+                .on_hover_text_at_pointer(forest::ForestView::tooltip(tree));
+            if response.clicked() {
+                self.forest.click(tree);
+            }
+        }
         if response.secondary_clicked() {
             self.context_node = hovered.clone();
         }
@@ -597,7 +634,10 @@ impl AntFarmView {
         };
         AntFarmResponse {
             clicked: response.clicked().then(|| hovered.clone()).flatten(),
-            clicked_empty: response.clicked() && hovered.is_none() && !tray_hovered,
+            clicked_empty: response.clicked()
+                && hovered.is_none()
+                && !tray_hovered
+                && tree_hovered.is_none(),
             open_envoy: response.clicked() && tray_hovered,
             hovered,
             close_requested: menu.close,
@@ -889,6 +929,7 @@ impl AntFarmView {
             };
             let falls = ant.pose != Pose::Queen && ant.kind != crate::model::NodeKind::Subagent;
             track.body = falls.then(|| Body {
+                kind: ant.kind,
                 at: motion::to_unit(at.pos, scene.rect),
                 size: ant.size,
                 facing_right: match at.heading {
@@ -933,6 +974,7 @@ fn hit(scene: &Scene, placed: &[Placed], pointer: Pos2) -> Option<NodeId> {
         .map(|(ant, _)| ant.id.clone())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_ground(
     painter: &egui::Painter,
     sprites: &Sprites,
@@ -941,6 +983,8 @@ fn paint_ground(
     now_s: f64,
     daylight: f32,
     pipe_stretch: f32,
+    forest_view: &forest::ForestView,
+    trees: &forest::Forest,
 ) {
     let px = scene.px;
     let a = scene.cell();
@@ -961,6 +1005,8 @@ fn paint_ground(
         };
         sprites.deco(painter, piece.deco, piece.foot, px, alpha);
     }
+    // The forest stands behind everything else on the surface.
+    forest_view.paint_trees(painter, sprites, scene, trees, palette, now_s);
     let plants = scenery::surface(scene);
     for (i, plant) in plants.iter().enumerate() {
         if plant.deco.rooted() {
@@ -968,6 +1014,7 @@ fn paint_ground(
             sprites.roots(painter, plant.foot, width, px, i);
         }
     }
+    forest_view.paint_roots(painter, sprites, trees);
     // Shafts up from the gallery to the landing, the Queen's chamber and storage.
     let gy = scene.gallery.center().y;
     let up = |x: f32, top: f32| {
@@ -1154,6 +1201,7 @@ fn paint_ants(
             cell = cell.translate(vec2(0.0, -layout::SLEEPER_LIFT * tpx));
         }
         let look = AntLook {
+            kind: ant.kind,
             coat: Coat::new(ant.agent.as_ref(), ant.pose == Pose::Failed),
             frame,
             facing_right,
@@ -1271,6 +1319,7 @@ fn paint_falls(
             continue;
         };
         let look = AntLook {
+            kind: fall.body.kind,
             coat: fall.body.coat,
             frame: 0,
             facing_right: fall.body.facing_right,

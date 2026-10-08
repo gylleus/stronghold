@@ -375,7 +375,10 @@ pub fn definitions() -> Vec<Value> {
              Myrstack shows on its node and ant. It becomes the worktree's Orca name (all \
              agents in that worktree go by it) or, for a worker, its task's display name. To \
              rename an agent later, run `orca worktree set --worktree path:<path> \
-             --display-name <name>`.",
+             --display-name <name>`. A Claude ant started without a model gets the Ants \
+             default model and effort from Myrstack's Settings (Queen section), which Karl \
+             uses to move the whole fleet to one model; the result names the model used. An \
+             explicit model wins; Codex ants keep Codex's default.",
             object(
                 json!({
                     "mode": { "type": "string", "enum": ["worktree", "new_worktree", "worker"] },
@@ -389,7 +392,8 @@ pub fn definitions() -> Vec<Value> {
                     "title": { "type": "string", "description": "Worker task title (default: the prompt's first line)." },
                     "label": { "type": "string", "description": "Short human name for the agent (2-4 words), shown in Myrstack's graph and ant farm. Sets the worktree's Orca display name, or a worker's task display name." },
                     "agent": { "type": "string", "enum": ["claude", "codex"], "default": "claude" },
-                    "model": { "type": "string", "description": "Model alias or id, e.g. opus, sonnet, gpt-6-astra (default: the agent's)." },
+                    "model": { "type": "string", "description": "Model alias or id, e.g. fable, opus, sonnet, gpt-6-astra. Default: the Ants default in Myrstack's Settings for a Claude ant, else the agent's own." },
+                    "effort": { "type": "string", "enum": ["low", "medium", "high", "xhigh", "max"], "description": "Claude only, with a model: --effort level (default: the Ants default's effort when the model is the default too, else the CLI's)." },
                     "allow_suffix": { "type": "boolean", "default": false, "description": "New worktree: when the name or branch is taken, let Orca add a suffix (name-2) instead of failing. Only for a deliberate second copy." },
                 }),
                 &["mode", "prompt"],
@@ -1447,6 +1451,13 @@ fn spawn_text(args: &crate::spawn::SpawnArgs, result: &Value) -> String {
     }
     if let (Some(task), Some(dispatch)) = (s("task_id"), s("dispatch_id")) {
         out.push(format!("Task {task}, dispatch {dispatch}."));
+    }
+    if args.agent == crate::spawn::Agent::Claude {
+        out.push(match (s("model"), s("effort")) {
+            (Some(model), Some(effort)) => format!("Model: {model}, effort {effort}."),
+            (Some(model), None) => format!("Model: {model}."),
+            (None, _) => "Model: the CLI default (no Ants default set in Settings).".into(),
+        });
     }
     let verified = result.get("verified").and_then(Value::as_bool) == Some(true);
     out.push(if verified {

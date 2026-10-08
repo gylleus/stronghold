@@ -876,6 +876,7 @@ fn sweep_marker_goes_stale() {
         total: 3,
         done: 1,
         current: Some("old".into()),
+        current_id: Some("repo::/x/old".into()),
     };
     write_marker(&path, &marker);
     assert_eq!(running_sweep(&path, 3_000), Some(marker));

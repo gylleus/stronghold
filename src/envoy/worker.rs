@@ -34,6 +34,7 @@ pub enum Work {
     },
     Thread {
         event: InboundEvent,
+        note: Option<super::notes::ThreadNote>,
         reply: Reply,
     },
 }
@@ -44,6 +45,8 @@ pub enum Update {
         events: Vec<InboundEvent>,
         bridge: BridgeStatus,
         notices: Vec<String>,
+        /// When this poll ran: the app's liveness signal for the loop.
+        polled_at_ms: i64,
     },
     Sent {
         id: String,
@@ -69,6 +72,8 @@ pub enum Update {
         reply: Reply,
         result: Result<super::requests::BindingPreview, String>,
     },
+    /// Karl's member id as `auth.test` reports it, resolved on each configure.
+    KarlId(String),
     Error(String),
 }
 
@@ -91,6 +96,7 @@ impl Worker {
             let mut slack = SlackChannel::new(io, inbox, path, bridge, EnvoySettings::default());
             let mut active = false;
             let mut published: Option<(Inbox, BridgeStatus, Vec<String>)> = None;
+            let mut published_at_ms: Option<i64> = None;
             let mut last_error: Option<String> = None;
             loop {
                 match commands.recv_timeout(Duration::from_secs(2)) {
@@ -99,6 +105,14 @@ impl Worker {
                         published = None;
                         if let Some(settings) = settings {
                             slack.configure(settings);
+                            match slack.resolve_karl() {
+                                Ok(Some(id)) => {
+                                    let _ = results.send(Update::KarlId(id));
+                                    wake();
+                                }
+                                Ok(None) => {}
+                                Err(e) => log::warn!("envoy: Karl's Slack id not resolved: {e}"),
+                            }
                         }
                     }
                     Ok(Work::Watches(watches)) => {
@@ -162,17 +176,17 @@ impl Worker {
                         }
                         wake();
                     }
-                    Ok(Work::Thread { event, reply }) => {
+                    Ok(Work::Thread { event, note, reply }) => {
                         let cached = slack.inbox.thread(&event);
                         let result = slack.thread(&event);
                         reply.send(Ok(match result {
                             Ok(thread) => {
                                 let (thread, omitted) = trim_thread(thread);
-                                json!({"event": event, "thread": thread, "omitted": omitted, "complete": true})
+                                json!({"event": event, "note": note, "thread": thread, "omitted": omitted, "complete": true})
                             }
                             Err(error) => {
                                 let (thread, omitted) = trim_thread(cached);
-                                json!({"event": event, "thread": thread, "omitted": omitted, "complete": false, "error": error})
+                                json!({"event": event, "note": note, "thread": thread, "omitted": omitted, "complete": false, "error": error})
                             }
                         }));
                     }
@@ -180,7 +194,8 @@ impl Worker {
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
                 }
                 if active {
-                    let update = match slack.poll(crate::control::server::now_ms()) {
+                    let now_ms = crate::control::server::now_ms();
+                    let update = match slack.poll(now_ms) {
                         Ok(batch) => {
                             let bridge = slack.health();
                             let unchanged =
@@ -189,16 +204,21 @@ impl Worker {
                                         && *status == bridge
                                         && *notices == batch.notices
                                 });
-                            if unchanged && last_error.is_none() {
+                            if unchanged
+                                && last_error.is_none()
+                                && !heartbeat_due(published_at_ms, now_ms)
+                            {
                                 continue;
                             }
                             last_error = None;
                             published = Some((slack.inbox.clone(), bridge, batch.notices.clone()));
+                            published_at_ms = Some(now_ms);
                             Update::Polled {
                                 inbox: slack.inbox.clone(),
                                 events: batch.events,
                                 bridge,
                                 notices: batch.notices,
+                                polled_at_ms: now_ms,
                             }
                         }
                         Err(e) => {
@@ -242,6 +262,15 @@ impl Worker {
     }
 }
 
+/// An unchanged poll is still reported this often, so the app can tell a quiet loop from a
+/// wedged one (see [`crate::envoy::POLL_STALE_MS`]).
+pub const HEARTBEAT_MS: i64 = 60_000;
+
+/// Whether an unchanged poll result must be published anyway.
+pub fn heartbeat_due(published_at_ms: Option<i64>, now_ms: i64) -> bool {
+    published_at_ms.is_none_or(|at| now_ms.saturating_sub(at) >= HEARTBEAT_MS)
+}
+
 /// Thread messages `envoy_event` returns: the root and the latest ones.
 const THREAD_KEEP: usize = 15;
 /// Characters kept of each thread message.
@@ -265,6 +294,13 @@ pub fn trim_thread(mut thread: Vec<InboundEvent>) -> (Vec<InboundEvent>, usize) 
 #[cfg(test)]
 mod trim_tests {
     use super::*;
+
+    #[test]
+    fn an_unchanged_poll_is_still_reported_once_a_minute() {
+        assert!(heartbeat_due(None, 1_000));
+        assert!(!heartbeat_due(Some(1_000), 1_000 + HEARTBEAT_MS - 1));
+        assert!(heartbeat_due(Some(1_000), 1_000 + HEARTBEAT_MS));
+    }
 
     #[test]
     fn long_threads_keep_the_root_and_the_latest_messages_cut_short() {

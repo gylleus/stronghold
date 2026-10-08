@@ -12,6 +12,7 @@ use eframe::egui::{
 
 use super::layout::{MATTRESS_TOP, Mark, PIPE_H, PIPE_LIP_W};
 use super::nature::Deco;
+use crate::model::NodeKind;
 use crate::orca::AgentIdentity;
 
 const ANT_GREY: &[u8] = include_bytes!("../../../assets/art/farm/ant_grey.png");
@@ -84,6 +85,7 @@ const CODEX_COATS: [[u8; 3]; 6] = [
 /// How to draw one ant.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AntLook {
+    pub kind: NodeKind,
     pub coat: Coat,
     /// Walk frame, wrapped to [`ANT_FRAMES`].
     pub frame: usize,
@@ -141,6 +143,7 @@ impl Palette {
 
 /// The loaded textures; create once per egui context with [`Sprites::load`].
 pub struct Sprites {
+    officer_cap: TextureHandle,
     ant_grey: TextureHandle,
     ant_red: TextureHandle,
     ant_claude: TextureHandle,
@@ -183,6 +186,11 @@ impl Sprites {
             )
         };
         Self {
+            officer_cap: ctx.load_texture(
+                "ant_farm/officer_cap",
+                officer_cap(),
+                TextureOptions::NEAREST,
+            ),
             ant_grey: png("ant_grey", ANT_GREY),
             ant_red: png("ant_red", ANT_RED),
             ant_claude: recolored("ant_claude", CLAUDE_COATS),
@@ -225,6 +233,31 @@ impl Sprites {
             unit_uv(),
             Color32::WHITE.gamma_multiply(alpha),
         );
+    }
+
+    /// A piece of scenery at `k` points per map texel (rather than its own scale), standing on
+    /// `foot`, turned `angle` radians about `pivot`, multiplied by `tint`.
+    pub fn deco_turned(
+        &self,
+        painter: &Painter,
+        deco: Deco,
+        foot: Pos2,
+        k: f32,
+        (angle, pivot): (f32, Pos2),
+        tint: Color32,
+    ) {
+        let Some(texture) = self.nature.get(&deco) else {
+            return;
+        };
+        let [w, h] = deco.size();
+        let size = vec2(w as f32 * k, h as f32 * k);
+        let rect = Rect::from_min_size(foot - vec2(size.x / 2.0, size.y), size);
+        let mut mesh = egui::Mesh::with_texture(texture.id());
+        mesh.add_rect_with_uv(rect, unit_uv(), tint);
+        if angle != 0.0 {
+            mesh.rotate(egui::emath::Rot2::from_angle(angle), pivot);
+        }
+        painter.add(mesh);
     }
 
     /// Roots spreading into the soil under a plant `width` points wide at `foot`.
@@ -385,6 +418,15 @@ impl Sprites {
             uv,
             Color32::WHITE.gamma_multiply(look.alpha),
         );
+        if matches!(look.kind, NodeKind::Coordinator | NodeKind::Attendant) {
+            // Share the body's UVs so the cap follows its gait, facing and belly-up poses.
+            painter.image(
+                self.officer_cap.id(),
+                cell,
+                uv,
+                Color32::WHITE.gamma_multiply(look.alpha),
+            );
+        }
     }
 
     /// A speech bubble with `mark`, its tail on `anchor` (the top of the ant's head).
@@ -670,6 +712,33 @@ fn decode(bytes: &[u8]) -> ColorImage {
         .to_rgba8();
     let size = [image.width() as usize, image.height() as usize];
     ColorImage::from_rgba_unmultiplied(size, image.as_flat_samples().as_slice())
+}
+
+/// A peaked officer's cap above the left-facing head. Its brass band identifies rank
+/// without recoloring the agent or occupying the space reserved for state bubbles.
+fn officer_cap() -> ColorImage {
+    let rows = [
+        b"..#####." as &[u8],
+        b".#sssss#",
+        b".#sssss#",
+        b".#bbbbb#",
+        b"######..",
+    ];
+    let mut image = ColorImage::filled([16, 16 * ANT_FRAMES], Color32::TRANSPARENT);
+    for frame in 0..ANT_FRAMES {
+        // The second walk frame lowers the head by one texel.
+        for (y, row) in rows.iter().enumerate() {
+            for (x, pixel) in row.iter().enumerate() {
+                image[(x, frame * 16 + 4 + frame + y)] = match pixel {
+                    b'#' => Color32::from_rgb(0x04, 0x1c, 0x22),
+                    b's' => Color32::from_rgb(0x36, 0x48, 0x58),
+                    b'b' => Color32::from_rgb(0xed, 0xcf, 0x8b),
+                    _ => Color32::TRANSPARENT,
+                };
+            }
+        }
+    }
+    image
 }
 
 /// `image` with each color of `from` swapped for the same slot of `to`; others kept.

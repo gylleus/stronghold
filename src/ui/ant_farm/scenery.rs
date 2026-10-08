@@ -40,8 +40,8 @@ pub fn surface(scene: &Scene) -> Vec<Placement> {
     for i in 0.. {
         let h = hash(i, 7);
         let deco = match h % 100 {
-            0..12 => Deco::Tree,
-            12..20 => Deco::Pine,
+            // No trees: on the surface a tree stands for a worktree (see [`super::forest`]).
+            0..20 => Deco::Tuft,
             20..36 => Deco::Bush,
             36..62 => {
                 [Deco::FlowerRed, Deco::FlowerYellow, Deco::FlowerPurple][(h / 100 % 3) as usize]
