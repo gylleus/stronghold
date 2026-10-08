@@ -81,6 +81,10 @@ pub struct SpawnOutcome {
     pub verified: bool,
     /// Warnings and what was done on the way (modal answered, prompt resubmitted, …).
     pub notes: Vec<String>,
+    /// The `--model` the agent was launched with (`None`: its CLI default).
+    pub model: Option<String>,
+    /// The `--effort` it was launched with.
+    pub effort: Option<String>,
 }
 
 impl SpawnOutcome {
@@ -325,6 +329,8 @@ pub fn run_plan_observed(
         context: run.ctx,
         verified: run.verified,
         notes: run.notes,
+        model: plan.request.model.clone(),
+        effort: plan.request.effort.clone(),
     })
 }
 

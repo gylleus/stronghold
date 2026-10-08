@@ -140,6 +140,8 @@ pub struct SpawnForm {
     pub prompt: String,
     /// Let Orca suffix a taken new worktree name instead of refusing it.
     pub allow_suffix: bool,
+    /// The saved default model and effort of new ants, used when `model` is blank.
+    pub ants: crate::spawn::AntSettings,
 }
 
 impl SpawnForm {
@@ -220,10 +222,14 @@ impl SpawnForm {
                 }
             }
         };
+        let mut model = Some(self.model.clone()).filter(|m| !m.trim().is_empty());
+        let mut effort = None;
+        self.ants.fill(self.agent, &mut model, &mut effort);
         Ok(SpawnRequest {
             target,
             agent: self.agent,
-            model: Some(self.model.clone()).filter(|m| !m.trim().is_empty()),
+            model,
+            effort,
             prompt: self.prompt.clone(),
             label: None,
         })
@@ -387,10 +393,16 @@ impl SpawnDialog {
     }
 
     /// Draws the dialog; returns the plan to launch when Karl pressed Launch (or ⌘↩).
-    pub fn show(&mut self, ctx: &egui::Context, fleet: &SpawnFleet) -> Option<SpawnPlan> {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        fleet: &SpawnFleet,
+        ants: &crate::spawn::AntSettings,
+    ) -> Option<SpawnPlan> {
         if !self.open {
             return None;
         }
+        self.form.ants = ants.clone();
         self.poll_catalog(ctx);
         let mut open = true;
         let mut launch = None;
@@ -544,12 +556,18 @@ impl SpawnDialog {
                     ui.label("Model");
                     let model_locked =
                         form.mode == ModeName::Worker && form.place == WorkerPlace::Terminal;
+                    let hint = if form.agent == Agent::Claude {
+                        form.ants.describe()
+                    } else {
+                        "default".into()
+                    };
                     ui.add_enabled(
                         !model_locked,
                         egui::TextEdit::singleline(&mut form.model)
-                            .hint_text("default")
+                            .hint_text(hint)
                             .desired_width(140.0),
-                    );
+                    )
+                    .on_hover_text("Blank: the Ants default from Settings (Claude only)");
                 });
                 ui.end_row();
             });
@@ -874,6 +892,22 @@ mod tests {
         f.model = " ".into();
         let req = f.request(&catalog, &fleet).unwrap();
         assert_eq!(req.model, None);
+        // A blank model takes the saved Ants default (Claude only); a typed one wins.
+        f.ants = crate::spawn::AntSettings {
+            model: Some("fable".into()),
+            effort: Some("high".into()),
+        };
+        let req = f.request(&catalog, &fleet).unwrap();
+        assert_eq!(req.model.as_deref(), Some("fable"));
+        assert_eq!(req.effort.as_deref(), Some("high"));
+        f.model = "opus".into();
+        let req = f.request(&catalog, &fleet).unwrap();
+        assert_eq!((req.model.as_deref(), req.effort), (Some("opus"), None));
+        f.agent = Agent::Codex;
+        f.model = String::new();
+        assert_eq!(f.request(&catalog, &fleet).unwrap().model, None);
+        f.agent = Agent::Claude;
+        f.ants = Default::default();
         assert_eq!(
             req.target,
             SpawnTarget::NewWorktree {
@@ -962,7 +996,9 @@ mod tests {
                 ..Default::default()
             };
             let mut output = ctx.run_ui(input, |ui| {
-                out = dialog.show(ui.ctx(), &fleet()).or(out.take());
+                out = dialog
+                    .show(ui.ctx(), &fleet(), &Default::default())
+                    .or(out.take());
             });
             output.textures_delta.clear();
             texts = shape_texts(&output);
@@ -1002,9 +1038,10 @@ mod tests {
             "{texts:?}"
         );
 
-        let plan =
-            crate::ui::test_util::click_label("Launch", |ui| dialog.show(ui.ctx(), &fleet()))
-                .expect("Launch returns the plan");
+        let plan = crate::ui::test_util::click_label("Launch", |ui| {
+            dialog.show(ui.ctx(), &fleet(), &Default::default())
+        })
+        .expect("Launch returns the plan");
         assert!(matches!(plan.steps[0], Step::CreateTerminal { .. }));
     }
 
@@ -1039,6 +1076,8 @@ mod tests {
                 },
                 verified: true,
                 notes: vec![],
+                model: None,
+                effort: None,
             }),
         });
         assert!(!dialog.job().unwrap().running());

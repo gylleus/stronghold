@@ -24,6 +24,9 @@ pub struct Cursor {
 pub struct Inbox {
     events: Vec<InboundEvent>,
     floor_us: i64,
+    /// App-owned resolution overlay; ingestion checkpoints remain worker-owned.
+    #[serde(skip)]
+    resolved: BTreeSet<String>,
     forwarded: BTreeSet<String>,
     /// Ingestion never backfills messages from before the first activation.
     pub first_enabled_ms: Option<i64>,
@@ -76,8 +79,7 @@ impl Inbox {
     }
 
     pub fn unforwarded(&self) -> Vec<InboundEvent> {
-        self.events
-            .iter()
+        self.open_events()
             .filter(|e| !self.forwarded.contains(&e.id()))
             .cloned()
             .collect()
@@ -91,6 +93,20 @@ impl Inbox {
         }
     }
 
+    pub fn resolve(&mut self, ids: impl IntoIterator<Item = String>) {
+        self.resolved.extend(ids);
+    }
+
+    pub fn is_open(&self, id: &str) -> bool {
+        self.get(id).is_some() && !self.resolved.contains(id)
+    }
+
+    pub fn open_events(&self) -> impl DoubleEndedIterator<Item = &InboundEvent> {
+        self.events
+            .iter()
+            .filter(|e| !self.resolved.contains(&e.id()))
+    }
+
     pub fn events(&self) -> &[InboundEvent] {
         &self.events
     }
@@ -102,8 +118,7 @@ impl Inbox {
     pub fn since(&self, since: Option<&str>, limit: usize) -> Vec<InboundEvent> {
         let floor = since.and_then(timestamp_us).unwrap_or_default();
         let events: Vec<_> = self
-            .events
-            .iter()
+            .open_events()
             .filter(|e| timestamp_us(&e.ts).unwrap_or_default() > floor)
             .collect();
         let limit = limit.min(MAX_EVENTS);
@@ -140,7 +155,7 @@ impl Inbox {
     }
 }
 
-pub(super) fn load<T: serde::de::DeserializeOwned + Default>(path: &Path) -> io::Result<T> {
+pub(crate) fn load<T: serde::de::DeserializeOwned + Default>(path: &Path) -> io::Result<T> {
     match fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(T::default()),
@@ -148,7 +163,7 @@ pub(super) fn load<T: serde::de::DeserializeOwned + Default>(path: &Path) -> io:
     }
 }
 
-pub(super) fn save(path: &Path, value: &impl Serialize) -> io::Result<()> {
+pub(crate) fn save(path: &Path, value: &impl Serialize) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }

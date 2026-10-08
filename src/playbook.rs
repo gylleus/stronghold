@@ -132,6 +132,17 @@ impl Role {
     }
 }
 
+/// The Envoy playbook as the session's appended system prompt, so it is part of the cached
+/// prefix and survives a context reset.
+pub fn envoy_system_prompt(playbook: &Playbook) -> Result<String> {
+    let served = playbook.get(&Target::Role(Role::Envoy), None)?;
+    Ok(format!(
+        "# Envoy standing rules\n\n{}\n\n{}",
+        served.version.header(),
+        served.body
+    ))
+}
+
 /// The first prompt of the Envoy session.
 pub fn envoy_launch_prompt(dry_run: bool) -> String {
     let mode = if dry_run {
@@ -140,9 +151,10 @@ pub fn envoy_launch_prompt(dry_run: bool) -> String {
         "Dry-run is OFF: drafts Karl approves are posted and relays are delivered."
     };
     format!(
-        "You are the Envoy. Load your standing rules with the myrstack MCP tool get_playbook \
-         (role=envoy) and follow them. {mode} Then wait: Myrstack types each new event into \
-         this terminal as an `Envoy event:` line. Don't poll."
+        "You are the Envoy. Your standing rules are the Envoy playbook in your system prompt; \
+         follow them. {mode} Then wait: Myrstack types each new event into this terminal as \
+         an `Envoy event:` line. Don't poll, and don't load the playbook again: it is already \
+         there."
     )
 }
 

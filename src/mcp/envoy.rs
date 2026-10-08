@@ -46,7 +46,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_inbox",
-            "Read recent inbound Slack events, newest first (default 20); since is a Slack timestamp. New events are typed into your terminal, so you rarely need this.",
+            "Read open inbound Slack events (default 20), with the notes of their threads; since is a Slack timestamp. New events are typed into your terminal, so you rarely need this.",
             json!({"since":string,"limit":{"type":"integer","minimum":1,"maximum":2000}}),
             vec![],
         ),
@@ -64,7 +64,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_drafts",
-            "Read drafts, optionally filtered by status.",
+            "Read open drafts by default; specify status to include handled drafts.",
             json!({"status":{"type":"string","enum":["pending","approved","sent","failed","rejected","dry_run_sent"]}}),
             vec![],
         ),
@@ -80,10 +80,16 @@ pub fn definitions() -> Vec<Value> {
             json!({"summary":string,"repo":string,"why":string,"slack_link":string}),
             vec!["summary", "why", "slack_link"],
         ),
+        (
+            "envoy_note",
+            "Remember a thread for your next fresh context: who asked, what was promised, what we're waiting on. Replaces the thread's note (at most 600 characters; empty text clears it). thread_ts is the thread root (an event's thread_ts, or its ts for a root message); omit it for a note on the whole conversation. Every later event in that thread is typed with the note.",
+            json!({"conversation":string,"thread_ts":string,"text":string}),
+            vec!["conversation", "text"],
+        ),
     ];
     specs.into_iter().map(|(name,description,properties,required)| json!({
         "name":name,"description":description,"inputSchema":{"type":"object","properties":properties,"required":required,"additionalProperties":false},
-        "annotations":{"readOnlyHint":matches!(name,"envoy_inbox"|"envoy_event"|"envoy_drafts"|"envoy_request"|"reach_out_status"),"idempotentHint":matches!(name,"envoy_inbox"|"envoy_event"|"envoy_drafts"|"envoy_request"|"reach_out_status"),"destructiveHint":false,"openWorldHint":name=="envoy_relay"||name=="envoy_event"}
+        "annotations":{"readOnlyHint":matches!(name,"envoy_inbox"|"envoy_event"|"envoy_drafts"|"envoy_request"|"reach_out_status"),"idempotentHint":matches!(name,"envoy_inbox"|"envoy_event"|"envoy_drafts"|"envoy_request"|"reach_out_status"|"envoy_note"),"destructiveHint":false,"openWorldHint":name=="envoy_relay"||name=="envoy_event"}
     })).collect()
 }
 

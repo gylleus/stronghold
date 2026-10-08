@@ -71,6 +71,8 @@ pub struct SpawnArgs {
     pub prompt: String,
     pub agent: Agent,
     pub model: Option<String>,
+    /// `--effort` level; only used with a model.
+    pub effort: Option<String>,
     /// Let Orca add a suffix (`name-2`) when the new worktree's name or branch is taken, instead
     /// of failing.
     pub allow_suffix: bool,
@@ -112,6 +114,7 @@ impl SpawnArgs {
             prompt: p.str("prompt")?.unwrap_or_default().trim().to_string(),
             agent,
             model: opt("model")?,
+            effort: opt("effort")?,
             allow_suffix: p.bool("allow_suffix")?.unwrap_or(false),
         };
         args.check().map_err(invalid)?;
@@ -135,6 +138,7 @@ impl SpawnArgs {
             ("title", &self.title),
             ("label", &self.label),
             ("model", &self.model),
+            ("effort", &self.effort),
         ];
         for (key, value) in fields {
             if let Some(value) = value {
@@ -260,6 +264,7 @@ impl SpawnArgs {
             target,
             agent: self.agent,
             model: self.model.clone(),
+            effort: self.effort.clone(),
             prompt: self.prompt.clone(),
             label: self.label.clone(),
         })
@@ -393,5 +398,7 @@ pub fn outcome_json(outcome: &super::SpawnOutcome) -> Value {
         "dispatch_id": outcome.context.dispatch_id,
         "verified": outcome.verified,
         "notes": outcome.notes,
+        "model": outcome.model,
+        "effort": outcome.effort,
     })
 }

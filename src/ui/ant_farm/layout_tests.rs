@@ -989,6 +989,7 @@ fn only_removed_ants_fall() {
 fn a_dead_ant_falls_to_the_bottom() {
     use super::death::*;
     let body = Body {
+        kind: NodeKind::Worker,
         at: pos2(0.5, 0.2),
         size: 32.0,
         facing_right: true,

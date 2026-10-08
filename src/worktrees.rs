@@ -33,7 +33,7 @@ use crate::orca::{
 /// The removal log in the data dir.
 pub const LOG_FILE: &str = "worktree-cleanup.jsonl";
 /// Present next to the log while a cleanup runs, from the app or the MCP tool, so the app
-/// shows the broom whoever started it.
+/// shows the saw whoever started it.
 pub const SWEEP_FILE: &str = "worktree-sweep.json";
 /// A worktree created this recently is kept: an agent may be about to start in it.
 pub const MIN_AGE_MS: i64 = 2 * 60 * 60 * 1000;
@@ -1378,6 +1378,7 @@ pub fn execute(
                 total,
                 done: done.len(),
                 current: Some(entry.name.clone()),
+                current_id: Some(entry.id.clone()),
             },
         );
         let mut removal = Removal {
@@ -1527,6 +1528,9 @@ pub struct SweepMarker {
     pub total: usize,
     pub done: usize,
     pub current: Option<String>,
+    /// The worktree id of `current`, for the saw in the ant farm.
+    #[serde(default)]
+    pub current_id: Option<String>,
 }
 
 fn write_marker(path: &Path, marker: &SweepMarker) {

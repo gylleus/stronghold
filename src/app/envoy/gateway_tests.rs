@@ -256,8 +256,8 @@ fn gateway_mcp_to_event_route_approval_fast_reply_and_safe_terminal_delivery() {
         preview: Some("OpenAI Codex\n›".into()),
         ..Default::default()
     };
-    assert!(!can_forward(&terminal, false, false));
-    assert!(can_forward(&terminal, true, false));
+    assert!(!can_forward(&terminal, false, false, None));
+    assert!(can_forward(&terminal, true, false, None));
     let (action, record) = core.reply_action(&id, &delivery, "ant").unwrap();
     assert!(
         matches!(&action,Action::Send{handle,input} if handle=="ant" && input.text.as_ref().unwrap().contains("not Karl's instruction") && input.text.as_ref().unwrap().contains(fake.event.permalink.as_ref().unwrap()))
@@ -1497,4 +1497,157 @@ fn binding_worker_preview_persists_proposal_and_notifies_without_assigning_owner
     .unwrap();
     assert!(restored.get(&id).unwrap().binding_proposal.is_some());
     assert!(restored.get(&id).unwrap().bound_requester().is_none());
+}
+
+#[test]
+fn decline_hides_the_draft_and_resolves_its_notification_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "Review");
+    let draft = route(&mut core, &id);
+    let mut notices =
+        crate::notify::NotificationCenter::new(crate::notify::history::History::default());
+    notices.dispatch(
+        cleanup::draft_notice(&json!(draft)),
+        &crate::notify::NotifySettings::default(),
+        1,
+    );
+    core.request(&command(
+        "envoy",
+        "envoy_decline",
+        json!({"id": id, "reason":"No thanks"}),
+    ))
+    .unwrap();
+    let mut reloaded = AppEnvoy::load(dir.path().into());
+    reloaded.handle = Some("envoy".into());
+    assert!(
+        reloaded
+            .request(&command("envoy", "envoy_drafts", json!({})))
+            .unwrap()["drafts"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(reloaded.requests()[0].settled);
+    assert!(reloaded.notice_resolved(&notices.history.entries()[0]));
+}
+
+#[test]
+fn request_dismissal_persists_without_closing_the_thread_and_new_replies_reopen_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, commands, _updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "Review");
+    let draft = route(&mut core, &id);
+    core.queue()
+        .unwrap()
+        .begin_approval(&draft.id, None, false, 0)
+        .unwrap();
+    core.queue()
+        .unwrap()
+        .finish_receipt(
+            &draft.id,
+            Ok(SendReceipt {
+                conversation: "C123".into(),
+                ts: "1.000001".into(),
+            }),
+            1,
+        )
+        .unwrap();
+    core.reconcile_requests().unwrap();
+    core.panel_action(
+        crate::ui::envoy::DraftAction::DismissRequest(id.clone()),
+        false,
+        |_| panic!("dismiss must not send"),
+    )
+    .1
+    .unwrap();
+    assert!(!commands.try_iter().any(|w| matches!(w, Work::Remove(_))));
+    let mut reloaded = AppEnvoy::load(dir.path().into());
+    assert!(reloaded.dismissed_requests().contains(&id));
+    assert!(!reloaded.requests()[0].settled);
+    reloaded
+        .requests_mut()
+        .unwrap()
+        .change(&id, |r| {
+            r.deliveries.push(crate::envoy::requests::Delivery {
+                id: "new-reply".into(),
+                text: "Hello".into(),
+                event: None,
+                delivered: false,
+                dry_run: false,
+                inbox: true,
+            });
+            Ok(())
+        })
+        .unwrap();
+    assert!(!reloaded.dismissed_requests().contains(&id));
+}
+
+#[test]
+fn request_lines_and_envoy_request_carry_the_bound_threads_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = fixture(dir.path());
+    let mut core = AppEnvoy::at(
+        dir.path().into(),
+        &egui::Context::default(),
+        fake.clone(),
+        fake.bridge.clone(),
+    );
+    core.set_enabled("envoy".into(), EnvoySettings::default())
+        .unwrap();
+    let id = submit(&mut core, "Which date is the rollout?");
+    core.requests_mut()
+        .unwrap()
+        .change(&id, |r| {
+            r.thread = Some(crate::envoy::requests::Thread {
+                conversation: "C123".into(),
+                ts: "1700000000.000100".into(),
+            });
+            Ok(())
+        })
+        .unwrap();
+    let plain = core.request_event("envoy").unwrap().0;
+    assert!(
+        matches!(&plain, Action::Send { input, .. } if !input.text.as_ref().unwrap().contains("note:"))
+    );
+    core.request(&command(
+        "envoy",
+        "envoy_note",
+        json!({"conversation":"C123","thread_ts":"1700000000.000100","text":"Avery's agent owns this thread; it promised a date by Friday"}),
+    ))
+    .unwrap();
+    let (action, _) = core.request_event("envoy").unwrap();
+    let Action::Send { input, .. } = &action else {
+        panic!("typed line")
+    };
+    let line = input.text.as_ref().unwrap();
+    assert!(line.starts_with("Envoy event: request from ant:"), "{line}");
+    assert!(
+        line.ends_with("— note: Avery's agent owns this thread; it promised a date by Friday"),
+        "{line}"
+    );
+    let shown = core
+        .request(&command("envoy", "envoy_request", json!({"id": id})))
+        .unwrap();
+    assert_eq!(
+        shown["note"]["text"],
+        "Avery's agent owns this thread; it promised a date by Friday"
+    );
+    core.context.fresh = true;
+    let (action, _) = core.request_event("envoy").unwrap();
+    let Action::Send { input, .. } = &action else {
+        panic!("typed line")
+    };
+    assert!(
+        input
+            .text
+            .as_ref()
+            .unwrap()
+            .starts_with("Fresh context: your earlier conversation was cleared."),
+        "a request typed first after a reset carries the handoff too"
+    );
 }

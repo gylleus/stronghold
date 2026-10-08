@@ -56,6 +56,7 @@ pub const ACTION_METHODS: &[&str] = &[
     "envoy_drafts",
     "envoy_relay",
     "envoy_propose_task",
+    "envoy_note",
     "send",
     "enter",
     "esc",
