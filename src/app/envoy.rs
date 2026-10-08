@@ -646,6 +646,12 @@ impl AppEnvoy {
                         now_ms(),
                     );
                     draft.slack_link = event.permalink.clone();
+                    draft.manual_approval = match args.get("manual_approval") {
+                        None => false,
+                        Some(value) => {
+                            value.as_bool().ok_or("manual_approval must be a boolean")?
+                        }
+                    };
                     draft
                 } else {
                     Draft::proposal(
