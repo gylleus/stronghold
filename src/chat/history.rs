@@ -21,6 +21,11 @@ pub const COMPACTED_NOTICE: &str = "Conversation compacted";
 /// One transcript record, reduced to what a pane draws.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HistoryRecord {
+    /// Source time of all visible blocks from one JSONL record.
+    Timed {
+        timestamp: jiff::Timestamp,
+        records: Vec<HistoryRecord>,
+    },
     /// A prompt: typed by the user or sent by another agent.
     Prompt(String),
     /// A prompt Karl spoke to the Queen.
@@ -42,8 +47,20 @@ pub fn parse_line(line: &str) -> Vec<HistoryRecord> {
 }
 
 pub fn parse_record(record: &Value) -> Vec<HistoryRecord> {
+    parse_record_in(record, false)
+}
+
+fn parse_record_in(record: &Value, subagent: bool) -> Vec<HistoryRecord> {
+    let records = record_items(record, subagent);
+    match super::protocol::timestamp_of(record) {
+        Some(timestamp) if !records.is_empty() => vec![HistoryRecord::Timed { timestamp, records }],
+        _ => records,
+    }
+}
+
+fn record_items(record: &Value, subagent: bool) -> Vec<HistoryRecord> {
     let flag = |key| record.get(key).and_then(Value::as_bool) == Some(true);
-    if flag("isMeta") || flag("isSidechain") || flag("isCompactSummary") {
+    if flag("isMeta") || (flag("isSidechain") && !subagent) || flag("isCompactSummary") {
         return Vec::new();
     }
     match record.get("type").and_then(Value::as_str) {
@@ -51,12 +68,14 @@ pub fn parse_record(record: &Value) -> Vec<HistoryRecord> {
         Some("assistant") => match parse_value(record) {
             Incoming::Assistant {
                 message_id,
+                model,
                 content,
                 usage,
                 ..
             } => vec![HistoryRecord::Message(Incoming::Assistant {
                 parent: None,
                 message_id,
+                model,
                 content: content.into_iter().map(shrink_block).collect(),
                 usage,
             })],
@@ -222,7 +241,16 @@ fn cut(text: String) -> String {
 impl Transcript {
     /// Adds one record read from a session transcript.
     pub fn apply_history(&mut self, record: &HistoryRecord) {
+        let start = self.items.len();
+        if let HistoryRecord::Timed { timestamp, records } = record {
+            for record in records {
+                self.apply_history(record);
+            }
+            self.set_timestamps(start, Some(*timestamp));
+            return;
+        }
         match record {
+            HistoryRecord::Timed { .. } => unreachable!(),
             HistoryRecord::Prompt(text) => self.items.push(super::ChatItem::User(text.clone())),
             HistoryRecord::VoicePrompt(text) => {
                 self.items.push(super::ChatItem::VoiceUser(text.clone()));
@@ -232,6 +260,8 @@ impl Transcript {
             HistoryRecord::Notice(text) => self.push_notice(text.clone()),
             HistoryRecord::System(text) => self.push_system(text.clone()),
         }
+        // Legacy history must never acquire the time at which it was loaded.
+        self.set_timestamps(start, None);
     }
 }
 
@@ -288,9 +318,17 @@ impl HistoryReader {
         self.offset += read as u64;
         let complete = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
         self.partial = bytes.split_off(complete);
+        // A dedicated subagent transcript is itself a sidechain. Only filter sidechains
+        // out of the parent session, where they would duplicate another chat's traffic.
+        let subagent = self
+            .path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "subagents");
         let records = String::from_utf8_lossy(&bytes)
             .lines()
-            .flat_map(parse_line)
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .flat_map(|record| parse_record_in(&record, subagent))
             .collect();
         Ok(Some(HistoryChunk {
             path: self.path.clone(),
@@ -341,6 +379,110 @@ mod tests {
             t.apply_history(&record);
         }
         t
+    }
+
+    #[test]
+    fn source_times_and_actual_models_survive_history_loading() {
+        let at = "2026-10-08T11:52:04Z";
+        let later = "2026-10-08T11:53:04Z";
+        let t = transcript_of(&jsonl(&[
+            json!({"type": "user", "timestamp": at, "message": {"content": "Hello"}}),
+            json!({"type": "assistant", "timestamp": at, "message": {
+            "id": "m1", "model": "claude-opus-4-6", "content": [
+                {"type": "text", "text": "Checking"},
+                {"type": "tool_use", "id": "t1", "name": "Read", "input": {}}
+            ]}}),
+            json!({"type": "user", "timestamp": later, "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "done"}
+            ]}}),
+            json!({"type": "assistant", "timestamp": later, "message": {
+                "id": "m2", "model": "<synthetic>", "content": [{"type": "text", "text": "Interrupted"}]
+            }}),
+            json!({"type": "assistant", "isSidechain": true, "message": {
+                "id": "child", "model": "other-model", "content": []
+            }}),
+            prompt("Legacy prompt"),
+            json!({"type": "system", "subtype": "compact_boundary", "timestamp": "bad"}),
+            prompt("<command-name>/model</command-name><command-args>sonnet</command-args>"),
+        ]));
+        assert_eq!(t.model.as_deref(), Some("claude-opus-4-6"));
+        for index in 0..3 {
+            assert_eq!(t.timestamp(index), Some(at.parse().unwrap()));
+        }
+        assert_eq!(t.timestamp(3), Some(later.parse().unwrap()));
+        for index in 4..7 {
+            assert_eq!(
+                t.timestamp(index),
+                None,
+                "legacy records must not get load time"
+            );
+        }
+        assert!(t.tool_calls().next().unwrap().result.is_some());
+        assert!(
+            transcript_of(&jsonl(&[reply("m", "Unknown model")]))
+                .model
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn dedicated_subagent_history_keeps_its_sidechain_times_and_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("subagents");
+        std::fs::create_dir(&folder).unwrap();
+        let path = folder.join("agent-a.jsonl");
+        let at = "2026-10-08T11:52:04Z";
+        std::fs::write(
+            &path,
+            jsonl(&[
+                json!({"type": "user", "isSidechain": true, "timestamp": at,
+                "message": {"content": "Explore"}}),
+                json!({"type": "assistant", "isSidechain": true, "timestamp": at,
+                "message": {"id": "m", "model": "claude-haiku-4-5", "content": [
+                    {"type": "text", "text": "Found it"}
+                ]}}),
+            ]),
+        )
+        .unwrap();
+        let t = load(&path).unwrap();
+        assert_eq!(t.items.len(), 2);
+        assert_eq!(t.model.as_deref(), Some("claude-haiku-4-5"));
+        assert_eq!(t.timestamp(0), Some(at.parse().unwrap()));
+        assert_eq!(t.timestamp(1), Some(at.parse().unwrap()));
+    }
+
+    #[test]
+    fn prepending_history_and_finishing_streams_preserves_message_times() {
+        let mut live = Transcript::default();
+        live.push_user("now");
+        let sent = live.timestamp(0).unwrap();
+        let at: jiff::Timestamp = "2026-10-09T11:52:04Z".parse().unwrap();
+        let messages = [
+            json!({"type": "stream_event", "event": {"type": "message_start", "message": {"id": "m", "model": "running-model"}}}),
+            json!({"type": "stream_event", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "text"}}}),
+        ];
+        for message in messages {
+            live.apply_at(&parse_value(&message), at);
+        }
+        let old = "2026-10-08T11:52:04Z";
+        live.prepend(transcript_of(&jsonl(&[
+            json!({"type": "user", "timestamp": old, "message": {"content": "Earlier"}}),
+            reply("old", "Earlier reply without time"),
+        ])));
+        live.apply_at(
+            &parse_value(&reply("m", "Finished")),
+            "2026-10-09T11:54:00Z".parse().unwrap(),
+        );
+        assert_eq!(live.items.len(), 4);
+        assert_eq!(live.timestamp(0), Some(old.parse().unwrap()));
+        assert_eq!(live.timestamp(1), None);
+        assert_eq!(live.timestamp(2), Some(sent));
+        assert_eq!(live.timestamp(3), Some(at));
+        assert_eq!(
+            live.assistant_text(),
+            ["Earlier reply without time", "Finished"]
+        );
+        assert_eq!(live.model.as_deref(), Some("running-model"));
     }
 
     #[test]

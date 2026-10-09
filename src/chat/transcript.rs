@@ -73,6 +73,8 @@ pub enum Decision {
 #[derive(Debug, Default)]
 pub struct Transcript {
     pub items: Vec<ChatItem>,
+    /// Source times keyed by item index; absent for legacy records without a timestamp.
+    timestamps: HashMap<usize, jiff::Timestamp>,
     /// From the newest `system/init`.
     pub session_id: Option<String>,
     pub model: Option<String>,
@@ -101,20 +103,53 @@ pub struct Transcript {
 }
 
 impl Transcript {
+    pub fn timestamp(&self, index: usize) -> Option<jiff::Timestamp> {
+        self.timestamps.get(&index).copied()
+    }
+
+    pub(super) fn set_timestamps(&mut self, start: usize, timestamp: Option<jiff::Timestamp>) {
+        for index in start..self.items.len() {
+            if let Some(timestamp) = timestamp {
+                self.timestamps.insert(index, timestamp);
+            } else {
+                self.timestamps.remove(&index);
+            }
+        }
+    }
+
+    /// Myrstack-authored messages are timed at creation, never during rendering.
+    fn push_local(&mut self, item: ChatItem) {
+        self.timestamps
+            .insert(self.items.len(), jiff::Timestamp::now());
+        self.items.push(item);
+    }
+
+    /// CLI messages are timed at the source or when received by the supervisor.
+    pub fn apply_at(&mut self, message: &Incoming, timestamp: jiff::Timestamp) {
+        let start = self.items.len();
+        self.apply(message);
+        self.set_timestamps(start, Some(timestamp));
+    }
+
     pub fn push_user(&mut self, text: &str) {
-        self.items.push(ChatItem::User(text.to_owned()));
+        self.push_local(ChatItem::User(text.to_owned()));
         self.running = true;
     }
 
     /// A message Karl spoke (hold-to-talk).
     pub fn push_voice_user(&mut self, text: &str) {
-        self.items.push(ChatItem::VoiceUser(text.to_owned()));
+        self.push_local(ChatItem::VoiceUser(text.to_owned()));
         self.running = true;
     }
 
     /// Puts `earlier` (the conversation before this one was opened) in front of the items.
     pub fn prepend(&mut self, earlier: Transcript) {
         let shift = earlier.items.len();
+        self.timestamps = std::mem::take(&mut self.timestamps)
+            .into_iter()
+            .map(|(index, timestamp)| (index + shift, timestamp))
+            .chain(earlier.timestamps)
+            .collect();
         let mut items = earlier.items;
         items.append(&mut self.items);
         self.items = items;
@@ -155,11 +190,11 @@ impl Transcript {
     }
 
     pub fn push_notice(&mut self, text: impl Into<String>) {
-        self.items.push(ChatItem::Notice(text.into()));
+        self.push_local(ChatItem::Notice(text.into()));
     }
 
     pub fn push_system(&mut self, text: impl Into<String>) {
-        self.items.push(ChatItem::System(text.into()));
+        self.push_local(ChatItem::System(text.into()));
     }
 
     /// Records that auto mode allowed `request`: its waiting card (if any) closes and its tool
@@ -182,7 +217,7 @@ impl Transcript {
     }
 
     pub fn push_error(&mut self, text: impl Into<String>) {
-        self.items.push(ChatItem::Error(text.into()));
+        self.push_local(ChatItem::Error(text.into()));
     }
 
     /// The first permission card still waiting for an answer.
@@ -194,7 +229,7 @@ impl Transcript {
     }
 
     pub fn push_permission(&mut self, request: PermissionRequest) {
-        self.items.push(ChatItem::Permission(PermissionCard {
+        self.push_local(ChatItem::Permission(PermissionCard {
             request,
             decision: None,
         }));
@@ -249,10 +284,14 @@ impl Transcript {
             Incoming::Stream { event, .. } => self.apply_stream(event),
             Incoming::Assistant {
                 message_id,
+                model,
                 content,
                 usage,
                 ..
             } => {
+                if model.is_some() {
+                    self.model = model.clone();
+                }
                 // Synthetic messages (an interrupt note) carry all-zero usage.
                 if let Some(tokens) = usage.map(|u| u.context_tokens()).filter(|&t| t > 0) {
                     self.context_tokens = Some(tokens);
@@ -279,7 +318,10 @@ impl Transcript {
 
     fn apply_stream(&mut self, event: &StreamEvent) {
         match event {
-            StreamEvent::MessageStart { message_id } => {
+            StreamEvent::MessageStart { message_id, model } => {
+                if model.is_some() {
+                    self.model = model.clone();
+                }
                 self.current_message = Some(message_id.clone());
                 self.stream_blocks.clear();
             }

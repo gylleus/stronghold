@@ -39,7 +39,10 @@ pub enum ChatEvent {
     State(SessionState),
     /// A message from the CLI (permission requests the policy allowed are included, so the
     /// transcript can show them; see [`ChatEvent::PermissionNeeded`]).
-    Message(Incoming),
+    Message {
+        message: Incoming,
+        timestamp: jiff::Timestamp,
+    },
     /// A tool call that waits for the user.
     PermissionNeeded(PermissionRequest),
     /// A tool call allowed without a card only because auto mode is on (including a card that
@@ -410,13 +413,16 @@ impl Supervisor {
     }
 
     fn on_line(&mut self, line: &str, init_id: &str, stdin: &mut Option<ChildStdin>) {
-        let message = match protocol::parse_line(line) {
-            Ok(m) => m,
+        let received_at = jiff::Timestamp::now();
+        let value = match serde_json::from_str(line) {
+            Ok(v) => v,
             Err(e) => {
                 log::debug!("chat: unparsed line ({e}): {}", line_start(line));
                 return;
             }
         };
+        let timestamp = protocol::timestamp_of(&value).unwrap_or(received_at);
+        let message = protocol::parse_value(&value);
         match &message {
             Incoming::ControlResponse {
                 request_id, error, ..
@@ -468,7 +474,7 @@ impl Supervisor {
             Incoming::Other(_) | Incoming::ControlResponse { .. } => return,
             _ => {}
         }
-        self.emit(ChatEvent::Message(message));
+        self.emit(ChatEvent::Message { message, timestamp });
     }
 
     /// Switches auto mode; turning it on also answers the cards already waiting.

@@ -151,7 +151,7 @@ pub fn chat_ui(ui: &mut Ui, state: &mut ChatPanelState, view: ChatView<'_>) -> V
             ui,
             "queen_chat_messages",
             &mut state.list,
-            &view.transcript.items,
+            view.transcript,
             thinking,
             view.is_node,
             &mut actions,
@@ -168,18 +168,27 @@ pub fn conversation(
     ui: &mut Ui,
     id_salt: impl std::hash::Hash + std::fmt::Debug,
     list: &mut MessageList,
-    items: &[ChatItem],
+    transcript: &Transcript,
     thinking: bool,
     is_node: &dyn Fn(&NodeId) -> bool,
     actions: &mut Vec<ChatAction>,
 ) -> Option<NodeId> {
     let mut clicked = None;
+    let items = &transcript.items;
+    let now = jiff::Zoned::now();
+    let timestamp_height =
+        ui.text_style_height(&egui::TextStyle::Small) + ui.spacing().item_spacing.y;
     let len = items.len() + usize::from(thinking);
     let metrics = TextMetrics::of(ui);
     let estimate = |i: usize, width: f32| {
         items
             .get(i)
             .map_or(metrics.row, |item| estimate_height(item, width, &metrics))
+            + if transcript.timestamp(i).is_some() {
+                timestamp_height
+            } else {
+                0.0
+            }
     };
     list.show(ui, id_salt, len, &estimate, &mut |ui, i| {
         let Some(item) = items.get(i) else {
@@ -191,6 +200,14 @@ pub fn conversation(
         };
         if let Some(id) = item_ui(ui, item, is_node, actions) {
             clicked = Some(id);
+        }
+        if let Some(timestamp) = transcript.timestamp(i) {
+            message_timestamp(
+                ui,
+                timestamp,
+                &now,
+                matches!(item, ChatItem::User(_) | ChatItem::VoiceUser(_)),
+            );
         }
     });
     clicked
@@ -222,11 +239,52 @@ pub fn transcript_conversation(
         ui,
         id_salt,
         &mut view.list,
-        &view.transcript.items,
+        &view.transcript,
         running,
         is_node,
         &mut actions,
     )
+}
+
+/// The same muted model label in every conversation header.
+pub fn model_label(ui: &mut Ui, model: Option<&str>) {
+    if let Some(model) = model.filter(|m| !m.trim().is_empty()) {
+        ui.weak(model);
+    }
+}
+
+fn timestamp_labels(timestamp: jiff::Timestamp, now: &jiff::Zoned) -> (String, String) {
+    let local = timestamp.to_zoned(now.time_zone().clone());
+    let format = if local.date() == now.date() {
+        "%H:%M"
+    } else {
+        "%Y-%m-%d %H:%M"
+    };
+    (
+        local.strftime(format).to_string(),
+        local.strftime("%Y-%m-%d %H:%M:%S %:z").to_string(),
+    )
+}
+
+fn message_timestamp(ui: &mut Ui, timestamp: jiff::Timestamp, now: &jiff::Zoned, user: bool) {
+    let (short, full) = timestamp_labels(timestamp, now);
+    let layout = if user {
+        egui::Layout::right_to_left(egui::Align::Center)
+    } else {
+        egui::Layout::left_to_right(egui::Align::Center)
+    };
+    let size = egui::vec2(
+        ui.available_width(),
+        ui.text_style_height(&egui::TextStyle::Small),
+    );
+    ui.allocate_ui_with_layout(size, layout, |ui| {
+        ui.label(
+            RichText::new(short)
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        )
+        .on_hover_text(full);
+    });
 }
 
 /// The last row of a conversation whose agent is at work.
@@ -324,9 +382,7 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
         if view.auto_mode {
             auto_badge(ui);
         }
-        if let Some(model) = &view.transcript.model {
-            ui.weak(model);
-        }
+        model_label(ui, view.transcript.model.as_deref());
         if let Some(gauge) = view.transcript.context_gauge() {
             context_gauge(ui, &gauge);
         }
@@ -1517,6 +1573,22 @@ mod tests {
             opened("term:term_1"),
             (Some(NodeId("term:term_1".into())), None)
         );
+    }
+
+    #[test]
+    fn timestamp_labels_use_local_dates_and_full_hover_time() {
+        let now: jiff::Zoned = "2026-10-09T00:30:00+02:00[Europe/Stockholm]"
+            .parse()
+            .unwrap();
+        let today = "2026-10-08T22:15:00Z".parse().unwrap();
+        assert_eq!(
+            timestamp_labels(today, &now),
+            ("00:15".into(), "2026-10-09 00:15:00 +02:00".into())
+        );
+        let yesterday = "2026-10-08T21:59:00Z".parse().unwrap();
+        assert_eq!(timestamp_labels(yesterday, &now).0, "2026-10-08 23:59");
+        let last_year = "2025-10-09T11:52:00Z".parse().unwrap();
+        assert_eq!(timestamp_labels(last_year, &now).0, "2025-10-09 13:52");
     }
 
     fn scripted_transcript() -> Transcript {

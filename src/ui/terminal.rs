@@ -409,6 +409,12 @@ pub fn terminal_panel(
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 let color = state_color(node.state, ui.visuals().dark_mode);
                 crate::ui::widgets::state_pill(ui, color, state_label(node.state));
+                crate::ui::chat::model_label(
+                    ui,
+                    conversation
+                        .as_ref()
+                        .and_then(|view| view.transcript.model.as_deref()),
+                );
                 let has_prs = review_rows
                     .iter()
                     .any(|row| row.agent.as_ref().is_some_and(|agent| agent.id == node.id));
@@ -926,6 +932,40 @@ mod tests {
             };
             terminal_panel(ui, node, None, input, 0)
         })
+    }
+
+    #[test]
+    fn agent_and_envoy_headers_show_the_transcript_model() {
+        for kind in [
+            NodeKind::Envoy,
+            NodeKind::Worker,
+            NodeKind::Coordinator,
+            NodeKind::Terminal,
+        ] {
+            let mut state = InputPanelState::default();
+            let mut view = crate::ui::chat::TranscriptView::new(Default::default());
+            view.loaded = true;
+            for record in crate::chat::history::parse_line(
+                r#"{"type":"assistant","timestamp":"2026-10-08T11:52:00Z","message":{"id":"m","model":"claude-test-model","content":[{"type":"text","text":"Hello"}]}}"#,
+            ) {
+                view.transcript.apply_history(&record);
+            }
+            crate::ui::test_util::click_label("claude-test-model", |ui| {
+                terminal_panel(
+                    ui,
+                    &node(kind, false, None),
+                    None,
+                    PanelInput {
+                        review_rows: &[],
+                        state: &mut state,
+                        terminal: None,
+                        conversation: Some(&mut view),
+                        is_node: &|_| false,
+                    },
+                    0,
+                )
+            });
+        }
     }
 
     #[test]
