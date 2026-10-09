@@ -1,5 +1,6 @@
-//! The worktree cleanup window on a synthetic plan, with the broom sweeping along the bottom
+//! The worktree cleanup window on a synthetic plan, with the saw running along the bottom
 //! (driven by a sweep marker in a temporary data dir, as when the Queen runs `clean_worktrees`).
+//! `cargo run --example ant_farm -- --saw` shows it cutting trees in the ant farm.
 //!
 //! `cargo run --example worktree_cleanup [--shot out.png] [--light]`: with `--shot`, saves a
 //! screenshot after a moment and exits.
@@ -135,7 +136,7 @@ impl eframe::App for Demo {
         });
         self.panel.tick(None, now_ms());
         self.panel.window(&ctx);
-        self.panel.broom(&ctx);
+        self.panel.saw(&ctx);
         let Some(path) = &self.shot else { return };
         if !self.shooting && self.since.elapsed() > Duration::from_millis(2500) {
             self.shooting = true;
@@ -179,6 +180,7 @@ fn main() -> eframe::Result {
         total: 4,
         done: 1,
         current: Some("graph-trackpad-pan".into()),
+        current_id: Some("myrstack::graph-trackpad-pan".into()),
     };
     std::fs::write(
         myrstack::worktrees::default_marker_path(),

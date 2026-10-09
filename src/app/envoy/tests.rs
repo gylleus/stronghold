@@ -8,20 +8,20 @@ fn forwarding_waits_for_idle_empty_composer_and_live_agent() {
         preview: Some("Claude Code\n❯ prior task\nResponse\n❯\n? for shortcuts".into()),
         ..Terminal::default()
     };
-    assert!(can_forward(&t, true, false));
-    assert!(!can_forward(&t, false, false));
-    assert!(!can_forward(&t, true, true));
+    assert!(can_forward(&t, true, false, None));
+    assert!(!can_forward(&t, false, false, None));
+    assert!(!can_forward(&t, true, true, None));
     t.preview = Some("Claude Code\n❯ unfinished user text".into());
-    assert!(!can_forward(&t, true, false));
+    assert!(!can_forward(&t, true, false, None));
     t.preview = Some("Do you want to proceed?\n❯ 1. Yes\n  2. No".into());
-    assert!(!can_forward(&t, true, false));
+    assert!(!can_forward(&t, true, false, None));
     t.preview = Some("Claude Code\nuser@host ~ %".into());
-    assert!(!can_forward(&t, true, false));
+    assert!(!can_forward(&t, true, false, None));
     t.agent_identity = Some(AgentIdentity::Codex);
     t.preview = Some("OpenAI Codex\n› prior task\nAnswer\n›".into());
-    assert!(can_forward(&t, true, false));
+    assert!(can_forward(&t, true, false, None));
     t.orphaned = true;
-    assert!(!can_forward(&t, true, false));
+    assert!(!can_forward(&t, true, false, None));
 }
 #[test]
 fn production_approval_transaction_never_calls_delivery_for_dry_run_or_secrets() {
@@ -110,6 +110,7 @@ fn queued_snapshot_after_forward_ack_does_not_replay_on_stop_start() {
             events: vec![],
             bridge: BridgeStatus::Ok,
             notices: vec![],
+            polled_at_ms: now_ms(),
         })
         .unwrap();
     core.acknowledge(&[event]);
@@ -142,6 +143,8 @@ fn bridge_alerts_on_start_reenable_and_each_down_transition() {
 #[derive(Clone, Default)]
 struct FakeSlack {
     sent: std::sync::Arc<std::sync::Mutex<Vec<crate::envoy::channel::OutboundMessage>>>,
+    /// What `auth.test` answers; `None` answers like any other search.
+    karl_id: Option<&'static str>,
 }
 impl crate::envoy::slack::SlackSender for FakeSlack {
     fn send(
@@ -156,7 +159,12 @@ impl crate::envoy::slack::SlackSender for FakeSlack {
     }
 }
 impl crate::envoy::slack::SlackIo for FakeSlack {
-    fn api(&mut self, _: &str, _: &[(&str, String)]) -> Result<Value, String> {
+    fn api(&mut self, method: &str, _: &[(&str, String)]) -> Result<Value, String> {
+        if method == "auth.test"
+            && let Some(id) = self.karl_id
+        {
+            return Ok(json!({"ok":true,"user":"karl126","user_id":id,"team":"Depict"}));
+        }
         Ok(json!({"ok":true,"messages":{"matches":[],"paging":{"pages":1}}}))
     }
     fn subscribe(&mut self, dir: &std::path::Path, _: &str) -> Result<(), String> {
@@ -223,6 +231,10 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
             EnvoySettings {
                 dry_run,
                 channels: vec!["C123".into()],
+                policies: vec![crate::envoy::settings::Policy {
+                    destination: "C123".into(),
+                    mode: crate::envoy::settings::ApprovalMode::Auto { veto_secs: 0 },
+                }],
                 ..Default::default()
             },
         )
@@ -241,7 +253,7 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
                 .contains("Envoy event: agent_comms from Avery in C123: The build is ready.")
         );
         core.acknowledge(&batch);
-        let args = json!({"in_reply_to":{"conversation":"C123","ts":event["ts"]},"text":"I will check the build.","rationale":"Avery requested a check."});
+        let args = json!({"in_reply_to":{"conversation":"C123","ts":event["ts"]},"text":"Use the checked build.","rationale":"Recommend this build; Karl has not decided.","manual_approval":true});
         let origin = Origin {
             terminal_handle: Some("term_envoy".into()),
             ..Default::default()
@@ -257,6 +269,10 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
         drop(server);
         assert_eq!(core.drafts().len(), 1);
         let id = core.drafts()[0].id.clone();
+        core.auto_approve(i64::MAX).unwrap();
+        assert_eq!(core.drafts()[0].status, DraftStatus::Pending);
+        assert!(core.drafts()[0].auto_at_ms.is_none());
+        assert!(sent.lock().unwrap().is_empty());
         let mut panel = DraftsPanel::default();
         let edited = if secret {
             "ghp_123456789012345678901234567890"
@@ -342,22 +358,22 @@ fn refused_prompt_relays_do_not_spend_budget_and_text_stays_one_line() {
         why: "Related\twork".into(),
     };
     assert!(
-        core.reserve_relay(request.clone(), can_forward(&terminal, true, false))
+        core.reserve_relay(request.clone(), can_forward(&terminal, true, false, None))
             .is_err()
     );
     terminal.preview = Some("Claude Code\n❯\n? for shortcuts".into());
     assert!(
-        core.reserve_relay(request.clone(), can_forward(&terminal, false, false))
+        core.reserve_relay(request.clone(), can_forward(&terminal, false, false, None))
             .is_err()
     );
     assert!(
-        core.reserve_relay(request.clone(), can_forward(&terminal, true, true))
+        core.reserve_relay(request.clone(), can_forward(&terminal, true, true, None))
             .is_err()
     );
     assert!(core.relays().is_empty());
     assert!(!core.relay_path.exists());
     let record = core
-        .reserve_relay(request, can_forward(&terminal, true, false))
+        .reserve_relay(request, can_forward(&terminal, true, false, None))
         .unwrap();
     assert_eq!(core.relays().len(), 1);
     let text = record.request.text();
@@ -571,6 +587,9 @@ fn failed_forward_and_retry_submission_do_not_start_receipt() {
     let mut core = AppEnvoy::load(dir.path().into());
     core.handle = Some("term_envoy".into());
     let events = vec![receipt_event("1.000001"), receipt_event("1.000002")];
+    for event in &events {
+        core.inbox.insert(event.clone());
+    }
     core.pending.extend(events.clone());
     let mut result = submit_receipt_batch(&mut core, 100, 1);
     result.outcome = Err("fixture failure".into());
@@ -651,7 +670,7 @@ fn idle_envoy_with_a_bare_composer_preview_takes_events() {
         ),
         ..Terminal::default()
     };
-    assert!(can_forward(&terminal, true, false));
+    assert!(can_forward(&terminal, true, false, None));
 }
 
 #[test]
@@ -702,4 +721,885 @@ fn batches_name_candidate_ants_and_fold_the_backlog() {
         lines[2]
     );
     assert!(lines[3].ends_with("— no ant match"));
+}
+
+#[test]
+fn reject_removes_the_item_from_the_inbox() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let event: InboundEvent = serde_json::from_value(json!({
+        "channel_kind":"slack", "conversation":"C123", "ts":"1.000001",
+        "user":"U123", "user_name":"Avery", "text":"Please reply",
+        "kind":"agent_comms"
+    }))
+    .unwrap();
+    core.inbox.insert(event.clone());
+    core.inbox
+        .save(&dir.path().join(crate::envoy::inbox::INBOX_FILE))
+        .unwrap();
+    let draft = core
+        .queue()
+        .unwrap()
+        .create(Draft::reply(
+            ReplyTo {
+                conversation: event.conversation.clone(),
+                ts: event.ts.clone(),
+            },
+            None,
+            "No thanks".into(),
+            "Requested".into(),
+            0,
+        ))
+        .unwrap();
+    let (_, result) = core.panel_action(
+        crate::ui::envoy::DraftAction::Reject(draft.id.clone()),
+        false,
+        |_| panic!("reject must not send"),
+    );
+    result.unwrap();
+    assert!(
+        core.inbox.since(None, 20).is_empty(),
+        "rejected source remains in the open inbox"
+    );
+    let reloaded = AppEnvoy::load(dir.path().into());
+    assert!(reloaded.inbox.since(None, 20).is_empty());
+}
+
+#[test]
+fn dismissed_events_survive_poll_restart_and_failed_forwarding() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let event = receipt_event("1.000001");
+    core.inbox.insert(event.clone());
+    core.inbox
+        .save(&dir.path().join(crate::envoy::inbox::INBOX_FILE))
+        .unwrap();
+    let snapshot = core.inbox.clone();
+    core.pending.push_back(event.clone());
+    let mut result = submit_receipt_batch(&mut core, 100, 1);
+    result.outcome = Err("offline".into());
+    core.panel_action(
+        crate::ui::envoy::DraftAction::DismissEvent(event.id()),
+        false,
+        |_| panic!("dismiss must not send"),
+    )
+    .1
+    .unwrap();
+    core.merge_polled(snapshot, vec![event.clone()]);
+    core.forward_done(&result, 100, |_| panic!("failed delivery"));
+    assert!(core.pending.is_empty());
+    assert!(core.inbox.unforwarded().is_empty());
+    assert!(core.inbox.since(None, 20).is_empty());
+    assert!(
+        core.inbox.get(&event.id()).is_some(),
+        "retain thread context and deduplication"
+    );
+    let mut reloaded = AppEnvoy::load(dir.path().into());
+    assert!(reloaded.inbox.unforwarded().is_empty());
+    assert!(!reloaded.inbox.insert(event));
+}
+
+#[test]
+fn clear_handled_persists_failed_dismissal_and_keeps_pending_approvals_and_fresh_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let stale = receipt_event("1.000001");
+    let active = receipt_event("2.000001");
+    let fresh = receipt_event(&format!("{}.000001", now_ms() / 1000));
+    for event in [&stale, &active, &fresh] {
+        core.inbox.insert(event.clone());
+        core.pending.push_back(event.clone());
+    }
+    core.inbox
+        .save(&dir.path().join(crate::envoy::inbox::INBOX_FILE))
+        .unwrap();
+    let draft = core
+        .queue()
+        .unwrap()
+        .create(Draft::reply(
+            ReplyTo {
+                conversation: active.conversation.clone(),
+                ts: active.ts.clone(),
+            },
+            None,
+            "Pending".into(),
+            "Requested".into(),
+            0,
+        ))
+        .unwrap();
+    let failed = core
+        .queue()
+        .unwrap()
+        .create(Draft::proposal(
+            "Failed task".into(),
+            None,
+            "Requested".into(),
+            String::new(),
+            0,
+        ))
+        .unwrap();
+    core.queue()
+        .unwrap()
+        .begin_approval(&failed.id, None, false, 0)
+        .unwrap();
+    core.queue()
+        .unwrap()
+        .finish(&failed.id, Err("Offline".into()), 1)
+        .unwrap();
+    core.panel_action(crate::ui::envoy::DraftAction::ClearHandled, false, |_| {
+        panic!("cleanup must not send")
+    })
+    .1
+    .unwrap();
+    let mut reloaded = AppEnvoy::load(dir.path().into());
+    assert!(!reloaded.inbox.is_open(&stale.id()));
+    assert!(reloaded.inbox.is_open(&active.id()));
+    assert!(reloaded.inbox.is_open(&fresh.id()));
+    assert_eq!(reloaded.pending_count(), 1);
+    assert!(
+        !reloaded.cleanup.draft_open(
+            reloaded
+                .drafts()
+                .iter()
+                .find(|d| d.id == failed.id)
+                .unwrap()
+        )
+    );
+    reloaded.handle = Some("envoy".into());
+    let command = |args| EnvoyCommand {
+        method: "envoy_drafts".into(),
+        args,
+        origin: crate::review::mark::Origin {
+            terminal_handle: Some("envoy".into()),
+            ..Default::default()
+        },
+    };
+    let open = reloaded.request(&command(json!({}))).unwrap();
+    assert_eq!(open["drafts"].as_array().unwrap().len(), 1);
+    assert_eq!(open["drafts"][0]["id"], draft.id);
+    let history = reloaded
+        .request(&command(json!({"status":"failed"})))
+        .unwrap();
+    assert_eq!(history["drafts"][0]["id"], failed.id);
+}
+
+#[test]
+fn cleanup_save_failure_keeps_the_item_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let event = receipt_event("1.000001");
+    core.inbox.insert(event.clone());
+    std::fs::create_dir(&core.cleanup_path).unwrap();
+    assert!(
+        core.panel_action(
+            crate::ui::envoy::DraftAction::DismissEvent(event.id()),
+            false,
+            |_| false
+        )
+        .1
+        .is_err()
+    );
+    assert!(core.inbox.is_open(&event.id()));
+}
+
+#[test]
+fn rejection_resolves_its_alert_without_reading_another_pending_drafts_alert() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let mut notices =
+        crate::notify::NotificationCenter::new(crate::notify::history::History::default());
+    let mut drafts = Vec::new();
+    for text in ["One", "Two"] {
+        let draft = core
+            .queue()
+            .unwrap()
+            .create(Draft::proposal(
+                text.into(),
+                None,
+                "Requested".into(),
+                String::new(),
+                0,
+            ))
+            .unwrap();
+        notices.dispatch(
+            cleanup::draft_notice(&json!(draft)),
+            &crate::notify::NotifySettings::default(),
+            1,
+        );
+        drafts.push(draft);
+    }
+    core.panel_action(
+        crate::ui::envoy::DraftAction::Reject(drafts[0].id.clone()),
+        false,
+        |_| false,
+    )
+    .1
+    .unwrap();
+    assert_eq!(
+        notices.history.mark_read_where(|e| core.notice_resolved(e)),
+        1
+    );
+    let path = dir.path().join("notifications.json");
+    notices.history.save(&path).unwrap();
+    let loaded = crate::notify::history::History::load(&path);
+    assert!(loaded.entries()[0].read);
+    assert!(!loaded.entries()[1].read);
+}
+
+fn envoy_command(method: &str, args: Value) -> EnvoyCommand {
+    EnvoyCommand {
+        method: method.into(),
+        args,
+        origin: crate::review::mark::Origin {
+            terminal_handle: Some("term_envoy".into()),
+            ..Default::default()
+        },
+    }
+}
+
+fn clear_action(core: &AppEnvoy, now: i64, tokens: Option<u64>) -> Option<ResetReason> {
+    let (action, reason) = core.reset_action(now, tokens)?;
+    assert_eq!(
+        action,
+        Action::Send {
+            handle: "term_envoy".into(),
+            input: TerminalInput::line(CLEAR_COMMAND),
+        }
+    );
+    Some(reason)
+}
+
+fn typed(action: &Action) -> String {
+    let Action::Send { input, .. } = action else {
+        panic!("typed line")
+    };
+    input.text.clone().unwrap()
+}
+
+#[test]
+fn quiet_period_clears_the_context_and_hands_pending_events_over_with_a_preamble() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    let settings = EnvoySettings::default();
+    core.settings = settings.clone();
+    let quiet_ms = settings.fresh_after_secs as i64 * 1_000;
+    let events = vec![receipt_event("1.000001"), receipt_event("1.000002")];
+    let mut inbox = Inbox::default();
+    for event in &events {
+        inbox.insert(event.clone());
+    }
+    core.merge_polled(inbox, events);
+    assert_eq!(
+        clear_action(&core, 100, Some(1_000_000)),
+        None,
+        "the launch context has had no batch: nothing to clear"
+    );
+    let result = submit_receipt_batch(&mut core, 100, 1);
+    assert!(
+        !typed(&result.action).starts_with("Fresh context"),
+        "the launch prompt already introduced the session"
+    );
+    core.forward_done(&result, 100, |_| {});
+    assert_eq!(core.context().events_since_reset, 2);
+
+    // A burst shares the context; after the quiet period a new batch starts clean.
+    core.inbox.insert(receipt_event("2.000001"));
+    core.pending.push_back(receipt_event("2.000001"));
+    assert_eq!(clear_action(&core, 100 + quiet_ms - 1, None), None);
+    let now = 100 + quiet_ms;
+    assert_eq!(clear_action(&core, now, None), Some(ResetReason::Quiet));
+    core.resetting = Some(7);
+    assert_eq!(clear_action(&core, now, None), None, "one reset at a time");
+    assert_eq!(
+        core.pending.len(),
+        1,
+        "pending events wait across the reset"
+    );
+    core.reset_done(
+        &ActionResult {
+            id: 7,
+            action: Action::Send {
+                handle: "term_envoy".into(),
+                input: TerminalInput::line(CLEAR_COMMAND),
+            },
+            outcome: Ok(()),
+            note: None,
+        },
+        now,
+    );
+    assert!(core.resetting.is_none());
+    assert!(core.context().fresh);
+    assert_eq!(core.context().events_since_reset, 0);
+    assert_eq!(core.context().resets, 1);
+    assert_eq!(core.pending.len(), 1);
+    assert_eq!(
+        core.inbox.unforwarded().len(),
+        1,
+        "nothing is acknowledged by a reset"
+    );
+    assert!(
+        core.next_forward(now + 1_999, &[]).is_none(),
+        "the cleared prompt gets a moment to settle"
+    );
+    assert_eq!(clear_action(&core, now + 2_000, Some(1_000_000)), None);
+    let result = submit_receipt_batch(&mut core, now + 2_000, 8);
+    let line = typed(&result.action);
+    assert!(
+        line.starts_with("Fresh context: your earlier conversation was cleared."),
+        "{line}"
+    );
+    assert!(line.contains("Dry-run is ON"), "{line}");
+    assert!(
+        line.contains(
+            " | Envoy event: agent_comms from Avery in C123: Fixture message — id C123:2.000001"
+        ),
+        "{line}"
+    );
+    core.forward_done(&result, now + 2_000, |_| {});
+    assert!(!core.context().fresh);
+    assert_eq!(core.context().events_since_reset, 1);
+    assert!(core.inbox.unforwarded().is_empty());
+    core.pending.push_back(receipt_event("3.000001"));
+    let result = submit_receipt_batch(&mut core, now + 3_000, 9);
+    assert!(
+        typed(&result.action).starts_with("Envoy event:"),
+        "only the first batch after a reset carries the preamble"
+    );
+}
+
+#[test]
+fn size_guards_reset_mid_burst_but_never_while_a_send_is_in_flight() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    core.settings = EnvoySettings {
+        reset_after_events: 3,
+        reset_after_tokens: 50_000,
+        ..Default::default()
+    };
+    core.pending.push_back(receipt_event("1.000001"));
+    let result = submit_receipt_batch(&mut core, 100, 1);
+    core.forward_done(&result, 100, |_| {});
+    core.pending.push_back(receipt_event("2.000001"));
+    assert_eq!(clear_action(&core, 200, Some(49_999)), None);
+    assert_eq!(
+        clear_action(&core, 200, Some(50_000)),
+        Some(ResetReason::Tokens)
+    );
+    core.pending.push_back(receipt_event("3.000001"));
+    let result = submit_receipt_batch(&mut core, 200, 2);
+    core.forward_done(&result, 200, |_| {});
+    assert_eq!(core.context().events_since_reset, 3);
+    core.pending.push_back(receipt_event("4.000001"));
+    assert_eq!(clear_action(&core, 300, None), Some(ResetReason::Events));
+
+    core.outgoing.insert("draft-1".into(), "term_envoy".into());
+    assert_eq!(core.in_flight(), Some("Slack send in flight"));
+    assert_eq!(clear_action(&core, 300, None), None);
+    core.outgoing.clear();
+    core.relay_actions.insert(
+        5,
+        AgentMessage::new("term_envoy", "term_ant", MessageKind::Relay),
+    );
+    assert_eq!(core.in_flight(), Some("relay in flight"));
+    assert_eq!(clear_action(&core, 300, None), None);
+    core.relay_actions.clear();
+    let mut draft = Draft::reply(
+        ReplyTo {
+            conversation: "C123".into(),
+            ts: "1.000001".into(),
+        },
+        None,
+        "On it".into(),
+        "asked".into(),
+        0,
+    );
+    draft.status = DraftStatus::Approved;
+    let draft = core.queue().unwrap().create(draft).unwrap();
+    assert_eq!(core.in_flight(), Some("approved draft being sent"));
+    assert_eq!(clear_action(&core, 300, None), None);
+    core.queue()
+        .unwrap()
+        .finish(&draft.id, Ok(()), 301)
+        .unwrap();
+    assert_eq!(core.in_flight(), None);
+    assert_eq!(clear_action(&core, 300, None), Some(ResetReason::Events));
+}
+
+#[test]
+fn a_failed_clear_keeps_the_batch_in_the_old_context_and_retries_later() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    core.settings = EnvoySettings {
+        fresh_after_secs: 0,
+        ..Default::default()
+    };
+    core.pending.push_back(receipt_event("1.000001"));
+    let result = submit_receipt_batch(&mut core, 100, 1);
+    core.forward_done(&result, 100, |_| {});
+    core.pending.push_back(receipt_event("2.000001"));
+    assert_eq!(clear_action(&core, 200, None), Some(ResetReason::Quiet));
+    core.resetting = Some(2);
+    core.reset_done(
+        &ActionResult {
+            id: 2,
+            action: Action::Send {
+                handle: "term_envoy".into(),
+                input: TerminalInput::line(CLEAR_COMMAND),
+            },
+            outcome: Err("terminal busy".into()),
+            note: None,
+        },
+        200,
+    );
+    assert!(core.resetting.is_none());
+    assert!(!core.context().fresh);
+    assert_eq!(core.context().events_since_reset, 1);
+    assert_eq!(core.pending.len(), 1);
+    assert_eq!(clear_action(&core, 200 + 29_999, None), None, "backing off");
+    assert!(core.next_forward(200 + 29_999, &[]).is_none());
+    let result = submit_receipt_batch(&mut core, 200 + 30_000, 3);
+    assert!(
+        typed(&result.action).starts_with("Envoy event:"),
+        "no preamble: the context was not cleared"
+    );
+    core.forward_done(&result, 200 + 30_000, |_| {});
+    assert_eq!(core.context().events_since_reset, 2);
+    assert_eq!(
+        clear_action(&core, 200 + crate::envoy::context::RESET_BACKOFF_MS, None),
+        Some(ResetReason::Quiet)
+    );
+}
+
+#[test]
+fn stop_and_a_new_session_forget_the_context_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, _commands, _updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    core.set_enabled("term_envoy".into(), EnvoySettings::default())
+        .unwrap();
+    core.pending.push_back(receipt_event("1.000001"));
+    let result = submit_receipt_batch(&mut core, 100, 1);
+    core.forward_done(&result, 100, |_| {});
+    core.resetting = Some(2);
+    core.set_enabled("term_envoy".into(), EnvoySettings::default())
+        .unwrap();
+    assert_eq!(core.context().events_since_reset, 1, "same session: kept");
+    core.set_enabled("term_envoy_2".into(), EnvoySettings::default())
+        .unwrap();
+    assert_eq!(core.context(), &ContextBudget::default());
+    assert!(core.resetting.is_none());
+    core.pending.push_back(receipt_event("2.000001"));
+    let result = submit_receipt_batch(&mut core, 200, 3);
+    core.forward_done(&result, 200, |_| {});
+    core.stop();
+    assert_eq!(core.context(), &ContextBudget::default());
+}
+
+#[test]
+fn thread_notes_are_written_by_tool_and_typed_with_every_event_in_the_thread() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    let mut root = receipt_event("10.000001");
+    root.text = "Can Karl's agent review realtime#694?".into();
+    let mut reply = receipt_event("11.000001");
+    reply.thread_ts = Some(root.ts.clone());
+    reply.text = "ping".into();
+    let other = receipt_event("12.000001");
+    let mut dm = receipt_event("13.000001");
+    dm.conversation = "D1".into();
+    let events = vec![root.clone(), reply.clone(), other.clone(), dm.clone()];
+    let mut inbox = Inbox::default();
+    for event in &events {
+        inbox.insert(event.clone());
+    }
+    core.merge_polled(inbox, events);
+    assert!(
+        core.request(&envoy_command(
+            "envoy_note",
+            json!({"conversation":"C123","thread_ts":"10.000001","text":"Avery asked for a realtime#694 review;\npromised an answer today; waiting on the Recs ant"})
+        ))
+        .is_ok()
+    );
+    let stored = core
+        .request(&envoy_command(
+            "envoy_note",
+            json!({"conversation":"D1","text":"Daniel: wants the rollout date"}),
+        ))
+        .unwrap();
+    assert_eq!(stored["note"]["text"], "Daniel: wants the rollout date");
+    assert_eq!(stored["notes"], 2);
+    for args in [
+        json!({"conversation":"nope","text":"x"}),
+        json!({"conversation":"C123","thread_ts":"later","text":"x"}),
+        json!({"conversation":"C123","text":"x".repeat(601)}),
+        json!({"conversation":"C123"}),
+    ] {
+        assert!(core.request(&envoy_command("envoy_note", args)).is_err());
+    }
+    let (action, _) = core.next_forward(20_000, &[]).unwrap();
+    let lines: Vec<String> = typed(&action).split(" | ").map(str::to_owned).collect();
+    assert_eq!(lines.len(), 4);
+    let note = "— note: Avery asked for a realtime#694 review; promised an answer today; waiting on the Recs ant";
+    assert!(lines[0].ends_with(note), "root: {}", lines[0]);
+    assert!(lines[1].ends_with(note), "reply: {}", lines[1]);
+    assert!(
+        lines[2].ends_with("— no ant match"),
+        "no note: {}",
+        lines[2]
+    );
+    assert!(
+        lines[3].ends_with("— note: Daniel: wants the rollout date"),
+        "conversation note: {}",
+        lines[3]
+    );
+    let inbox = core
+        .request(&envoy_command("envoy_inbox", json!({})))
+        .unwrap();
+    assert_eq!(inbox["events"].as_array().unwrap().len(), 4);
+    let notes = inbox["notes"].as_array().unwrap();
+    assert_eq!(notes.len(), 2, "one per thread, not per event: {notes:?}");
+    assert!(
+        core.request(&envoy_command(
+            "envoy_note",
+            json!({"conversation":"D1","text":""})
+        ))
+        .unwrap()["note"]
+            .is_null()
+    );
+    assert_eq!(
+        AppEnvoy::load(dir.path().into())
+            .notes
+            .as_ref()
+            .unwrap()
+            .len(),
+        1,
+        "notes persist"
+    );
+}
+
+#[test]
+fn orca_preview_without_the_composer_defers_to_the_sampled_screen() {
+    use crate::detect::ComposerState;
+    // Orca's preview of the live Envoy during the stall: the stale startup banner, then the
+    // hint Claude Code draws under the composer. No `❯` anywhere.
+    let terminal = Terminal {
+        agent_identity: Some(AgentIdentity::Claude),
+        writable: true,
+        title: Some("\u{2733} Envoy MCP tool setup".into()),
+        preview: Some(
+            "approves them without a prompt. Replace that * with the exact value you mean, or only use * after the subcommand.\nnew task? /clear to save 101.9k tokens"
+                .into(),
+        ),
+        ..Terminal::default()
+    };
+    assert!(
+        !can_forward(&terminal, true, false, None),
+        "the preview alone cannot show an empty composer"
+    );
+    assert!(can_forward(
+        &terminal,
+        true,
+        false,
+        Some(ComposerState::Empty)
+    ));
+    assert!(!can_forward(
+        &terminal,
+        true,
+        false,
+        Some(ComposerState::Text)
+    ));
+    assert!(!can_forward(
+        &terminal,
+        true,
+        false,
+        Some(ComposerState::Absent)
+    ));
+    assert!(
+        !can_forward(&terminal, false, false, Some(ComposerState::Empty)),
+        "the screen never overrides a busy node"
+    );
+    let bare = Terminal {
+        preview: Some("banner\n\u{276f}".into()),
+        ..terminal
+    };
+    assert!(can_forward(&bare, true, false, None));
+    assert!(
+        !can_forward(&bare, true, false, Some(ComposerState::Text)),
+        "a stale bare-composer preview loses to the screen"
+    );
+}
+
+#[test]
+fn events_waiting_too_long_turn_the_status_stuck_and_warn_once_per_half_hour() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, _commands, updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    assert_eq!(core.stuck_events(now_ms()), 0);
+    core.set_enabled("term_envoy".into(), EnvoySettings::default())
+        .unwrap();
+    let now = now_ms();
+    let mut inbox = Inbox::default();
+    inbox.insert(receipt_event("1.000001"));
+    inbox.insert(receipt_event("1.000002"));
+    updates
+        .send(Update::Polled {
+            inbox,
+            events: vec![receipt_event("1.000001"), receipt_event("1.000002")],
+            bridge: BridgeStatus::Ok,
+            notices: vec![],
+            polled_at_ms: now,
+        })
+        .unwrap();
+    let (notices, _) = core.poll_updates();
+    assert!(notices.iter().all(|n| n.title != "Envoy events stuck"));
+    assert_eq!(core.pending.len(), 2);
+    let now = core
+        .pending_since_ms
+        .expect("ingestion starts the wait clock");
+    assert_eq!(core.stuck_events(now + STUCK_AFTER_MS - 1), 0);
+    assert_eq!(core.stuck_events(now + STUCK_AFTER_MS), 2);
+    core.blocked = Some("no empty agent prompt");
+    // The poll loop stays fresh here; the stale signal has its own test.
+    core.last_polled_ms = Some(now + STUCK_AFTER_MS);
+    let notices = core.stall_notices(now + STUCK_AFTER_MS);
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].title, "Envoy events stuck");
+    assert!(
+        notices[0].message.contains("2 event(s) have waited 10 min")
+            && notices[0].message.contains("no empty agent prompt"),
+        "{}",
+        notices[0].message
+    );
+    assert!(core.stall_notices(now + STUCK_AFTER_MS + 1_000).is_empty());
+    core.last_polled_ms = Some(now + STUCK_AFTER_MS + RENOTIFY_MS);
+    assert_eq!(
+        core.stall_notices(now + STUCK_AFTER_MS + RENOTIFY_MS).len(),
+        1,
+        "repeated while it lasts"
+    );
+    let mut status = EnvoyStatus {
+        session: crate::envoy::SessionState::Running,
+        bridge: BridgeStatus::Ok,
+        pending_drafts: 0,
+        dry_run: true,
+        stuck_events: 0,
+        poll_stale: false,
+    };
+    core.pending_since_ms = Some(now - STUCK_AFTER_MS);
+    core.apply_status(&mut status);
+    assert_eq!(status.stuck_events, 2);
+    assert_eq!(status.health(), crate::envoy::EnvoyHealth::EventsStuck);
+
+    // Typing a batch is progress: the clock restarts for whatever still waits.
+    let result = submit_receipt_batch(&mut core, now + STUCK_AFTER_MS, 1);
+    core.pending.push_back(receipt_event("1.000003"));
+    core.forward_done(&result, now + STUCK_AFTER_MS, |_| {});
+    assert_eq!(core.pending_since_ms, Some(now + STUCK_AFTER_MS));
+    assert_eq!(core.stuck_events(now + STUCK_AFTER_MS + 1), 0);
+    assert!(core.stall_notices(now + STUCK_AFTER_MS + 1).is_empty());
+    assert_eq!(core.stuck_notified_ms, None, "a new stall warns afresh");
+    core.pending.clear();
+    core.note_pending(now);
+    assert_eq!(core.pending_since_ms, None);
+}
+
+#[test]
+fn a_silent_poll_loop_turns_the_status_stale_until_the_next_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, _commands, updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    let now = now_ms();
+    assert!(
+        !core.poll_stale(now + POLL_STALE_MS),
+        "stopped: nothing to poll"
+    );
+    core.set_enabled("term_envoy".into(), EnvoySettings::default())
+        .unwrap();
+    assert!(!core.poll_stale(now + POLL_STALE_MS - 1));
+    assert!(core.poll_stale(now + POLL_STALE_MS + 1_000));
+    let notices = core.stall_notices(now + POLL_STALE_MS + 1_000);
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].title, "Envoy poll stale");
+    assert!(core.stall_notices(now + POLL_STALE_MS + 2_000).is_empty());
+    updates
+        .send(Update::Polled {
+            inbox: Inbox::default(),
+            events: vec![],
+            bridge: BridgeStatus::Ok,
+            notices: vec![],
+            polled_at_ms: now + POLL_STALE_MS + 3_000,
+        })
+        .unwrap();
+    core.poll_updates();
+    assert!(!core.poll_stale(now + POLL_STALE_MS + 4_000));
+    assert_eq!(core.stale_notified_ms, None);
+    let mut status = EnvoyStatus {
+        session: crate::envoy::SessionState::Running,
+        bridge: BridgeStatus::Stale,
+        pending_drafts: 1,
+        dry_run: true,
+        stuck_events: 0,
+        poll_stale: false,
+    };
+    core.last_polled_ms = Some(now - POLL_STALE_MS);
+    core.apply_status(&mut status);
+    assert!(status.poll_stale);
+    assert_eq!(status.health(), crate::envoy::EnvoyHealth::PollStale);
+    core.stop();
+    assert!(!core.poll_stale(now + 2 * POLL_STALE_MS));
+}
+
+#[test]
+fn batches_say_who_each_event_is_for() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("term_envoy".into());
+    let now = 1_791_300_000_000;
+    let karl = core.karl().to_owned();
+    assert_eq!(karl, "U0AMMLGSFL0");
+    let mut ant_root = receipt_event("1791299800.000001");
+    ant_root.text = "Request from Recs rollout: who owns the wheat index?".into();
+    let mut envoy_root = receipt_event("1791299850.000001");
+    envoy_root.text = "Anyone know the recs rollout status?".into();
+    let mut tagged_other = receipt_event("1791299900.000001");
+    tagged_other.text = "<@U0177NR3GG4> can your search agent reindex wheat?".into();
+    let mut tagged_karl = receipt_event("1791299910.000001");
+    tagged_karl.text = format!("<@{karl}> is realtime#694 ready?");
+    let mut in_ant_thread = receipt_event("1791299920.000001");
+    in_ant_thread.thread_ts = Some(ant_root.ts.clone());
+    in_ant_thread.text = "<@U0177NR3GG4> your agent should answer this".into();
+    let mut in_envoy_thread = receipt_event("1791299930.000001");
+    in_envoy_thread.thread_ts = Some(envoy_root.ts.clone());
+    in_envoy_thread.text = "@depict-search-agent take it from here".into();
+    let mut chatter = receipt_event("1791299960.000001");
+    chatter.text = "lunch?".into();
+    let mut inbox = Inbox::default();
+    for event in [&ant_root, &envoy_root] {
+        inbox.insert(event.clone());
+    }
+    let batch = vec![
+        tagged_other,
+        tagged_karl,
+        in_ant_thread,
+        in_envoy_thread,
+        chatter,
+    ];
+    for event in &batch {
+        inbox.insert(event.clone());
+    }
+    core.merge_polled(inbox, batch);
+    let mut sent = Draft::reply(
+        ReplyTo {
+            conversation: "C123".into(),
+            ts: envoy_root.ts.clone(),
+        },
+        Some(envoy_root.ts.clone()),
+        "Rolling out now. (Karl's AI agent)".into(),
+        "status question".into(),
+        now,
+    );
+    sent.status = DraftStatus::Sent;
+    core.queue().unwrap().create(sent).unwrap();
+    let ants = [Ant {
+        id: "term:term_ant".into(),
+        label: "Recs rollout".into(),
+        threads: vec![format!("C123:{}", ant_root.ts)],
+        ..Ant::default()
+    }];
+    let (action, _) = core.next_forward(now, &ants).expect("batch");
+    let Action::Send { input, .. } = action else {
+        panic!("typed batch")
+    };
+    let text = input.text.unwrap();
+    let lines: Vec<&str> = text.split(" | ").collect();
+    assert_eq!(lines.len(), 5, "{text}");
+    assert!(
+        lines[0].contains("— addressee: not Karl (tags <@U0177NR3GG4>, not Karl) — no ant match"),
+        "{}",
+        lines[0]
+    );
+    assert!(
+        lines[1].contains("— addressee: Karl (mentions Karl) —"),
+        "{}",
+        lines[1]
+    );
+    assert!(
+        lines[2].contains(
+            "— addressee: unclear (tags <@U0177NR3GG4> in Karl's thread) — ants: Recs rollout (term:term_ant, its thread)"
+        ),
+        "{}",
+        lines[2]
+    );
+    assert!(
+        lines[3].contains("— addressee: unclear (tags @depict-search-agent in Karl's thread) —"),
+        "a thread the Envoy replied in is Karl's: {}",
+        lines[3]
+    );
+    assert!(
+        lines[4].contains("— addressee: unclear (no mention) — no ant match"),
+        "{}",
+        lines[4]
+    );
+}
+
+#[test]
+fn karls_id_comes_from_slack_when_it_answers() {
+    let dir = tempfile::tempdir().unwrap();
+    let bridge = dir.path().join("bridge");
+    std::fs::create_dir_all(bridge.join("channels")).unwrap();
+    std::fs::write(bridge.join("fixture-only"), "").unwrap();
+    let fake = FakeSlack {
+        karl_id: Some("W0RESOLVED"),
+        ..FakeSlack::default()
+    };
+    let mut core = AppEnvoy::at(dir.path().into(), &egui::Context::default(), fake, bridge);
+    assert_eq!(
+        core.karl(),
+        "U0AMMLGSFL0",
+        "the settings' id until Slack answers"
+    );
+    core.set_enabled(
+        "term_envoy".into(),
+        EnvoySettings {
+            channels: vec!["C123".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    wait_for(&mut core, |c| c.karl() == "W0RESOLVED");
+}
+
+#[test]
+fn clearing_stuck_events_resolves_warning_and_resets_the_wait_clock() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let event = receipt_event("1.000001");
+    core.inbox.insert(event.clone());
+    core.pending.push_back(event);
+    core.pending_since_ms = Some(now_ms() - STUCK_AFTER_MS);
+    let mut notices =
+        crate::notify::NotificationCenter::new(crate::notify::history::History::default());
+    for notice in core.stall_notices(now_ms()) {
+        notices.dispatch(notice, &crate::notify::NotifySettings::default(), now_ms());
+    }
+    assert_eq!(notices.history.entries().len(), 1);
+    assert!(!core.notice_resolved(&notices.history.entries()[0]));
+    core.panel_action(crate::ui::envoy::DraftAction::ClearHandled, false, |_| {
+        panic!("cleanup must not send")
+    })
+    .1
+    .unwrap();
+    assert_eq!(core.stuck_events(now_ms()), 0);
+    assert!(core.pending_since_ms.is_none());
+    assert!(core.notice_resolved(&notices.history.entries()[0]));
+    assert!(core.stall_notices(now_ms() + RENOTIFY_MS).is_empty());
 }

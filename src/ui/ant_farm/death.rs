@@ -22,6 +22,7 @@ const BOUNCE: f32 = 0.15;
 /// How an ant looked when it was last drawn, for its fall.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Body {
+    pub kind: crate::model::NodeKind,
     /// Relative to the farm's rect; see [`motion::to_unit`].
     pub at: Pos2,
     pub size: f32,

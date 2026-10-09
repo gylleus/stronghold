@@ -142,7 +142,14 @@ impl AppEnvoy {
         let args = &command.args;
         match command.method.as_str() {
             "envoy_request" => {
-                Ok(json!({"request":self.requests_mut()?.get(required(args,"id")?)?}))
+                let request = self.requests_mut()?.get(required(args, "id")?)?.clone();
+                let note = request.thread.as_ref().and_then(|t| {
+                    self.notes
+                        .as_ref()?
+                        .for_thread(&t.conversation, &t.ts)
+                        .cloned()
+                });
+                Ok(json!({"request":request, "note":note}))
             }
             "envoy_decline" => {
                 self.reconcile_requests()?;
@@ -467,8 +474,14 @@ impl AppEnvoy {
             let text = turns
                 .iter()
                 .map(|(r, t)| {
+                    let note = r
+                        .thread
+                        .as_ref()
+                        .and_then(|t| self.notes.as_ref()?.for_thread(&t.conversation, &t.ts))
+                        .map(|n| format!(" — note: {}", n.text))
+                        .unwrap_or_default();
                     format!(
-                        "Envoy event: request from {}: {} — id {} turn {}",
+                        "Envoy event: request from {}: {} — id {} turn {}{note}",
                         r.requester.as_ref().map_or("unknown", |r| r.label.as_str()),
                         t.ask.chars().take(120).collect::<String>(),
                         r.id,
@@ -477,6 +490,7 @@ impl AppEnvoy {
                 })
                 .collect::<Vec<_>>()
                 .join(" | ");
+            let text = self.handoff(safe_line(&text));
             let records = turns
                 .iter()
                 .map(|(r, t)| {
@@ -493,7 +507,7 @@ impl AppEnvoy {
             return Some((
                 Action::Send {
                     handle: handle.into(),
-                    input: TerminalInput::line(safe_line(&text)),
+                    input: TerminalInput::line(text),
                 },
                 GatewayAction::Requests(records),
             ));
@@ -550,6 +564,7 @@ impl AppEnvoy {
         }
         let recorded = match action {
             GatewayAction::Requests(turns) => {
+                self.context.forwarded(turns.len(), now_ms());
                 let mut result = Ok(());
                 for (id, turn, from) in turns {
                     result = result.and_then(|()| {
@@ -660,8 +675,10 @@ impl MyrstackApp {
         if let Some(handle) = self.envoy_core.handle.clone()
             && self.envoy_core.forwarding.is_none()
             && self.envoy_core.gateway_actions.is_empty()
+            && self.envoy_core.resetting.is_none()
             && self.envoy_target_ready(&handle)
             && let Some((action, record)) = self.envoy_core.request_event(&handle)
+            && !self.envoy_reset()
         {
             let id = self.actions.submit(action);
             self.envoy_core.gateway_actions.insert(id, record);

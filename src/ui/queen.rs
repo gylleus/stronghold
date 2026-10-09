@@ -478,6 +478,8 @@ mod envoy_tests {
             bridge: BridgeStatus::Missing,
             pending_drafts: 0,
             dry_run: true,
+            stuck_events: 0,
+            poll_stale: false,
         };
         assert_eq!(
             crate::ui::test_util::click_label("Start Envoy", |ui| envoy_control(ui, status)),

@@ -470,3 +470,35 @@ fn pr_refs_resolve_to_head_branches_once() {
     c.resolve_prs(std::slice::from_ref(&e));
     assert_eq!(c.io.methods.len(), 2, "cached refs are not looked up again");
 }
+
+#[test]
+fn karls_id_is_resolved_from_auth_test() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    assert_eq!(c.settings.karl_user_id, "U0AMMLGSFL0");
+    c.io.replies
+        .push_back(json!({"ok":true,"user":"karl126","user_id":"u0ammlgsfl0","team":"Depict"}));
+    assert_eq!(c.resolve_karl().unwrap().as_deref(), Some("U0AMMLGSFL0"));
+    c.io.replies
+        .push_back(json!({"ok":true,"user":"karl126","user_id":"W0NEWID","team":"Depict"}));
+    assert_eq!(c.resolve_karl().unwrap().as_deref(), Some("W0NEWID"));
+    assert_eq!(
+        c.settings.karl_user_id, "W0NEWID",
+        "the resolved id replaces the configured one"
+    );
+    c.io.replies.push_back(json!({"ok":true,"team":"Depict"}));
+    assert_eq!(
+        c.resolve_karl().unwrap(),
+        None,
+        "no id: the configured one stands"
+    );
+    assert_eq!(c.settings.karl_user_id, "W0NEWID");
+    c.io.replies
+        .push_back(json!({"ok":true,"user_id":"C0BHZLG3X63"}));
+    assert!(
+        c.resolve_karl().is_err(),
+        "a conversation id is not a member id"
+    );
+    assert_eq!(c.settings.karl_user_id, "W0NEWID");
+    assert_eq!(c.io.methods.iter().filter(|m| *m == "auth.test").count(), 4);
+}

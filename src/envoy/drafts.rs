@@ -84,9 +84,27 @@ pub struct Draft {
     pub auto_at_ms: Option<i64>,
     #[serde(default)]
     pub automatic: bool,
+    #[serde(default)]
+    pub manual_approval: bool,
 }
 
 impl Draft {
+    /// Whether this draft went out (or would have, in dry-run) in `conversation`'s thread
+    /// `root`: a reply in it, or the post that started it.
+    pub fn posted_in(&self, conversation: &str, root: &str) -> bool {
+        if !matches!(self.status, DraftStatus::Sent | DraftStatus::DryRunSent) {
+            return false;
+        }
+        let same = |c: &str| c == conversation;
+        let reply = self.in_reply_to.as_ref();
+        (reply.is_some_and(|r| same(&r.conversation))
+            || self.conversation.as_deref().is_some_and(same)
+            || self.receipt.as_ref().is_some_and(|r| same(&r.conversation)))
+            && (self.thread_ts.as_deref() == Some(root)
+                || reply.is_some_and(|r| r.ts == root)
+                || self.receipt.as_ref().is_some_and(|r| r.ts == root))
+    }
+
     pub fn reply(
         in_reply_to: ReplyTo,
         thread_ts: Option<String>,
@@ -113,6 +131,7 @@ impl Draft {
             confirmed_send: false,
             auto_at_ms: None,
             automatic: false,
+            manual_approval: false,
         }
     }
 
@@ -142,6 +161,7 @@ impl Draft {
             confirmed_send: false,
             auto_at_ms: None,
             automatic: false,
+            manual_approval: false,
         }
     }
 
@@ -169,7 +189,8 @@ impl Draft {
     }
 
     pub fn allows_auto(&self) -> bool {
-        self.kind != DraftKind::TaskProposal
+        !self.manual_approval
+            && self.kind != DraftKind::TaskProposal
             && self
                 .request
                 .as_ref()
@@ -224,7 +245,7 @@ impl Draft {
 
     fn validate(&self) -> Result<(), String> {
         if self.automatic && !self.allows_auto() {
-            return Err("Rewritten requests require manual approval".into());
+            return Err("This draft requires manual approval".into());
         }
         if let Some(link) = &self.request
             && link.agent
@@ -469,7 +490,7 @@ impl DraftQueue {
         let old = self.saved.clone();
         let d = self.pending_mut(id)?;
         if at.is_some() && !d.allows_auto() {
-            return Err("Rewritten requests require manual approval".into());
+            return Err("This draft requires manual approval".into());
         }
         d.auto_at_ms = at;
         d.automatic = at.is_some();
@@ -555,6 +576,62 @@ mod tests {
             "Requested status".into(),
             1,
         )
+    }
+    #[test]
+    fn manual_decisions_stay_manual_after_edit_and_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(DRAFTS_FILE);
+        let mut queue = DraftQueue::load(&path).unwrap();
+        let mut decision = reply();
+        decision.manual_approval = true;
+        let draft = queue.create(decision).unwrap();
+        assert!(queue.schedule(&draft.id, Some(2)).is_err());
+        queue
+            .edit(&draft.id, "Use settings for the alert.", 2)
+            .unwrap();
+        let mut queue = DraftQueue::load(&path).unwrap();
+        assert!(queue.get(&draft.id).unwrap().manual_approval);
+        assert!(queue.schedule(&draft.id, Some(3)).is_err());
+        let approved = queue.begin_approval(&draft.id, None, false, 3).unwrap();
+        assert_eq!(approved.status, DraftStatus::Approved);
+        assert!(!approved.automatic);
+        assert!(approved.outbound().unwrap().text.ends_with(ATTRIBUTION));
+
+        let mut legacy = serde_json::to_value(reply()).unwrap();
+        legacy.as_object_mut().unwrap().remove("manual_approval");
+        let legacy: Draft = serde_json::from_value(legacy).unwrap();
+        let legacy = queue.create(legacy).unwrap();
+        queue.schedule(&legacy.id, Some(4)).unwrap();
+    }
+
+    #[test]
+    fn posted_in_knows_sent_replies_by_thread_root() {
+        let mut draft = reply();
+        assert!(
+            !draft.posted_in("C123", "1.000001"),
+            "pending drafts posted nothing"
+        );
+        draft.status = DraftStatus::Sent;
+        assert!(draft.posted_in("C123", "1.000001"));
+        assert!(!draft.posted_in("C999", "1.000001"));
+        assert!(!draft.posted_in("C123", "2.000001"));
+        draft.status = DraftStatus::DryRunSent;
+        assert!(draft.posted_in("C123", "1.000001"), "dry-run sends count");
+        let mut started = reply();
+        started.status = DraftStatus::Sent;
+        started.thread_ts = None;
+        started.receipt = Some(SendReceipt {
+            conversation: "C123".into(),
+            ts: "5.000001".into(),
+        });
+        assert!(
+            started.posted_in("C123", "5.000001"),
+            "a root post owns its thread"
+        );
+        assert!(
+            started.posted_in("C123", "1.000001"),
+            "so does a top-level reply"
+        );
     }
     #[test]
     fn attribution_inside_original_ask_remains_byte_identical() {

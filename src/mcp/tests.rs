@@ -470,6 +470,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "envoy_drafts",
         "envoy_relay",
         "envoy_propose_task",
+        "envoy_note",
         "clean_worktrees",
     ];
     assert_eq!(names, expected);
@@ -530,6 +531,17 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
             .as_str()
             .unwrap()
             .contains("make a new ant for X")
+    );
+    assert!(
+        spawn["description"]
+            .as_str()
+            .unwrap()
+            .contains("Ants default model"),
+        "coordinators learn where the default model comes from"
+    );
+    assert_eq!(
+        spawn["inputSchema"]["properties"]["effort"]["enum"],
+        json!(crate::chat::settings::EFFORT_LEVELS)
     );
     let close = tools.iter().find(|t| t["name"] == "close_agents").unwrap();
     assert_eq!(
@@ -1500,8 +1512,9 @@ fn spawn_session_reports_the_new_session() {
         "worktree_id": "r::/wt", "worktree_path": "/wt",
         "task_id": null, "dispatch_id": null,
         "verified": true, "notes": ["accepted the Bypass Permissions warning (2)"],
+        "model": "fable", "effort": "high",
     });
-    let mut server = McpServer::new(FakeControl::default().reply("spawn", Ok(reply)));
+    let mut server = McpServer::new(FakeControl::default().reply("spawn", Ok(reply.clone())));
     let r = call(
         &mut server,
         "spawn_session",
@@ -1511,8 +1524,38 @@ fn spawn_session_reports_the_new_session() {
     let t = text(&r);
     assert!(t.starts_with("Started Claude in term_new (/wt)."), "{t}");
     assert!(t.contains("Node: term:term_new"));
+    assert!(t.contains("Model: fable, effort high."), "{t}");
     assert!(t.contains("The prompt shows as started."));
     assert!(t.contains("- accepted the Bypass Permissions warning (2)"));
+    assert_eq!(
+        server.control().calls[0].1["effort"],
+        Value::Null,
+        "no effort passed: the app fills the Ants default"
+    );
+
+    // No model in the result: the ant runs the CLI default and the text says so.
+    let mut bare = reply.clone();
+    bare["model"] = Value::Null;
+    bare["effort"] = Value::Null;
+    let mut server = McpServer::new(FakeControl::default().reply("spawn", Ok(bare)));
+    let r = call(
+        &mut server,
+        "spawn_session",
+        json!({"mode": "new_worktree", "repo": "depict", "name": "x", "prompt": "go",
+               "effort": "max"}),
+    );
+    assert!(text(&r).contains("Model: the CLI default"), "{}", text(&r));
+    assert_eq!(server.control().calls[0].1["effort"], "max");
+
+    // Codex ants are outside the setting; nothing about a model is said.
+    let mut server = McpServer::new(FakeControl::default().reply("spawn", Ok(reply)));
+    let r = call(
+        &mut server,
+        "spawn_session",
+        json!({"mode": "new_worktree", "repo": "depict", "name": "x", "prompt": "go",
+               "agent": "codex"}),
+    );
+    assert!(!text(&r).contains("Model:"), "{}", text(&r));
 
     let failed = CallError::Control(crate::control::ControlError::failed(
         "Start worker: worker failed at agent_readiness",

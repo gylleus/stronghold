@@ -225,6 +225,12 @@ pub fn validate_conversation(s: &str) -> Result<(), String> {
     }
     Ok(())
 }
+/// A Slack member id: `U…` or `W…` (enterprise), alphanumeric.
+pub fn is_member_id(s: &str) -> bool {
+    matches!(s.as_bytes().first(), Some(b'U' | b'W' | b'u' | b'w'))
+        && s.len() >= 2
+        && s.bytes().all(|b| b.is_ascii_alphanumeric())
+}
 pub fn validate_ts(s: &str) -> Result<(), String> {
     if timestamp_us(s).is_none_or(|t| t <= 0) {
         return Err("Invalid Slack timestamp".into());
@@ -388,6 +394,22 @@ impl<I: SlackIo> SlackChannel<I> {
             next_poll_ms: 0,
             next_subscribe_ms: 0,
         }
+    }
+
+    /// Karl's member id as Slack reports it (`auth.test`, what `slackmsg whoami` prints). A
+    /// resolved id replaces the configured one for drops, searches and the addressee check;
+    /// `Ok(None)` means Slack gave none and the configured id stands.
+    pub fn resolve_karl(&mut self) -> Result<Option<String>, String> {
+        let value = self.io.api("auth.test", &[])?;
+        let Some(id) = value["user_id"].as_str().map(str::trim) else {
+            return Ok(None);
+        };
+        if !is_member_id(id) {
+            return Err(format!("auth.test gave an invalid user id {id:?}"));
+        }
+        let id = id.to_ascii_uppercase();
+        self.settings.karl_user_id = id.clone();
+        Ok(Some(id))
     }
 
     pub fn configure(&mut self, settings: EnvoySettings) {

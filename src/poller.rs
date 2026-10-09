@@ -313,6 +313,7 @@ impl PromptSampler {
     pub fn tick(
         &mut self,
         verdicts: &mut BTreeMap<String, Option<PromptKind>>,
+        composers: &mut BTreeMap<String, crate::detect::ComposerState>,
         terminals: &[Terminal],
         screens: &dyn ScreenSource,
         now: Duration,
@@ -320,6 +321,7 @@ impl PromptSampler {
     ) {
         let candidates = prompt_sample_candidates(terminals, wall_ms, self.idle_after);
         verdicts.retain(|handle, _| candidates.iter().any(|t| &t.handle == handle));
+        composers.retain(|handle, _| candidates.iter().any(|t| &t.handle == handle));
         if !self.is_due(now) {
             return;
         }
@@ -334,6 +336,10 @@ impl PromptSampler {
             match screens.read_screen(handle) {
                 Ok(read) => {
                     verdicts.insert(handle.clone(), detect_prompt(&read.tail, agent));
+                    composers.insert(
+                        handle.clone(),
+                        crate::detect::composer_state(&read.tail, agent),
+                    );
                 }
                 Err(err) => log::debug!("{}", describe_error("prompt sample", &err)),
             }
@@ -599,6 +605,7 @@ impl PollState {
             let data = &mut self.data;
             self.sampler.tick(
                 &mut data.needs_input,
+                &mut data.composers,
                 &data.terminals,
                 screens,
                 now,
@@ -1575,17 +1582,39 @@ mod tests {
         };
         let mut sampler = PromptSampler::new(&config);
         let mut verdicts = BTreeMap::new();
+        let mut composers = BTreeMap::new();
 
-        sampler.tick(&mut verdicts, &terminals, &fake, secs(0), NOW_MS);
+        sampler.tick(
+            &mut verdicts,
+            &mut composers,
+            &terminals,
+            &fake,
+            secs(0),
+            NOW_MS,
+        );
         assert_eq!(fake.with(|s| s.calls.screens.len()), 5, "budget");
         assert_eq!(verdicts.get("t1"), Some(&Some(PromptKind::Permission)));
         assert_eq!(verdicts.get("t0"), Some(&None));
         assert_eq!(verdicts.len(), 5);
 
         // Not due again until the interval passes.
-        sampler.tick(&mut verdicts, &terminals, &fake, secs(9), NOW_MS + 9_000);
+        sampler.tick(
+            &mut verdicts,
+            &mut composers,
+            &terminals,
+            &fake,
+            secs(9),
+            NOW_MS + 9_000,
+        );
         assert_eq!(fake.with(|s| s.calls.screens.len()), 5);
-        sampler.tick(&mut verdicts, &terminals, &fake, secs(10), NOW_MS + 10_000);
+        sampler.tick(
+            &mut verdicts,
+            &mut composers,
+            &terminals,
+            &fake,
+            secs(10),
+            NOW_MS + 10_000,
+        );
         let reads = fake.with(|s| s.calls.screens.clone());
         assert_eq!(reads[5..], ["t5", "t6", "t0", "t1", "t2"]);
         assert_eq!(verdicts.len(), 7);
@@ -1593,13 +1622,29 @@ mod tests {
         // Output from t1 drops its verdict at once, even between samples.
         let mut resumed = terminals.clone();
         resumed[1].last_output_at = Some(Timestamp::Millis(NOW_MS + 11_000));
-        sampler.tick(&mut verdicts, &resumed, &fake, secs(12), NOW_MS + 12_000);
+        sampler.tick(
+            &mut verdicts,
+            &mut composers,
+            &resumed,
+            &fake,
+            secs(12),
+            NOW_MS + 12_000,
+        );
         assert!(!verdicts.contains_key("t1"));
         assert_eq!(verdicts.len(), 6);
+        assert!(!composers.contains_key("t1"), "pruned with the verdict");
+        assert_eq!(composers.len(), 6);
 
         // A failed read keeps the previous verdict.
         fake.with(|s| s.fail_screen = true);
-        sampler.tick(&mut verdicts, &terminals, &fake, secs(20), NOW_MS + 20_000);
+        sampler.tick(
+            &mut verdicts,
+            &mut composers,
+            &terminals,
+            &fake,
+            secs(20),
+            NOW_MS + 20_000,
+        );
         assert_eq!(verdicts.len(), 6);
     }
 
@@ -1625,6 +1670,12 @@ mod tests {
         assert_eq!(fake.with(|s| s.calls.screens.clone()), ["waiting"]);
         assert_eq!(data.screen_needs_input("waiting"), Some(true));
         assert_eq!(data.screen_needs_input("busy"), None);
+        assert_eq!(
+            data.screen_composer("waiting"),
+            Some(crate::detect::ComposerState::Absent),
+            "the same read says what the composer holds"
+        );
+        assert_eq!(data.screen_composer("busy"), None);
 
         // Plain ticks never read screens.
         let mut plain = PollState::new(PollerConfig::default());
