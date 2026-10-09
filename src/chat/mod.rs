@@ -203,12 +203,12 @@ impl ChatSession {
                 }
                 self.state = state;
             }
-            ChatEvent::Message(message) => {
+            ChatEvent::Message { message, timestamp } => {
                 voice::tap(&message, &mut self.speech);
                 if matches!(message, Incoming::Result(_)) {
                     self.log_turn();
                 }
-                self.transcript.apply(&message);
+                self.transcript.apply_at(&message, timestamp);
                 if let Incoming::Result(result) = &message {
                     log::info!(
                         "chat: turn finished ({}, {} ms, ${:.4})",

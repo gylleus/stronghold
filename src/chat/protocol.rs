@@ -30,6 +30,7 @@ pub enum Incoming {
     Assistant {
         parent: Option<String>,
         message_id: String,
+        model: Option<String>,
         content: Vec<ContentBlock>,
         /// The API call's token usage; its input side is how full the context is.
         usage: Option<Usage>,
@@ -70,10 +71,21 @@ pub struct Init {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamEvent {
-    MessageStart { message_id: String },
-    BlockStart { index: u64, block: BlockKind },
-    TextDelta { index: u64, text: String },
-    BlockStop { index: u64 },
+    MessageStart {
+        message_id: String,
+        model: Option<String>,
+    },
+    BlockStart {
+        index: u64,
+        block: BlockKind,
+    },
+    TextDelta {
+        index: u64,
+        text: String,
+    },
+    BlockStop {
+        index: u64,
+    },
     MessageStop,
     Other,
 }
@@ -190,6 +202,16 @@ fn str_of(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(Value::as_str).map(str::to_owned)
 }
 
+/// Synthetic interrupt/error messages have no running model.
+fn model_of(v: &Value) -> Option<String> {
+    str_of(v, "model").filter(|m| !m.trim().is_empty() && m != "<synthetic>")
+}
+
+/// Source time, when the CLI supplies one. Missing or malformed times stay unknown.
+pub fn timestamp_of(v: &Value) -> Option<jiff::Timestamp> {
+    v.get("timestamp")?.as_str()?.parse().ok()
+}
+
 fn parent_of(v: &Value) -> Option<String> {
     str_of(v, "parent_tool_use_id")
 }
@@ -213,6 +235,7 @@ pub fn parse_value(v: &Value) -> Incoming {
             Incoming::Assistant {
                 parent: parent_of(v),
                 message_id: str_of(message, "id").unwrap_or_default(),
+                model: model_of(message),
                 content: parse_content(message.get("content")),
                 usage: Usage::parse(message.get("usage")),
             }
@@ -261,7 +284,7 @@ fn parse_system(v: &Value) -> Incoming {
     match v.get("subtype").and_then(Value::as_str).unwrap_or_default() {
         "init" => Incoming::Init(Init {
             session_id: str_of(v, "session_id").unwrap_or_default(),
-            model: str_of(v, "model"),
+            model: model_of(v),
             cwd: str_of(v, "cwd"),
             tools: v
                 .get("tools")
@@ -293,6 +316,7 @@ fn parse_stream_event(e: &Value) -> StreamEvent {
     let index = || e.get("index").and_then(Value::as_u64).unwrap_or_default();
     match e.get("type").and_then(Value::as_str).unwrap_or_default() {
         "message_start" => StreamEvent::MessageStart {
+            model: e.get("message").and_then(model_of),
             message_id: e
                 .get("message")
                 .and_then(|m| str_of(m, "id"))

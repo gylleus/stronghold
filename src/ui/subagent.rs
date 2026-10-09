@@ -69,6 +69,12 @@ pub fn subagent_transcript(
     ui.horizontal(|ui| {
         let color = state_color(node.state, ui.visuals().dark_mode);
         ui.label(RichText::new("●").color(color));
+        crate::ui::chat::model_label(
+            ui,
+            view.as_ref()
+                .and_then(|view| view.transcript.model.as_deref())
+                .or(info.model.as_deref()),
+        );
         ui.add(egui::Label::new(RichText::new(&node.label).strong()).truncate());
     });
     ui.separator();
