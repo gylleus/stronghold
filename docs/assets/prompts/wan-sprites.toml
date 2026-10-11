@@ -1,0 +1,10 @@
+schema_version = 1
+palette = "palette.json"
+archive = "asset-library"
+
+[generation]
+style = "Crisp dark outline, chunky pixel clusters, three-tone shading, side-scroller game sprite."
+negative = "frontal view, facing camera, three-quarter view, three-quarter angle, looking at viewer, turned toward camera, frontal face, chest facing camera, both shoulders facing viewer, back view, multiple views, sprite sheet, cropped, cast shadow, floor, blurry, text, watermark"
+sprite_size = 48
+reference_size = 768
+reference_steps = 30

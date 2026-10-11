@@ -1,10 +1,12 @@
 # Myrstack art: inventory, Paleccino and asset descriptions
 
-Status: **draft for Karl's approval.** Karl chose the theme on 2026-10-11: the ant colony
-becomes **dwarves living underground, mining for gold and treasure**, at higher sprite
-resolution and fidelity. Section 3 maps the fleet onto that world and section 4 lists every
-resource it needs. Only test images have been generated, and the app's art and theme code
-are unchanged.
+Status: **draft, being shaped with Karl.** Theme (2026-10-11): the ant colony becomes
+**dwarves living underground, mining for gold and treasure**. The look is **grim and
+gritty**, the dwarves are **proper dwarves** (squat, not short humans), and sprites are
+**48 px** (the King 64 px). Miners face sideways; the King and the Envoy face the camera.
+Animations are drawn as **pose sheets by Codex's image model**, not by local video (section
+2b). Palettes are swapped at runtime (4j). Only test art exists so far; the app's art and
+theme code are unchanged.
 
 Bead: `myr-bov`.
 
@@ -117,9 +119,74 @@ What the test showed:
 - **The default palette hurts.** Jehkoba64 turned the red beard muddy. A palette chosen for
   the theme (warm golds and ember, cool stone, a few skin and beard ramps) should fix most
   of that.
-- **Animation not tried yet.** The Wan animation stage was not run for Myrstack. Paleccino's
-  validation shows it works on this Mac (about 6 min per 33-frame clip) with drift and
-  clipping that need review.
+- **Animation:** see 2b. Wan's motion was unusable, and the sheet route replaced it.
+
+### 2b. Animation: why Wan failed, and the route that works
+
+Paleccino's `generate` animates with the local **Wan 2.2 5B** video model. For Myrstack's
+miner (seed-41 profile reference, `mine` and `think`, 33 frames at 512 px, about 7–10 min a
+clip) it was **unusable**. The model zoomed in, invented rock and coloured junk, and lost
+the dwarf's identity mid-swing. The raw frames show it, so the background removal isn't to
+blame.
+
+![Wan 5B mining clip at 48 px](tests/wan5b-mine-failed.png)
+
+**fitness-rpg never shipped Wan animation.** Its provenance records about 1,300 assets made
+with `"backend": "built-in imagegen"` / `"tool": "image_gen.imagegen"`. That's Codex's
+built-in image tool, a hosted OpenAI image model. It draws **one sheet of discrete poses
+per action** from an identity reference (and, there, a motion storyboard), and `import-sheets`
+cuts the cells on the CPU. Wan was a research track (`image-generation/pixel-animation-14b/`):
+its best result was the 14B model with a pixel adapter on an RTX 3090, for gentle breathing
+motion, and it still needed cleanup.
+
+**The route Myrstack uses, tested 2026-10-11/12:**
+
+1. `paleccino plan --definition hold-v1.toml` writes one exact prompt per action
+   ([`prompts/hold-v1.toml`](prompts/hold-v1.toml)). I drop the palette paragraph (palettes
+   are applied at runtime) and ask for a flat grey background.
+2. [`tools/imagegen.sh`](tools/imagegen.sh) runs one headless `codex exec` call per image,
+   with the identity reference attached (`-i`). It copies the untouched PNG out. About
+   1–2 minutes per image, on Karl's Codex quota.
+3. **Reference first:** one still per character
+   ([`prompts/miner-ref-v2.txt`](prompts/miner-ref-v2.txt)), then one sheet per action
+   from that reference (`miner-mine.txt`, 8 poses; `miner-think.txt`, 6; `king-command.txt`,
+   6, played once). They come back consistent: same face, kit and proportions in every
+   pose.
+4. **Import and downscale.** `register` → `recipe` → `import-sheets` works with two quirks:
+   - The 8-pose sheets came back 1774×887, so they're trimmed by 1–2 px of background to
+     divide into the grid.
+   - Paleccino's sheet import only has nearest-neighbour scaling, which speckles a painted
+     sheet shrunk about 9× and leaves a grey fringe.
+
+   [`tools/downscale.py`](tools/downscale.py) instead keys out the grey at full size,
+   erodes the edge 2 px, uses one shared crop for all poses, and area-averages to 48/64 px
+   with binary alpha. That's clean. Long term, this belongs in Paleccino as a `box` resample
+   option.
+
+![Miner `mine` (48 px) and King `command` (64 px), drawn by image_gen, area-downscaled, shown 4× and 3×](tests/imagegen-sheets-48-64.png)
+
+Karl's notes on the first image_gen round:
+
+- **Too tall.** The first dwarves were about 4½ heads tall. The proportions line that fixed
+  it, now in every prompt: *"a proper fantasy dwarf, NOT a short human: about 2.5–3 heads
+  tall, nearly as wide as tall, oversized head and beard, barrel chest, very short stubby
+  legs, oversized hands and boots, low squat centre of gravity."*
+
+  ![First round, too tall](tests/imagegen-refs-too-tall.png)
+  ![With the proportions line](tests/imagegen-refs-dwarf-proportions.png)
+
+- **The King was too kind.** He's now a scowling taskmaster: broken nose, a scarred eye.
+- **The King and the Envoy face the camera.** They don't walk around.
+- **No scroll; a scepter, and much richer.** "We are getting rich here after all." He now has
+  a gem-set gold crown, gold-inlaid plate, a ruby chain, rings, and a ruby scepter.
+
+  ![The King at 64 px: idle (top, 8 poses) and command (bottom, 6 poses, played once), shown 3×](tests/king-rich-64.png)
+
+  The image model doesn't hold scale exactly between poses: the idle shifts size and
+  position slightly. Fix it in the recipe with per-pose ground contacts or regions, or
+  regenerate the sheet.
+- **Headless Codex needs `< /dev/null`.** Run in the background without it, `codex exec`
+  waits forever on stdin. [`tools/imagegen.sh`](tools/imagegen.sh) closes it.
 
 **Fit for Myrstack, and what reuse needs:**
 
@@ -151,12 +218,12 @@ same state → place rules); only what is drawn changes.
 
 | Fleet concept | Ant farm today | Dwarf hold |
 | --- | --- | --- |
-| The Queen (the fleet hub) | Crowned ant in the Queen's chamber | **The King under the Mountain** on a stone throne in the **throne hall** |
+| The Queen (the fleet hub) | Crowned ant in the Queen's chamber | **The King under the Mountain**, a grumpy taskmaster overlord in the **throne hall**, facing the camera |
 | Coordinator / attendant | Ant at a tunnel's mouth | **Foreman** with a lantern and a scroll of plans, at the **shaft head** |
 | Worker / terminal | Ant digging in the chamber | **Miner** with a pickaxe at the **ore face** at the end of the shaft |
 | Worker editing or building | Hard hat and hammer overlay | Miner **hammering timber supports** with a mallet, sparks flying |
 | Subagent (trails its parent) | Small faded ant | **Apprentice**: a young, short-bearded dwarf carrying a lantern behind their elder |
-| The Envoy (outside world) | Dish on the surface, listening post with headphones | **Ravenmaster**: a raven roost on the surface, and a desk underground with a brass **speaking tube** and ear trumpet |
+| The Envoy (outside world) | Dish on the surface, listening post with headphones | **Ravenmaster**, facing the camera: a raven roost on the surface, and a desk underground with a brass **speaking tube** and ear trumpet |
 | Claude / Codex / unknown agent | Amber / slate-teal / grey ant coat | **Livery colour** of hood and tunic: amber-ochre / slate with teal trim / plain grey |
 | Needs input (waiting on Karl) | Ants queue at the landing on the surface | Dwarves queue at the **mine entrance** on the mountainside |
 | Karl's messages | Pop out of a green warp pipe | Pop out of a brass **message tube** rising from the rock, as sealed scrolls |
@@ -175,38 +242,48 @@ same state → place rules); only what is drawn changes.
 
 Shared art direction for every generated asset:
 
-- **Style:** chunky, readable pixel art at 3× today's resolution. Crisp dark outlines, warm
-  torch-lit interiors against cool stone, cozy rather than grim.
-- **Lighting:** soft upper-left key light, three or four stepped shades per material. Gold
+- **Style:** grim, gritty dark-fantasy pixel art: soot, grime, worn iron, scars; heavy
+  dark outlines, chunky clusters, muted earth and iron tones with hot ember and gold
+  accents. Bold shapes that still read at 48 px.
+- **Lighting:** harsh low torchlight, deep shadows, three stepped shades per material. Gold
   and gems get a bright specular pixel.
-- **View:** strict side view for everything in the hold; actors face right and the code
-  mirrors them.
-- **Palette:** one fixed palette for the hold (to be chosen; see section 5).
+- **Dwarves are dwarves:** about 2.5–3 heads tall and nearly as wide, oversized head and
+  beard, barrel chest, stubby legs, big hands and boots. Every character prompt carries the
+  proportions line from 2b.
+- **View:** strict right-facing side profile for everyone who moves; the code mirrors for
+  left. **The King and the Envoy face the camera**, since they stay at their posts.
+- **Palette:** none at generation. Assets are kept in their original colours and the app
+  applies a swappable palette at runtime (see 4j).
 - **Format:** transparent PNG frames and atlases from Paleccino, unless noted.
 
 **Scale.** One farm texel today becomes 3 texels, so a 16 px ant cell becomes a **48×48**
 actor cell, and every prop and tile below is sized at that density. Sizes are given in final
 pixels.
 
-**Livery recoloring.** Every dwarf's hood and tunic use one reserved four-tone grey ramp, and
-the code recolors that ramp per agent (Claude, Codex, plain, failed). The ants work the same
-way today. This needs one sprite per character rather than four, and the palette must keep
-the ramp's exact colours. Beards could get the same treatment (ginger, brown, black, white,
-picked per agent) so the crowd looks varied. That is optional.
+**Livery recoloring.** Every dwarf's hood and tunic are generated in one **key colour** that
+nothing else on a dwarf uses (a saturated green). At load the app swaps that hue for the
+agent's livery (Claude amber, Codex slate with teal, plain grey, failed red) and keeps each
+pixel's lightness, so the shading survives. One sprite then serves every agent. The ants do
+something similar today with an exact six-colour ramp, but exact ramps don't survive
+unpaletted originals; a hue key does. This has not been tested yet: it's the first thing
+to try with the key-colour miner.
 
 ### 4a. Characters (48×48 cells unless noted)
 
-Animations are short loops picked from Paleccino's generated clips. Frame counts are the
-target; durations are tuned in code.
+Animations are loops of 4–8 frames picked from Paleccino's 33-frame Wan clips, or played
+once where noted. Frame counts are the target; durations are tuned in code.
 
-1. **`miner`**: workers and loose terminals, most of the crowd. *Visual:* a stout dwarf
-   miner, side view: iron helmet with a small candle lamp, a bushy beard to the belt,
-   grey-ramp hood and tunic (livery), brown leather apron, thick boots, a pickaxe.
+1. **`miner`**: workers and loose terminals, most of the crowd. *Visual:* a squat, weary
+   dwarf miner in profile: grime-streaked face, dark matted beard, battered iron helmet
+   with a guttering candle, a key-colour green wool hood and tunic (livery), a scorched
+   leather apron, heavy boots, a chipped iron pickaxe. Tested; see 2b.
    *Animations:* `walk` 4 frames; `mine` 4 (pickaxe swing into the rock face; chips are
    drawn by code); `build` 4 (mallet striking a timber post); `carry` 4 (walking with both
    hands raised, holding a nugget the code draws); `wait` 2 (standing, looking up, tapping a
-   foot); `doze` 2 (sitting slumped on a crate, beard rising with each breath);
-   `knocked_out` 1 (flat on the back, helmet off beside them).
+   foot); `think` 6 (standing, stroking the beard, head tilting: working without a tool
+   call, which `detect.rs` can tell apart; today it falls under digging); `doze` 2 (sitting
+   slumped on a crate, beard rising with each breath); `knocked_out` 1 (flat on the back,
+   helmet off beside them).
 2. **`foreman`**: coordinators and attendants. *Visual:* an older dwarf with a grey braided
    beard, a peaked leather cap instead of a helmet, a lantern on a pole and a rolled scroll
    of plans under one arm, livery tunic with a brass badge. *Animations:* `stand` 2
@@ -216,13 +293,22 @@ target; durations are tuned in code.
    with a short stubbly beard, oversized helmet, carrying a small lantern; livery as their
    elder. *Animations:* `walk` 4, `idle` 2.
 4. **`king`**: the Queen node. *Size:* 64×64 (the Queen's spot is bigger than a cell).
-   *Visual:* the dwarf King under the Mountain, seated: a long white beard in two braids
-   bound with gold rings, a heavy gold crown with a red gem, a deep red and gold robe, a
-   rune-carved scepter. *Animations:* `idle` 2 (stroking the beard); `call` 2 (raising the
-   scepter; the code draws the call rings). His crown is part of the sprite, so the separate
-   crown item is no longer needed on him.
-5. **`ravenmaster`**: the Envoy. *Visual:* a lean dwarf in a dark feathered cloak, a raven
-   on one shoulder, holding a brass ear trumpet. *Animations:* `listen` 2 (trumpet to the
+   **Faces the camera.** *Visual:* a squat, broad old dwarf king, a grumpy, greedy
+   taskmaster overlord grown obscenely rich from his mines: scowling, broken nose, a scar
+   across one eye, an iron-grey beard braided with thick gold rings and gems, a massive spiked
+   dark-gold crown set with rubies and emeralds, black plate inlaid with gold, a gold chain
+   with a huge ruby pendant, gold rings on every finger, a fur mantle lined with crimson
+   velvet, and a heavy gold **scepter** topped with a glowing ruby. Wealth worn as a threat.
+   ([`prompts/king-front-ref-v2.txt`](prompts/king-front-ref-v2.txt))
+   *Animations:* `idle` 8 (glaring, thumping the scepter impatiently, irritated huff;
+   tested, see below); `think` 6 (glowering, drumming his ringed fingers: the Queen is busy
+   on a chat turn); `command`, played once (hoists the scepter, the ruby flares, he barks an
+   order and slams it down: the Queen spawns a session, and a new dwarf walks in from the
+   mine entrance; tested); `call` 2 (the code draws the call rings). His crown is part of the sprite, so the separate crown item
+   is no longer needed on him.
+5. **`ravenmaster`**: the Envoy. **Faces the camera.** *Visual:* a squat, hunched dwarf
+   in a dark, ragged feathered cloak, a raven on one shoulder, holding a dented brass ear
+   trumpet. *Animations:* `listen` 2 (trumpet to the
    ear); `receive` 2 (the raven flaps).
 6. **`raven`**: the Envoy's messenger on the surface. *Size:* 24×24. *Visual:* a glossy
    black raven with a tiny scroll tied to one leg. *Animations:* `perch` 2, `fly` 4.
@@ -364,21 +450,124 @@ is drawn at a whole-pixel scale. `src/ui/art.rs` would load PNGs with nearest fi
 - **The name:** Myrstack is Swedish for anthill, which no longer fits. Renaming is Karl's call
   and isn't part of this work.
 
-## 5. Decisions for Karl before generation
+### 4i. Side view: getting the dwarves to face sideways
 
-1. **The concept mapping in section 3.** Does each role read right to you: King, foreman,
-   miner, apprentice, ravenmaster?
+Karl's first note: the test dwarf looks at the camera. SDXL with the pixel-art LoRA leans
+heavily towards front and three-quarter views, and "side profile facing right" in Paleccino's
+prompt template isn't enough on its own.
+
+- **Sweep 1, plain prompt** ("seen strictly from the side in profile" in the description,
+  front views in the negative): 0 of 6 seeds in profile.
+  ![Sweep 1](tests/facing-sweep-1-plain.png)
+- **Sweep 2, profile prompt.** I borrowed fitness-rpg's `view = "profile"` wording: the
+  description *starts* with "sprite in strict right-facing side profile. Orthographic
+  90-degree side view. Head and body point toward the right edge together. Only the near
+  side is visible…". The negative *starts* with the rejected views ("frontal view, facing
+  camera, three-quarter view …"). The appearance stays short, so everything fits in one CLIP
+  chunk. Result: 2 of 6 seeds in true profile (37 and 41), one close (73). The project
+  settings and scripts are in [`prompts/`](prompts/).
+  ![Sweep 2](tests/facing-sweep-2-profile.png)
+
+**Update:** Codex's image model holds a profile far better than SDXL. Both image_gen miner
+references and all 14 sheet poses came back in profile at the first attempt. The SDXL
+findings above matter only if Paleccino's local reference stage is used.
+
+**For production with SDXL (superseded by image_gen for now):**
+
+- Generate 6–8 seeds per dwarf with the profile prompt and keep the profiles. At about
+  2 minutes a seed that's cheap.
+- Animate only from an approved profile reference (`--reference`). The animation prompt
+  repeats the facing.
+- **To make it reliable,** port fitness-rpg's `--guide-image` / `--guide-strength`
+  (image-to-image from a side-view silhouette) and `view = "profile"` into Paleccino.
+  That changes Paleccino, not Myrstack, so it's Karl's call. With a guide, every seed comes
+  out in profile, and dwarves of one role share a stance, which helps a big roster look
+  consistent.
+
+### 4j. Palettes, swappable at runtime
+
+**Generation doesn't need the palette.** Paleccino applies the palette only at its last
+export step. It already saves an unpaletted `original-colors.png` with the same size, crop
+and frames as the paletted export. The pixel look comes from the downsample to 48 px, not
+from the palette: the test dwarf has 743 colours unpaletted and still reads as pixel art.
+The palette adds cohesion and mood.
+
+So Myrstack ships the original-colour atlases and applies the palette itself:
+
+- **At texture load, not in a shader.** egui has no simple hook for a custom fragment
+  shader; a `PaintCallback` with glow or wgpu would work but costs far more code. Recoloring
+  on the CPU when a texture is built is enough: each sprite has a few hundred distinct
+  colours. Build a per-palette lookup from each distinct colour to its nearest palette
+  colour (CIEDE2000, the same metric as Paleccino's `map_to_palette`), then rewrite the
+  pixels. Switching palettes rebuilds the textures, which should take well under a second.
+  The farm already recolors its ants at load (`sprites.rs`, `recolor`), so this extends an
+  existing pattern.
+- **Any palette works.** A palette is just a list of hex colours, such as a Lospec JSON
+  file, with no fixed size or ordering. "None" shows the originals.
+- **Order at load:** livery recolor (4) → palette mapping → texture. The livery hue swap runs
+  on the originals, so every palette sees the same liveried dwarf.
+- **Code-drawn art follows too.** Tiles, effects and sky colours go through the same nearest-
+  colour mapping, so the whole farm changes together. The UI theme accent can take its
+  colour from the palette as well.
+- **Settings:** a palette picker in Settings, with a few bundled palettes and an option to
+  add a Lospec JSON file.
+
+Prototype: the same 48 px dwarf mapped to 15 Lospec palettes with Paleccino's own mapper
+([`tools/palette_grid.py`](tools/palette_grid.py)). This is exactly what the app would do at
+load time.
+
+![The test dwarf without a palette and mapped to 15 palettes](tests/palette-swap.png)
+
+### 4k. Variety: a roster built to grow
+
+Karl wants hundreds of different dwarves eventually. For now: a handful while the look
+settles, built so more can be added endlessly.
+
+- **One TOML file per dwarf** under `art/roster/`: role (miner, foreman, apprentice), build,
+  beard colour and style, headgear, tool, accessories, and the key-colour livery. A small
+  script turns a file into a Paleccino `generate` call: a reference, then the role's standard
+  animation set with `--reference`, so every action keeps the same dwarf. Adding a dwarf
+  means adding a file and running the script.
+- **Trait tables for bulk:** later, a generator can combine traits (6 beards × 5 hats × 6
+  tools × 3 builds …) into roster files, keeping only the ones that pass review.
+- **Shipped as data, not code.** Each dwarf exports an atlas plus a manifest entry (role,
+  animations, frames, timing). The app finds dwarves through one manifest, not one
+  `include_bytes!` per file. Rough sizes: a 48 px dwarf with about 40 frames is about
+  20–40 KB of PNG, so 300 dwarves come to about 10 MB, which can still be embedded.
+  Textures are built only for dwarves on screen.
+- **A dwarf per agent:** the app picks a dwarf from the role's pool by a stable hash of the
+  agent id, so an agent keeps the same dwarf across polls and launches.
+- **Review gate:** a generated dwarf joins the roster only after a look at its review page.
+  Generated motion drifts and masks fail now and then.
+
+## 5. Decisions
+
+Settled with Karl (2026-10-11/12):
+
+- Theme: dwarves underground, mining for gold and treasure; grim and gritty.
+- 48 px actor cells (the King 64 px).
+- Proper dwarf proportions.
+- Miners in profile; the King and the Envoy face the camera.
+- Many animations: mining, thinking, the King idle, the King ordering a new dwarf.
+- Palettes swappable at runtime; Paleccino generates without one.
+- Room for hundreds of dwarves later, a few for now.
+- Codex image_gen is allowed for generation.
+
+Still open:
+
+1. **The concept mapping in section 3** for the remaining roles: foreman, apprentice,
+   ravenmaster.
 2. **The whip.** A pebble bonking the helmet is my suggestion. Alternatives: the foreman
    ringing a hand bell, or a splash from a water bucket.
 3. **Karl's pipe.** A brass message tube is my suggestion. Alternatives: a mine-lift cage
    that comes down, or a well with a bucket.
-4. **UI illustrations as pixel art** (King avatar, empty states, app icon), or keep them as
-   smooth vector art drawn by hand?
-5. **Resolution:** 48 px actor cells (3× today), as above. 64 px looks better still but fits
-   fewer dwarves on screen.
-6. **Palette.** The first step after approval would be to export the test dwarf against two
-   or three candidate palettes (ENDESGA 32, Jehkoba64 and one warm 48–64 colour Lospec
-   palette) so you can pick one by eye.
-7. **Scope of the first batch.** I'd suggest the cast (1–6), treasure and bubbles (7–17)
-   and the tiles (34–39) first, wired into the farm, then the set pieces, scenery and UI
-   illustrations.
+4. **UI illustrations as pixel art** (King avatar, empty states, app icon), or smooth vector?
+5. **Which palettes to bundle** for the first version of the picker (see 4j).
+6. **Next batch.** I'd suggest finishing the cast first:
+   - the miner's `walk`, `carry`, `wait`, `doze`, `build` and `knocked_out`;
+   - the front-facing King's `idle` and `command`;
+   - the foreman, apprentice and ravenmaster;
+   - two or three more miner variants, to test the roster.
+
+   Then the code: palette mapping at load, the dwarf manifest, 48 px farm cells. Treasure,
+   bubbles, tiles and set pieces come after.
