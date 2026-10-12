@@ -19,6 +19,8 @@ pub enum Action {
     /// Hammering at chest height (editing, building).
     Build,
     Walk,
+    /// Braced against a minecart rim, tool stowed; only used during travel.
+    Ride,
     /// Walking with a gold nugget held overhead.
     Carry,
     /// Standing with a gold nugget held overhead.
@@ -30,7 +32,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 11] = [
+    pub const ALL: [Action; 12] = [
         Action::Still,
         Action::Wait,
         Action::Study,
@@ -38,6 +40,7 @@ impl Action {
         Action::Mine,
         Action::Build,
         Action::Walk,
+        Action::Ride,
         Action::Carry,
         Action::Hold,
         Action::Sleep,
@@ -53,6 +56,7 @@ impl Action {
                 | Action::Mine
                 | Action::Build
                 | Action::Walk
+                | Action::Ride
                 | Action::Carry
         )
     }
@@ -232,6 +236,15 @@ pub fn pose(action: Action, t: f64) -> Pose {
                 ..rest
             }
         }
+        Action::Ride => Pose {
+            arm: 0.95,
+            back_arm: 0.85,
+            stowed: true,
+            lean: 0.025,
+            head: (t as f32 * 9.0).sin() * 0.025,
+            hop: 2.0 + (t as f32 * 15.0).sin().abs(),
+            ..rest
+        },
         Action::Walk | Action::Carry => {
             const CYCLE: f64 = 0.56;
             let u = (t.rem_euclid(CYCLE) / CYCLE) as f32;

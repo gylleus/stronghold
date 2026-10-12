@@ -21,10 +21,16 @@ fixed heights affect only dwarves. World art always uses one image pixel per far
   ore seams and loose chips. It draws at the requested texel size, so resizing a chamber
   adds rock detail instead of stretching it. `Prop::Cave` shares the prop texture cache;
   the seed changes the rock face. `Prop::Masonry` gives the throne hall, Envoy and treasury
-  staggered, chipped stone blocks. Adjust `WALL` and the face colours here.
+  staggered, chipped stone blocks. Unequal roof slabs, clustered scree and occasional
+  pit-props break up repeated edges; `grain` supplies stable variation. Adjust `WALL`
+  and the face colours here. Tool racks occupy empty parts of a working room only, with
+  clearance around dwarves and tags.
 - `sprites.rs` places the props and generates granite, worked stone and alpine turf tiles.
-  `rock_tile` controls sloping strata, fractures, chisel marks, pebbles and sparse veins. `gallery`, `shoring`
-  and `throne_hall` place rails, supports, torches, banners and braziers. `nature.rs` draws
+  `rock_tile` uses a 256-texel repeat for folded strata, fractures, granite flecks and
+  sparse veins, branching quartz, rust-coloured seams and crystal cavities. Surface boulders
+  have split faces, quartz and lichen; the receiver has a recessed rune panel and tool scars.
+  A hand winch and spoil heap dress the entrance. `gallery`, `shoring` and `throne_hall`
+  place rails, supports, soot, torches, banners and braziers. `nature.rs` draws
   pine, spruce, boulders, heather, edelweiss, gentian, mushrooms and celestial pieces;
   `scenery.rs` controls their deterministic placement. `Prop::Peaks` repeats across the
   horizon, with matching edge heights and snow caps.
@@ -33,6 +39,11 @@ fixed heights affect only dwarves. World art always uses one image pixel per far
   priest lights the basin. `Role::RunePriest` replaces the Ravenmaster: a long hooded robe,
   rune hem, braided beard, carved staff and blue crystal. `Action::Scry` raises both hands
   and pulses crystal/runes; otherwise the priest holds `Still`. The lab includes him.
+- Travelling dwarves use `Action::Ride`: braced arms, tools stowed, no walking stride.
+  `Prop::MineCart` covers the lower body; its wheels turn only on horizontal travel.
+  Vertical legs use `CartYoke` and an overhead chain. `motion::route` connects actual
+  shaft centres to the gallery, with sidings through rooms; cargo rides in the tub.
+  Arrival removes the cart and restores the worker's state pose. There is no idle ride.
 - `mail.rs` keeps message routes/timing and draws sealed scrolls. Karl's riveted brass tube
   stretches only as a message leaves. Fire has four frames at six frames per second;
   the tube, receiving stone and pool animate on events/work. Scenery and waiting figures
@@ -41,7 +52,8 @@ fixed heights affect only dwarves. World art always uses one image pixel per far
   Codex has blue cloth and a tall diamond crest. Helmets, caps and bandanas carry the guild
   colour too. `art::dress` assigns `dwarf::Crest`; `dwarf/parts.rs` cuts the actual brooches.
   Identity remains visible when sleeping or failed (failure is shown by the red bubble).
-  The farm demo includes both agents, and the dwarf lab has a crest picker.
+  The farm demo includes both agents, and the dwarf lab has a crest picker. The King
+  uses the regular dwarf body size; his taller, broader crown supplies the royal silhouette.
 - `pixel::Mapper::apply` maps texture colours before upload. `Mapper::shape` maps the
   scene's code-drawn colours (preserving alpha) before camera zoom; it skips image tints,
   since those textures are already mapped. This also covers labels and all transient effects.

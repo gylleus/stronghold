@@ -68,44 +68,61 @@ pub fn draw(c: &mut Canvas, d: Deco) {
                 WOOD,
             );
             c.line((x - 1.0, h - 6.0), (x + 3.0, h - 2.0), 0.6, WOOD_LIGHT);
-            let layers = if d == Deco::Pine { 3 } else { 4 };
-            for i in (0..layers).rev() {
-                let y = 3.0 + i as f32 * 6.0;
-                let r = 4.0 + i as f32 * 3.0;
-                c.cut(
+            // One broken silhouette, with uneven boughs instead of stacked triangles.
+            let lean = if d == Deco::Pine { -1.0 } else { 1.5 };
+            let mut edge = vec![(x + lean, 1.0)];
+            for (dx, y) in [
+                (-3.0, 9.0),
+                (-2.0, 8.0),
+                (-6.0, 15.0),
+                (-4.0, 14.0),
+                (-9.0, 23.0),
+                (-6.0, 21.0),
+                (-12.0, 31.0),
+                (-4.0, 30.0),
+                (-2.0, 32.0),
+                (3.0, 29.0),
+                (11.0, 31.0),
+                (7.0, 25.0),
+                (9.0, 25.0),
+                (4.0, 18.0),
+                (6.0, 19.0),
+                (2.0, 12.0),
+                (4.0, 13.0),
+            ] {
+                edge.push(((x + dx * (w / 28.0)).clamp(1.0, w - 1.0), y * (h / 38.0)));
+            }
+            c.cut(pts(&edge), GREEN_DARK);
+            for (dx, y, r) in [(-1.0, 8.0, 3.0), (-2.0, 15.0, 5.0), (-1.0, 22.0, 8.0)] {
+                c.paint(
                     pts(&[
-                        (x, y),
-                        (x - r, y + 12.0),
-                        (x - r * 0.7, y + 13.0),
-                        (x - 1.0, y + 12.0),
-                        (x + r, y + 13.0),
+                        (x + dx, y),
+                        (x - r, y + 7.0),
+                        (x - 1.0, y + 5.0),
+                        (x + 3.0, y + 8.0),
+                        (x + 1.0, y + 2.0),
                     ]),
                     GREEN,
                 );
-                c.paint(
-                    pts(&[(x, y + 1.0), (x - r + 2.0, y + 11.0), (x - 1.0, y + 9.0)]),
+                c.line(
+                    (x + dx - 1.0, y + 2.0),
+                    (x - r + 1.0, y + 6.0),
+                    0.5,
                     GREEN_LIGHT,
-                );
-                c.paint(
-                    pts(&[(x, y + 4.0), (x + r - 1.0, y + 12.0), (x + 1.0, y + 11.0)]),
-                    GREEN_DARK,
                 );
             }
         }
         Deco::Boulder | Deco::Rock => {
             c.cut(
-                blob(
-                    &pts(&[
-                        (1.0, h - 3.0),
-                        (w * 0.2, 4.0),
-                        (w * 0.5, 1.0),
-                        (w * 0.83, 3.0),
-                        (w - 1.0, h - 3.0),
-                        (w * 0.75, h - 1.0),
-                        (w * 0.2, h - 1.0),
-                    ]),
-                    3,
-                ),
+                pts(&[
+                    (1.0, h - 3.0),
+                    (w * 0.2, 4.0),
+                    (w * 0.5, 1.0),
+                    (w * 0.83, 3.0),
+                    (w - 1.0, h - 3.0),
+                    (w * 0.75, h - 1.0),
+                    (w * 0.2, h - 1.0),
+                ]),
                 STONE,
             );
             c.paint(
@@ -123,7 +140,23 @@ pub fn draw(c: &mut Canvas, d: Deco) {
                 STONE_DARK,
             );
             if d == Deco::Boulder {
-                c.line((9.0, 6.0), (7.0, 10.0), 0.5, STONE_DARK);
+                c.line((10.0, 3.0), (8.0, 7.0), 0.5, STONE_DARK);
+                c.line((8.0, 7.0), (11.0, 10.0), 0.5, STONE_DARK);
+                c.line((8.0, 7.0), (5.0, 8.0), 0.5, STONE_DARK);
+                c.line((11.0, 6.0), (16.0, 8.0), 0.5, rgb(0xb0ac96));
+                c.line((16.0, 8.0), (18.0, 7.0), 0.5, rgb(0xb0ac96));
+                // Lichen catches in sheltered cracks at the base.
+                c.paint(
+                    pts(&[
+                        (3.0, 10.0),
+                        (6.0, 9.0),
+                        (8.0, 11.0),
+                        (5.0, 12.0),
+                        (2.0, 11.0),
+                    ]),
+                    GREEN_DARK,
+                );
+                c.detail(4.0, 9.0, 2.0, 1.0, GREEN_LIGHT);
             }
         }
         Deco::Heather => {

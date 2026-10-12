@@ -951,7 +951,7 @@ impl AntFarmView {
             });
             if born {
                 let from = scene.queen_chamber.center() + vec2(0.0, 0.3 * scene.cell());
-                let path = route(from, ant.pos, false, scene.gallery.center().y);
+                let path = route(from, ant.pos, &Spot::Queen, &ant.spot, scene);
                 track.walk = Some(Walk::new(&path, scene.rect, now_s));
                 self.births.push(now_s);
             }
@@ -960,8 +960,7 @@ impl AntFarmView {
                     Some(walk) => walk.sample(scene.rect, now_s).0,
                     None => motion::from_unit(track.at, scene.rect),
                 };
-                let same_area = track.spot.area() == ant.spot.area();
-                let path = route(from, ant.pos, same_area, scene.gallery.center().y);
+                let path = route(from, ant.pos, &track.spot, &ant.spot, scene);
                 track.walk = Some(Walk::new(&path, scene.rect, now_s));
                 track.spot = ant.spot.clone();
             } else if steady && track.walk.is_none() {
@@ -1100,7 +1099,23 @@ fn paint_ground(
     }
     sprites.passage(painter, scene.gallery, px);
     sprites.gallery(painter, scene.gallery, px);
+    sprites.standing(
+        painter,
+        world::Prop::Spoil,
+        egui::pos2(scene.entrance_x() - 17.0 * px, scene.surface_y + 2.0 * px),
+        px,
+        1.0,
+    );
     sprites.entrance(painter, scene.entrance_x(), scene.surface_y, px);
+    if scene.entrance_x() - 41.0 * px >= scene.rect.left() {
+        sprites.standing(
+            painter,
+            world::Prop::PitheadWinch,
+            egui::pos2(scene.entrance_x() - 31.0 * px, scene.surface_y),
+            px * 0.8,
+            1.0,
+        );
+    }
     for plant in &plants {
         sprites.deco(painter, plant.deco, plant.foot, px, 1.0);
     }
@@ -1108,7 +1123,37 @@ fn paint_ground(
     sprites.throne_hall(painter, scene.queen_chamber, px);
     sprites.masonry(painter, scene.storage);
     for tunnel in &scene.tunnels {
-        sprites.cave(painter, tunnel.chamber, dwarf::seed_of(&tunnel.label) as u8);
+        let seed = dwarf::seed_of(&tunnel.label) as u8;
+        sprites.cave(painter, tunnel.chamber, seed);
+        let mut rows = Vec::new();
+        for ant in &scene.ants {
+            if matches!(&ant.spot, Spot::Chamber(key,_) if key == &tunnel.key) {
+                let y = ant.pos.y + ant.size / 2.0;
+                if !rows.iter().any(|row: &f32| (row - y).abs() < px) {
+                    rows.push(y);
+                }
+            }
+        }
+        for y in rows {
+            sprites.siding(painter, tunnel.chamber, y, px);
+        }
+        if tunnel.key != TunnelKey::RestingArea {
+            let prop = world::Prop::ToolRack;
+            let size = prop.size().map(|n| n as f32 * px * 0.85);
+            let dressing = Rect::from_min_size(
+                tunnel.chamber.min + vec2(12.0, 12.0) * px,
+                vec2(size[0], size[1]),
+            );
+            // Fill an unused part of the working face, leaving bodies and tags readable.
+            let occupied = scene.ants.iter().any(|ant| {
+                Rect::from_center_size(ant.pos, Vec2::splat(ant.size))
+                    .expand(10.0 * px)
+                    .intersects(dressing)
+            });
+            if !occupied && tunnel.chamber.shrink(4.0 * px).contains_rect(dressing) {
+                sprites.prop(painter, prop, dressing, 1.0);
+            }
+        }
     }
     for bed in &scene.beds {
         sprites.bed(painter, bed.rect, px);
@@ -1274,6 +1319,21 @@ fn paint_ants(
         }
         let carrying =
             ant.pose == Pose::Carry || (walking && ant.state == crate::model::NodeState::Done);
+        let riding = walking
+            && !matches!(
+                ant.kind,
+                crate::model::NodeKind::Queen | crate::model::NodeKind::Envoy
+            );
+        let hoisted = riding && at.heading.is_some_and(|h| h.y.abs() > h.x.abs());
+        if hoisted {
+            sprites.cart_hoist(
+                painter,
+                cell,
+                motion::hoist_ceiling(scene, at.pos),
+                tpx,
+                ant.alpha,
+            );
+        }
         let figure = Figure {
             key: ant.id.as_str(),
             look: dwarf_look(ant),
@@ -1298,7 +1358,15 @@ fn paint_ants(
             }
             continue;
         }
-        figures.body(painter, &figure, cell, px, now_s);
+        let rider_cell = if riding {
+            cell.translate(vec2(0.0, -3.0 * tpx))
+        } else {
+            cell
+        };
+        figures.body(painter, &figure, rider_cell, px, now_s);
+        if riding {
+            sprites.cart(painter, cell, tpx, carrying, hoisted, now_s, ant.alpha);
+        }
         if let Some(bed) = bed {
             sprites.blanket(painter, bed.rect, cell, tpx, ant.alpha);
         }
@@ -1399,8 +1467,7 @@ fn dwarf_action(ant: &layout::Ant, walking: bool, carrying: bool, queen_busy: bo
         };
     }
     match ant.pose {
-        _ if walking && carrying => Action::Carry,
-        _ if walking => Action::Walk,
+        _ if walking => Action::Ride,
         _ if carrying => Action::Hold,
         _ if ant.state == NodeState::Stalled => Action::Wait,
         Pose::Dig => Action::Mine,

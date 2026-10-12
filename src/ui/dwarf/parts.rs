@@ -963,21 +963,27 @@ fn hat(p: &mut Piece, look: &Look) {
             }
         }
         Hat::Crown => {
+            // Broad, tall battlements identify the King without enlarging his body.
             p.cut(
                 vec![
-                    pos2(-10.0, -78.0),
-                    pos2(-11.0, -94.0),
-                    pos2(-4.0, -86.0),
-                    pos2(3.0, -97.0),
-                    pos2(10.0, -86.0),
-                    pos2(17.0, -95.0),
-                    pos2(18.0, -78.0),
+                    pos2(-16.0, -78.0),
+                    pos2(-19.0, -108.0),
+                    pos2(-8.0, -96.0),
+                    pos2(-3.0, -112.0),
+                    pos2(4.0, -99.0),
+                    pos2(11.0, -114.0),
+                    pos2(17.0, -97.0),
+                    pos2(25.0, -109.0),
+                    pos2(22.0, -78.0),
                 ],
                 GOLD,
             );
-            p.paint(ellipse(pos2(4.0, -82.0), 2.6, 2.6, 10), RUBY);
-            p.paint(ellipse(pos2(-6.0, -82.0), 1.6, 1.6, 8), tint(GOLD, 0.5));
-            p.paint(ellipse(pos2(13.0, -82.0), 1.6, 1.6, 8), tint(GOLD, 0.5));
+            p.paint(rect(-15.0, -88.0, 22.0, -78.0), shade(GOLD, 0.25));
+            p.paint(rect(-15.0, -87.0, 22.0, -84.0), tint(GOLD, 0.45));
+            p.cut(ellipse(pos2(4.0, -85.0), 4.0, 5.0, 10), RUBY);
+            for x in [-9.0, 17.0] {
+                p.paint(ellipse(pos2(x, -81.5), 1.8, 1.8, 8), tint(GOLD, 0.5));
+            }
         }
         Hat::Bald => {}
     }
