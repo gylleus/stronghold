@@ -28,6 +28,8 @@ pub struct Body {
     pub facing_right: bool,
     pub coat: Coat,
     pub alpha: f32,
+    /// Picks the dwarf drawn in its place ([`crate::ui::dwarf::seed_of`] its id).
+    pub seed: u64,
 }
 
 /// A dead ant falling, from `start_s`.

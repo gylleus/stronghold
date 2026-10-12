@@ -71,10 +71,14 @@ pub enum Tool {
     Pickaxe,
     Hammer,
     Shovel,
+    /// The King's.
+    Scepter,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 3] = [Tool::Pickaxe, Tool::Hammer, Tool::Shovel];
+    pub const ALL: [Tool; 4] = [Tool::Pickaxe, Tool::Hammer, Tool::Shovel, Tool::Scepter];
+    /// What miners carry.
+    pub const DIGGING: [Tool; 3] = [Tool::Pickaxe, Tool::Hammer, Tool::Shovel];
 }
 
 /// Everything that makes one dwarf look like himself.
@@ -149,11 +153,35 @@ impl Look {
             trousers: TROUSERS[r.below(TROUSERS.len())],
             beard: Beard::ALL[r.below(Beard::ALL.len())],
             hat: hats[r.below(hats.len())],
-            tool: Tool::ALL[r.below(Tool::ALL.len())],
+            tool: Tool::DIGGING[r.below(Tool::DIGGING.len())],
             nose: 0.8 + r.unit() * 0.5,
             girth: 0.9 + r.unit() * 0.25,
         }
     }
+}
+
+impl Look {
+    /// The King: white braids, a crown, a red robe and a scepter.
+    pub fn king() -> Self {
+        Self {
+            skin: SKINS[1],
+            hair: HAIRS[6],
+            tunic: Color32::from_rgb(0x8c, 0x1c, 0x24),
+            trousers: Color32::from_rgb(0x3a, 0x2a, 0x30),
+            beard: Beard::Braided,
+            hat: Hat::Crown,
+            tool: Tool::Scepter,
+            nose: 1.2,
+            girth: 1.15,
+        }
+    }
+}
+
+/// A stable seed for `key` (FNV-1a), for picking a dwarf per agent.
+pub fn seed_of(key: &str) -> u64 {
+    key.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 /// splitmix64: small, fast and stable across platforms and versions.
@@ -200,6 +228,8 @@ pub struct Pose {
     pub since_strike: Option<f32>,
     /// A "?" over the head, 0..1 grown.
     pub question: f32,
+    /// The whole dwarf turned about his middle, radians clockwise (lying down, tumbling).
+    pub roll: f32,
 }
 
 /// The pose for `action` at `t` seconds (each dwarf passes its own phase offset in `t`).
@@ -214,11 +244,14 @@ pub fn pose(action: Action, t: f64) -> Pose {
         Action::Mine => {
             const CYCLE: f64 = 0.95;
             let u = (t.rem_euclid(CYCLE) / CYCLE) as f32;
-            // Wind up slowly, hang at the top, strike fast, recoil.
-            let (top, hit) = (-2.5, 1.45);
-            let (arm, lean, stretch) = if u < 0.42 {
+            // An overhead swing, both hands on the handle. Angles are backward from hanging
+            // down: the tool rises behind him, hangs above his head, comes over the top and
+            // down in front, and follows through to hang again (a full turn later).
+            let rest_back = -rest.arm;
+            let (top, hit) = (2.75, 4.95);
+            let (back, lean, stretch) = if u < 0.42 {
                 let k = ease_in_out(u / 0.42);
-                (lerp(rest.arm, top, k), -0.08 * k, 0.06 * k)
+                (lerp(rest_back, top, k), -0.08 * k, 0.06 * k)
             } else if u < 0.52 {
                 (top, -0.08, 0.06)
             } else if u < 0.6 {
@@ -227,14 +260,16 @@ pub fn pose(action: Action, t: f64) -> Pose {
             } else {
                 let k = ease_out((u - 0.6) / 0.4);
                 (
-                    lerp(hit, rest.arm, k) + 0.12 * (1.0 - k) * (k * 9.0).sin(),
+                    lerp(hit, rest_back + std::f32::consts::TAU, k)
+                        - 0.12 * (1.0 - k) * (k * 9.0).sin(),
                     lerp(0.14, 0.0, k),
                     lerp(-0.1, 0.0, k) + 0.03 * (1.0 - k) * (k * 14.0).sin(),
                 )
             };
+            let arm = -back;
             Pose {
                 arm,
-                back_arm: arm * 0.35,
+                back_arm: arm,
                 head: lean * 0.8,
                 lean,
                 stretch,
@@ -379,7 +414,8 @@ pub fn draw(
 ) -> Drawing {
     let k = height / 100.0;
     let place = Xf::translate(foot.to_vec2() - vec2(0.0, pose.hop * k))
-        .then(Xf::scale(if facing_right { k } else { -k }, k));
+        .then(Xf::scale(if facing_right { k } else { -k }, k))
+        .then(Xf::rotate_about(pos2(0.0, -45.0), pose.roll));
     // Squash and stretch keep the volume; lean tips him over his feet.
     let body = place
         .then(Xf::rotate(pose.lean))
@@ -529,12 +565,13 @@ fn tool(p: &mut Piece, tool: Tool, hand: Pos2) {
             p.cut(
                 blob(
                     &[
-                        pos2(hand.x - 13.0, end.y + 6.0),
-                        pos2(hand.x - 6.0, end.y - 1.0),
-                        pos2(hand.x + 6.0, end.y - 1.0),
-                        pos2(hand.x + 15.0, end.y + 7.0),
-                        pos2(hand.x + 5.0, end.y + 2.5),
-                        pos2(hand.x - 5.0, end.y + 2.5),
+                        // The points curve back towards the hands.
+                        pos2(hand.x - 13.0, end.y - 6.0),
+                        pos2(hand.x - 6.0, end.y + 1.0),
+                        pos2(hand.x + 6.0, end.y + 1.0),
+                        pos2(hand.x + 15.0, end.y - 7.0),
+                        pos2(hand.x + 5.0, end.y - 2.5),
+                        pos2(hand.x - 5.0, end.y - 2.5),
                     ],
                     6,
                 ),
@@ -562,6 +599,15 @@ fn tool(p: &mut Piece, tool: Tool, hand: Pos2) {
                 shade(IRON, 0.3),
             );
         }
+        Tool::Scepter => {
+            p.cut(capsule(butt, pos2(hand.x, end.y), 1.8), GOLD);
+            p.cut(ellipse(pos2(hand.x, end.y + 2.0), 5.2, 5.2, 16), GOLD);
+            p.paint(ellipse(pos2(hand.x, end.y + 2.0), 3.6, 3.6, 14), RUBY);
+            p.paint(
+                ellipse(pos2(hand.x - 1.2, end.y + 0.8), 1.2, 1.2, 8),
+                tint(RUBY, 0.6),
+            );
+        }
         Tool::Shovel => {
             p.cut(capsule(butt, pos2(hand.x, end.y - 6.0), 1.9), WOOD);
             p.cut(
@@ -587,6 +633,7 @@ fn tool_tip(tool: Tool) -> Pos2 {
         Tool::Pickaxe => pos2(SHOULDER.x, 2.0),
         Tool::Hammer => pos2(SHOULDER.x, -6.0),
         Tool::Shovel => pos2(SHOULDER.x, 4.0),
+        Tool::Scepter => pos2(SHOULDER.x, -2.0),
     }
 }
 
@@ -889,8 +936,13 @@ mod tests {
     }
 
     #[test]
-    fn crowns_are_left_to_kings() {
-        assert!((0..500).all(|s| Look::from_seed(s).hat != Hat::Crown));
+    fn crowns_and_scepters_are_left_to_kings() {
+        assert!((0..500).all(|s| {
+            let look = Look::from_seed(s);
+            look.hat != Hat::Crown && look.tool != Tool::Scepter
+        }));
+        assert_eq!(seed_of("term:abc"), seed_of("term:abc"));
+        assert_ne!(seed_of("term:abc"), seed_of("term:abd"));
     }
 
     #[test]

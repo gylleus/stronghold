@@ -71,7 +71,7 @@ fn each_section_renders_headless() {
         running_model: Some("claude-fable-5"),
         env_model: None,
     };
-    let cases: [(Section, &[&str]); 6] = [
+    let cases: [(Section, &[&str]); 7] = [
         (
             Section::Queen,
             &[
@@ -123,6 +123,15 @@ fn each_section_renders_headless() {
                 "Speak all of the Queen's replies",
                 "▶ Test voice",
                 "Speech recognition (Parakeet)",
+            ],
+        ),
+        (
+            Section::Art,
+            &[
+                art::DWARVES_LABEL,
+                art::PIXELS_LABEL,
+                art::PALETTE_LABEL,
+                "Own colours",
             ],
         ),
         (

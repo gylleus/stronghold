@@ -247,6 +247,7 @@ impl MyrstackApp {
                     let Some(snapshot) = &self.snapshot else {
                         return;
                     };
+                    self.ant_farm.set_art(self.whip_window.art());
                     self.ant_farm.set_queen_busy(self.queen_thinking());
                     self.ant_farm.set_queen_focused(self.shows_chat());
                     self.ant_farm.set_envoy_health(self.envoy_status().health());

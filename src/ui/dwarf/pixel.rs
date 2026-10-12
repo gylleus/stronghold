@@ -37,6 +37,104 @@ impl Palette {
     }
 }
 
+/// The palettes bundled in `assets/palettes` (Lospec; credited in `assets/LICENSES.md`), by
+/// file name.
+pub const BUNDLED: [(&str, &str); 16] = [
+    (
+        "endesga-32",
+        include_str!("../../../assets/palettes/endesga-32.json"),
+    ),
+    (
+        "jehkoba64",
+        include_str!("../../../assets/palettes/jehkoba64.json"),
+    ),
+    (
+        "resurrect-64",
+        include_str!("../../../assets/palettes/resurrect-64.json"),
+    ),
+    (
+        "apollo",
+        include_str!("../../../assets/palettes/apollo.json"),
+    ),
+    (
+        "aap-64",
+        include_str!("../../../assets/palettes/aap-64.json"),
+    ),
+    (
+        "dawnbringer-32",
+        include_str!("../../../assets/palettes/dawnbringer-32.json"),
+    ),
+    (
+        "zughy-32",
+        include_str!("../../../assets/palettes/zughy-32.json"),
+    ),
+    (
+        "journey",
+        include_str!("../../../assets/palettes/journey.json"),
+    ),
+    (
+        "lospec500",
+        include_str!("../../../assets/palettes/lospec500.json"),
+    ),
+    (
+        "vinik24",
+        include_str!("../../../assets/palettes/vinik24.json"),
+    ),
+    (
+        "fantasy-24",
+        include_str!("../../../assets/palettes/fantasy-24.json"),
+    ),
+    (
+        "sweetie-16",
+        include_str!("../../../assets/palettes/sweetie-16.json"),
+    ),
+    (
+        "pico-8",
+        include_str!("../../../assets/palettes/pico-8.json"),
+    ),
+    ("na16", include_str!("../../../assets/palettes/na16.json")),
+    ("slso8", include_str!("../../../assets/palettes/slso8.json")),
+    ("oil-6", include_str!("../../../assets/palettes/oil-6.json")),
+];
+
+/// The bundled palettes, parsed, in [`BUNDLED`] order.
+pub fn bundled() -> Vec<Palette> {
+    BUNDLED
+        .iter()
+        .map(|(file, json)| Palette::from_lospec(json).unwrap_or_else(|e| panic!("{file}: {e}")))
+        .collect()
+}
+
+/// Recolours flat shapes (meshes, paths, circles) to `mapper`'s palette, keeping alpha.
+pub fn recolor(shapes: &mut [Shape], mapper: &mut Mapper) {
+    let mut map = |c: &mut Color32| {
+        if c.a() > 0 {
+            let m = mapper.map(c.to_opaque());
+            *c = Color32::from_rgba_unmultiplied(m.r(), m.g(), m.b(), c.a());
+        }
+    };
+    for shape in shapes {
+        match shape {
+            Shape::Mesh(mesh) => {
+                for v in &mut std::sync::Arc::make_mut(mesh).vertices {
+                    map(&mut v.color);
+                }
+            }
+            Shape::Path(path) => {
+                map(&mut path.fill);
+                if let eframe::egui::epaint::ColorMode::Solid(c) = &mut path.stroke.color {
+                    map(c);
+                }
+            }
+            Shape::Circle(circle) => {
+                map(&mut circle.fill);
+                map(&mut circle.stroke.color);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Maps colours to their nearest palette colour (in CIELAB), remembering past answers.
 pub struct Mapper {
     lab: Vec<[f32; 3]>,

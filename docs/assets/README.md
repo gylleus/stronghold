@@ -77,12 +77,46 @@ Notes: the outline colour has to stay clear of the background. On the dark mine 
 palette's darkest colour can swallow the outline (Oil 6, Fantasy 24). The farm would want a
 lighter backdrop, or an outline colour picked per palette.
 
+**In the app** (Karl: "add this pixel and palette options to the app itself"): a new
+**Settings → Art** section, saved as the `art` key in `settings.json` and applied at once.
+
+- **"Dwarves instead of ants in the ant farm"** (off by default, so the farm is unchanged
+  until it's switched on).
+- **Dwarf pixels:** Smooth, Farm pixels (one pixel per farm texel, matching the farm's
+  art), or 16, 24, 32, 48 or 64 px tall.
+- **Palette:** own colours, or any of the 16 bundled palettes. A palette also works on
+  smooth dwarves: their flat shapes are recoloured directly.
+
+How the farm maps onto dwarves (`src/ui/ant_farm/art.rs`):
+- The Queen is the King: crown, white braids, red robe, ruby scepter. While her chat turn
+  runs he studies.
+- Each agent gets a dwarf picked by its id. The tunic is its livery: Claude amber, Codex
+  slate, failed red, unknown agents their own colour.
+- Walking walks; digging and building mine; sleeping and failed dwarves lie on their backs;
+  dwarves leaving the fleet tumble head down.
+- Bubbles, carried items, name tags, dirt, beams and mail are unchanged. The ant-only
+  overlays (crown item, headphones, builder's hat) are skipped for dwarves.
+
+Pixel dwarves re-render at 12 frames per second and cache one texture per agent.
+`cargo run --release --example ant_farm -- --dwarves [--pixels farm|HEIGHT] [--palette NAME]`
+shows the demo fleet.
+
+![The farm with dwarves](tests/farm-dwarves.png)
+![Smooth (top) and farm pixels in Endesga 32 (bottom)](tests/farm-dwarves-smooth-vs-pixel.png)
+
+Also fixed after Karl's notes:
+- The mining swing is overhead now, with both hands on the handle. It goes up behind the
+  head, over the top and down in front; before, it swung underarm.
+- The pickaxe head curves back towards the hands.
+
 Next, if Karl likes the direction:
 - the King (front-facing, crown and scepter) and the foreman, apprentice and ravenmaster as
   styles on the same rig;
 - more parts (hair styles, eyebrows, eyepatch, apron, hood);
 - `Carry` and `Build` actions;
-- wiring dwarves into the ant farm in place of the ant sprites.
+- a lighter farm backdrop, or a per-palette outline colour, where a palette's darkest
+  colour swallows the outline;
+- dwarf-specific overlays (a hard hat for builders, an ear trumpet for the Envoy).
 
 ## 1. What Myrstack ships today
 

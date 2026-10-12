@@ -1,6 +1,6 @@
 //! A workbench for the code-drawn dwarves (`myrstack::ui::dwarf`): one dwarf to dress and pose
 //! on the left, a crowd of seeded dwarves at work on the right. Pixel mode renders them small
-//! and maps them to a palette (the Lospec palettes in `assets/palettes`); the palette view shows
+//! and maps them to a palette (the bundled Lospec palettes, `pixel::BUNDLED`); the palette view shows
 //! the dressed dwarf in every palette at once.
 //!
 //! `cargo run --release --example dwarf_lab [--shot out.png] [--action mine|study|walk|still]
@@ -22,47 +22,6 @@ const WINDOW: [f32; 2] = [1440.0, 860.0];
 const CROWD: usize = 15;
 /// Dwarf heights in pixel mode.
 const HEIGHTS: [usize; 7] = [16, 24, 32, 40, 48, 64, 96];
-
-/// The bundled palettes, by file name.
-const PALETTES: [(&str, &str); 16] = [
-    (
-        "endesga-32",
-        include_str!("../assets/palettes/endesga-32.json"),
-    ),
-    (
-        "jehkoba64",
-        include_str!("../assets/palettes/jehkoba64.json"),
-    ),
-    (
-        "resurrect-64",
-        include_str!("../assets/palettes/resurrect-64.json"),
-    ),
-    ("apollo", include_str!("../assets/palettes/apollo.json")),
-    ("aap-64", include_str!("../assets/palettes/aap-64.json")),
-    (
-        "dawnbringer-32",
-        include_str!("../assets/palettes/dawnbringer-32.json"),
-    ),
-    ("zughy-32", include_str!("../assets/palettes/zughy-32.json")),
-    ("journey", include_str!("../assets/palettes/journey.json")),
-    (
-        "lospec500",
-        include_str!("../assets/palettes/lospec500.json"),
-    ),
-    ("vinik24", include_str!("../assets/palettes/vinik24.json")),
-    (
-        "fantasy-24",
-        include_str!("../assets/palettes/fantasy-24.json"),
-    ),
-    (
-        "sweetie-16",
-        include_str!("../assets/palettes/sweetie-16.json"),
-    ),
-    ("pico-8", include_str!("../assets/palettes/pico-8.json")),
-    ("na16", include_str!("../assets/palettes/na16.json")),
-    ("slso8", include_str!("../assets/palettes/slso8.json")),
-    ("oil-6", include_str!("../assets/palettes/oil-6.json")),
-];
 
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -87,7 +46,7 @@ fn main() -> eframe::Result {
     };
     let pixel_height = value("--pixel").and_then(|h| h.parse::<usize>().ok());
     let palette = value("--palette")
-        .and_then(|name| PALETTES.iter().position(|(file, _)| *file == name))
+        .and_then(|name| pixel::BUNDLED.iter().position(|(file, _)| *file == name))
         .map_or(0, |i| i + 1);
     let palette_view = flag("--palettes");
     eframe::run_native(
@@ -99,10 +58,7 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             myrstack::ui::theme::install(&cc.egui_ctx);
             cc.egui_ctx.set_theme(egui::Theme::Dark);
-            let palettes: Vec<Palette> = PALETTES
-                .iter()
-                .map(|(file, json)| Palette::from_lospec(json).expect(file))
-                .collect();
+            let palettes: Vec<Palette> = pixel::bundled();
             Ok(Box::new(Lab {
                 seed: 7,
                 look: Look::from_seed(7),

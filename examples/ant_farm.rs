@@ -9,7 +9,9 @@
 //! farm. Every few seconds one worker
 //! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
 //! report, N hatches a new worker, M sends a burst of messages between ants and T toggles the
-//! Queen thinking. With `--shot`, it saves a screenshot once settled and another while a worker
+//! Queen thinking. `--dwarves` draws dwarves instead of ants, `--pixels farm|HEIGHT` as pixels
+//! and `--palette NAME` (a bundled palette's file name, such as `endesga-32`) in a palette.
+//! With `--shot`, it saves a screenshot once settled and another while a worker
 //! walks, a new one emerges, a broadcast ripples and messages fly (`-walk`), then exits.
 
 use std::collections::HashSet;
@@ -20,6 +22,7 @@ use myrstack::model::{
     Edge, EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
 };
 use myrstack::traffic::{AgentMessage, MessageKind};
+use myrstack::ui::ant_farm::art::{ArtSettings, Pixels};
 use myrstack::ui::ant_farm::{AntFarmView, Pulse};
 use myrstack::ui::envoy_receipt::ReceiptCue;
 use myrstack::ui::graph::GraphView;
@@ -52,6 +55,20 @@ fn main() -> eframe::Result {
     let show_graph = args.iter().any(|a| a == "--graph");
     let sweep = args.iter().any(|a| a == "--sweep").then(sweep_marker);
     let parked = args.iter().any(|a| a == "--parked");
+    let value = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1).cloned())
+    };
+    let art = ArtSettings {
+        dwarves: args.iter().any(|a| a == "--dwarves"),
+        pixels: match value("--pixels").as_deref() {
+            None => Pixels::Off,
+            Some("farm") => Pixels::Farm,
+            Some(h) => Pixels::Height(h.parse().expect("--pixels farm or a height")),
+        },
+        palette: value("--palette").unwrap_or_default(),
+    };
     let ants = args
         .iter()
         .position(|a| a == "--ants")
@@ -102,6 +119,7 @@ fn main() -> eframe::Result {
                 farm: {
                     // As in the app with the Queen's chat showing.
                     let mut farm = AntFarmView::new();
+                    farm.set_art(&art);
                     farm.set_queen_focused(true);
                     farm.set_envoy_health(health);
                     if health == myrstack::envoy::EnvoyHealth::AwaitingApproval {
