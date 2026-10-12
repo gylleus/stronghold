@@ -165,7 +165,7 @@ motion, and it still needed cleanup.
 
 ![Miner `mine` (48 px) and King `command` (64 px), drawn by image_gen, area-downscaled, shown 4× and 3×](tests/imagegen-sheets-48-64.png)
 
-Karl's notes on the first image_gen round:
+Karl's notes on the image_gen rounds:
 
 - **Too tall.** The first dwarves were about 4½ heads tall. The proportions line that fixed
   it, now in every prompt: *"a proper fantasy dwarf, NOT a short human: about 2.5–3 heads
@@ -185,6 +185,16 @@ Karl's notes on the first image_gen round:
   The image model doesn't hold scale exactly between poses: the idle shifts size and
   position slightly. Fix it in the recipe with per-pose ground contacts or regions, or
   regenerate the sheet.
+- **Not realism: comic dark fantasy.** "Their heads or weapons can grow in size, or wiggle."
+  Round 3 redrew both characters with the cartoon style block; the first sheet shows the
+  difference.
+
+  ![Comic references: miner A and B, King A and B (A picked for both)](tests/comic-refs.png)
+  ![Comic round at real size (shown 4× and 3×): miner `mine` 8 and `study` 6 (48 px); King `work` 6 and `command` 6 (64 px)](tests/comic-sheets-48-64.png)
+
+- **No idle animations.** Idle holds a still; thinking gets a working animation.
+- **A network drop stalls Codex.** It waits "for network" indefinitely, so batch runs need
+  a per-call time limit.
 - **Headless Codex needs `< /dev/null`.** Run in the background without it, `codex exec`
   waits forever on stdin. [`tools/imagegen.sh`](tools/imagegen.sh) closes it.
 
@@ -242,9 +252,17 @@ same state → place rules); only what is drawn changes.
 
 Shared art direction for every generated asset:
 
-- **Style:** grim, gritty dark-fantasy pixel art: soot, grime, worn iron, scars; heavy
-  dark outlines, chunky clusters, muted earth and iron tones with hot ember and gold
-  accents. Bold shapes that still read at 48 px.
+- **Style:** **dark-fantasy cartoon with a comic-book feel, not realism.** Caricatured
+  proportions: huge heads, oversized hands, beards, boots and weapons. Bold simple shapes,
+  thick ink outlines, flat colour with hard cel shadows, little texture noise. Grim mood
+  (soot, dents, scars, muted iron and earth with punchy gold, crimson and ember). The
+  shared style block is [`prompts/v3/style.txt`](prompts/v3/style.txt).
+- **Motion:** cartoon animation: anticipation, squash and stretch, overshoot; heads, beards
+  and tools may swell and wobble for emphasis.
+- **No idle animations, ever** (they distract). An agent that is idle or done holds a
+  **still pose** (one frame). Motion means work: the *working* animation plays while an
+  agent is thinking about its prompt or task, and the action animation (mining, building)
+  while it uses tools.
 - **Lighting:** harsh low torchlight, deep shadows, three stepped shades per material. Gold
   and gems get a bright specular pixel.
 - **Dwarves are dwarves:** about 2.5–3 heads tall and nearly as wide, oversized head and
@@ -270,48 +288,66 @@ to try with the key-colour miner.
 
 ### 4a. Characters (48×48 cells unless noted)
 
-Animations are loops of 4–8 frames picked from Paleccino's 33-frame Wan clips, or played
-once where noted. Frame counts are the target; durations are tuned in code.
+Every character is drawn in the cartoon style (4, top) from one approved identity
+reference, with one Codex image_gen sheet per animation (2b). Each character has:
 
-1. **`miner`**: workers and loose terminals, most of the crowd. *Visual:* a squat, weary
-   dwarf miner in profile: grime-streaked face, dark matted beard, battered iron helmet
-   with a guttering candle, a key-colour green wool hood and tunic (livery), a scorched
-   leather apron, heavy boots, a chipped iron pickaxe. Tested; see 2b.
-   *Animations:* `walk` 4 frames; `mine` 4 (pickaxe swing into the rock face; chips are
-   drawn by code); `build` 4 (mallet striking a timber post); `carry` 4 (walking with both
-   hands raised, holding a nugget the code draws); `wait` 2 (standing, looking up, tapping a
-   foot); `think` 6 (standing, stroking the beard, head tilting: working without a tool
-   call, which `detect.rs` can tell apart; today it falls under digging); `doze` 2 (sitting
-   slumped on a crate, beard rising with each breath); `knocked_out` 1 (flat on the back,
-   helmet off beside them).
-2. **`foreman`**: coordinators and attendants. *Visual:* an older dwarf with a grey braided
-   beard, a peaked leather cap instead of a helmet, a lantern on a pole and a rolled scroll
-   of plans under one arm, livery tunic with a brass badge. *Animations:* `stand` 2
-   (consulting the scroll, lantern swaying); `walk` 4; `carry` 4; `wait` 2; `doze` 2;
-   `knocked_out` 1. An attendant variant (a ledger instead of a scroll) is optional.
-3. **`apprentice`**: subagents. *Size:* 36×36 inside a 48 cell. *Visual:* a young dwarf
-   with a short stubbly beard, oversized helmet, carrying a small lantern; livery as their
-   elder. *Animations:* `walk` 4, `idle` 2.
-4. **`king`**: the Queen node. *Size:* 64×64 (the Queen's spot is bigger than a cell).
-   **Faces the camera.** *Visual:* a squat, broad old dwarf king, a grumpy, greedy
-   taskmaster overlord grown obscenely rich from his mines: scowling, broken nose, a scar
-   across one eye, an iron-grey beard braided with thick gold rings and gems, a massive spiked
-   dark-gold crown set with rubies and emeralds, black plate inlaid with gold, a gold chain
-   with a huge ruby pendant, gold rings on every finger, a fur mantle lined with crimson
-   velvet, and a heavy gold **scepter** topped with a glowing ruby. Wealth worn as a threat.
-   ([`prompts/king-front-ref-v2.txt`](prompts/king-front-ref-v2.txt))
-   *Animations:* `idle` 8 (glaring, thumping the scepter impatiently, irritated huff;
-   tested, see below); `think` 6 (glowering, drumming his ringed fingers: the Queen is busy
-   on a chat turn); `command`, played once (hoists the scepter, the ruby flares, he barks an
-   order and slams it down: the Queen spawns a session, and a new dwarf walks in from the
-   mine entrance; tested); `call` 2 (the code draws the call rings). His crown is part of the sprite, so the separate crown item
-   is no longer needed on him.
-5. **`ravenmaster`**: the Envoy. **Faces the camera.** *Visual:* a squat, hunched dwarf
-   in a dark, ragged feathered cloak, a raven on one shoulder, holding a dented brass ear
-   trumpet. *Animations:* `listen` 2 (trumpet to the
-   ear); `receive` 2 (the raven flaps).
-6. **`raven`**: the Envoy's messenger on the surface. *Size:* 24×24. *Visual:* a glossy
-   black raven with a tiny scroll tied to one leg. *Animations:* `perch` 2, `fly` 4.
+- **`still`:** one frame, the reference pose cut to size. Shown when the agent is idle,
+  done or parked. **No idle loops.**
+- **`work`:** a loop that plays while the agent is thinking about its prompt or task
+  (`detect.rs` can tell thinking apart from tool use).
+- **Action loops** for tool use, and one-shots where noted.
+
+Frame counts are targets (6–8 per loop); durations are tuned in code.
+
+1. **`miner`**: workers and loose terminals, most of the crowd. Right-facing profile.
+   *Visual:* a squat cartoon dwarf, about 2 heads tall: enormous head under a dented iron
+   helmet with a guttering candle stuck on top, a giant bulbous nose, huge brows, a massive
+   dark beard to the knees, a soot-blackened key-colour green hood and tunic (livery), a
+   scorched apron, tiny legs in huge boots, an oversized chipped pickaxe
+   ([`prompts/v3/miner-ref.txt`](prompts/v3/miner-ref.txt)).
+   *Animations:*
+   - `study` 6, the work loop: squints at the rock face, taps it and listens, scratches
+     under the helmet.
+   - `mine` 8, tool use: wind-up, smear, squash on impact with sparks. **Tested; looks
+     right.**
+   - `build` 8, editing or building: hammers a timber prop, wobbling.
+   - `walk` 8.
+   - `carry` 8: hauls a nugget overhead.
+   - `knocked_out` 1: flat on the back, helmet off.
+   - Stills: `wait` (arms crossed, tapping a boot, glaring up at the surface; needs input)
+     and `doze` (slumped on a crate, beard over his face; idle, with the "Zz" bubble
+     carrying the state).
+2. **`foreman`**: coordinators and attendants. Profile. *Visual:* an older cartoon
+   dwarf with a grey braided beard, a peaked leather cap, a lantern on a pole and a rolled
+   plan under one arm, livery tunic with a brass badge. *Animations:* `work` 6 (unrolls the
+   plan, jabs at it, shouts down the shaft); `walk` 8; `carry` 8; `knocked_out` 1; stills
+   `still`, `wait` and `doze`.
+3. **`apprentice`**: subagents. *Size:* 36×36 inside a 48 cell. Profile. *Visual:* a
+   young cartoon dwarf with a stubbly beard, an oversized helmet over his eyes and a small
+   lantern; livery as their elder. *Animations:* `walk` 8 (scurrying); `work` 6 (holds
+   the lantern up for the elder, peering); `still`.
+4. **`king`**: the Queen node. *Size:* 64×64. **Faces the camera.** *Visual:* a squat,
+   greedy, grumpy cartoon dwarf king grown obscenely rich: enormous scowling head, a giant
+   crooked nose, a scarred squinting eye, furious brows, a beard braided with fat gold rings,
+   an oversized askew spiked gold crown crammed with rubies, black plate with gold trim, a
+   fur and crimson mantle, and a comically huge gold **scepter** with a glowing ruby
+   ([`prompts/v3/king-ref.txt`](prompts/v3/king-ref.txt)). His crown is part of the
+   sprite, so the separate crown item is no longer needed on him.
+   *Animations:*
+   - `still`: glaring, scepter planted.
+   - `work` 6, while the Queen is busy on a chat turn: counts gold coins and bites one
+     suspiciously.
+   - `command` 6, played once: swells up, thrusts the scepter, bellows; the Queen spawns
+     a session and a new dwarf walks in from the mine entrance.
+   - `call`: the code draws the call rings over `still`.
+5. **`ravenmaster`**: the Envoy. **Faces the camera.** *Visual:* a squat, hunched
+   cartoon dwarf in a ragged feathered cloak, a raven on one shoulder, a dented brass ear
+   trumpet bigger than his head. *Animations:* `still`; `work` 6 (trumpet to the ear,
+   eyes bulging, the raven leaning in); `receive`, played once (the raven flaps off with a
+   scroll).
+6. **`raven`**: the Envoy's messenger on the surface. *Size:* 24×24. *Visual:* a scruffy
+   cartoon raven with a scroll tied to one leg. *Animations:* `still` (perched); `fly` 6,
+   played only while carrying a message.
 
 ### 4b. Treasure and items
 
@@ -564,8 +600,8 @@ Still open:
 4. **UI illustrations as pixel art** (King avatar, empty states, app icon), or smooth vector?
 5. **Which palettes to bundle** for the first version of the picker (see 4j).
 6. **Next batch.** I'd suggest finishing the cast first:
-   - the miner's `walk`, `carry`, `wait`, `doze`, `build` and `knocked_out`;
-   - the front-facing King's `idle` and `command`;
+   - the miner's `walk`, `carry`, `build`, `knocked_out` and the `wait` and `doze` stills;
+   - the King's `still` (his `work` and `command` are done);
    - the foreman, apprentice and ravenmaster;
    - two or three more miner variants, to test the roster.
 
