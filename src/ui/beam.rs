@@ -1,7 +1,6 @@
 //! Tool calls drawn as beams from the caller to the agents they act on, see
-//! [`crate::traffic::beam`]: a thin blue line with a dot pulled back along it for a read, a blue
-//! ring sweeping over the agents of a listing, a red laser and a burst for a close (a faint
-//! dashed line for a dry run), a green burst on a spawned agent. Each lasts under a second. With
+//! [`crate::traffic::beam`]: warm light pulled back along a read, a ring for a listing,
+//! a shot and burst for a close (dashed for a dry run), and a burst for a spawned agent. Each lasts under a second. With
 //! the system's Reduce motion on, they show in place and fade instead. Shared by the farm, which supply the screen positions.
 //!
 //! Bursts stay calm: the Queen's parallel reads within [`MERGE_S`] become one fan of lines, a
@@ -23,20 +22,7 @@ pub const MERGE_S: f64 = 0.3;
 pub const STALE_S: f64 = 2.0;
 pub const MAX_BEAMS: usize = 8;
 
-/// The beam colors, also shown in the farm's legend.
-pub const READ: Color32 = Color32::from_rgb(0x5c, 0xa8, 0xff);
-pub const KILL: Color32 = Color32::from_rgb(0xff, 0x45, 0x45);
-pub const SPAWN: Color32 = Color32::from_rgb(0x6f, 0xe0, 0x8c);
-
-pub fn color(kind: BeamKind) -> Color32 {
-    match kind {
-        BeamKind::Read | BeamKind::Sweep | BeamKind::Write => READ,
-        BeamKind::Kill | BeamKind::DryKill => KILL,
-        BeamKind::Spawn => SPAWN,
-    }
-}
-
-/// One beam showing, or queued to.
+/// One tool call currently lighting its targets.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lit {
     pub beam: Beam,
@@ -114,11 +100,18 @@ pub type End = (Pos2, f32);
 
 /// Draws `l` from `from` to `targets` (screen positions of those drawn) at `now_s`; `size`
 /// scales line widths and bursts with the view's zoom.
-pub fn paint(painter: &Painter, l: &Lit, from: End, targets: &[End], size: f32, now_s: f64) {
+pub fn paint(
+    painter: &Painter,
+    l: &Lit,
+    from: End,
+    targets: &[End],
+    size: f32,
+    now_s: f64,
+    color: Color32,
+) {
     let Some(t) = l.progress(now_s) else {
         return;
     };
-    let color = color(l.beam.kind);
     let width = (size * 0.06).max(1.0);
     if l.beam.kind == BeamKind::Sweep {
         sweep(painter, l.still, t, from, targets, color, width);

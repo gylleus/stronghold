@@ -1,13 +1,58 @@
 # Myrstack art: inventory, Paleccino and asset descriptions
 
-Status: **direction changed on 2026-10-12.** Karl disliked the generated comic art and
-dropped cloud generation. **The dwarves are now drawn in code as paper cutouts** (section
-0): layered parts tinted from single colours, randomised per agent, animated by rotating
-pinned pieces. Local generation (Paleccino) stays an option for the *other* assets: tiles,
-props, set pieces. Sections 2b–4 record how we got here; the generated-sprite plans there
-are superseded for the dwarves.
+Status: **all farm art is drawn in code as of 2026-10-12.** The dwarf mine uses the
+same ink cutouts and hard pixel rasterizer for characters, props and scenery. There are
+no farm PNGs and no alternate ant-farm art path. The earlier experiments below are history.
 
-Bead: `myr-bov`.
+## Dwarven world art: the mountain mine
+
+Bead: `myr-uhz`. Settings → Art → **Palette** recolours the entire scene, including granite,
+worked passages, sky, labels, bubbles and effects. **Pixels** chooses the dwarf resolution;
+fixed heights affect only dwarves. World art always uses one image pixel per farm texel
+(`scene.px` points), with nearest sampling and an ink outline at least one texel wide.
+
+- `src/ui/ant_farm/world.rs` contains the shared prop renderer and texture cache. `Prop`
+  picks the drawing, `size()` its native texel bounds. The cache key includes prop, rendered
+  size, palette and animation frame. `Canvas` calls the dwarf's `Piece::cut`/`paint`,
+  `blob`, `capsule`, `ellipse`, `Xf` and `Finish::INK`. Adjust the material constants here
+  for worn timber, grey stone, iron, brass, parchment, gold and blue rune light. Leave a
+  texel around silhouettes for the outline.
+- `sprites.rs` places the props and generates granite, worked stone and alpine turf tiles.
+  `rock_tile` controls strata, chisel marks, pebbles and sparse veins. `gallery`, `shoring`
+  and `throne_hall` place rails, supports, torches, banners and braziers. `nature.rs` draws
+  pine, spruce, boulders, heather, edelweiss, gentian, mushrooms and celestial pieces;
+  `scenery.rs` controls their deterministic placement. `Prop::Peaks` repeats across the
+  horizon, with matching edge heights and snow caps.
+- `comms.rs` draws the standing rune stone, pedestal basin and tablet stack. The stone's
+  runes are dim at rest, cracked/dark when stopped, and gold on receipt. Only a working
+  priest lights the basin. `Role::RunePriest` replaces the Ravenmaster: a long hooded robe,
+  rune hem, braided beard, carved staff and blue crystal. `Action::Scry` raises both hands
+  and pulses crystal/runes; otherwise the priest holds `Still`. The lab includes him.
+- `mail.rs` keeps message routes/timing and draws sealed scrolls. Karl's riveted brass tube
+  stretches only as a message leaves. Fire has four frames at six frames per second;
+  the tube, receiving stone and pool animate on events/work. Scenery and waiting figures
+  stay still. Snore z's and the pebble bonk use the same material colours as the bubbles.
+- `pixel::Mapper::apply` maps texture colours before upload. `Mapper::shape` maps the
+  scene's code-drawn colours (preserving alpha) before camera zoom; it skips image tints,
+  since those textures are already mapped. This also covers labels and all transient effects.
+
+Visual checks (each farm command also writes a `-walk` screenshot):
+
+```sh
+cargo run --release --example ant_farm -- --parked --shot /tmp/farm.png
+cargo run --release --example ant_farm -- --parked --palette endesga-32 --shot /tmp/farm-endesga.png
+cargo run --release --example ant_farm -- --parked --palette oil-6 --shot /tmp/farm-oil.png
+MYRSTACK_HOUR=22 cargo run --release --example ant_farm -- --parked --shot /tmp/farm-night.png
+cargo run --release --example dwarf_lab -- --pixel 48 --shot /tmp/dwarf-lab.png
+```
+
+Use `--scrying` for the working priest, `--stopped` for a stopped receiver, and
+`--receipt-at-ms 31` to inspect gold receiving runes and `--bridge-down` for the
+cracked stone. Prop tests rasterize every drawing at multiple sizes and in every palette;
+pose tests ensure only work animates. For small palettes, rock and wall source colours
+are lifted only if they would map to the ink (or to each other), then passed through the
+same nearest-colour mapper. Baseline for this replacement: `/tmp/farm-before.png`
+and `/tmp/farm-before-walk.png`.
 
 ## 0. Current direction: code-drawn paper-cutout dwarves
 

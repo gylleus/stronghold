@@ -29,7 +29,7 @@ impl ReceiptCue {
             } else {
                 4.0 * fade * fade * (progress * std::f32::consts::TAU * 4.0).sin()
             },
-            highlight: if reduced_motion { fade } else { 0.0 },
+            highlight: fade,
             active: true,
         }
     }
@@ -64,7 +64,7 @@ mod tests {
                 } else {
                     let envelope = 4.0 * (1.0 - elapsed as f32 / DURATION_MS as f32).powi(2);
                     assert!(cue.offset.abs() <= envelope);
-                    assert_eq!(cue.highlight, 0.0);
+                    assert!(cue.highlight > 0.0);
                 }
             }
         }

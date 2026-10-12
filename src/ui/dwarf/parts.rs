@@ -1,6 +1,6 @@
 //! The pieces a dwarf is built from, in his own units (about 100 tall, facing right, feet on
 //! the origin): boots, body, arms with the tool, head with hair, beard, face and hat, and the
-//! Ravenmaster's raven. Each is cut in the look's colours; [`super::draw`] places them.
+//! rune priest's staff. Each is cut in the look's colours; [`super::draw`] places them.
 
 use eframe::egui::{Color32, Pos2, pos2, vec2};
 
@@ -15,7 +15,7 @@ const BRASS: Color32 = Color32::from_rgb(0xc8, 0x96, 0x3c);
 const FLAME: Color32 = Color32::from_rgb(0xff, 0xb0, 0x30);
 const FLAME_CORE: Color32 = Color32::from_rgb(0xff, 0xf0, 0xb0);
 const BANDANA: Color32 = Color32::from_rgb(0xa8, 0x34, 0x2a);
-const RAVEN: Color32 = Color32::from_rgb(0x22, 0x22, 0x2e);
+const CRYSTAL: Color32 = Color32::from_rgb(0x69, 0xae, 0xc4);
 /// Where the fist is, in arm coordinates (the arm hangs straight down from the shoulder).
 const HAND: Pos2 = pos2(SHOULDER.x, -25.5);
 
@@ -64,6 +64,42 @@ pub(super) fn body(look: &Look) -> Piece {
         look.tunic,
     );
     match look.garment {
+        Garment::Robe => {
+            // A continuous skirt down to the boots, broad enough to read at farm size.
+            p.cut(
+                blob(
+                    &[
+                        pos2(-16.0, -46.0),
+                        pos2(12.0, -48.0),
+                        pos2(18.0, -31.0),
+                        pos2(23.0, -5.0),
+                        pos2(0.0, -3.0),
+                        pos2(-22.0, -6.0),
+                        pos2(-18.0, -31.0),
+                    ],
+                    6,
+                ),
+                look.tunic,
+            );
+            p.paint(
+                vec![
+                    pos2(-16.0, -37.0),
+                    pos2(-6.0, -32.0),
+                    pos2(-8.0, -6.0),
+                    pos2(-19.0, -7.0),
+                ],
+                shade(look.tunic, 0.3),
+            );
+            p.paint(
+                capsule(pos2(10.0, -33.0), pos2(16.0, -8.0), 1.8),
+                tint(look.tunic, 0.2),
+            );
+            p.paint(capsule(pos2(-18.0, -8.0), pos2(19.0, -8.0), 1.2), BRASS);
+            for x in [-13.0, -2.0, 9.0] {
+                rune(&mut p, pos2(x, -16.0), BRASS);
+            }
+            return p;
+        }
         Garment::Tunic => {}
         Garment::Apron => {
             let apron = Color32::from_rgb(0x7a, 0x52, 0x34);
@@ -159,7 +195,7 @@ pub(super) fn back_arm(look: &Look) -> Piece {
 pub(super) fn arm(look: &Look, pose: &Pose) -> Piece {
     let mut p = Piece::default();
     // The tool goes under the fist, so it is cut first.
-    if !pose.nugget && !pose.stowed {
+    if !pose.nugget && !pose.stowed && look.role != Role::RunePriest {
         let start = p.polys.len();
         tool(&mut p, look.tool, look.role == Role::Apprentice);
         let grip = Xf::rotate_about(HAND, -pose.grip);
@@ -218,7 +254,7 @@ pub(super) fn tool_tip(tool: Tool) -> Pos2 {
         Tool::Hammer => -6.0,
         Tool::Shovel => 4.0,
         Tool::Lantern => -4.0,
-        Tool::Trumpet => -10.0,
+        Tool::Staff => -10.0,
         Tool::Scepter => -2.0,
     };
     pos2(SHOULDER.x, y)
@@ -294,27 +330,12 @@ fn tool(p: &mut Piece, tool: Tool, small: bool) {
                 shade(IRON, 0.2),
             );
         }
-        Tool::Trumpet => {
-            // A brass ear trumpet, its bell beyond the fist.
-            p.cut(capsule(butt, pos2(x, end.y - 6.0), 1.6), BRASS);
-            p.cut(
-                blob(
-                    &[
-                        pos2(x - 1.8, end.y - 8.0),
-                        pos2(x + 1.8, end.y - 8.0),
-                        pos2(x + 8.0, end.y + 2.0),
-                        pos2(x + 9.0, end.y + 6.0),
-                        pos2(x - 9.0, end.y + 6.0),
-                        pos2(x - 8.0, end.y + 2.0),
-                    ],
-                    5,
-                ),
-                BRASS,
-            );
-            p.paint(
-                ellipse(pos2(x, end.y + 5.0), 7.0, 1.6, 12),
-                shade(BRASS, 0.5),
-            );
+        Tool::Staff => {
+            p.cut(capsule(pos2(x, -82.0), pos2(x, 0.0), 1.8), WOOD);
+            for y in [-65.0, -51.0, -37.0] {
+                rune(p, pos2(x - 1.0, y), BRASS);
+            }
+            crystal(p, pos2(x, -85.0), 0.0);
         }
         Tool::Scepter => {
             p.cut(capsule(butt, pos2(x, end.y), 1.8), GOLD);
@@ -332,44 +353,53 @@ fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Vec<Pos2> {
     vec![pos2(x0, y0), pos2(x1, y0), pos2(x1, y1), pos2(x0, y1)]
 }
 
-/// The Ravenmaster's raven, perched on his back shoulder.
-pub(super) fn raven() -> Piece {
+fn rune(p: &mut Piece, at: Pos2, color: Color32) {
+    p.paint(capsule(at, at + vec2(0.0, 5.0), 0.8), color);
+    p.paint(capsule(at, at + vec2(3.0, 2.0), 0.8), color);
+    p.paint(
+        capsule(at + vec2(3.0, 2.0), at + vec2(0.0, 3.0), 0.8),
+        color,
+    );
+}
+fn crystal(p: &mut Piece, at: Pos2, pulse: f32) {
+    p.cut(
+        vec![
+            at + vec2(0.0, -8.0),
+            at + vec2(5.0, -2.0),
+            at + vec2(4.0, 5.0),
+            at + vec2(0.0, 8.0),
+            at + vec2(-4.0, 4.0),
+            at + vec2(-5.0, -2.0),
+        ],
+        tint(CRYSTAL, pulse * 0.4),
+    );
+    p.paint(
+        vec![
+            at + vec2(0.0, -7.0),
+            at + vec2(-4.0, -1.0),
+            at + vec2(0.0, 6.0),
+        ],
+        tint(CRYSTAL, 0.65),
+    );
+}
+/// A planted staff leaves both hands free over the pool. No animation at rest.
+pub(super) fn priest_staff(pose: &Pose) -> Piece {
     let mut p = Piece::default();
-    p.cut(
-        blob(
-            &[
-                pos2(-22.0, -50.0),
-                pos2(-18.0, -57.0),
-                pos2(-10.0, -60.0),
-                pos2(-4.0, -56.0),
-                pos2(-8.0, -50.0),
-                pos2(-15.0, -49.0),
-            ],
-            5,
-        ),
-        RAVEN,
-    );
-    p.cut(ellipse(pos2(-6.0, -63.0), 4.6, 4.4, 14), RAVEN);
-    p.cut(
-        vec![pos2(-2.5, -64.5), pos2(4.0, -62.5), pos2(-2.0, -61.5)],
-        Color32::from_rgb(0x5a, 0x56, 0x52),
-    );
-    p.paint(
-        ellipse(pos2(-5.0, -64.2), 1.1, 1.1, 8),
-        Color32::from_rgb(0xe8, 0xe0, 0xc0),
-    );
-    p.paint(
-        blob(
-            &[
-                pos2(-17.0, -55.0),
-                pos2(-10.0, -57.0),
-                pos2(-8.0, -52.0),
-                pos2(-15.0, -51.0),
-            ],
-            4,
-        ),
-        tint(RAVEN, 0.15),
-    );
+    p.cut(capsule(pos2(29.0, -76.0), pos2(29.0, -2.0), 1.8), WOOD);
+    for y in [-62.0, -49.0, -36.0] {
+        rune(&mut p, pos2(28.0, y), BRASS);
+    }
+    p.cut(capsule(pos2(24.0, -79.0), pos2(34.0, -79.0), 1.6), GOLD);
+    crystal(&mut p, pos2(29.0, -84.0), pose.scry);
+    if pose.scry > 0.0 {
+        for (x, y) in [(40.0, -63.0), (48.0, -48.0), (37.0, -33.0)] {
+            rune(
+                &mut p,
+                pos2(x, y - pose.scry * 2.0),
+                tint(CRYSTAL, pose.scry * 0.4),
+            );
+        }
+    }
     p
 }
 
@@ -832,8 +862,8 @@ fn hat(p: &mut Piece, look: &Look) {
             p.paint(capsule(pos2(-12.0, -75.0), pos2(18.0, -75.0), 1.4), LEATHER);
         }
         Hat::Hood => {
-            let cloth = if look.role == Role::Ravenmaster {
-                Color32::from_rgb(0x2c, 0x28, 0x34)
+            let cloth = if look.role == Role::RunePriest {
+                shade(look.tunic, 0.2)
             } else {
                 shade(look.tunic, 0.3)
             };
@@ -860,14 +890,8 @@ fn hat(p: &mut Piece, look: &Look) {
                 capsule(pos2(4.0, -75.0), pos2(21.0, -74.0), 1.3),
                 shade(cloth, 0.35),
             );
-            if look.role == Role::Ravenmaster {
-                // Feathers down the back of the hood.
-                for (x, y) in [(-17.0, -80.0), (-16.0, -71.0), (-13.0, -62.0)] {
-                    p.paint(
-                        vec![pos2(x, y), pos2(x + 5.0, y - 2.0), pos2(x - 3.0, y + 6.0)],
-                        tint(cloth, 0.2),
-                    );
-                }
+            if look.role == Role::RunePriest {
+                rune(p, pos2(-15.0, -78.0), BRASS);
             }
         }
         Hat::Bandana => {

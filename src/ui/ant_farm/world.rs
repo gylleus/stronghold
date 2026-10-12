@@ -1,0 +1,1017 @@
+//! Shared cutout renderer for the mine. All coordinates are farm texels; textures have
+//! hard alpha, a one-texel ink outline and NEAREST sampling, just like the dwarves.
+
+use super::nature::Deco;
+use crate::ui::dwarf::{
+    cutout::{self, Finish, Piece, Xf, blob, capsule, ellipse},
+    pixel::{self, Mapper},
+};
+use eframe::egui::{
+    self, Color32, ColorImage, Painter, Pos2, Rect, Shape, TextureHandle, TextureOptions, pos2,
+    vec2,
+};
+use std::collections::HashMap;
+
+pub const fn rgb(n: u32) -> Color32 {
+    Color32::from_rgb((n >> 16) as u8, (n >> 8) as u8, n as u8)
+}
+pub const INK: Color32 = Finish::INK.outline_color;
+pub const STONE: Color32 = rgb(0x706e68);
+pub const STONE_DARK: Color32 = rgb(0x484b4c);
+pub const STONE_LIGHT: Color32 = rgb(0x93958c);
+pub const WOOD: Color32 = rgb(0x87613e);
+pub const WOOD_DARK: Color32 = rgb(0x503c2b);
+pub const WOOD_LIGHT: Color32 = rgb(0xb08b59);
+pub const IRON: Color32 = rgb(0x4c535a);
+pub const GOLD: Color32 = rgb(0xe0a830);
+pub const GOLD_DARK: Color32 = rgb(0x8e612b);
+pub const LIGHT: Color32 = rgb(0xffdfa0);
+pub const RED: Color32 = rgb(0xa33536);
+pub const BLUE: Color32 = rgb(0x69aec4);
+pub const PARCHMENT: Color32 = rgb(0xeee0b9);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Prop {
+    Nature(Deco),
+    Peaks,
+    Roots,
+    Entrance,
+    Tube,
+    Scroll,
+    Support,
+    Shoring,
+    Torch,
+    Throne,
+    Banner,
+    Brazier,
+    Chest,
+    Treasure(u8),
+    Bunk,
+    Blanket,
+    RuneStone,
+    CrackedStone,
+    ReceivingStone,
+    Basin,
+    ScryingBasin,
+    Tablets,
+    Bubble(u8),
+    Snore,
+    Pebble,
+}
+
+impl Prop {
+    pub fn size(self) -> [usize; 2] {
+        match self {
+            Self::Nature(d) => d.size(),
+            Self::Peaks => [192, 52],
+            Self::Roots => [24, 12],
+            Self::Entrance => [40, 28],
+            Self::Tube => [24, 26],
+            Self::Scroll => [18, 12],
+            Self::Support => [36, 22],
+            Self::Shoring => [20, 10],
+            Self::Torch => [12, 18],
+            Self::Throne => [26, 32],
+            Self::Banner => [14, 24],
+            Self::Brazier => [16, 22],
+            Self::Chest => [26, 22],
+            Self::Treasure(_) => [18, 14],
+            Self::Bunk => [24, 12],
+            Self::Blanket => [12, 8],
+            Self::RuneStone | Self::CrackedStone | Self::ReceivingStone => [30, 43],
+            Self::Basin | Self::ScryingBasin => [28, 24],
+            Self::Tablets => [17, 25],
+            Self::Bubble(_) => [16, 16],
+            Self::Snore => [7, 7],
+            Self::Pebble => [5, 5],
+        }
+    }
+
+    /// Only lit fires, a receipt, and work at the pool change frame. All other props rest.
+    pub fn frame(self, now_s: f64) -> u8 {
+        match self {
+            Self::Torch
+            | Self::Brazier
+            | Self::Entrance
+            | Self::ScryingBasin
+            | Self::ReceivingStone => (now_s * 6.0).floor().rem_euclid(4.0) as u8,
+            _ => 0,
+        }
+    }
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct Key {
+    prop: Prop,
+    size: [usize; 2],
+    palette: String,
+    frame: u8,
+}
+struct Cached {
+    texture: TextureHandle,
+    used: u64,
+}
+#[derive(Default)]
+pub struct WorldArt {
+    textures: HashMap<Key, Cached>,
+    palette: String,
+    mapper: Option<Mapper>,
+    generation: u64,
+}
+
+impl WorldArt {
+    pub fn begin_frame(&mut self, palette: &str) {
+        self.generation += 1;
+        if self.palette != palette {
+            self.palette = palette.to_owned();
+            self.mapper = pixel::BUNDLED
+                .iter()
+                .find(|(n, _)| *n == palette)
+                .map(|(_, json)| {
+                    Mapper::new(&pixel::Palette::from_lospec(json).expect("bundled palette"))
+                });
+        }
+        // Retain all four animation frames, but release old sizes/palettes after resizing.
+        self.textures
+            .retain(|k, c| k.palette == palette && c.used + 120 >= self.generation);
+    }
+
+    pub fn map(&mut self, image: &mut ColorImage) {
+        if let Some(m) = &mut self.mapper {
+            m.apply(image);
+        }
+    }
+
+    /// Keep walls separate from the dwarf's ink, and uncut rock separate from walls.
+    /// Tiny palettes can otherwise map all three materials to the same colour. Lift the
+    /// source material only when necessary, then use the same nearest-colour Mapper.
+    pub fn map_stone(&mut self, image: &mut ColorImage, worked: bool) {
+        let Some(mapper) = &mut self.mapper else {
+            return;
+        };
+        fn distinct(mapper: &mut Mapper, c: Color32, avoid: &[Color32]) -> Color32 {
+            for step in 0..=32 {
+                let mapped = mapper.map(c.lerp_to_gamma(Color32::WHITE, step as f32 / 32.0));
+                if !avoid.contains(&mapped) {
+                    return mapped;
+                }
+            }
+            mapper.map(c)
+        }
+        let ink = mapper.map(INK);
+        let floor = distinct(mapper, rgb(0x46484a), &[ink]);
+        let avoid = if worked { vec![ink] } else { vec![ink, floor] };
+        let mut colors = HashMap::new();
+        for c in &mut image.pixels {
+            let source = *c;
+            *c = *colors
+                .entry(source)
+                .or_insert_with(|| distinct(mapper, source, &avoid));
+        }
+    }
+
+    pub fn map_scene(
+        &mut self,
+        ctx: &egui::Context,
+        layer: egui::LayerId,
+        start: egui::layers::ShapeIdx,
+    ) {
+        let Some(mapper) = &mut self.mapper else {
+            return;
+        };
+        ctx.graphics_mut(|g| {
+            let list = g.entry(layer);
+            for i in start.0..list.next_idx().0 {
+                list.mutate_shape(egui::layers::ShapeIdx(i), |s| mapper.shape(&mut s.shape));
+            }
+        });
+    }
+
+    pub fn paint(
+        &mut self,
+        painter: &Painter,
+        prop: Prop,
+        rect: Rect,
+        px: f32,
+        frame: u8,
+        alpha: f32,
+    ) {
+        let size = [
+            (rect.width() / px).round().max(1.0) as usize,
+            (rect.height() / px).round().max(1.0) as usize,
+        ];
+        let key = Key {
+            prop,
+            size,
+            palette: self.palette.clone(),
+            frame,
+        };
+        if !self.textures.contains_key(&key) {
+            let mut image = render(prop, size, frame);
+            self.map(&mut image);
+            let texture = painter.ctx().load_texture(
+                format!("mine/{prop:?}/{size:?}/{frame}/{}", self.palette),
+                image,
+                TextureOptions::NEAREST,
+            );
+            self.textures.insert(
+                key,
+                Cached {
+                    texture,
+                    used: self.generation,
+                },
+            );
+        }
+        let key = Key {
+            prop,
+            size,
+            palette: self.palette.clone(),
+            frame,
+        };
+        let cached = self.textures.get_mut(&key).expect("prop just cached");
+        cached.used = self.generation;
+        let rect = Rect::from_min_size(
+            pos2(
+                (rect.left() / px).round() * px,
+                (rect.top() / px).round() * px,
+            ),
+            vec2(size[0] as f32, size[1] as f32) * px,
+        );
+        painter.image(
+            cached.texture.id(),
+            rect,
+            Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
+            Color32::WHITE.gamma_multiply(alpha),
+        );
+    }
+}
+
+pub fn render(prop: Prop, size: [usize; 2], frame: u8) -> ColorImage {
+    let [w, h] = prop.size().map(|n| n as f32);
+    let mut c = Canvas {
+        shapes: Vec::new(),
+        finish: Finish {
+            outline: (w / size[0] as f32).max(h / size[1] as f32).max(1.0),
+            ..Finish::INK
+        },
+    };
+    draw(&mut c, prop, frame);
+    // Scale shapes first: rasterize expects square texels even when a prop is stretched.
+    let sx = size[0] as f32 / w;
+    let sy = size[1] as f32 / h;
+    for shape in &mut c.shapes {
+        if let Shape::Mesh(mesh) = shape {
+            for v in &mut std::sync::Arc::make_mut(mesh).vertices {
+                v.pos.x *= sx;
+                v.pos.y *= sy;
+            }
+        } else if let Shape::Path(path) = shape {
+            for p in &mut path.points {
+                p.x *= sx;
+                p.y *= sy;
+            }
+            path.stroke.width *= sx.min(sy);
+        }
+    }
+    pixel::rasterize(
+        &c.shapes,
+        Rect::from_min_size(Pos2::ZERO, vec2(size[0] as f32, size[1] as f32)),
+        size,
+        1,
+    )
+}
+
+/// A few pieces in the same ink finish as a dwarf. Details are painted inside the cut.
+pub struct Canvas {
+    pub shapes: Vec<Shape>,
+    finish: Finish,
+}
+impl Canvas {
+    pub fn cut(&mut self, points: Vec<Pos2>, fill: Color32) {
+        cutout::draw(
+            &mut self.shapes,
+            Piece::default().cut(points, fill),
+            Xf::IDENTITY,
+            &self.finish,
+        );
+    }
+    pub fn paint(&mut self, points: Vec<Pos2>, fill: Color32) {
+        cutout::draw(
+            &mut self.shapes,
+            Piece::default().paint(points, fill),
+            Xf::IDENTITY,
+            &self.finish,
+        );
+    }
+    pub fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, fill: Color32) {
+        self.cut(rect(x, y, w, h), fill);
+    }
+    pub fn detail(&mut self, x: f32, y: f32, w: f32, h: f32, fill: Color32) {
+        self.paint(rect(x, y, w, h), fill);
+    }
+    pub fn line(&mut self, a: (f32, f32), b: (f32, f32), r: f32, color: Color32) {
+        self.paint(capsule(pos2(a.0, a.1), pos2(b.0, b.1), r), color);
+    }
+    pub fn oval(&mut self, x: f32, y: f32, rx: f32, ry: f32, color: Color32) {
+        self.cut(ellipse(pos2(x, y), rx, ry, 16), color);
+    }
+}
+pub fn pts(p: &[(f32, f32)]) -> Vec<Pos2> {
+    p.iter().map(|&(x, y)| pos2(x, y)).collect()
+}
+pub fn rect(x: f32, y: f32, w: f32, h: f32) -> Vec<Pos2> {
+    pts(&[(x, y), (x + w, y), (x + w, y + h), (x, y + h)])
+}
+
+fn timber(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32) {
+    c.rect(x, y, w, h, WOOD);
+    c.detail(x, y, 1.0, h, WOOD_LIGHT);
+    c.detail(x + w - 1.0, y, 1.0, h, WOOD_DARK);
+    if h > w {
+        c.line(
+            (x + w * 0.5, y + 2.0),
+            (x + w * 0.7, y + h - 2.0),
+            0.45,
+            WOOD_DARK,
+        );
+    }
+    for yy in [y + 1.0, y + h - 2.0] {
+        c.detail(x, yy, w, 1.0, IRON);
+    }
+}
+fn flame(c: &mut Canvas, x: f32, y: f32, frame: u8, s: f32) {
+    let lean = [0.0, 1.0, -1.0, 1.5][frame as usize % 4];
+    let p = |q: &[(f32, f32)]| {
+        q.iter()
+            .map(|&(a, b)| pos2(x + a * s, y + b * s))
+            .collect::<Vec<_>>()
+    };
+    c.cut(
+        blob(
+            &p(&[
+                (-3.0, 0.0),
+                (-3.5, -4.0),
+                (-1.0, -7.0),
+                (lean, -10.0),
+                (3.5, -4.0),
+                (3.0, 0.0),
+            ]),
+            4,
+        ),
+        rgb(0xe77932),
+    );
+    c.paint(
+        blob(&p(&[(-2.0, -1.0), (0.5, -7.0), (2.0, -3.0), (1.0, 0.0)]), 4),
+        GOLD,
+    );
+    c.paint(p(&[(-1.0, 0.0), (0.0, -4.0), (1.5, 0.0)]), LIGHT);
+}
+fn gem(c: &mut Canvas, x: f32, y: f32, s: f32, color: Color32) {
+    c.cut(
+        pts(&[
+            (x - s, y),
+            (x - s * 0.5, y - s),
+            (x + s * 0.5, y - s),
+            (x + s, y),
+            (x, y + s),
+        ]),
+        color,
+    );
+    c.paint(
+        pts(&[(x - s, y), (x - s * 0.5, y - s), (x, y), (x, y + s)]),
+        LIGHT,
+    );
+    c.line((x, y), (x + s, y), 0.4, INK);
+}
+fn rune(c: &mut Canvas, x: f32, y: f32, color: Color32) {
+    c.line((x, y), (x, y + 5.0), 0.6, color);
+    c.line((x, y), (x + 3.0, y + 2.0), 0.6, color);
+    c.line((x + 3.0, y + 2.0), (x, y + 3.0), 0.6, color);
+}
+fn coins(c: &mut Canvas, x: f32, y: f32) {
+    for (dx, dy) in [
+        (1.0, 0.0),
+        (5.0, -2.0),
+        (10.0, 0.0),
+        (7.0, 2.0),
+        (2.0, 3.0),
+        (12.0, 3.0),
+    ] {
+        c.oval(x + dx, y + dy, 2.4, 1.3, GOLD);
+        c.detail(x + dx - 1.0, y + dy - 1.0, 2.0, 1.0, LIGHT);
+    }
+}
+fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
+    match prop {
+        Prop::Nature(d) => super::nature::draw(c, d),
+        Prop::Peaks => {
+            // Matching edge heights make the distant range repeat without a seam.
+            c.paint(
+                pts(&[
+                    (0.0, 40.0),
+                    (18.0, 22.0),
+                    (36.0, 34.0),
+                    (59.0, 7.0),
+                    (83.0, 32.0),
+                    (115.0, 0.0),
+                    (141.0, 29.0),
+                    (166.0, 13.0),
+                    (192.0, 40.0),
+                    (192.0, 52.0),
+                    (0.0, 52.0),
+                ]),
+                rgb(0x718994),
+            );
+            for (x, y, w) in [
+                (18.0, 22.0, 9.0),
+                (59.0, 7.0, 13.0),
+                (115.0, 0.0, 15.0),
+                (166.0, 13.0, 11.0),
+            ] {
+                c.paint(
+                    pts(&[
+                        (x - w, y + w),
+                        (x, y),
+                        (x + w, y + w),
+                        (x + 3.0, y + w - 3.0),
+                        (x - 1.0, y + w + 1.0),
+                        (x - 5.0, y + w - 4.0),
+                    ]),
+                    rgb(0xc5d0ca),
+                );
+                c.paint(
+                    pts(&[
+                        (x, y + 2.0),
+                        (x + 2.0, y + 17.0),
+                        (x + 20.0, 48.0),
+                        (x + 35.0, 50.0),
+                    ]),
+                    rgb(0x627884),
+                );
+            }
+            c.paint(
+                pts(&[
+                    (0.0, 45.0),
+                    (26.0, 37.0),
+                    (51.0, 47.0),
+                    (87.0, 35.0),
+                    (119.0, 45.0),
+                    (149.0, 35.0),
+                    (176.0, 44.0),
+                    (192.0, 45.0),
+                    (192.0, 52.0),
+                    (0.0, 52.0),
+                ]),
+                rgb(0x596d70),
+            );
+        }
+        Prop::Roots => {
+            for (x, y) in [(2.0, 9.0), (8.0, 11.0), (20.0, 10.0)] {
+                c.cut(capsule(pos2(12.0, 1.0), pos2(x, y), 0.8), WOOD_DARK);
+                c.line((x, y - 2.0), (x + 3.0, y - 3.0), 0.5, WOOD);
+            }
+        }
+        Prop::Support => {
+            timber(c, 2.0, 3.0, 3.0, 18.0);
+            timber(c, 31.0, 3.0, 3.0, 18.0);
+            c.cut(pts(&[(4.0, 3.0), (11.0, 3.0), (4.0, 10.0)]), WOOD_DARK);
+            c.cut(pts(&[(31.0, 3.0), (25.0, 3.0), (31.0, 10.0)]), WOOD_DARK);
+            timber(c, 1.0, 1.0, 34.0, 3.0);
+        }
+        Prop::Shoring => {
+            timber(c, 1.0, 1.0, 3.0, 8.0);
+            timber(c, 16.0, 1.0, 3.0, 8.0);
+            timber(c, 1.0, 2.0, 18.0, 2.0);
+        }
+        Prop::Entrance => {
+            c.cut(
+                pts(&[
+                    (1.0, 27.0),
+                    (3.0, 15.0),
+                    (8.0, 7.0),
+                    (17.0, 2.0),
+                    (28.0, 4.0),
+                    (35.0, 12.0),
+                    (39.0, 27.0),
+                ]),
+                STONE,
+            );
+            c.paint(
+                pts(&[
+                    (3.0, 24.0),
+                    (9.0, 9.0),
+                    (19.0, 3.0),
+                    (25.0, 5.0),
+                    (12.0, 11.0),
+                    (9.0, 26.0),
+                ]),
+                STONE_LIGHT,
+            );
+            c.rect(12.0, 9.0, 17.0, 18.0, INK);
+            timber(c, 10.0, 8.0, 4.0, 19.0);
+            timber(c, 28.0, 8.0, 4.0, 19.0);
+            timber(c, 9.0, 7.0, 24.0, 4.0);
+            c.line((32.0, 12.0), (37.0, 12.0), 0.8, IRON);
+            c.line((37.0, 12.0), (37.0, 16.0), 0.6, IRON);
+            c.rect(34.0, 16.0, 5.0, 7.0, IRON);
+            c.detail(
+                35.0,
+                17.0,
+                3.0,
+                4.0,
+                if frame.is_multiple_of(2) { LIGHT } else { GOLD },
+            );
+            c.detail(16.0, 26.0, 11.0, 1.0, STONE_LIGHT);
+        }
+        Prop::Tube => {
+            c.rect(6.0, 6.0, 12.0, 19.0, GOLD);
+            c.detail(7.0, 7.0, 2.0, 17.0, LIGHT);
+            c.detail(15.0, 7.0, 3.0, 18.0, GOLD_DARK);
+            c.cut(
+                pts(&[
+                    (2.0, 2.0),
+                    (22.0, 2.0),
+                    (19.0, 7.0),
+                    (17.0, 9.0),
+                    (7.0, 9.0),
+                    (5.0, 7.0),
+                ]),
+                GOLD,
+            );
+            c.oval(12.0, 2.5, 10.0, 1.5, GOLD_DARK);
+            c.rect(4.0, 23.0, 16.0, 2.0, GOLD_DARK);
+            c.rect(5.0, 12.0, 14.0, 8.0, GOLD);
+            for x in [6.0, 17.0] {
+                for y in [12.0, 19.0] {
+                    c.detail(x, y, 1.0, 1.0, LIGHT);
+                }
+            }
+        }
+        Prop::Scroll => {
+            c.rect(3.0, 3.0, 12.0, 7.0, PARCHMENT);
+            for x in [3.0, 15.0] {
+                c.cut(capsule(pos2(x, 2.0), pos2(x, 9.0), 1.6), PARCHMENT);
+                c.detail(x - 1.0, 3.0, 1.0, 6.0, rgb(0xb09b74));
+            }
+            c.detail(8.0, 3.0, 1.0, 7.0, WOOD_DARK);
+            c.detail(4.0, 6.0, 10.0, 1.0, WOOD_DARK);
+            c.oval(9.0, 7.0, 2.0, 2.0, RED);
+            c.detail(8.0, 6.0, 1.0, 1.0, rgb(0xf17d60));
+        }
+        Prop::Torch => {
+            c.rect(4.0, 10.0, 4.0, 6.0, IRON);
+            c.line((6.0, 15.0), (8.0, 10.0), 1.0, STONE_LIGHT);
+            flame(c, 6.0, 10.0, frame, 0.85);
+            c.rect(3.0, 10.0, 6.0, 2.0, IRON);
+        }
+        Prop::Brazier => {
+            c.cut(
+                pts(&[(3.0, 20.0), (7.0, 14.0), (9.0, 14.0), (13.0, 20.0)]),
+                IRON,
+            );
+            flame(c, 8.0, 11.0, frame, 0.9);
+            c.cut(
+                pts(&[(2.0, 11.0), (14.0, 11.0), (12.0, 16.0), (4.0, 16.0)]),
+                IRON,
+            );
+            c.detail(3.0, 11.0, 10.0, 1.0, STONE_LIGHT);
+            for x in [4.0, 8.0, 12.0] {
+                c.detail(x, 12.0, 1.0, 2.0, GOLD);
+            }
+        }
+        Prop::Throne => {
+            c.cut(
+                pts(&[
+                    (4.0, 25.0),
+                    (4.0, 5.0),
+                    (9.0, 1.0),
+                    (17.0, 1.0),
+                    (22.0, 5.0),
+                    (22.0, 25.0),
+                ]),
+                STONE,
+            );
+            c.rect(7.0, 5.0, 12.0, 18.0, STONE_DARK);
+            c.line((8.0, 17.0), (8.0, 6.0), 0.6, GOLD);
+            c.line((18.0, 6.0), (18.0, 17.0), 0.6, GOLD);
+            c.paint(
+                pts(&[
+                    (10.0, 7.0),
+                    (10.0, 3.0),
+                    (13.0, 5.0),
+                    (16.0, 3.0),
+                    (16.0, 7.0),
+                ]),
+                GOLD,
+            );
+            c.rect(5.0, 20.0, 16.0, 5.0, RED);
+            c.detail(6.0, 20.0, 14.0, 1.0, rgb(0xd35b4c));
+            for x in [2.0, 20.0] {
+                c.rect(x, 17.0, 4.0, 12.0, STONE);
+                c.detail(x, 17.0, 4.0, 2.0, STONE_LIGHT);
+            }
+            c.rect(1.0, 29.0, 24.0, 2.0, STONE_LIGHT);
+        }
+        Prop::Banner => {
+            c.cut(
+                pts(&[
+                    (2.0, 3.0),
+                    (12.0, 3.0),
+                    (12.0, 20.0),
+                    (7.0, 23.0),
+                    (2.0, 20.0),
+                ]),
+                RED,
+            );
+            c.detail(2.0, 4.0, 1.0, 15.0, GOLD);
+            c.detail(11.0, 4.0, 1.0, 15.0, GOLD);
+            c.rect(1.0, 1.0, 12.0, 2.0, GOLD_DARK);
+            c.paint(
+                pts(&[
+                    (4.0, 10.0),
+                    (4.0, 6.0),
+                    (6.0, 8.0),
+                    (7.0, 5.0),
+                    (8.0, 8.0),
+                    (10.0, 6.0),
+                    (10.0, 10.0),
+                ]),
+                GOLD,
+            );
+            c.line((5.0, 18.0), (9.0, 12.0), 0.7, GOLD);
+            c.paint(
+                blob(
+                    &pts(&[
+                        (4.0, 14.0),
+                        (6.0, 11.0),
+                        (10.0, 12.0),
+                        (11.0, 15.0),
+                        (8.0, 13.0),
+                    ]),
+                    3,
+                ),
+                LIGHT,
+            );
+        }
+        Prop::Chest => {
+            c.cut(
+                pts(&[
+                    (3.0, 11.0),
+                    (3.0, 4.0),
+                    (7.0, 1.0),
+                    (21.0, 2.0),
+                    (23.0, 11.0),
+                ]),
+                WOOD,
+            );
+            c.rect(5.0, 4.0, 15.0, 6.0, WOOD_DARK);
+            for x in [4.0, 20.0] {
+                c.detail(x, 3.0, 2.0, 8.0, IRON);
+            }
+            coins(c, 5.0, 11.0);
+            c.rect(2.0, 12.0, 22.0, 7.0, WOOD);
+            for x in [4.0, 20.0] {
+                c.rect(x, 12.0, 2.0, 7.0, IRON);
+                c.detail(x, 14.0, 1.0, 1.0, STONE_LIGHT);
+            }
+            c.rect(11.0, 12.0, 3.0, 3.0, GOLD);
+            coins(c, 8.0, 17.0);
+        }
+        Prop::Treasure(kind) => {
+            c.cut(
+                blob(
+                    &pts(&[
+                        (1.0, 11.0),
+                        (5.0, 6.0),
+                        (9.0, 4.0),
+                        (15.0, 8.0),
+                        (17.0, 12.0),
+                    ]),
+                    4,
+                ),
+                GOLD_DARK,
+            );
+            coins(c, 2.0, 9.0);
+            gem(
+                c,
+                10.0,
+                5.0,
+                3.0,
+                [RED, rgb(0x4da475), rgb(0x508acd)][kind as usize % 3],
+            );
+        }
+        Prop::Bunk => {
+            timber(c, 1.0, 1.0, 2.0, 10.0);
+            timber(c, 21.0, 4.0, 2.0, 7.0);
+            timber(c, 2.0, 8.0, 20.0, 2.0);
+            c.rect(3.0, 5.0, 18.0, 3.0, rgb(0xb69c56));
+            for x in (4..21).step_by(3) {
+                c.line((x as f32, 6.0), (x as f32 + 1.0, 7.0), 0.4, LIGHT);
+            }
+            c.oval(6.0, 4.0, 3.0, 1.5, rgb(0xc2ab76));
+        }
+        Prop::Blanket => {
+            c.rect(1.0, 1.0, 10.0, 6.0, rgb(0x6e4846));
+            for x in [3.0, 8.0] {
+                c.detail(x, 1.0, 2.0, 6.0, rgb(0xad8b63));
+            }
+            for y in [2.0, 5.0] {
+                c.detail(1.0, y, 10.0, 1.0, rgb(0x3b454a));
+            }
+            c.detail(1.0, 1.0, 1.0, 6.0, PARCHMENT);
+        }
+        Prop::RuneStone | Prop::CrackedStone | Prop::ReceivingStone => {
+            c.cut(
+                pts(&[
+                    (4.0, 40.0),
+                    (6.0, 8.0),
+                    (12.0, 2.0),
+                    (21.0, 3.0),
+                    (25.0, 10.0),
+                    (27.0, 40.0),
+                ]),
+                if prop == Prop::CrackedStone {
+                    STONE_DARK
+                } else {
+                    STONE
+                },
+            );
+            c.paint(
+                pts(&[
+                    (6.0, 37.0),
+                    (8.0, 10.0),
+                    (13.0, 5.0),
+                    (15.0, 6.0),
+                    (10.0, 13.0),
+                    (9.0, 37.0),
+                ]),
+                STONE_LIGHT,
+            );
+            c.rect(2.0, 39.0, 26.0, 3.0, STONE_DARK);
+            let glow = match prop {
+                Prop::ReceivingStone => {
+                    if frame.is_multiple_of(2) {
+                        LIGHT
+                    } else {
+                        GOLD
+                    }
+                }
+                Prop::CrackedStone => INK,
+                _ => rgb(0x46606a),
+            };
+            for (x, y) in [(15.0, 10.0), (14.0, 20.0), (16.0, 29.0)] {
+                rune(c, x, y, glow);
+            }
+            if prop == Prop::CrackedStone {
+                c.line((22.0, 6.0), (16.0, 17.0), 0.6, INK);
+                c.line((16.0, 17.0), (20.0, 23.0), 0.6, INK);
+                c.line((20.0, 23.0), (12.0, 34.0), 0.6, INK);
+            }
+        }
+        Prop::Basin | Prop::ScryingBasin => {
+            c.rect(8.0, 12.0, 12.0, 8.0, STONE);
+            c.detail(17.0, 13.0, 3.0, 7.0, STONE_DARK);
+            c.rect(5.0, 20.0, 18.0, 3.0, STONE_LIGHT);
+            c.cut(
+                blob(
+                    &pts(&[
+                        (2.0, 8.0),
+                        (26.0, 8.0),
+                        (23.0, 15.0),
+                        (14.0, 17.0),
+                        (5.0, 15.0),
+                    ]),
+                    4,
+                ),
+                STONE,
+            );
+            c.oval(14.0, 7.0, 12.0, 4.0, STONE_LIGHT);
+            c.oval(
+                14.0,
+                7.0,
+                9.0,
+                2.5,
+                if prop == Prop::ScryingBasin {
+                    BLUE
+                } else {
+                    rgb(0x314951)
+                },
+            );
+            if prop == Prop::ScryingBasin {
+                c.line((9.0, 7.0), (16.0, 6.0), 0.6, LIGHT);
+                for x in [8.0, 19.0] {
+                    rune(c, x, 1.0 + (frame % 2) as f32, BLUE);
+                }
+            }
+            rune(c, 13.0, 12.0, GOLD_DARK);
+        }
+        Prop::Tablets => {
+            for (x, y) in [(2.0, 17.0), (1.0, 11.0), (3.0, 5.0)] {
+                c.cut(
+                    pts(&[
+                        (x, y + 2.0),
+                        (x + 2.0, y),
+                        (x + 11.0, y),
+                        (x + 12.0, y + 7.0),
+                        (x, y + 8.0),
+                    ]),
+                    STONE,
+                );
+                c.detail(x + 1.0, y + 6.0, 10.0, 1.0, STONE_DARK);
+                rune(c, x + 5.0, y + 1.0, GOLD);
+            }
+        }
+        Prop::Bubble(mark) => {
+            c.cut(
+                blob(
+                    &pts(&[
+                        (2.0, 2.0),
+                        (13.0, 2.0),
+                        (14.0, 6.0),
+                        (13.0, 11.0),
+                        (8.0, 12.0),
+                        (5.0, 14.0),
+                        (5.0, 11.0),
+                        (1.0, 10.0),
+                    ]),
+                    3,
+                ),
+                PARCHMENT,
+            );
+            match mark {
+                0 => {
+                    c.rect(7.0, 3.0, 2.0, 5.0, rgb(0xc2612b));
+                    c.rect(7.0, 10.0, 2.0, 1.0, rgb(0xc2612b));
+                }
+                1 => {
+                    z(c, 3.0, 4.0, 4.0, rgb(0x497690));
+                    z(c, 9.0, 6.0, 3.0, rgb(0x497690));
+                }
+                2 => {
+                    // A comic puff of anger, deliberately a different silhouette from ×.
+                    c.cut(
+                        blob(
+                            &pts(&[
+                                (3.0, 7.0),
+                                (4.0, 4.0),
+                                (6.0, 4.0),
+                                (8.0, 3.0),
+                                (10.0, 4.0),
+                                (12.0, 6.0),
+                                (11.0, 8.0),
+                                (9.0, 9.0),
+                                (7.0, 8.0),
+                                (5.0, 10.0),
+                                (5.0, 8.0),
+                            ]),
+                            3,
+                        ),
+                        RED,
+                    );
+                    c.line((5.0, 5.0), (7.0, 6.0), 0.5, LIGHT);
+                }
+                3 => {
+                    c.line((5.0, 4.0), (10.0, 9.0), 1.0, RED);
+                    c.line((10.0, 4.0), (5.0, 9.0), 1.0, RED);
+                }
+                _ => {
+                    gem(c, 7.0, 7.0, 3.0, GOLD);
+                    c.line((11.0, 3.0), (11.0, 6.0), 0.5, GOLD);
+                    c.line((10.0, 4.0), (13.0, 4.0), 0.5, GOLD);
+                }
+            }
+        }
+        Prop::Snore => z(c, 1.0, 1.0, 5.0, rgb(0x497690)),
+        Prop::Pebble => {
+            c.cut(
+                pts(&[(1.0, 2.0), (2.0, 1.0), (4.0, 2.0), (3.0, 4.0), (1.0, 3.0)]),
+                STONE,
+            );
+            c.detail(2.0, 1.0, 1.0, 1.0, STONE_LIGHT);
+        }
+    }
+}
+fn z(c: &mut Canvas, x: f32, y: f32, s: f32, color: Color32) {
+    c.line((x, y), (x + s, y), 0.6, color);
+    c.line((x + s, y), (x, y + s), 0.6, color);
+    c.line((x, y + s), (x + s, y + s), 0.6, color);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn props() -> Vec<Prop> {
+        let mut props = vec![
+            Prop::Peaks,
+            Prop::Roots,
+            Prop::Entrance,
+            Prop::Tube,
+            Prop::Scroll,
+            Prop::Support,
+            Prop::Shoring,
+            Prop::Torch,
+            Prop::Throne,
+            Prop::Banner,
+            Prop::Brazier,
+            Prop::Chest,
+            Prop::Bunk,
+            Prop::Blanket,
+            Prop::RuneStone,
+            Prop::CrackedStone,
+            Prop::ReceivingStone,
+            Prop::Basin,
+            Prop::ScryingBasin,
+            Prop::Tablets,
+            Prop::Snore,
+            Prop::Pebble,
+        ];
+        props.extend(Deco::ALL.map(Prop::Nature));
+        props.extend((0..3).map(Prop::Treasure));
+        props.extend((0..5).map(Prop::Bubble));
+        props
+    }
+
+    #[test]
+    fn every_prop_builds_at_farm_sizes_in_every_palette() {
+        for prop in props() {
+            for scale in [0.75, 1.0, 2.0] {
+                let size = prop.size().map(|n| (n as f32 * scale).round() as usize);
+                for frame in 0..=prop.frame(0.5) {
+                    let image = render(prop, size, frame);
+                    assert_eq!(image.size, size);
+                    assert!(
+                        image.pixels.iter().any(|p| p.a() == 255),
+                        "{prop:?} {size:?}"
+                    );
+                    assert!(image.pixels.iter().all(|p| p.a() == 0 || p.a() == 255));
+                    for palette in pixel::bundled() {
+                        let mut mapped = image.clone();
+                        Mapper::new(&palette).apply(&mut mapped);
+                        assert!(
+                            mapped
+                                .pixels
+                                .iter()
+                                .filter(|p| p.a() > 0)
+                                .all(|p| palette.colors.contains(p)),
+                            "{prop:?} {}",
+                            palette.name
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn only_fire_receipts_and_scrying_animate() {
+        for prop in props() {
+            let active = matches!(
+                prop,
+                Prop::Entrance
+                    | Prop::Torch
+                    | Prop::Brazier
+                    | Prop::ReceivingStone
+                    | Prop::ScryingBasin
+            );
+            assert_eq!(prop.frame(0.0) != prop.frame(0.5), active, "{prop:?}");
+            assert_eq!(
+                render(prop, prop.size(), 0) != render(prop, prop.size(), 3),
+                active,
+                "{prop:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn small_palettes_keep_ink_walls_and_rock_separate() {
+        for (name, _) in pixel::BUNDLED {
+            let mut world = WorldArt::default();
+            world.begin_frame(name);
+            let mut ink = ColorImage::filled([1, 1], INK);
+            let mut wall = ColorImage::filled([1, 1], rgb(0x46484a));
+            let mut rock = ColorImage::filled([1, 1], rgb(0x625f59));
+            world.map(&mut ink);
+            world.map_stone(&mut wall, true);
+            world.map_stone(&mut rock, false);
+            assert_ne!(wall.pixels[0], ink.pixels[0], "{name}: silhouette");
+            assert_ne!(wall.pixels[0], rock.pixels[0], "{name}: excavated wall");
+        }
+    }
+
+    #[test]
+    fn palette_switch_rebuilds_cached_props_and_tiles() {
+        let ctx = egui::Context::default();
+        let mut sprites = super::super::sprites::Sprites::load(&ctx);
+        for name in ["endesga-32", "oil-6", ""] {
+            sprites.begin_frame(name, 2.0, 0.0);
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                let painter = ui.ctx().layer_painter(egui::LayerId::background());
+                sprites.standing(&painter, Prop::Tube, pos2(50.0, 70.0), 2.0, 1.0);
+            });
+            output.textures_delta.clear();
+            let world = sprites.world.borrow();
+            assert!(world.textures.keys().all(|k| k.palette == name));
+            assert_eq!(world.textures.len(), 1);
+        }
+    }
+}

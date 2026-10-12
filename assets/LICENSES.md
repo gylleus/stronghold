@@ -5,12 +5,10 @@ Everything here is compiled into the binary (`include_bytes!`); nothing is fetch
 | File | Source | License |
 | --- | --- | --- |
 | `fonts/Phosphor-Bold.ttf` | [Phosphor Icons](https://phosphoricons.com) 2.1, `@phosphor-icons/web@2.1.2`, bold weight, unmodified | MIT |
-| `art/farm/emote_*.png` | [Emotes Pack](https://opengameart.org/content/emotes-pack) by Kenney (kenney.nl), pixel style 1, unmodified | CC0 |
-| `art/farm/coin_pile.png` | [Gold treasure icons 16x16](https://opengameart.org/node/60941) by Bonsaiheldin (bonsaiheld.org), icon 3, unmodified | CC0 |
 
-The Phosphor font uses the MIT license; its notice and license text are included below. The ant farm's
-pixel art (`art/farm`) is CC0 (public domain): no notice is required, the credits above are
-a courtesy. Its soil, grass and tunnel tiles are generated in `src/ui/ant_farm/sprites.rs`.
+The Phosphor font uses the MIT license; its notice and license text are included below.
+The mine, its props, scenery and dwarves are drawn in Rust with the cutout and pixel
+renderers in `src/ui/dwarf/` and `src/ui/ant_farm/`. No third-party farm artwork is bundled.
 
 To add an icon, pick it at phosphoricons.com and add its codepoint (from the package's
 `src/bold/style.css`) to `src/ui/icons.rs`: the whole bold font is bundled.
