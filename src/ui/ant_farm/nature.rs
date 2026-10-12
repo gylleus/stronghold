@@ -1,266 +1,254 @@
-//! The surface's pixel art: plants, rocks and sky pieces drawn as character maps, one
-//! character per texel. Part of the art layer with [`super::sprites`]; replace a map (or load
-//! a PNG in its place) to restyle the surface.
+//! Alpine plants and sky pieces, cut and painted with the dwarf's ink tools.
+use super::world::{
+    Canvas, GOLD, LIGHT, PARCHMENT, STONE, STONE_DARK, STONE_LIGHT, WOOD, WOOD_DARK, WOOD_LIGHT,
+    pts, rgb,
+};
+use crate::ui::dwarf::cutout::{blob, capsule, ellipse};
+use eframe::egui::{Color32, pos2};
 
-use eframe::egui::{Color32, ColorImage};
-
-/// Something growing or lying on the surface, or hanging in the sky.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Deco {
-    /// A worktree with an agent at work in it (see [`super::forest`]).
-    Tree,
-    /// A worktree whose agents are idle, done or parked.
-    AutumnTree,
-    /// A worktree with no agent in it: likely one the saw can take.
-    BareTree,
-    /// What a sawn tree leaves.
-    Stump,
-    /// The chainsaw of the worktree cleanup, bar pointing right.
-    Saw,
-    Bush,
-    FlowerRed,
-    FlowerYellow,
-    FlowerPurple,
-    Tuft,
+    Pine,
+    Spruce,
+    Boulder,
     Rock,
+    Heather,
+    Edelweiss,
+    Gentian,
     Mushroom,
     Cloud,
     Moon,
     Sun,
 }
-
 impl Deco {
-    pub const ALL: [Deco; 15] = [
-        Deco::Tree,
-        Deco::AutumnTree,
-        Deco::BareTree,
-        Deco::Stump,
-        Deco::Saw,
-        Deco::Bush,
-        Deco::FlowerRed,
-        Deco::FlowerYellow,
-        Deco::FlowerPurple,
-        Deco::Tuft,
-        Deco::Rock,
-        Deco::Mushroom,
-        Deco::Cloud,
-        Deco::Moon,
-        Deco::Sun,
+    pub const ALL: [Deco; 11] = [
+        Self::Pine,
+        Self::Spruce,
+        Self::Boulder,
+        Self::Rock,
+        Self::Heather,
+        Self::Edelweiss,
+        Self::Gentian,
+        Self::Mushroom,
+        Self::Cloud,
+        Self::Moon,
+        Self::Sun,
     ];
-
-    /// Texels per farm texel: big things are drawn twice as chunky as the ants.
-    pub fn scale(self) -> f32 {
-        match self {
-            Deco::Tree
-            | Deco::AutumnTree
-            | Deco::BareTree
-            | Deco::Stump
-            | Deco::Saw
-            | Deco::Bush
-            | Deco::Cloud
-            | Deco::Moon
-            | Deco::Sun => 2.0,
-            _ => 1.0,
-        }
-    }
-
-    /// Size in screen points at `px` points per farm texel.
-    pub fn extent(self, px: f32) -> [f32; 2] {
-        let [w, h] = self.size();
-        let k = px * self.scale();
-        [w as f32 * k, h as f32 * k]
-    }
-
-    /// Whether it puts roots into the soil below it.
-    pub fn rooted(self) -> bool {
-        matches!(
-            self,
-            Deco::Tree | Deco::AutumnTree | Deco::BareTree | Deco::Stump | Deco::Bush
-        )
-    }
-
-    fn map(self) -> &'static [&'static str] {
-        match self {
-            Deco::Tree | Deco::AutumnTree => TREE,
-            Deco::BareTree => BARE_TREE,
-            Deco::Stump => STUMP,
-            Deco::Saw => SAW,
-            Deco::Bush => BUSH,
-            Deco::FlowerRed | Deco::FlowerYellow | Deco::FlowerPurple => FLOWER,
-            Deco::Tuft => TUFT,
-            Deco::Rock => ROCK,
-            Deco::Mushroom => MUSHROOM,
-            Deco::Cloud => CLOUD,
-            Deco::Moon => MOON,
-            Deco::Sun => SUN,
-        }
-    }
-
-    /// The petal color `X` stands for in [`FLOWER`].
-    fn petals(self) -> Color32 {
-        match self {
-            Deco::FlowerYellow => rgb(0xf2c94c),
-            Deco::FlowerPurple => rgb(0xa77be8),
-            _ => rgb(0xe0483e),
-        }
-    }
-
-    /// An autumn tree's leaves in place of the greens.
-    fn leaves(self, c: char) -> Option<Color32> {
-        if self != Deco::AutumnTree {
-            return None;
-        }
-        match c {
-            'G' => Some(rgb(0x8a3a1c)),
-            'g' => Some(rgb(0xc8682a)),
-            'l' => Some(rgb(0xf0b048)),
-            _ => None,
-        }
-    }
-
-    /// Size in texels.
     pub fn size(self) -> [usize; 2] {
-        let map = self.map();
-        let w = map.iter().map(|r| r.chars().count()).max().unwrap_or(0);
-        [w, map.len()]
+        match self {
+            Self::Pine => [28, 38],
+            Self::Spruce => [24, 36],
+            Self::Boulder => [21, 14],
+            Self::Rock => [10, 7],
+            Self::Heather => [16, 11],
+            Self::Edelweiss | Self::Gentian => [9, 11],
+            Self::Mushroom => [10, 10],
+            Self::Cloud => [42, 14],
+            Self::Moon | Self::Sun => [20, 20],
+        }
     }
+    pub fn extent(self, px: f32) -> [f32; 2] {
+        self.size().map(|n| n as f32 * px)
+    }
+    pub fn rooted(self) -> bool {
+        matches!(self, Self::Pine | Self::Spruce)
+    }
+}
+const GREEN: Color32 = rgb(0x476351);
+const GREEN_DARK: Color32 = rgb(0x2b443c);
+const GREEN_LIGHT: Color32 = rgb(0x748267);
 
-    /// The map as an image; rows shorter than the widest are padded with transparency.
-    pub fn image(self) -> ColorImage {
-        let map = self.map();
-        let [w, h] = self.size();
-        let mut image = ColorImage::filled([w, h], Color32::TRANSPARENT);
-        for (y, row) in map.iter().enumerate() {
-            for (x, c) in row.chars().enumerate() {
-                image[(x, y)] = self.leaves(c).unwrap_or_else(|| color(c, self.petals()));
+pub fn draw(c: &mut Canvas, d: Deco) {
+    let [w, h] = d.size().map(|n| n as f32);
+    match d {
+        Deco::Pine | Deco::Spruce => {
+            let x = w / 2.0;
+            c.cut(
+                capsule(pos2(x - 1.0, h - 10.0), pos2(x, h - 2.0), 2.0),
+                WOOD,
+            );
+            c.line((x - 1.0, h - 6.0), (x + 3.0, h - 2.0), 0.6, WOOD_LIGHT);
+            // One broken silhouette, with uneven boughs instead of stacked triangles.
+            let lean = if d == Deco::Pine { -1.0 } else { 1.5 };
+            let mut edge = vec![(x + lean, 1.0)];
+            for (dx, y) in [
+                (-3.0, 9.0),
+                (-2.0, 8.0),
+                (-6.0, 15.0),
+                (-4.0, 14.0),
+                (-9.0, 23.0),
+                (-6.0, 21.0),
+                (-12.0, 31.0),
+                (-4.0, 30.0),
+                (-2.0, 32.0),
+                (3.0, 29.0),
+                (11.0, 31.0),
+                (7.0, 25.0),
+                (9.0, 25.0),
+                (4.0, 18.0),
+                (6.0, 19.0),
+                (2.0, 12.0),
+                (4.0, 13.0),
+            ] {
+                edge.push(((x + dx * (w / 28.0)).clamp(1.0, w - 1.0), y * (h / 38.0)));
+            }
+            c.cut(pts(&edge), GREEN_DARK);
+            for (dx, y, r) in [(-1.0, 8.0, 3.0), (-2.0, 15.0, 5.0), (-1.0, 22.0, 8.0)] {
+                c.paint(
+                    pts(&[
+                        (x + dx, y),
+                        (x - r, y + 7.0),
+                        (x - 1.0, y + 5.0),
+                        (x + 3.0, y + 8.0),
+                        (x + 1.0, y + 2.0),
+                    ]),
+                    GREEN,
+                );
+                c.line(
+                    (x + dx - 1.0, y + 2.0),
+                    (x - r + 1.0, y + 6.0),
+                    0.5,
+                    GREEN_LIGHT,
+                );
             }
         }
-        image
+        Deco::Boulder | Deco::Rock => {
+            c.cut(
+                pts(&[
+                    (1.0, h - 3.0),
+                    (w * 0.2, 4.0),
+                    (w * 0.5, 1.0),
+                    (w * 0.83, 3.0),
+                    (w - 1.0, h - 3.0),
+                    (w * 0.75, h - 1.0),
+                    (w * 0.2, h - 1.0),
+                ]),
+                STONE,
+            );
+            c.paint(
+                pts(&[
+                    (2.0, h - 4.0),
+                    (w * 0.25, 4.0),
+                    (w * 0.5, 2.0),
+                    (w * 0.68, 4.0),
+                    (w * 0.35, 5.0),
+                ]),
+                STONE_LIGHT,
+            );
+            c.paint(
+                pts(&[(w * 0.65, 4.0), (w - 2.0, h - 3.0), (w * 0.7, h - 2.0)]),
+                STONE_DARK,
+            );
+            if d == Deco::Boulder {
+                c.line((10.0, 3.0), (8.0, 7.0), 0.5, STONE_DARK);
+                c.line((8.0, 7.0), (11.0, 10.0), 0.5, STONE_DARK);
+                c.line((8.0, 7.0), (5.0, 8.0), 0.5, STONE_DARK);
+                c.line((11.0, 6.0), (16.0, 8.0), 0.5, rgb(0xb0ac96));
+                c.line((16.0, 8.0), (18.0, 7.0), 0.5, rgb(0xb0ac96));
+                // Lichen catches in sheltered cracks at the base.
+                c.paint(
+                    pts(&[
+                        (3.0, 10.0),
+                        (6.0, 9.0),
+                        (8.0, 11.0),
+                        (5.0, 12.0),
+                        (2.0, 11.0),
+                    ]),
+                    GREEN_DARK,
+                );
+                c.detail(4.0, 9.0, 2.0, 1.0, GREEN_LIGHT);
+            }
+        }
+        Deco::Heather => {
+            for (x, y) in [(3.0, 5.0), (7.0, 3.0), (11.0, 5.0), (13.0, 3.0)] {
+                c.cut(capsule(pos2(8.0, 10.0), pos2(x, y), 0.7), GREEN);
+                c.oval(x, y, 1.6, 2.0, rgb(0x9d728d));
+                c.paint(ellipse(pos2(x - 0.5, y - 1.0), 0.6, 0.8, 8), rgb(0xc9a1b1));
+            }
+        }
+        Deco::Edelweiss | Deco::Gentian => {
+            c.cut(capsule(pos2(4.0, 9.0), pos2(4.0, 4.0), 0.6), GREEN);
+            c.paint(pts(&[(4.0, 8.0), (1.0, 6.0), (1.0, 8.0)]), GREEN_LIGHT);
+            let color = if d == Deco::Edelweiss {
+                PARCHMENT
+            } else {
+                rgb(0x557fba)
+            };
+            for (x, y) in [(2.0, 3.0), (5.0, 2.0), (7.0, 4.0), (5.0, 6.0), (2.0, 5.0)] {
+                c.cut(capsule(pos2(4.0, 4.0), pos2(x, y), 0.7), color);
+            }
+            c.detail(4.0, 3.0, 1.0, 2.0, GOLD);
+        }
+        Deco::Mushroom => {
+            c.cut(capsule(pos2(5.0, 5.0), pos2(5.0, 9.0), 1.4), PARCHMENT);
+            c.cut(
+                blob(
+                    &pts(&[
+                        (1.0, 5.0),
+                        (3.0, 2.0),
+                        (6.0, 1.0),
+                        (9.0, 4.0),
+                        (8.0, 6.0),
+                        (3.0, 6.0),
+                    ]),
+                    4,
+                ),
+                rgb(0xae4240),
+            );
+            c.detail(3.0, 3.0, 2.0, 1.0, PARCHMENT);
+            c.detail(7.0, 4.0, 1.0, 1.0, PARCHMENT);
+        }
+        Deco::Cloud => {
+            c.cut(
+                blob(
+                    &pts(&[
+                        (2.0, 10.0),
+                        (7.0, 7.0),
+                        (13.0, 7.0),
+                        (16.0, 3.0),
+                        (24.0, 2.0),
+                        (30.0, 7.0),
+                        (36.0, 6.0),
+                        (40.0, 10.0),
+                        (35.0, 12.0),
+                        (8.0, 12.0),
+                    ]),
+                    4,
+                ),
+                rgb(0xc8cec7),
+            );
+            c.paint(
+                blob(
+                    &pts(&[
+                        (6.0, 10.0),
+                        (18.0, 9.0),
+                        (30.0, 10.0),
+                        (36.0, 11.0),
+                        (10.0, 12.0),
+                    ]),
+                    3,
+                ),
+                rgb(0x969fa4),
+            );
+        }
+        Deco::Moon => {
+            c.oval(10.0, 10.0, 8.0, 8.0, rgb(0xd4d0b9));
+            for (x, y, r) in [(7.0, 6.0, 2.0), (13.0, 12.0, 2.5), (6.0, 13.0, 1.2)] {
+                c.paint(ellipse(pos2(x, y), r, r, 12), rgb(0x9da8a6));
+            }
+            c.line((6.0, 4.0), (10.0, 3.0), 0.6, PARCHMENT);
+        }
+        Deco::Sun => {
+            for (a, b) in [
+                ((10.0, 1.0), (10.0, 3.0)),
+                ((10.0, 17.0), (10.0, 19.0)),
+                ((1.0, 10.0), (3.0, 10.0)),
+                ((17.0, 10.0), (19.0, 10.0)),
+            ] {
+                c.line(a, b, 0.8, WOOD_DARK);
+            }
+            c.oval(10.0, 10.0, 6.5, 6.5, GOLD);
+            c.paint(ellipse(pos2(8.0, 8.0), 3.5, 3.0, 16), LIGHT);
+        }
     }
 }
-
-const fn rgb(hex: u32) -> Color32 {
-    Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
-}
-
-/// The palette: `.` is transparent, `X` the flower's petal color.
-fn color(c: char, petals: Color32) -> Color32 {
-    match c {
-        'k' => rgb(0x1f2a1a),
-        'G' => rgb(0x2f6b28),
-        'g' => rgb(0x4c9a3b),
-        'l' => rgb(0x7cc35a),
-        'B' => rgb(0x4a2e17),
-        'b' => rgb(0x6b4423),
-        'y' => rgb(0xf2c94c),
-        'o' => rgb(0xf29a3c),
-        'w' => rgb(0xf5f0e6),
-        'm' => rgb(0xc8372d),
-        'S' => rgb(0x5d5d63),
-        's' => rgb(0x8e8e93),
-        'h' => rgb(0xc4c4c8),
-        'c' => rgb(0xffffff),
-        'C' => rgb(0xd8e4f0),
-        'X' => petals,
-        _ => Color32::TRANSPARENT,
-    }
-}
-
-const TREE: &[&str] = &[
-    ".....kkkkk.....",
-    "...kkGgglGkk...",
-    "..kGgglllgggk..",
-    ".kGgglllggggGk.",
-    ".kGggllggggglk.",
-    "kGgggggggggllgk",
-    "kGgglggggggglgk",
-    "kGgggllgggggggk",
-    ".kGggggggglggGk",
-    ".kGGgggggglgGk.",
-    "..kGGggggggGk..",
-    "...kkGGbGGkk...",
-    "....kkkbBkk....",
-    "......bB.......",
-    "......bB.......",
-    "......bB.......",
-    ".....bbBB......",
-    "....bb..BB.....",
-];
-
-const BARE_TREE: &[&str] = &[
-    "..b.....b...b..",
-    "...b...b...b...",
-    ".b..b..b..b..b.",
-    "..b..b.b.b..b..",
-    "...bb..bbb.bb..",
-    "b....b.bBb.b...",
-    ".bb...bbB.b....",
-    "...bb.bbBbb..b.",
-    ".....bbbB..bb..",
-    "..b...bbB.b....",
-    "...bbb.bBb.....",
-    "......bbB......",
-    "......bbB......",
-    "......bB.......",
-    "......bB.......",
-    "......bB.......",
-    ".....bbBB......",
-    "....bb..BB.....",
-];
-
-const STUMP: &[&str] = &[".kkkk.", "kywwyk", "kbBbBk", "kbBbBk", "bbBbBB"];
-
-const SAW: &[&str] = &[
-    "...kkkkk..............",
-    "..k.....k.............",
-    "..k..kkkkkk...........",
-    ".kkkkoooooook.h.h.h.h.",
-    "koooooooowook.sssssssh",
-    "kooooooooooook.ssssssh",
-    ".kooooooooook.h.h.h.h.",
-    "..kkkkkkkkkk..........",
-];
-
-const BUSH: &[&str] = &[
-    "...kkkkk...",
-    ".kkGgglgkk.",
-    "kGgglggggGk",
-    "kGggggglggk",
-    "kGgglggggGk",
-    ".kGGgggGGk.",
-];
-
-const FLOWER: &[&str] = &[
-    ".X.X.", "XXyXX", ".XXX.", "..g..", ".gg..", "..gg.", "..g..",
-];
-
-const TUFT: &[&str] = &[".g...g.", ".g.l.g.", "gG.g.Gg", ".gGgGg.", "..ggg.."];
-
-const ROCK: &[&str] = &["...kkk..", ".kkshsk.", "kSsshhsk", "kSsssssk", ".kkkkkk."];
-
-const MUSHROOM: &[&str] = &[".kkkk.", "kmwmmk", "kmmmwk", ".kwwk.", "..ww..", ".kwwk."];
-
-const CLOUD: &[&str] = &[
-    ".......cccc.........",
-    "....ccccccccc..ccc..",
-    "..cccccccccccccccccc",
-    ".ccccccccccccccccccc",
-    "cccccccccccccccccccc",
-    ".CCCCCCCCCCCCCCCCCC.",
-];
-
-const MOON: &[&str] = &[
-    "..wwww..", ".wwhwww.", "wwwwwhww", "wwhwwwww", "wwwwwwhw", "wwwhwwww", ".wwwwww.", "..wwww..",
-];
-
-const SUN: &[&str] = &[
-    "....y....",
-    ".y.yyy.y.",
-    "..yyyyy..",
-    ".yyyoyyy.",
-    "yyyoyoyyy",
-    ".yyyoyyy.",
-    "..yyyyy..",
-    ".y.yyy.y.",
-    "....y....",
-];

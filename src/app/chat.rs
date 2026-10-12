@@ -141,7 +141,7 @@ impl MyrstackApp {
     /// Whether the conversation column shows the Queen's chat now.
     pub(super) fn shows_chat(&self) -> bool {
         use crate::ui::columns::{Picked, shows_chat};
-        let picked = if self.graph.selection().len() > 1 {
+        let picked = if self.fleet.selection().len() > 1 {
             Picked::Other
         } else if self.queen_selected() {
             Picked::Queen

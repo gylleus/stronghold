@@ -1,9 +1,10 @@
-//! The Settings window: a section list on the left (Queen, Whip, Notifications, Voice,
-//! General) and the
+//! The Settings window: a section list on the left (Queen, Envoy, Whip, Notifications, Voice,
+//! Art, General) and the
 //! chosen section's form. It owns the settings file: every save writes the whole file with the
 //! edited section replaced. Opened from the top bar's gear, the palette's "Settings…" and ⌘,;
 //! the "Whip…" button and "Whip settings…" open it on the Whip section.
 
+pub mod art;
 pub mod envoy;
 pub mod general;
 pub mod notifications;
@@ -35,16 +36,18 @@ pub enum Section {
     Whip,
     Notifications,
     Voice,
+    Art,
     General,
 }
 
 impl Section {
-    pub const ALL: [Section; 6] = [
+    pub const ALL: [Section; 7] = [
         Section::Queen,
         Section::Envoy,
         Section::Whip,
         Section::Notifications,
         Section::Voice,
+        Section::Art,
         Section::General,
     ];
 
@@ -55,6 +58,7 @@ impl Section {
             Section::Whip => "Whip",
             Section::Notifications => "Notifications",
             Section::Voice => "Voice",
+            Section::Art => "Art",
             Section::General => "General",
         }
     }
@@ -175,6 +179,10 @@ impl SettingsPane {
     /// The saved default model and effort of new ants.
     pub fn ants(&self) -> &AntSettings {
         &self.applied.ants
+    }
+
+    pub fn art(&self) -> &crate::ui::ant_farm::art::ArtSettings {
+        &self.applied.art
     }
 
     pub fn path(&self) -> Option<&std::path::Path> {
@@ -305,6 +313,13 @@ impl SettingsPane {
                 }
                 if revert {
                     self.voice_draft = self.applied.voice.clone();
+                }
+            }
+            Section::Art => {
+                if let Some(next) = art::section(ui, &self.applied.art) {
+                    let mut settings = self.applied.clone();
+                    settings.art = next;
+                    self.commit(settings);
                 }
             }
             Section::General => {

@@ -35,7 +35,7 @@ use crate::persist::PersistedState;
 use crate::poller::{Poller, PollerCommand, PollerConfig, ScreenUpdate};
 use crate::quota::{QuotaPoller, Quotas};
 use crate::ui;
-use crate::ui::graph::GraphView;
+use crate::ui::fleet_view::FleetView;
 use crate::ui::sidebar::FleetFilter;
 use crate::whip::{self, WhipInput, WhipRunner, WhipStatus};
 
@@ -46,16 +46,6 @@ const REPAINT_SOON: Duration = Duration::from_millis(1);
 /// How often UI state is saved while running (it is also saved on exit).
 const AUTOSAVE: Duration = Duration::from_secs(5);
 
-/// Which view fills the central panel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum View {
-    #[default]
-    Graph,
-    Table,
-    /// The fleet as an ant farm; see [`ui::ant_farm`].
-    AntFarm,
-}
-
 /// Top-level application state.
 pub struct MyrstackApp {
     /// Global show-window hotkey; `None` if registration failed.
@@ -63,16 +53,15 @@ pub struct MyrstackApp {
     poller: Poller,
     /// Newest snapshot; `None` until the first poll completes.
     data: Option<FleetData>,
-    /// Graph model built from `data`.
+    /// Fleet snapshot built from `data`.
     snapshot: Option<FleetSnapshot>,
-    graph: GraphView,
+    fleet: FleetView,
     ant_farm: ui::ant_farm::AntFarmView,
-    /// Node selected in the graph, shared by all views and side panels.
+    /// Node selected in the fleet, shared with the side panels.
     selected: Option<NodeId>,
     /// The nodes selected so far, for back/forward.
     history: ui::history::SelectionHistory,
-    view: View,
-    /// The dock's pane arrangement: sidebar, graph or table, details and conversation.
+    /// The dock's pane arrangement: sidebar, farm, details and conversation.
     panes: ui::dock::PaneLayout,
     /// A pane to bring to the front of its tab group next frame (the dock is out of `panes`
     /// while it draws).
@@ -89,7 +78,7 @@ pub struct MyrstackApp {
     watched_screen: Option<String>,
     /// Newest screen of `watched_screen`.
     screen: Option<ScreenUpdate>,
-    /// Which nodes the graph shows; edited in the sidebar.
+    /// Which nodes the fleet shows; edited in the sidebar.
     filter: FleetFilter,
     /// Maps terminals to Claude sessions and scans subagents off the UI thread.
     claude: ClaudeWorker,
@@ -129,9 +118,9 @@ pub struct MyrstackApp {
     finish_closes: Vec<lifecycle::PendingClose>,
     /// Asks or finished sessions changed: rebuild the snapshot.
     overlays_changed: bool,
-    /// Messages between agents, for the graph and the ant farm to draw.
+    /// Messages between agents, for the farm to draw.
     traffic: crate::traffic::Traffic,
-    /// Agents' state changes, for the graph and the ant farm to pop.
+    /// Agents' state changes, for the farm to pop.
     state_changes: crate::ui::state_pop::Transitions,
     /// Every notification's dispatcher, the saved inbox, toasts and node badges.
     notifications: notifications::AppNotifications,
@@ -215,11 +204,10 @@ impl MyrstackApp {
             poller,
             data: None,
             snapshot: None,
-            graph: GraphView::new(),
+            fleet: FleetView::new(),
             ant_farm: ui::ant_farm::AntFarmView::new(),
             selected: None,
             history: ui::history::SelectionHistory::default(),
-            view: View::default(),
             panes: ui::dock::PaneLayout::default(),
             bring_forward: None,
             chat_hidden: false,
@@ -394,17 +382,17 @@ impl MyrstackApp {
     fn has_conversation(&self) -> bool {
         self.shows_chat()
             || self.selected_node().is_some()
-            || (self.snapshot.is_some() && self.graph.selection().len() > 1)
+            || (self.snapshot.is_some() && self.fleet.selection().len() > 1)
     }
 
     /// Whether the details column has something to show: one selected node (or the Queen).
     fn has_details(&self) -> bool {
-        self.graph.selection().len() <= 1
+        self.fleet.selection().len() <= 1
             && (self.queen_selected() || self.selected_node().is_some())
     }
 
     pub(super) fn conversation_contents(&mut self, ui: &mut egui::Ui, now_ms: i64) {
-        if self.graph.selection().len() > 1 {
+        if self.fleet.selection().len() > 1 {
             self.selection_contents(ui);
         } else if self.shows_chat() {
             if let Some(id) = self.chat.ui(ui, self.snapshot.as_ref(), &self.traffic) {
@@ -480,7 +468,7 @@ impl MyrstackApp {
             .as_ref()
             .is_some_and(|s| s.coordinator_gone(node))
         {
-            ui::graph::coordinator_gone_note(ui);
+            ui::fleet_view::coordinator_gone_note(ui);
         }
         let usage = self.claude_data.as_ref().and_then(|c| c.node_usage(node));
         let response = ui::terminal::details_panel(ui, node, self.screen.as_ref(), usage, now_ms);
@@ -520,7 +508,7 @@ impl MyrstackApp {
         }
         if response.close {
             self.selected = None;
-            self.graph.set_selected(None);
+            self.fleet.set_selected(None);
         }
         if let Some(id) = response.select {
             self.select_and_focus(id);
@@ -558,40 +546,31 @@ impl MyrstackApp {
             self.select_and_focus(id);
         } else if response.close {
             self.selected = None;
-            self.graph.set_selected(None);
+            self.fleet.set_selected(None);
         }
     }
 
-    /// Selects the queen, opening her chat and details, and pans onto her keeping the zoom.
+    /// Selects the queen, opening her chat and details, and focuses the farm camera on her.
     fn select_queen(&mut self) {
         let id = NodeId::queen();
-        self.graph.set_selected(Some(&id));
-        self.graph.center_on(&id);
+        self.fleet.set_selected(Some(&id));
+        self.fleet.center_on(&id);
         self.selected = Some(id);
     }
 
-    /// Selects `id` in the app and the graph, and pans/zooms onto it unless it is filtered out.
+    /// Selects `id` in the app and the fleet, and pans/zooms onto it unless it is filtered out.
     fn select_and_focus(&mut self, id: NodeId) {
-        self.graph.set_selected(Some(&id));
-        if self.graph.is_visible(&id) {
-            self.graph.focus_nodes(std::slice::from_ref(&id));
+        self.fleet.set_selected(Some(&id));
+        if self.fleet.is_visible(&id) {
+            self.fleet.focus_nodes(std::slice::from_ref(&id));
         }
         self.selected = Some(id);
-    }
-
-    /// Switches to the graph (unless the ant farm is shown) and selects and focuses `id`
-    /// there, as `focus_agent` does.
-    fn focus_in_graph(&mut self, id: NodeId) {
-        if self.view == View::Table {
-            self.view = View::Graph;
-        }
-        self.select_and_focus(id);
     }
 
     fn clear_filters(&mut self) {
         self.filter = FleetFilter::default();
         if let Some(snapshot) = &self.snapshot {
-            self.graph.set_hidden(&self.filter.hidden(snapshot));
+            self.fleet.set_hidden(&self.filter.hidden(snapshot));
         }
     }
 
@@ -606,14 +585,14 @@ impl MyrstackApp {
             ctx,
             self.snapshot.as_ref(),
             self.data.as_ref(),
-            self.graph.hidden(),
+            self.fleet.hidden(),
             &cx,
         );
         match outcome {
-            Some(ui::search::SearchOutcome::Select(id)) => self.focus_in_graph(id),
+            Some(ui::search::SearchOutcome::Select(id)) => self.select_and_focus(id),
             Some(ui::search::SearchOutcome::ClearFiltersAndSelect(id)) => {
                 self.clear_filters();
-                self.focus_in_graph(id);
+                self.select_and_focus(id);
             }
             Some(ui::search::SearchOutcome::Run(action)) => self.run_palette_action(ctx, action),
             None => {}
@@ -652,7 +631,7 @@ impl MyrstackApp {
         let Some(snapshot) = &self.snapshot else {
             return;
         };
-        let hidden = self.graph.hidden();
+        let hidden = self.fleet.hidden();
         let current = self.selected.as_ref();
         let target = match command {
             KeyCommand::NextNode | KeyCommand::PrevNode => {
@@ -679,8 +658,8 @@ impl MyrstackApp {
                 };
                 let groups = ui::keys::repo_nav(snapshot, hidden);
                 if let Some((repo, id)) = ui::keys::step_repo(&groups, current, delta) {
-                    self.graph.set_selected(Some(&id));
-                    self.graph.focus_repo(&repo);
+                    self.fleet.set_selected(Some(&id));
+                    self.fleet.focus_repo(&repo);
                     self.selected = Some(id);
                 }
                 None
@@ -708,9 +687,9 @@ impl MyrstackApp {
                 } else if self.help_open {
                     self.help_open = false;
                 } else if let Some(keep) =
-                    ui::selection::after_escape(current, &self.graph.selection())
+                    ui::selection::after_escape(current, &self.fleet.selection())
                 {
-                    self.graph.set_selected(keep.as_ref());
+                    self.fleet.set_selected(keep.as_ref());
                     self.selected = keep;
                 }
                 None
@@ -727,8 +706,7 @@ impl MyrstackApp {
                 None
             }
             KeyCommand::Fit => {
-                self.view = View::Graph;
-                self.graph.fit_to_screen();
+                self.ant_farm.fit_to_screen();
                 None
             }
             KeyCommand::ToggleHelp => {
@@ -740,14 +718,14 @@ impl MyrstackApp {
             | KeyCommand::HistoryBack
             | KeyCommand::HistoryForward => None,
             KeyCommand::CloseSession => {
-                let ids = ui::selection::close_targets(current, &self.graph.selection());
+                let ids = ui::selection::close_targets(current, &self.fleet.selection());
                 if !ids.is_empty() {
                     self.request_close(ids);
                 }
                 None
             }
             KeyCommand::Whip => {
-                let ids = ui::selection::whip_targets(current, &self.graph.selection());
+                let ids = ui::selection::whip_targets(current, &self.fleet.selection());
                 if !ids.is_empty() {
                     self.request_whip(ids);
                 }
@@ -755,8 +733,8 @@ impl MyrstackApp {
             }
         };
         if let Some(id) = target {
-            self.graph.set_selected(Some(&id));
-            self.graph.center_on(&id);
+            self.fleet.set_selected(Some(&id));
+            self.fleet.center_on(&id);
             self.selected = Some(id);
         }
     }
@@ -790,7 +768,7 @@ impl MyrstackApp {
             .unwrap_or_default();
         let shown = age_ms.map_or_else(
             || "no data yet".to_owned(),
-            |ms| format!("showing data from {} ago", ui::table::format_age(ms)),
+            |ms| format!("showing data from {} ago", ui::fleet_view::format_age(ms)),
         );
         let retry = egui::Panel::top("stale_banner")
             .show(ui, |ui| {
@@ -817,7 +795,7 @@ impl MyrstackApp {
         let Some(id) = self.selected.clone() else {
             return;
         };
-        if self.view == View::Table || !self.graph.hidden().contains(&id) {
+        if !self.fleet.hidden().contains(&id) {
             return;
         }
         let clear = egui::Panel::top("hidden_selection")
@@ -882,20 +860,8 @@ impl MyrstackApp {
         if let Some(step) = ui::history::history_buttons(ui, can_back, self.history.can_forward()) {
             self.history_step(step);
         }
-        ui.selectable_value(&mut self.view, View::Graph, "Graph");
-        ui.selectable_value(&mut self.view, View::Table, "Table");
-        ui.selectable_value(&mut self.view, View::AntFarm, "Ant farm")
-            .on_hover_text("The fleet as an ant farm: an ant's place shows its state");
-        if self.view == View::Graph && ui.button("Fit").clicked() {
-            self.graph.fit_to_screen();
-        }
-        if self.view == View::Graph
-            && ui
-                .button("Reset layout")
-                .on_hover_text("Forget saved node positions and lay the graph out again")
-                .clicked()
-        {
-            self.graph.reset_layout();
+        if ui.button("Fit").clicked() {
+            self.ant_farm.fit_to_screen();
         }
         ui.separator();
         if let Some(data) = &self.data {
@@ -961,7 +927,7 @@ impl MyrstackApp {
         self.history.record(self.selected.as_ref());
     }
 
-    /// Selects the previous or next node in the history and centers the graph on it.
+    /// Selects the previous or next node in the history and centers the fleet on it.
     fn history_step(&mut self, step: ui::history::HistoryStep) {
         let target = match step {
             ui::history::HistoryStep::Back => self.history.back(self.selected.as_ref()),
@@ -970,19 +936,19 @@ impl MyrstackApp {
         let Some(id) = target else {
             return;
         };
-        self.graph.set_selected(Some(&id));
-        if self.graph.is_visible(&id) {
-            self.graph.center_on(&id);
+        self.fleet.set_selected(Some(&id));
+        if self.fleet.is_visible(&id) {
+            self.fleet.center_on(&id);
         }
         self.selected = Some(id);
     }
 }
 
-/// Multi-selection: several nodes selected in the graph (box or Shift/Cmd-click).
+/// Multi-selection: several nodes selected in the fleet (box or Shift/Cmd-click).
 impl MyrstackApp {
     /// The "N selected" panel, in the conversation column while 2+ nodes are selected.
     fn selection_contents(&mut self, ui: &mut egui::Ui) {
-        let selection = self.graph.selection();
+        let selection = self.fleet.selection();
         let Some(snapshot) = self.snapshot.as_ref() else {
             return;
         };
@@ -992,8 +958,8 @@ impl MyrstackApp {
             .collect();
         match ui::selection::selection_panel(ui, &nodes) {
             Some(ui::selection::SelectionAction::SelectOnly(id)) => {
-                self.graph.set_selected(Some(&id));
-                self.graph.center_on(&id);
+                self.fleet.set_selected(Some(&id));
+                self.fleet.center_on(&id);
                 self.selected = Some(id);
             }
             Some(ui::selection::SelectionAction::Close) => {
@@ -1003,7 +969,7 @@ impl MyrstackApp {
                 self.request_whip(selection.into_iter().collect());
             }
             Some(ui::selection::SelectionAction::Clear) => {
-                self.graph.set_selected(None);
+                self.fleet.set_selected(None);
                 self.selected = None;
             }
             None => {}
@@ -1011,7 +977,7 @@ impl MyrstackApp {
     }
 }
 
-/// Closing (killing) sessions: requests from the terminal panel, the graph's context menu, `x`
+/// Closing (killing) sessions: requests from the terminal panel, the fleet's context menu, `x`
 /// and the sidebar's "Close shown…" open one confirmation dialog; confirmed steps run on the
 /// action runner.
 impl MyrstackApp {
@@ -1036,7 +1002,7 @@ impl MyrstackApp {
         let terminals = self.data.as_ref().map_or(&[][..], |d| &d.terminals[..]);
         let confirmed =
             self.close
-                .show(ctx, self.snapshot.as_ref(), terminals, self.graph.hidden());
+                .show(ctx, self.snapshot.as_ref(), terminals, self.fleet.hidden());
         if let Some((plan, labels)) = confirmed {
             log::info!("closing sessions: {:?}", plan.steps);
             let ids: Vec<_> = plan
@@ -1055,12 +1021,6 @@ impl MyrstackApp {
         let Some(state) = storage.and_then(PersistedState::load) else {
             return;
         };
-        log::debug!(
-            "persist: restoring {} node positions, view {:?}",
-            state.layout.positions.len(),
-            state.view
-        );
-        self.view = state.view;
         if let Some(panes) = state
             .panes
             .as_deref()
@@ -1071,8 +1031,6 @@ impl MyrstackApp {
         self.panes.notifications = state.notifications_panel;
         self.chat_hidden = state.chat_hidden;
         self.filter = state.filter;
-        self.selected = state.layout.selected.clone();
-        self.graph.import_layout(state.layout);
         self.ant_farm.set_rooms(state.farm_rooms);
         self.search
             .set_recents(ui::commands::Recents::from_keys(&state.recent_actions));
@@ -1080,10 +1038,8 @@ impl MyrstackApp {
 
     fn persisted_state(&self) -> PersistedState {
         PersistedState {
-            view: self.view,
             chat_hidden: self.chat_hidden,
             filter: self.filter.clone(),
-            layout: self.graph.export_layout(),
             recent_actions: self.search.recents().keys(),
             panes: self.panes.encode(),
             notifications_panel: self.panes.notifications,
@@ -1096,10 +1052,6 @@ impl MyrstackApp {
 impl eframe::App for MyrstackApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         let state = self.persisted_state();
-        log::debug!(
-            "persist: saved {} node positions",
-            state.layout.positions.len()
-        );
         state.save(storage);
     }
 
@@ -1206,11 +1158,11 @@ impl eframe::App for MyrstackApp {
             }
             snapshot.mark_parked(self.parking.entries());
             snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_status());
-            self.graph.set_hidden(&self.filter.hidden(&snapshot));
-            self.graph.sync(&snapshot);
+            self.fleet.set_hidden(&self.filter.hidden(&snapshot));
+            self.fleet.sync(&snapshot);
             if let Some(claude) = &self.claude_data {
-                self.graph.set_usage(claude.node_usages(&snapshot.nodes));
-                self.graph
+                self.fleet.set_usage(claude.node_usages(&snapshot.nodes));
+                self.fleet
                     .set_building(claude.building_nodes(&snapshot.nodes));
             }
             if let Some(id) = &self.selected

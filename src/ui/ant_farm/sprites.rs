@@ -1,108 +1,37 @@
-//! The ant farm's art: the one place that knows what the farm looks like. The view hands it
-//! positions and poses from [`super::layout`]; it draws pixel-art sprites from
-//! `assets/art/farm` (see `assets/LICENSES.md`) and generates the soil tiles.
-//!
-//! To change the art, replace the PNGs (16×16 cells; the ant sheets stack two walk frames),
-//! the tile generators below or the surface's pixel maps in [`super::nature`]; nothing outside
-//! these files draws farm art.
+//! The mine's art entry point. All props use the dwarf cutout tools in `world` and
+//! `nature`, rasterized at one image pixel per farm texel with NEAREST filtering.
+//! Granite, worked stone and alpine turf are procedural `ColorImage`s. No farm art
+//! is loaded from assets. Palette mapping covers textures and the final scene's shapes.
 
+use super::forest::art::Deco as ForestDeco;
+use super::layout::{MATTRESS_TOP, Mark, PIPE_H, PIPE_LIP_W};
+use super::nature::Deco;
+use super::world::{GOLD, INK, IRON, LIGHT, Prop, STONE, STONE_LIGHT, WOOD_DARK, WorldArt, rgb};
+use crate::orca::AgentIdentity;
 use eframe::egui::{
     self, Color32, ColorImage, Painter, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2,
 };
+use std::cell::RefCell;
+use std::collections::HashMap;
+const TILE: usize = 256;
 
-use super::layout::{MATTRESS_TOP, Mark, PIPE_H, PIPE_LIP_W};
-use super::nature::Deco;
-use crate::model::NodeKind;
-use crate::orca::AgentIdentity;
-
-const ANT_GREY: &[u8] = include_bytes!("../../../assets/art/farm/ant_grey.png");
-const ANT_RED: &[u8] = include_bytes!("../../../assets/art/farm/ant_red.png");
-const CROWN: &[u8] = include_bytes!("../../../assets/art/farm/crown.png");
-const COIN: &[u8] = include_bytes!("../../../assets/art/farm/coin.png");
-const COIN_PILE: &[u8] = include_bytes!("../../../assets/art/farm/coin_pile.png");
-const EMOTE_ALERT: &[u8] = include_bytes!("../../../assets/art/farm/emote_exclamation.png");
-const EMOTE_SLEEP: &[u8] = include_bytes!("../../../assets/art/farm/emote_sleeps.png");
-const EMOTE_WHIP: &[u8] = include_bytes!("../../../assets/art/farm/emote_anger.png");
-const EMOTE_FAILED: &[u8] = include_bytes!("../../../assets/art/farm/emote_cross.png");
-const EMOTE_PR: &[u8] = include_bytes!("../../../assets/art/farm/emote_star.png");
-
-/// Frames stacked in an ant sheet.
-pub const ANT_FRAMES: usize = 2;
-/// Side of a generated soil tile in texels.
-const TILE: usize = 32;
-
-/// An ant's body colors. Claude and Codex ants differ in brightness as well as hue (light
-/// amber against dark slate with teal glints), so they stay apart under color blindness; red
-/// means failed whatever the agent, and amber is kept light so it never reads as red.
+/// Agent guild colours and crests; identity stays visible in every state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Coat {
-    /// No known agent, and the Queen: the sprite's own grey.
+    /// No known agent, and the Queen: the dwarf's own colours.
     Plain,
     Claude,
     Codex,
-    Failed,
 }
 
 impl Coat {
-    pub fn new(agent: Option<&AgentIdentity>, failed: bool) -> Self {
+    pub fn new(agent: Option<&AgentIdentity>) -> Self {
         match agent {
-            _ if failed => Coat::Failed,
             Some(AgentIdentity::Claude) => Coat::Claude,
             Some(AgentIdentity::Codex) => Coat::Codex,
             _ => Coat::Plain,
         }
     }
-}
-
-/// The grey sprite's colors, outline first, then body, shade, highlight, dark and darkest.
-const GREY_COATS: [[u8; 3]; 6] = [
-    [4, 28, 34],
-    [139, 164, 172],
-    [111, 128, 133],
-    [190, 213, 221],
-    [69, 89, 94],
-    [55, 71, 77],
-];
-/// [`GREY_COATS`] recolored for Claude: light amber.
-const CLAUDE_COATS: [[u8; 3]; 6] = [
-    [44, 22, 6],
-    [226, 162, 94],
-    [192, 126, 68],
-    [250, 212, 156],
-    [142, 86, 42],
-    [112, 66, 34],
-];
-/// [`GREY_COATS`] recolored for Codex: dark slate with teal glints.
-const CODEX_COATS: [[u8; 3]; 6] = [
-    [2, 8, 10],
-    [62, 78, 86],
-    [46, 60, 66],
-    [84, 200, 186],
-    [32, 42, 46],
-    [24, 32, 36],
-];
-
-/// How to draw one ant.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AntLook {
-    pub kind: NodeKind,
-    pub coat: Coat,
-    /// Walk frame, wrapped to [`ANT_FRAMES`].
-    pub frame: usize,
-    pub facing_right: bool,
-    /// Belly up (failed).
-    pub upside_down: bool,
-    pub alpha: f32,
-}
-
-/// Something carried or stored.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Item {
-    Crown,
-    /// A crumb carried to storage.
-    Crumb,
-    /// One PR's crumbs on the storage pile.
-    Pile,
 }
 
 /// The farm's palette, picked by the local time of day.
@@ -122,8 +51,8 @@ impl Palette {
         label_shadow: Color32::from_rgb(0x1a, 0x10, 0x08),
     };
     pub const DAY: Self = Self {
-        sky_top: Color32::from_rgb(0x7f, 0xc8, 0xf0),
-        sky_bottom: Color32::from_rgb(0xc8, 0xec, 0xff),
+        sky_top: rgb(0x8199aa),
+        sky_bottom: rgb(0xbdc7bf),
         label: Color32::from_rgb(0xfb, 0xf4, 0xe4),
         label_shadow: Color32::from_rgb(0x2b, 0x1a, 0x0c),
     };
@@ -141,328 +70,404 @@ impl Palette {
     }
 }
 
-/// The loaded textures; create once per egui context with [`Sprites::load`].
 pub struct Sprites {
-    officer_cap: TextureHandle,
-    ant_grey: TextureHandle,
-    ant_red: TextureHandle,
-    ant_claude: TextureHandle,
-    ant_codex: TextureHandle,
-    crown: TextureHandle,
-    coin: TextureHandle,
-    pile: TextureHandle,
-    alert: TextureHandle,
-    sleep: TextureHandle,
-    whip: TextureHandle,
-    failed: TextureHandle,
-    pr: TextureHandle,
-    soil: TextureHandle,
+    forest: HashMap<ForestDeco, TextureHandle>,
+    pub world: RefCell<WorldArt>,
+    rock: TextureHandle,
     tunnel: TextureHandle,
-    grass: TextureHandle,
-    nature: std::collections::HashMap<Deco, TextureHandle>,
+    turf: TextureHandle,
+    palette: String,
+    px: f32,
+    now_s: f64,
 }
-
 impl Sprites {
     pub fn load(ctx: &egui::Context) -> Self {
-        let png = |name: &str, bytes: &[u8]| {
-            ctx.load_texture(
-                format!("ant_farm/{name}"),
-                decode(bytes),
-                TextureOptions::NEAREST,
-            )
-        };
-        let recolored = |name: &str, coats: [[u8; 3]; 6]| {
-            ctx.load_texture(
-                format!("ant_farm/{name}"),
-                recolor(decode(ANT_GREY), &GREY_COATS, &coats),
-                TextureOptions::NEAREST,
-            )
-        };
         let tile = |name: &str, image: ColorImage| {
             ctx.load_texture(
-                format!("ant_farm/{name}"),
+                format!("mine/{name}"),
                 image,
                 TextureOptions::NEAREST_REPEAT,
             )
         };
         Self {
-            officer_cap: ctx.load_texture(
-                "ant_farm/officer_cap",
-                officer_cap(),
-                TextureOptions::NEAREST,
-            ),
-            ant_grey: png("ant_grey", ANT_GREY),
-            ant_red: png("ant_red", ANT_RED),
-            ant_claude: recolored("ant_claude", CLAUDE_COATS),
-            ant_codex: recolored("ant_codex", CODEX_COATS),
-            crown: png("crown", CROWN),
-            coin: png("coin", COIN),
-            pile: png("pile", COIN_PILE),
-            alert: png("alert", EMOTE_ALERT),
-            sleep: png("sleep", EMOTE_SLEEP),
-            whip: png("whip", EMOTE_WHIP),
-            failed: png("failed", EMOTE_FAILED),
-            pr: png("pr", EMOTE_PR),
-            soil: tile("soil", soil_tile(SOIL)),
-            tunnel: tile("tunnel", soil_tile(TUNNEL)),
-            grass: tile("grass", grass_tile()),
-            nature: Deco::ALL
+            forest: ForestDeco::ALL
                 .into_iter()
                 .map(|d| {
-                    let name = format!("ant_farm/nature/{d:?}");
                     (
                         d,
-                        ctx.load_texture(name, d.image(), TextureOptions::NEAREST),
+                        ctx.load_texture(
+                            format!("forest/{d:?}"),
+                            d.image(),
+                            TextureOptions::NEAREST,
+                        ),
                     )
                 })
                 .collect(),
+            world: RefCell::new(WorldArt::default()),
+            rock: tile("granite", rock_tile(false)),
+            tunnel: tile("worked-stone", rock_tile(true)),
+            turf: tile("alpine-turf", turf_tile()),
+            palette: String::new(),
+            px: 1.0,
+            now_s: 0.0,
         }
     }
-
-    /// A piece of scenery standing on `foot` (the middle of its bottom edge).
-    pub fn deco(&self, painter: &Painter, deco: Deco, foot: Pos2, px: f32, alpha: f32) {
-        let Some(texture) = self.nature.get(&deco) else {
-            return;
-        };
-        let [w, h] = deco.extent(px);
-        let size = vec2(w, h);
-        let rect = Rect::from_min_size(foot - vec2(size.x / 2.0, size.y), size);
-        painter.image(
-            texture.id(),
-            rect,
-            unit_uv(),
-            Color32::WHITE.gamma_multiply(alpha),
+    pub fn begin_frame(&mut self, palette: &str, px: f32, now_s: f64) {
+        self.px = px;
+        self.now_s = now_s;
+        self.world.borrow_mut().begin_frame(palette);
+        if self.palette != palette {
+            self.palette = palette.to_owned();
+            for (deco, texture) in &mut self.forest {
+                let mut image = deco.image();
+                self.world.borrow_mut().map(&mut image);
+                texture.set(image, TextureOptions::NEAREST);
+            }
+            let mut rock = rock_tile(false);
+            let mut tunnel = rock_tile(true);
+            let mut turf = turf_tile();
+            self.world.borrow_mut().map_stone(&mut rock, false);
+            self.world.borrow_mut().map_stone(&mut tunnel, true);
+            self.world.borrow_mut().map(&mut turf);
+            for (texture, image) in [
+                (&mut self.rock, rock),
+                (&mut self.tunnel, tunnel),
+                (&mut self.turf, turf),
+            ] {
+                texture.set(image, TextureOptions::NEAREST_REPEAT);
+            }
+        }
+    }
+    pub fn prop(&self, painter: &Painter, prop: Prop, rect: Rect, alpha: f32) {
+        self.world
+            .borrow_mut()
+            .paint(painter, prop, rect, self.px, prop.frame(self.now_s), alpha);
+    }
+    pub fn standing(&self, painter: &Painter, prop: Prop, foot: Pos2, px: f32, alpha: f32) {
+        let [w, h] = prop.size().map(|n| n as f32 * px);
+        self.prop(
+            painter,
+            prop,
+            Rect::from_min_size(foot - vec2(w / 2.0, h), vec2(w, h)),
+            alpha,
         );
     }
-
+    pub fn deco(&self, painter: &Painter, deco: Deco, foot: Pos2, px: f32, alpha: f32) {
+        self.standing(painter, Prop::Nature(deco), foot, px, alpha);
+    }
     /// A piece of scenery at `k` points per map texel (rather than its own scale), standing on
     /// `foot`, turned `angle` radians about `pivot`, multiplied by `tint`.
     pub fn deco_turned(
         &self,
         painter: &Painter,
-        deco: Deco,
+        deco: ForestDeco,
         foot: Pos2,
         k: f32,
         (angle, pivot): (f32, Pos2),
         tint: Color32,
     ) {
-        let Some(texture) = self.nature.get(&deco) else {
+        let Some(texture) = self.forest.get(&deco) else {
             return;
         };
         let [w, h] = deco.size();
         let size = vec2(w as f32 * k, h as f32 * k);
         let rect = Rect::from_min_size(foot - vec2(size.x / 2.0, size.y), size);
         let mut mesh = egui::Mesh::with_texture(texture.id());
-        mesh.add_rect_with_uv(rect, unit_uv(), tint);
+        mesh.add_rect_with_uv(rect, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), tint);
         if angle != 0.0 {
             mesh.rotate(egui::emath::Rot2::from_angle(angle), pivot);
         }
         painter.add(mesh);
     }
 
-    /// Roots spreading into the soil under a plant `width` points wide at `foot`.
-    pub fn roots(&self, painter: &Painter, foot: Pos2, width: f32, px: f32, seed: usize) {
-        let color = Color32::from_rgb(0x5a, 0x38, 0x1c);
-        let strands = 3;
-        for s in 0..strands {
-            let h = noise(s, seed, 5);
-            let lean = (s as f32 - 1.0) * 0.6 + (h % 3) as f32 * 0.2 - 0.2;
-            let len = 4 + (h % 5) as usize;
-            for i in 0..len {
-                let x = foot.x + lean * i as f32 * px + ((h >> i) & 1) as f32 * px;
-                let y = foot.y + (i as f32 + 2.0) * px;
-                if (x - foot.x).abs() > width {
-                    break;
-                }
-                let p = pos2((x / px).round() * px, y);
-                painter.rect_filled(Rect::from_min_size(p, vec2(px, px)), 0.0, color);
-            }
-        }
+    pub fn roots(&self, painter: &Painter, foot: Pos2, _width: f32, px: f32, _seed: usize) {
+        self.standing(painter, Prop::Roots, foot + vec2(0.0, 12.0 * px), px, 1.0);
     }
-
-    /// The anthill's mound of dug-out dirt around the shaft at `x` on the surface.
-    pub fn mound(&self, painter: &Painter, x: f32, surface_y: f32, a: f32, px: f32) {
-        let dirt = Color32::from_rgb(0x9c, 0x6a, 0x3c);
-        let light = Color32::from_rgb(0xb5, 0x80, 0x4c);
-        let hole = 0.6 * a;
-        for (step, (w, color)) in [(1.4, dirt), (1.0, light), (0.7, dirt)].iter().enumerate() {
-            let y = surface_y - (step as f32 + 1.0) * 2.0 * px;
-            for side in [-1.0, 1.0] {
-                let inner = x + side * hole;
-                let outer = inner + side * w * a * 0.5;
-                let rect = Rect::from_two_pos(pos2(inner, y), pos2(outer, y + 2.0 * px));
-                painter.rect_filled(rect, 0.0, *color);
-            }
-        }
+    pub fn entrance(&self, painter: &Painter, x: f32, y: f32, px: f32) {
+        self.standing(painter, Prop::Entrance, pos2(x, y + px), px, 1.0);
     }
-
-    /// A star: a dot, or a little cross for a bright one.
     pub fn star(&self, painter: &Painter, at: Pos2, px: f32, bright: bool, alpha: f32) {
-        let color = Color32::from_rgb(0xfb, 0xf4, 0xd0).gamma_multiply(alpha);
+        let color = LIGHT.gamma_multiply(alpha);
         if bright {
             self.sparkle(painter, at, px, color, false);
         } else {
+            painter.rect_filled(Rect::from_center_size(at, vec2(px, px)), 0.0, color);
+        }
+    }
+    pub fn ground(&self, painter: &Painter, rect: Rect, surface_y: f32, px: f32, palette: Palette) {
+        // Flat bands retain the selected palette even across the day/night gradient.
+        let height = surface_y - rect.top();
+        for i in 0..8 {
+            let band = Rect::from_min_max(
+                pos2(rect.left(), rect.top() + height * i as f32 / 8.0),
+                pos2(rect.right(), rect.top() + height * (i + 1) as f32 / 8.0),
+            );
             painter.rect_filled(
-                Rect::from_center_size(at, vec2(px, px)),
+                band,
                 0.0,
-                color.gamma_multiply(0.7),
+                palette
+                    .sky_top
+                    .lerp_to_gamma(palette.sky_bottom, i as f32 / 7.0),
+            );
+        }
+        let rock = Rect::from_min_max(pos2(rect.left(), surface_y), rect.max);
+        tiled(painter, self.rock.id(), rock, px);
+    }
+    /// Foreground alpine turf, painted after the distant peaks so its blades stay visible.
+    pub fn surface_edge(&self, painter: &Painter, rect: Rect, surface_y: f32, px: f32) {
+        let turf = Rect::from_min_max(
+            pos2(rect.left(), surface_y - 3.0 * px),
+            pos2(rect.right(), surface_y + 3.0 * px),
+        );
+        let span = TILE as f32 * px;
+        painter.image(
+            self.turf.id(),
+            turf,
+            Rect::from_min_max(
+                pos2(turf.left() / span, 0.0),
+                pos2(turf.right() / span, 6.0 / TILE as f32),
+            ),
+            Color32::WHITE,
+        );
+    }
+    pub fn peaks(&self, painter: &Painter, scene: &super::layout::Scene) {
+        let px = scene.px;
+        let span = 192.0 * px;
+        let n = (scene.rect.width() / span).ceil() as usize;
+        for i in 0..n {
+            self.prop(
+                painter,
+                Prop::Peaks,
+                Rect::from_min_size(
+                    pos2(
+                        scene.rect.left() + i as f32 * span,
+                        scene.surface_y - 52.0 * px,
+                    ),
+                    vec2(span, 52.0 * px),
+                ),
+                1.0,
             );
         }
     }
-
-    /// Sky above `surface_y` and soil below it, filling `rect`.
-    pub fn ground(&self, painter: &Painter, rect: Rect, surface_y: f32, px: f32, palette: Palette) {
-        let sky = Rect::from_min_max(rect.min, pos2(rect.right(), surface_y));
-        let mut mesh = egui::Mesh::default();
-        let i = mesh.vertices.len() as u32;
-        for (p, c) in [
-            (sky.left_top(), palette.sky_top),
-            (sky.right_top(), palette.sky_top),
-            (sky.right_bottom(), palette.sky_bottom),
-            (sky.left_bottom(), palette.sky_bottom),
-        ] {
-            mesh.colored_vertex(p, c);
-        }
-        mesh.add_triangle(i, i + 1, i + 2);
-        mesh.add_triangle(i, i + 2, i + 3);
-        painter.add(mesh);
-        let soil = Rect::from_min_max(pos2(rect.left(), surface_y), rect.max);
-        tiled(painter, self.soil.id(), soil, px);
-        let grass = Rect::from_min_max(
-            pos2(rect.left(), surface_y - 2.0 * px),
-            pos2(rect.right(), surface_y + 4.0 * px),
-        );
-        let span = TILE as f32 * px;
-        let uv = Rect::from_min_max(
-            pos2(grass.left() / span, 0.0),
-            pos2(grass.right() / span, grass.height() / span),
-        );
-        painter.image(self.grass.id(), grass, uv, Color32::WHITE);
-    }
-
-    /// A passage dug out of the soil.
     pub fn passage(&self, painter: &Painter, rect: Rect, px: f32) {
-        let edge = Rect::from_min_max(rect.min - vec2(px, px), rect.max + vec2(px, px));
-        painter.rect_filled(edge, 0.0, Color32::from_rgb(0x3a, 0x22, 0x12));
+        painter.rect_filled(rect.expand(px), 0.0, INK);
         tiled(painter, self.tunnel.id(), rect, px);
+        // Broken, shallow notches leave passages cut into the mountain, not framed panels.
+        let mut x = rect.left();
+        while x + 5.0 * px < rect.right() {
+            let depth = (1 + noise((x / px) as usize, 0, 7) % 2) as f32 * px;
+            painter.rect_filled(
+                Rect::from_min_size(pos2(x, rect.top() - px), vec2(4.0 * px, depth)),
+                0.0,
+                rgb(0x6b6a61),
+            );
+            x += 9.0 * px;
+        }
     }
-
-    /// A wooden bed in the resting area filling `rect` (see [`super::layout::BED_W`]): a
-    /// headboard on the left, where a sleeper's head lies, a mattress and a pillow.
-    pub fn bed(&self, painter: &Painter, rect: Rect, px: f32) {
-        let wood = Color32::from_rgb(0x8a, 0x4b, 0x1c);
-        let dark = Color32::from_rgb(0x5a, 0x30, 0x12);
-        let sheet = Color32::from_rgb(0xe8, 0xdc, 0xc0);
-        let pillow = Color32::from_rgb(0xfb, 0xf4, 0xe6);
-        let at = |x: f32, y: f32, w: f32, h: f32, color: Color32| {
-            let min = rect.min + vec2(x * px, y * px);
-            painter.rect_filled(Rect::from_min_size(min, vec2(w * px, h * px)), 0.0, color);
-        };
-        let (w, h) = (rect.width() / px, rect.height() / px);
-        let mattress = h - MATTRESS_TOP;
-        // Legs, the side rail, the mattress on it, the boards at either end.
-        at(1.0, h - 1.0, 1.0, 1.0, dark);
-        at(w - 2.0, h - 1.0, 1.0, 1.0, dark);
-        at(0.0, h - 3.0, w, 2.0, wood);
-        at(0.0, h - 2.0, w, 1.0, dark);
-        at(2.0, mattress, w - 3.0, 3.0, sheet);
-        at(
-            2.0,
-            mattress + 2.0,
-            w - 3.0,
+    pub fn cave(&self, painter: &Painter, rect: Rect, seed: u8) {
+        self.prop(
+            painter,
+            Prop::Cave(seed % 8),
+            rect.expand(2.0 * self.px),
             1.0,
-            Color32::from_rgb(0xc8, 0xb8, 0x98),
         );
-        at(0.0, 0.0, 2.0, h - 1.0, wood);
-        at(0.0, 0.0, 2.0, 1.0, dark);
-        at(w - 1.0, mattress - 1.0, 1.0, h - mattress, wood);
-        at(3.0, mattress - 2.0, 4.0, 2.0, pillow);
     }
-
-    /// The blanket over the back half of the sleeper at `cell` lying on the bed at `bed`,
-    /// its head and kicking legs left out.
+    pub fn masonry(&self, painter: &Painter, rect: Rect) {
+        self.prop(painter, Prop::Masonry, rect, 1.0);
+    }
+    pub fn shoring(&self, painter: &Painter, shaft: Rect, px: f32) {
+        let mut y = shaft.top() + 6.0 * px;
+        while y + 10.0 * px < shaft.bottom() {
+            self.prop(
+                painter,
+                Prop::Shoring,
+                Rect::from_min_size(pos2(shaft.left(), y), vec2(shaft.width(), 10.0 * px)),
+                1.0,
+            );
+            y += 24.0 * px;
+        }
+    }
+    pub fn gallery(&self, painter: &Painter, rect: Rect, px: f32) {
+        let floor = rect.bottom() - 2.0 * px;
+        let mut x = rect.left() + 4.0 * px;
+        while x < rect.right() - 2.0 * px {
+            painter.rect_filled(
+                Rect::from_min_size(pos2(x, floor - 2.0 * px), vec2(3.0 * px, 4.0 * px)),
+                0.0,
+                WOOD_DARK,
+            );
+            x += 8.0 * px;
+        }
+        for y in [floor - 2.0 * px, floor + px] {
+            painter.rect_filled(
+                Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), px)),
+                0.0,
+                IRON,
+            );
+            painter.rect_filled(
+                Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), px * 0.5)),
+                0.0,
+                STONE_LIGHT,
+            );
+        }
+        x = rect.left() + 30.0 * px;
+        while x < rect.right() - 20.0 * px {
+            self.prop(
+                painter,
+                Prop::Support,
+                Rect::from_min_size(
+                    pos2(x - 18.0 * px, rect.top()),
+                    vec2(36.0 * px, rect.height() - px),
+                ),
+                1.0,
+            );
+            let foot = pos2(x + 24.0 * px, rect.bottom() - 3.0 * px);
+            self.prop(
+                painter,
+                Prop::Soot,
+                Rect::from_min_size(
+                    pos2(foot.x - 6.0 * px, rect.top() + px),
+                    vec2(12.0 * px, rect.height() - 2.0 * px),
+                ),
+                1.0,
+            );
+            self.glow(painter, foot - vec2(0.0, 11.0 * px), 12.0 * px, GOLD, 0.32);
+            self.standing(painter, Prop::Torch, foot, px, 1.0);
+            x += 96.0 * px;
+        }
+    }
+    /// Narrow working sidings under each row, joining the shaft hoist.
+    pub fn siding(&self, painter: &Painter, chamber: Rect, floor: f32, px: f32) {
+        let left = chamber.left() + 5.0 * px;
+        let right = chamber.right() - 5.0 * px;
+        let y = (floor / px).round() * px;
+        let mut x = left;
+        while x < right {
+            painter.rect_filled(
+                Rect::from_min_size(pos2(x, y - px), vec2(2.0 * px, 3.0 * px)),
+                0.0,
+                WOOD_DARK,
+            );
+            x += 9.0 * px;
+        }
+        painter.rect_filled(
+            Rect::from_min_max(pos2(left, y), pos2(right, y + px)),
+            0.0,
+            IRON,
+        );
+    }
+    pub fn throne_hall(&self, painter: &Painter, rect: Rect, px: f32) {
+        let floor = rect.bottom() - 2.0 * px;
+        self.standing(
+            painter,
+            Prop::Throne,
+            pos2(rect.center().x, floor),
+            px * 0.9,
+            1.0,
+        );
+        for side in [-1.0, 1.0] {
+            self.standing(
+                painter,
+                Prop::Banner,
+                pos2(
+                    rect.center().x + side * (rect.width() / 2.0 - 9.0 * px),
+                    rect.top() + 18.0 * px,
+                ),
+                px * 0.65,
+                1.0,
+            );
+            let foot = pos2(
+                rect.center().x + side * (rect.width() / 2.0 - 8.0 * px),
+                floor,
+            );
+            self.glow(painter, foot - vec2(0.0, 15.0 * px), 12.0 * px, GOLD, 0.4);
+            self.standing(painter, Prop::Brazier, foot, px * 0.65, 1.0);
+        }
+    }
+    /// The hoist cage sits behind the rider. Cable length follows the actual journey.
+    pub fn cart_hoist(&self, painter: &Painter, cell: Rect, ceiling: f32, px: f32, alpha: f32) {
+        let foot = cell.center_bottom();
+        let top = foot.y - 22.0 * px;
+        let cable_x = (foot.x / self.px).round() * self.px;
+        if ceiling < top {
+            painter.rect_filled(
+                Rect::from_min_max(pos2(cable_x, ceiling), pos2(cable_x + self.px, top)),
+                0.0,
+                IRON.gamma_multiply(alpha),
+            );
+            let mut y = ceiling;
+            while y < top {
+                painter.rect_filled(
+                    Rect::from_min_size(pos2(cable_x - self.px, y), vec2(3.0 * self.px, self.px)),
+                    0.0,
+                    STONE_LIGHT.gamma_multiply(alpha),
+                );
+                y += 4.0 * self.px;
+            }
+        }
+        self.standing(painter, Prop::CartYoke, foot, px * 0.77, alpha);
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn cart(
+        &self,
+        painter: &Painter,
+        cell: Rect,
+        px: f32,
+        cargo: bool,
+        hoisted: bool,
+        now_s: f64,
+        alpha: f32,
+    ) {
+        let size = vec2(20.0, 11.0) * px;
+        let bounds = Rect::from_min_size(cell.center_bottom() - vec2(size.x / 2.0, size.y), size);
+        // Hoisted wheels stop; ground travel turns the spokes. No parked cart idles.
+        let frame = if hoisted {
+            0
+        } else {
+            Prop::MineCart.frame(now_s)
+        };
+        self.world
+            .borrow_mut()
+            .paint(painter, Prop::MineCart, bounds, self.px, frame, alpha);
+        if cargo {
+            self.prop(
+                painter,
+                Prop::Treasure(0),
+                Rect::from_min_size(bounds.min + vec2(10.0, -2.0) * px, vec2(7.0, 5.0) * px),
+                alpha,
+            );
+        }
+    }
+    pub fn bed(&self, painter: &Painter, rect: Rect, _px: f32) {
+        self.prop(painter, Prop::Bunk, rect, 1.0);
+    }
     pub fn blanket(&self, painter: &Painter, bed: Rect, cell: Rect, px: f32, alpha: f32) {
-        let quilt = Color32::from_rgb(0x4a, 0x6f, 0xb8).gamma_multiply(alpha);
-        let fold = Color32::from_rgb(0x9c, 0xb8, 0xe8).gamma_multiply(alpha);
         let top = bed.bottom() - (MATTRESS_TOP + 3.0) * px;
         let body = Rect::from_min_max(
             pos2(cell.left() + 0.45 * cell.width(), top),
             pos2(bed.right() - px, bed.bottom() - (MATTRESS_TOP - 2.0) * px),
         );
-        painter.rect_filled(body, 0.0, quilt);
-        let edge = Rect::from_min_size(body.min, vec2(px, body.height()));
-        painter.rect_filled(edge, 0.0, fold);
+        self.prop(painter, Prop::Blanket, body, alpha);
     }
-
-    /// An ant filling `cell`.
-    pub fn ant(&self, painter: &Painter, cell: Rect, look: AntLook) {
-        let texture = match look.coat {
-            Coat::Plain => &self.ant_grey,
-            Coat::Claude => &self.ant_claude,
-            Coat::Codex => &self.ant_codex,
-            Coat::Failed => &self.ant_red,
-        };
-        let frame = look.frame % ANT_FRAMES;
-        let h = 1.0 / ANT_FRAMES as f32;
-        let (y0, y1) = (frame as f32 * h, (frame + 1) as f32 * h);
-        let (y0, y1) = if look.upside_down { (y1, y0) } else { (y0, y1) };
-        let (x0, x1) = if look.facing_right {
-            (1.0, 0.0)
-        } else {
-            (0.0, 1.0)
-        };
-        let uv = Rect::from_min_max(pos2(x0, y0), pos2(x1, y1));
-        painter.image(
-            texture.id(),
-            cell,
-            uv,
-            Color32::WHITE.gamma_multiply(look.alpha),
-        );
-        if matches!(look.kind, NodeKind::Coordinator | NodeKind::Attendant) {
-            // Share the body's UVs so the cap follows its gait, facing and belly-up poses.
-            painter.image(
-                self.officer_cap.id(),
-                cell,
-                uv,
-                Color32::WHITE.gamma_multiply(look.alpha),
-            );
-        }
-    }
-
-    /// A speech bubble with `mark`, its tail on `anchor` (the top of the ant's head).
     pub fn bubble(&self, painter: &Painter, anchor: Pos2, size: f32, mark: Mark, alpha: f32) {
-        let texture = match mark {
-            Mark::Alert => &self.alert,
-            Mark::Sleep => &self.sleep,
-            Mark::Whip => &self.whip,
-            Mark::Failed => &self.failed,
-            Mark::PrReady => &self.pr,
+        let mark = match mark {
+            Mark::Alert => 0,
+            Mark::Sleep => 1,
+            Mark::Stalled => 2,
+            Mark::Failed => 3,
+            Mark::PrReady => 4,
         };
-        let rect = Rect::from_center_size(anchor - vec2(0.0, size / 2.0), vec2(size, size));
-        painter.image(
-            texture.id(),
-            rect,
-            unit_uv(),
-            Color32::WHITE.gamma_multiply(alpha),
+        self.prop(
+            painter,
+            Prop::Bubble(mark),
+            Rect::from_min_size(anchor - vec2(size / 2.0, size), vec2(size, size)),
+            alpha,
         );
     }
-
-    pub fn item(&self, painter: &Painter, rect: Rect, item: Item, alpha: f32) {
-        let texture = match item {
-            Item::Crown => &self.crown,
-            Item::Crumb => &self.coin,
-            Item::Pile => &self.pile,
-        };
-        painter.image(
-            texture.id(),
-            rect,
-            unit_uv(),
-            Color32::WHITE.gamma_multiply(alpha),
-        );
+    pub fn pile(&self, painter: &Painter, rect: Rect, variant: u8) {
+        self.prop(painter, Prop::Treasure(variant % 3), rect, 1.0);
     }
-
-    /// Karl's green warp pipe standing on the surface at `foot` (the middle of its base),
-    /// `stretch` texels taller while it pops a message out, with `text` on its body.
+    /// Riveted brass pneumatic tube, with a name plate. Only a departing message stretches it.
     pub fn pipe(
         &self,
         painter: &Painter,
@@ -472,73 +477,53 @@ impl Sprites {
         text: &str,
         font: egui::FontId,
     ) {
-        let outline = Color32::from_rgb(0x10, 0x3a, 0x12);
-        let green = Color32::from_rgb(0x3c, 0xb0, 0x3c);
-        let light = Color32::from_rgb(0x9a, 0xe8, 0x6a);
-        let shade = Color32::from_rgb(0x24, 0x7c, 0x28);
-        let lip_w = PIPE_LIP_W * px;
-        let body_w = lip_w - 4.0 * px;
-        let lip_h = 7.0 * px;
-        let top = foot.y - (PIPE_H + stretch) * px;
-        let lip = Rect::from_min_size(pos2(foot.x - lip_w / 2.0, top), vec2(lip_w, lip_h));
-        let body = Rect::from_min_max(
-            pos2(foot.x - body_w / 2.0, lip.bottom()),
-            pos2(foot.x + body_w / 2.0, foot.y + px),
+        let rect = Rect::from_min_size(
+            foot - vec2((PIPE_LIP_W + 2.0) * px / 2.0, (PIPE_H + stretch) * px),
+            vec2((PIPE_LIP_W + 2.0) * px, (PIPE_H + stretch + 1.0) * px),
         );
-        // Each piece: outline, green, a highlight down the left, shade down the right.
-        for part in [body, lip] {
-            painter.rect_filled(part.expand(px), 0.0, outline);
-            painter.rect_filled(part, 0.0, green);
-            let stripe = |x: f32, w: f32| {
-                Rect::from_min_size(
-                    pos2(part.left() + x * px, part.top()),
-                    vec2(w * px, part.height()),
-                )
-            };
-            painter.rect_filled(stripe(2.0, 2.0), 0.0, light);
-            painter.rect_filled(stripe(5.0, 1.0), 0.0, light);
-            let right = part.width() / px;
-            painter.rect_filled(stripe(right - 4.0, 2.0), 0.0, shade);
-        }
-        // The dark opening on top and the seam under the lip.
-        painter.rect_filled(
-            Rect::from_min_size(lip.min + vec2(2.0 * px, 0.0), vec2(lip_w - 4.0 * px, px)),
-            0.0,
-            outline,
-        );
-        painter.rect_filled(
-            Rect::from_min_size(pos2(body.left(), lip.bottom()), vec2(body_w, px)),
-            0.0,
-            outline,
-        );
-        // The name across the body, shrunk to fit it.
-        let room = body_w - 4.0 * px;
-        let mut galley = painter.layout_no_wrap(text.to_string(), font.clone(), outline);
+        self.prop(painter, Prop::Tube, rect, 1.0);
+        let room = 12.0 * px;
+        let mut galley = painter.layout_no_wrap(text.to_owned(), font.clone(), INK);
         if galley.size().x > room {
-            let size = (font.size * room / galley.size().x).max(6.0);
             galley = painter.layout_no_wrap(
-                text.to_string(),
-                egui::FontId::new(size, font.family),
-                outline,
+                text.to_owned(),
+                egui::FontId::new((font.size * room / galley.size().x).max(6.0), font.family),
+                INK,
             );
         }
-        let at = pos2(
-            foot.x - galley.size().x / 2.0,
-            (lip.bottom() + foot.y) / 2.0 - galley.size().y / 2.0,
+        painter.galley(
+            pos2(
+                foot.x - galley.size().x / 2.0,
+                rect.top() + rect.height() * 0.62 - galley.size().y / 2.0,
+            ),
+            galley,
+            INK,
         );
-        painter.galley(at, galley, outline);
     }
-
-    /// The whip's lash poking a stalled ant at `cell`: a pixel line from above and behind.
-    pub fn whip(&self, painter: &Painter, cell: Rect, px: f32, phase: usize) {
-        let color = Color32::from_rgb(0x8a, 0x4b, 0x1c);
-        let tip = cell.right_top() + vec2(-3.0 * px, 4.0 * px + (phase % 2) as f32 * px);
-        for i in 0..6 {
-            let p = tip + vec2(i as f32 * px, -(i as f32) * px * 0.8);
-            painter.rect_filled(Rect::from_min_size(p, vec2(px, px)), 0.0, color);
+    /// A pebble arcs onto the helmet; a white tink appears at impact, then it falls away.
+    pub fn bonk(&self, painter: &Painter, cell: Rect, px: f32, phase: usize) {
+        let t = (phase % 12) as f32 / 12.0;
+        let hit = cell.center_top() + vec2(2.0 * px, 3.0 * px);
+        let at = if t < 0.65 {
+            let u = t / 0.65;
+            hit + vec2(
+                -10.0 * (1.0 - u),
+                -12.0 * (1.0 - u) - 8.0 * (u * std::f32::consts::PI).sin(),
+            ) * px
+        } else {
+            let u = (t - 0.65) / 0.35;
+            hit + vec2(5.0 * u, -4.0 * u + 10.0 * u * u) * px
+        };
+        self.prop(
+            painter,
+            Prop::Pebble,
+            Rect::from_center_size(at, vec2(4.0, 4.0) * px),
+            1.0,
+        );
+        if (0.6..0.85).contains(&t) {
+            self.sparkle(painter, hit, px, Color32::WHITE, true);
         }
     }
-
     /// A soft pixel glow around `center`: stacked translucent squares, brightest inside.
     pub fn glow(&self, painter: &Painter, center: Pos2, radius: f32, color: Color32, alpha: f32) {
         for i in (1..=4).rev() {
@@ -589,71 +574,10 @@ impl Sprites {
         }
     }
 
-    /// A small "z" drifting up from a sleeper, at `pos`.
-    pub fn snore(&self, painter: &Painter, pos: Pos2, px: f32, alpha: f32, palette: Palette) {
-        let font = egui::FontId::monospace(6.0 + 2.5 * px);
-        let shadow = palette.label_shadow.gamma_multiply(alpha);
-        let color = palette.label.gamma_multiply(alpha);
-        painter.text(
-            pos + vec2(1.0, 1.0),
-            egui::Align2::CENTER_CENTER,
-            "z",
-            font.clone(),
-            shadow,
-        );
-        painter.text(pos, egui::Align2::CENTER_CENTER, "z", font, color);
+    pub fn snore(&self, painter: &Painter, pos: Pos2, px: f32, alpha: f32, _palette: Palette) {
+        self.standing(painter, Prop::Snore, pos, px, alpha);
     }
-
-    /// A builder's hard hat and hammer on the ant at `cell`; the hammer is raised on even
-    /// `step`s and strikes the face on odd ones, with a spark.
-    pub fn builder(&self, painter: &Painter, cell: Rect, facing_right: bool, px: f32, step: usize) {
-        let hat = Color32::from_rgb(0xf2, 0xc1, 0x2e);
-        let brim = Color32::from_rgb(0xc8, 0x8e, 0x1a);
-        let wood = Color32::from_rgb(0x8a, 0x4b, 0x1c);
-        let iron = Color32::from_rgb(0x8f, 0x96, 0x9e);
-        // Texel `(x, y)` of the left-facing sprite, mirrored when the ant faces right.
-        let dot = |x: i32, y: i32, color: Color32| {
-            let x = if facing_right { 15 - x } else { x };
-            let min = cell.min + vec2(x as f32 * px, y as f32 * px);
-            painter.rect_filled(Rect::from_min_size(min, vec2(px, px)), 0.0, color);
-        };
-        for x in 2..=4 {
-            dot(x, 5, hat);
-        }
-        for x in 1..=5 {
-            dot(x, 6, hat);
-        }
-        for x in 0..=6 {
-            dot(x, 7, brim);
-        }
-        let raised = step.is_multiple_of(2);
-        type Texels = &'static [(i32, i32)];
-        let (handle, head): (Texels, Texels) = if raised {
-            (
-                &[(1, 11), (0, 10), (-1, 9), (-2, 8)],
-                &[(-4, 6), (-3, 6), (-2, 6), (-4, 7), (-3, 7), (-2, 7)],
-            )
-        } else {
-            (
-                &[(1, 12), (0, 12), (-1, 12), (-2, 12)],
-                &[(-4, 11), (-3, 11), (-4, 12), (-3, 12), (-4, 13), (-3, 13)],
-            )
-        };
-        for &(x, y) in handle {
-            dot(x, y, wood);
-        }
-        for &(x, y) in head {
-            dot(x, y, iron);
-        }
-        if !raised {
-            let spark = Color32::from_rgb(0xff, 0xf0, 0x8a);
-            dot(-6, 11, spark);
-            dot(-5, 14, spark);
-        }
-    }
-
-    /// Dirt flying from the digger's feet at `now_s`: clods kicked up and back behind it,
-    /// falling in arcs and fading. `seed` staggers diggers so they don't throw in step.
+    /// Granite chips and an occasional gold spark fly back from an active digger.
     pub fn dirt(
         &self,
         painter: &Painter,
@@ -663,110 +587,42 @@ impl Sprites {
         now_s: f64,
         seed: f32,
     ) {
-        const CLODS: usize = 8;
-        const LIFE_S: f64 = 0.9;
-        let shades = [
-            Color32::from_rgb(0xb0, 0x7a, 0x45),
-            Color32::from_rgb(0x8a, 0x5a, 0x34),
-            Color32::from_rgb(0xc8, 0x94, 0x5c),
-        ];
         let back = if facing_right { -1.0 } else { 1.0 };
-        // The sprite's feet: the bottom rows of the cell, a little behind its middle.
-        let face = pos2(cell.center().x + back * 2.0 * px, cell.top() + 13.0 * px);
-        for i in 0..CLODS {
-            let k = i as f32 / CLODS as f32;
-            let t = ((now_s / LIFE_S) + f64::from(k) + f64::from(seed)).fract() as f32;
-            // Each clod has its own throw, from a hash of its slot.
+        let face = cell.center_bottom() - vec2(0.0, 2.0 * px);
+        for i in 0..6 {
+            let t = ((now_s / 0.9) + i as f64 / 6.0 + seed as f64).fract() as f32;
             let h = noise(i, (seed * 97.0) as usize, 11);
-            let vx = 8.0 + (h % 9) as f32;
-            let vy = 24.0 + (h / 9 % 9) as f32;
-            let x = back * vx * t;
-            let y = -vy * t + 22.0 * t * t;
-            let p = face + vec2(x * px, y * px);
-            let snapped = pos2((p.x / px).round() * px, (p.y / px).round() * px);
-            let size = if h.is_multiple_of(3) { px } else { 2.0 * px };
-            let color = shades[(h % 3) as usize].gamma_multiply(1.0 - t * t);
-            painter.rect_filled(Rect::from_min_size(snapped, vec2(size, size)), 0.0, color);
-        }
-    }
-}
-
-fn unit_uv() -> Rect {
-    Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0))
-}
-
-/// Fills `rect` with a repeating tile at `px` points per texel, anchored to the screen so
-/// tiles line up across passages.
-fn tiled(painter: &Painter, texture: egui::TextureId, rect: Rect, px: f32) {
-    let span = TILE as f32 * px;
-    let uv = Rect::from_min_max(
-        (rect.min.to_vec2() / span).to_pos2(),
-        (rect.max.to_vec2() / span).to_pos2(),
-    );
-    painter.image(texture, rect, uv, Color32::WHITE);
-}
-
-fn decode(bytes: &[u8]) -> ColorImage {
-    let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
-        .expect("bundled farm sprite is a valid PNG")
-        .to_rgba8();
-    let size = [image.width() as usize, image.height() as usize];
-    ColorImage::from_rgba_unmultiplied(size, image.as_flat_samples().as_slice())
-}
-
-/// A peaked officer's cap above the left-facing head. Its brass band identifies rank
-/// without recoloring the agent or occupying the space reserved for state bubbles.
-fn officer_cap() -> ColorImage {
-    let rows = [
-        b"..#####." as &[u8],
-        b".#sssss#",
-        b".#sssss#",
-        b".#bbbbb#",
-        b"######..",
-    ];
-    let mut image = ColorImage::filled([16, 16 * ANT_FRAMES], Color32::TRANSPARENT);
-    for frame in 0..ANT_FRAMES {
-        // The second walk frame lowers the head by one texel.
-        for (y, row) in rows.iter().enumerate() {
-            for (x, pixel) in row.iter().enumerate() {
-                image[(x, frame * 16 + 4 + frame + y)] = match pixel {
-                    b'#' => Color32::from_rgb(0x04, 0x1c, 0x22),
-                    b's' => Color32::from_rgb(0x36, 0x48, 0x58),
-                    b'b' => Color32::from_rgb(0xed, 0xcf, 0x8b),
-                    _ => Color32::TRANSPARENT,
-                };
+            let p = face
+                + vec2(
+                    back * (8.0 + (h % 9) as f32) * t,
+                    -(24.0 + (h / 9 % 9) as f32) * t + 22.0 * t * t,
+                ) * px;
+            let p = pos2((p.x / px).round() * px, (p.y / px).round() * px);
+            if i == 0 {
+                self.sparkle(painter, p, px, LIGHT.gamma_multiply(1.0 - t), false);
+            } else {
+                self.prop(
+                    painter,
+                    Prop::Pebble,
+                    Rect::from_center_size(p, vec2(3.0, 3.0) * px),
+                    1.0 - t * t,
+                );
             }
         }
     }
-    image
 }
-
-/// `image` with each color of `from` swapped for the same slot of `to`; others kept.
-fn recolor(mut image: ColorImage, from: &[[u8; 3]], to: &[[u8; 3]]) -> ColorImage {
-    for pixel in &mut image.pixels {
-        let [r, g, b, a] = pixel.to_srgba_unmultiplied();
-        if let Some(i) = from.iter().position(|c| *c == [r, g, b]) {
-            let [r, g, b] = to[i];
-            *pixel = Color32::from_rgba_unmultiplied(r, g, b, a);
-        }
-    }
-    image
+fn tiled(painter: &Painter, texture: egui::TextureId, rect: Rect, px: f32) {
+    let span = TILE as f32 * px;
+    painter.image(
+        texture,
+        rect,
+        Rect::from_min_max(
+            (rect.min.to_vec2() / span).to_pos2(),
+            (rect.max.to_vec2() / span).to_pos2(),
+        ),
+        Color32::WHITE,
+    );
 }
-
-/// Soil shades, darkest last; the last is used sparsely for pebbles.
-const SOIL: [Color32; 4] = [
-    Color32::from_rgb(0x8a, 0x5a, 0x34),
-    Color32::from_rgb(0x7c, 0x4f, 0x2d),
-    Color32::from_rgb(0x96, 0x66, 0x3c),
-    Color32::from_rgb(0x5e, 0x3a, 0x1f),
-];
-const TUNNEL: [Color32; 4] = [
-    Color32::from_rgb(0x3f, 0x27, 0x16),
-    Color32::from_rgb(0x46, 0x2c, 0x19),
-    Color32::from_rgb(0x38, 0x22, 0x13),
-    Color32::from_rgb(0x2c, 0x1a, 0x0e),
-];
-
 /// A small deterministic hash for tile noise.
 fn noise(x: usize, y: usize, salt: u32) -> u32 {
     let mut h = (x as u32).wrapping_mul(0x9e37_79b1) ^ (y as u32).wrapping_mul(0x85eb_ca77) ^ salt;
@@ -776,76 +632,146 @@ fn noise(x: usize, y: usize, salt: u32) -> u32 {
     h
 }
 
-/// A seamless tile of chunky dithered soil in `shades`.
-pub fn soil_tile(shades: [Color32; 4]) -> ColorImage {
-    let mut image = ColorImage::filled([TILE, TILE], shades[0]);
+/// Sloping strata and irregular fractured planes; no rectangular noise patches.
+pub fn rock_tile(worked: bool) -> ColorImage {
+    let base = if worked {
+        super::excavation::WALL
+    } else {
+        rgb(0x6b6a61)
+    };
+    let dark = if worked { rgb(0x44453e) } else { rgb(0x5f6058) };
+    let light = if worked { rgb(0x585a50) } else { rgb(0x77766a) };
+    let mut image = ColorImage::filled([TILE, TILE], base);
     for y in 0..TILE {
         for x in 0..TILE {
-            let n = noise(x / 2, y / 2, 7) % 16;
-            let shade = match n {
-                0 => shades[3],
-                1..=4 => shades[1],
-                5..=7 => shades[2],
-                _ => shades[0],
+            // Folded bands wrap across the tile; interrupted faces keep the mountain
+            // from looking like a repeated diagonal stripe pattern.
+            let phase = std::f32::consts::TAU * x as f32 / TILE as f32;
+            let folded = y as f32 + (phase * 2.0).sin() * 7.0 + (phase * 5.0).sin() * 2.0;
+            let strata = folded.rem_euclid(64.0);
+            let segment = noise(x / 17, (folded.rem_euclid(TILE as f32) / 64.0) as usize, 17);
+            image[(x, y)] = if strata < 1.4 && !segment.is_multiple_of(3) {
+                dark
+            } else if strata < 5.0 && segment.is_multiple_of(5) {
+                light
+            } else {
+                base
             };
-            image[(x, y)] = shade;
+            // Short fissures and granite flecks: sparse enough to leave quiet areas.
+            let fracture = noise(x / 23, y / 19, 29);
+            if fracture.is_multiple_of(7) && x % 23 == (y % 19) / 3 + 6 && y % 19 < 11 {
+                image[(x, y)] = dark;
+            }
+            if worked && (x + y * 3) % 31 == 0 && y % 9 < 2 {
+                image[(x, y)] = light;
+            }
+            if !worked {
+                let n = noise(x / 2, y / 2, 31);
+                if n.is_multiple_of(151) {
+                    image[(x, y)] = if y % 2 == 0 { light } else { dark };
+                }
+                if (20..35).contains(&x) && y == 42 - (x - 20) / 3 && x % 6 != 0 {
+                    image[(x, y)] = GOLD_DARK_TILE;
+                }
+                if (28..32).contains(&x) && y == 40 + (x - 28) {
+                    image[(x, y)] = GOLD_DARK_TILE;
+                }
+                if x == 48 && y == 19 {
+                    image[(x, y)] = rgb(0x78a19c);
+                }
+                if x == 49 && y == 20 {
+                    image[(x, y)] = rgb(0x426665);
+                }
+            }
+        }
+    }
+    if !worked {
+        // A branching quartz seam, oxidised edges and a small exposed crystal pocket.
+        // These are geological inclusions in the tile, not animated decoration.
+        for i in 0..25 {
+            let x = 93 + i;
+            let y = 104 - i / 3 + (i / 7) % 2;
+            image[(x, y + 1)] = dark;
+            image[(x, y)] = rgb(0x9a9789);
+            if i % 7 < 3 {
+                image[(x, y - 1)] = rgb(0x77796e);
+            }
+            if (9..16).contains(&i) {
+                image[(x, 101 + (i - 9) / 2)] = rgb(0x8d8b7e);
+            }
+        }
+        for y in 0..9 {
+            for x in 0..15 {
+                let dx = x as f32 - 7.0;
+                let dy = y as f32 - 4.0;
+                if dx * dx / 49.0 + dy * dy / 16.0 < 1.0 {
+                    image[(173 + x, 187 + y)] = rgb(0x454941);
+                    if y == 1 || (x + y) % 7 == 0 {
+                        image[(173 + x, 187 + y)] = dark;
+                    }
+                }
+            }
+        }
+        for (x, y, h) in [(177, 190, 3), (181, 189, 4), (184, 191, 2)] {
+            for d in 0..h {
+                image[(x, y + d)] = rgb(0x6e8e8c);
+                image[(x + 1, y + d)] = rgb(0x4c6868);
+            }
+            image[(x, y)] = rgb(0xa5b4a6);
+        }
+        for i in 0..16 {
+            let x = 34 + i;
+            let y = 220 + i / 5;
+            image[(x, y)] = rgb(0x7a6250);
+            if i % 4 < 2 {
+                image[(x, y + 1)] = rgb(0x8b765c);
+            }
         }
     }
     image
 }
-
-/// A seamless strip of grass over the topsoil.
-pub fn grass_tile() -> ColorImage {
-    let dirt = SOIL[0];
-    let greens = [
-        Color32::from_rgb(0x4c, 0x9a, 0x3b),
-        Color32::from_rgb(0x3b, 0x7d, 0x2e),
-    ];
+const GOLD_DARK_TILE: Color32 = rgb(0x9b8656);
+pub fn turf_tile() -> ColorImage {
     let mut image = ColorImage::filled([TILE, TILE], Color32::TRANSPARENT);
     for x in 0..TILE {
-        let blade = 1 + (noise(x, 0, 3) % 2) as usize;
-        for y in 0..6 {
-            image[(x, y)] = if y < 2 - blade.min(2) {
-                Color32::TRANSPARENT
-            } else if y < 4 {
-                greens[(x + y) % 2]
+        let blade = 1 + (noise(x, 0, 3) % 3) as usize;
+        for y in 3 - blade..6 {
+            image[(x, y)] = if y >= 4 {
+                STONE
+            } else if x % 13 == 0 {
+                rgb(0x95758a)
+            } else if x % 3 == 0 {
+                rgb(0x7f8968)
             } else {
-                dirt
+                rgb(0x525e48)
             };
         }
     }
     image
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::graph::contrast_ratio;
 
     #[test]
-    fn coats_cover_every_color_of_the_grey_ant() {
-        let image = decode(ANT_GREY);
-        for pixel in image.pixels.iter().filter(|p| p.a() > 0) {
-            let [r, g, b, _] = pixel.to_srgba_unmultiplied();
-            assert!(GREY_COATS.contains(&[r, g, b]), "unmapped {pixel:?}");
+    fn tiles_use_the_selected_palette_and_keep_alpha() {
+        for palette in crate::ui::dwarf::pixel::bundled() {
+            for mut image in [rock_tile(false), rock_tile(true), turf_tile()] {
+                let before = image.clone();
+                crate::ui::dwarf::pixel::Mapper::new(&palette).apply(&mut image);
+                assert_ne!(image, before);
+                for (a, b) in image.pixels.iter().zip(before.pixels) {
+                    assert_eq!(a.a(), b.a());
+                    assert!(a.a() == 0 || palette.colors.contains(a));
+                }
+            }
         }
     }
 
-    /// Claude and Codex ants must differ in brightness, not only hue.
     #[test]
-    fn claude_and_codex_differ_in_brightness() {
-        let body = |coats: [[u8; 3]; 6]| {
-            let [r, g, b] = coats[1];
-            Color32::from_rgb(r, g, b)
-        };
-        let ratio = contrast_ratio(body(CLAUDE_COATS), body(CODEX_COATS));
-        assert!(ratio > 3.0, "{ratio}");
-    }
-
-    #[test]
-    fn failed_wins_over_the_agent() {
-        assert_eq!(Coat::new(Some(&AgentIdentity::Claude), true), Coat::Failed);
-        assert_eq!(Coat::new(Some(&AgentIdentity::Codex), false), Coat::Codex);
-        assert_eq!(Coat::new(None, false), Coat::Plain);
+    fn agent_guilds_are_distinct() {
+        assert_eq!(Coat::new(Some(&AgentIdentity::Claude)), Coat::Claude);
+        assert_eq!(Coat::new(Some(&AgentIdentity::Codex)), Coat::Codex);
+        assert_eq!(Coat::new(None), Coat::Plain);
     }
 }

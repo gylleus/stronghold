@@ -1,13 +1,10 @@
-//! UI state saved between launches through eframe's storage: filters, view, graph layout,
-//! selection, the pane arrangement, the command palette's recent actions and the ant farm's rooms. Window size and
-//! position are saved by eframe itself.
+//! UI state saved between launches: filters, panes, recent actions and farm rooms.
+//! Window size and position are saved by eframe itself.
 
 use serde::{Deserialize, Serialize};
 
-use crate::app::View;
 use crate::ui::ant_farm::rooms::RoomPlan;
 use crate::ui::dock::NotificationsDock;
-use crate::ui::graph::SavedLayout;
 use crate::ui::sidebar::FleetFilter;
 
 /// Storage key of [`PersistedState`].
@@ -19,11 +16,9 @@ pub const FORMAT_VERSION: u32 = 1;
 #[serde(default)]
 pub struct PersistedState {
     pub version: u32,
-    pub view: View,
     /// ⌘J hid the Queen's chat shown when nothing is selected.
     pub chat_hidden: bool,
     pub filter: FleetFilter,
-    pub layout: SavedLayout,
     /// The command palette's recently run actions, newest first.
     pub recent_actions: Vec<String>,
     /// The dock's pane arrangement, see [`crate::ui::dock::PaneLayout::encode`]; `None` for
@@ -39,10 +34,8 @@ impl Default for PersistedState {
     fn default() -> Self {
         Self {
             version: FORMAT_VERSION,
-            view: View::default(),
             chat_hidden: false,
             filter: FleetFilter::default(),
-            layout: SavedLayout::default(),
             recent_actions: Vec::new(),
             panes: None,
             notifications_panel: NotificationsDock::default(),
@@ -68,8 +61,7 @@ mod tests {
     use std::collections::{BTreeSet, HashMap};
 
     use super::*;
-    use crate::model::{NodeId, NodeKind, NodeState};
-    use crate::ui::graph::SavedView;
+    use crate::model::{NodeKind, NodeState};
 
     #[derive(Default)]
     struct MemoryStorage(HashMap<String, String>);
@@ -90,7 +82,6 @@ mod tests {
     fn sample() -> PersistedState {
         PersistedState {
             version: FORMAT_VERSION,
-            view: View::Table,
             chat_hidden: true,
             filter: FleetFilter {
                 repos: BTreeSet::from(["myrstack".to_owned()]),
@@ -100,21 +91,7 @@ mod tests {
                 show_released: false,
                 text: "hrw".into(),
             },
-            layout: SavedLayout {
-                positions: [
-                    (NodeId::terminal("t1"), [1.5, -2.0]),
-                    (NodeId("sub:s:a".into()), [300.0, 40.25]),
-                ]
-                .into_iter()
-                .collect(),
-                view: Some(SavedView {
-                    zoom: 0.75,
-                    pan: [12.0, -8.0],
-                }),
-                manual_view: true,
-                selected: Some(NodeId::terminal("t1")),
-            },
-            recent_actions: vec!["fit_graph".into(), "open_chat".into()],
+            recent_actions: vec!["fit_farm".into(), "open_chat".into()],
             panes: crate::ui::dock::PaneLayout::default().encode(),
             notifications_panel: NotificationsDock {
                 open: false,
@@ -168,11 +145,9 @@ mod tests {
         let mut storage = MemoryStorage::default();
         storage.set_string_for_test("(version: 1, view: Table)");
         let state = PersistedState::load(&storage).unwrap();
-        assert_eq!(state.view, View::Table);
         assert_eq!(state.panes, None);
         assert!(!state.chat_hidden);
         assert_eq!(state.filter, FleetFilter::default());
-        assert_eq!(state.layout, SavedLayout::default());
         assert_eq!(state.notifications_panel, NotificationsDock::default());
         assert!(state.notifications_panel.open, "the panel starts open");
     }
@@ -184,9 +159,24 @@ mod tests {
             "(version: 1, view: Table, details: Collapsed, chat_hidden: true)",
         );
         let state = PersistedState::load(&storage).unwrap();
-        assert_eq!(state.view, View::Table);
         assert!(state.chat_hidden);
         assert_eq!(state.panes, None);
+    }
+
+    #[test]
+    fn removed_view_and_layout_fields_are_ignored() {
+        let mut storage = MemoryStorage::default();
+        storage.set_string_for_test(
+            r#"(version:1, view:Graph, layout:(positions:{"term:a":[1.0,2.0]},view:Some((zoom:0.7,pan:[0.0,0.0])),manual_view:true,selected:Some("term:a")), chat_hidden:true, recent_actions:["fit_graph","open_chat"] )"#,
+        );
+        let state = PersistedState::load(&storage).unwrap();
+        assert!(state.chat_hidden);
+        let recents = crate::ui::commands::Recents::from_keys(&state.recent_actions);
+        assert_eq!(recents.keys(), vec!["open_chat"]);
+        state.save(&mut storage);
+        let saved = storage.0.get(STORAGE_KEY).unwrap();
+        assert!(!saved.contains("layout:"));
+        assert!(!saved.contains("view:"));
     }
 
     impl MemoryStorage {

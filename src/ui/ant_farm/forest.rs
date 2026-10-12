@@ -13,10 +13,11 @@ use std::collections::{HashMap, HashSet};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Vec2, pos2, vec2};
 
 use super::layout::Scene;
-use super::nature::Deco;
+pub(crate) mod art;
 use super::sprites::{Palette, Sprites};
 use crate::model::{Node, NodeState};
 use crate::orca::spawn::Worktree;
+use art::Deco;
 
 /// How long a sawn tree takes to fall, lies there, and fades with its stump, in seconds.
 const FALL_S: f64 = 1.0;

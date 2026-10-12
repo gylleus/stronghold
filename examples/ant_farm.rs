@@ -1,12 +1,13 @@
 //! The ant farm on a synthetic fleet of 6 runs, loose terminals and subagents (about 30
 //! agents), one of each state, to check how it looks.
 //!
-//! `cargo run --example ant_farm [--light] [--graph] [--saw] [--trees N] [--shot out.png]`.
+//! `cargo run --example ant_farm [--light] [--saw] [--trees N] [--shot out.png]`.
 //! `--receipt-at-ms 31` freezes a receipt mid-shake; `--reduced-motion` shows its flash.
+//! `--scrying` shows the working rune priest; `--stopped` darkens the rune stone.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
 //! terminals in the resting area; `--ants N` keeps only the first N agents.
 //! `--taskmasters` shows coordinators in every state, plus a parked coordinator and attendant.
-//! `--graph` shows the same fleet as the graph. The surface grows a tree per worktree: the
+//! The surface grows a tree per worktree: the
 //! agents' own and a few with nobody in them, or `--trees N` of them; `--saw` runs the worktree
 //! cleanup's chainsaw on one. Every few seconds one worker
 //! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
@@ -14,6 +15,7 @@
 //! Queen thinking and X closes a worktree (its tree falls). With `--shot`, it saves a
 //! screenshot once settled and another while a worker walks, a new one emerges, a broadcast
 //! ripples, messages fly and a tree falls (`-walk`), then exits.
+//! `--pixels farm|HEIGHT` and `--palette NAME` select dwarf rendering.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -22,12 +24,14 @@ use eframe::egui;
 use myrstack::model::{
     Edge, EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
 };
+use myrstack::orca::AgentIdentity;
 use myrstack::orca::spawn::Worktree;
 use myrstack::traffic::{AgentMessage, MessageKind};
+use myrstack::ui::ant_farm::art::{ArtSettings, Pixels};
 use myrstack::ui::ant_farm::forest;
 use myrstack::ui::ant_farm::{AntFarmView, Pulse};
 use myrstack::ui::envoy_receipt::ReceiptCue;
-use myrstack::ui::graph::GraphView;
+use myrstack::ui::fleet_view::FleetView;
 use myrstack::ui::worktrees::WorktreePanel;
 use myrstack::worktrees::SweepMarker;
 
@@ -41,7 +45,10 @@ fn main() -> eframe::Result {
         .position(|a| a == "--shot")
         .and_then(|i| args.get(i + 1).cloned());
     let light = args.iter().any(|a| a == "--light");
-    let health = if args.iter().any(|a| a == "--bridge-down") {
+    let scrying = args.iter().any(|a| a == "--scrying");
+    let health = if args.iter().any(|a| a == "--stopped") {
+        myrstack::envoy::EnvoyHealth::Stopped
+    } else if args.iter().any(|a| a == "--bridge-down") {
         myrstack::envoy::EnvoyHealth::BridgeDown
     } else if args.iter().any(|a| a == "--approval") {
         myrstack::envoy::EnvoyHealth::AwaitingApproval
@@ -54,13 +61,25 @@ fn main() -> eframe::Result {
             .expect("receipt age in milliseconds")
     });
     let reduced_motion = args.iter().any(|a| a == "--reduced-motion");
-    let show_graph = args.iter().any(|a| a == "--graph");
     let trees = args
         .iter()
         .position(|a| a == "--trees")
         .map(|i| args[i + 1].parse::<usize>().expect("a number of trees"));
     let saw = args.iter().any(|a| a == "--saw").then(sweep_marker);
     let parked = args.iter().any(|a| a == "--parked");
+    let value = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1).cloned())
+    };
+    let art = ArtSettings {
+        pixels: match value("--pixels").as_deref() {
+            None => Pixels::Farm,
+            Some("farm") => Pixels::Farm,
+            Some(h) => Pixels::Height(h.parse().expect("--pixels farm or a height")),
+        },
+        palette: value("--palette").unwrap_or_default(),
+    };
     let ants = args
         .iter()
         .position(|a| a == "--ants")
@@ -98,23 +117,32 @@ fn main() -> eframe::Result {
                 .find(|n| n.kind == NodeKind::Envoy)
                 .unwrap()
                 .label = format!("Envoy · {}", health.label());
-            let mut graph = GraphView::new();
-            graph.sync(&snapshot);
-            graph.set_pr_ready(HashSet::from([
+            if scrying {
+                snapshot
+                    .nodes
+                    .iter_mut()
+                    .find(|n| n.kind == NodeKind::Envoy)
+                    .unwrap()
+                    .state = NodeState::Working;
+            }
+            let mut fleet = FleetView::new();
+            fleet.sync(&snapshot);
+            fleet.set_pr_ready(HashSet::from([
                 id("run0-w1"),
                 id("run2-w2"),
                 id("run4-w0"),
                 id("run5-w5"),
             ]));
-            graph.set_selected(Some(&id("run2-coord")));
+            fleet.set_selected(Some(&id("run2-coord")));
             let saw = saw.map(|data| (WorktreePanel::new(&cc.egui_ctx), data));
             let worktrees = worktrees(&snapshot, trees);
             Ok(Box::new(Demo {
                 snapshot,
-                graph,
+                fleet,
                 farm: {
                     // As in the app with the Queen's chat showing.
                     let mut farm = AntFarmView::new();
+                    farm.set_art(&art);
                     farm.set_queen_focused(true);
                     farm.set_envoy_health(health);
                     if health == myrstack::envoy::EnvoyHealth::AwaitingApproval {
@@ -123,7 +151,6 @@ fn main() -> eframe::Result {
                     farm
                 },
                 shot,
-                show_graph,
                 receipt_at_ms,
                 reduced_motion,
                 started: Instant::now(),
@@ -139,10 +166,9 @@ fn main() -> eframe::Result {
 
 struct Demo {
     snapshot: FleetSnapshot,
-    graph: GraphView,
+    fleet: FleetView,
     farm: AntFarmView,
     shot: Option<String>,
-    show_graph: bool,
     receipt_at_ms: Option<i64>,
     reduced_motion: bool,
     started: Instant,
@@ -240,7 +266,7 @@ impl Demo {
         );
         worker.label = "Fresh hatchling".into();
         self.snapshot.nodes.push(worker);
-        self.graph.sync(&self.snapshot);
+        self.fleet.sync(&self.snapshot);
     }
 
     /// One message of each kind, plus a repeat that joins its envelope.
@@ -262,7 +288,6 @@ impl Demo {
             let flight = message
                 .resolve(&self.snapshot)
                 .expect("both ends in the fleet");
-            self.graph.message(flight.clone(), now_s, false);
             self.farm.message(flight, now_s, false);
         }
     }
@@ -283,7 +308,7 @@ impl Demo {
             NodeState::Working => NodeState::NeedsInput,
             _ => NodeState::Working,
         };
-        self.graph.sync(&self.snapshot);
+        self.fleet.sync(&self.snapshot);
         self.flipped_at = Instant::now();
     }
 
@@ -309,15 +334,10 @@ impl eframe::App for Demo {
             .map_or_else(ReceiptCue::default, |elapsed| {
                 ReceiptCue::at(Some(0), elapsed, self.reduced_motion)
             });
-        self.graph.set_envoy_receipt(receipt);
         self.farm.set_envoy_receipt(receipt);
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                if self.show_graph {
-                    self.graph.show(ui);
-                    return;
-                }
                 let saw = self.saw.as_mut().and_then(|(panel, _)| {
                     let now_ms = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -327,9 +347,9 @@ impl eframe::App for Demo {
                 });
                 self.farm
                     .set_forest(forest::groves(&self.worktrees, &self.snapshot.nodes), saw);
-                let response = self.farm.show(ui, &self.snapshot, &self.graph);
+                let response = self.farm.show(ui, &self.snapshot, &mut self.fleet);
                 if let Some(id) = &response.clicked {
-                    self.graph.click_node(id, false);
+                    self.fleet.click_node(id, false);
                 }
             });
         if self.shot.is_none() {
@@ -439,7 +459,13 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState, repo: &
         run_id: run.map(str::to_string),
         task_id: None,
         dispatch_id: None,
-        agent: None,
+        agent: if matches!(kind, NodeKind::Queen | NodeKind::Envoy) {
+            None
+        } else if myrstack::ui::dwarf::seed_of(name).is_multiple_of(2) {
+            Some(AgentIdentity::Claude)
+        } else {
+            Some(AgentIdentity::Codex)
+        },
         worktree_path: Some(format!("/x/orca/workspaces/{repo}/{name}")),
         branch: None,
         last_output_ms: None,

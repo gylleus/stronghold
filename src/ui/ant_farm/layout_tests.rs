@@ -115,6 +115,19 @@ fn tunnel_of(scene: &Scene, name: &str) -> usize {
 }
 
 #[test]
+fn king_has_a_regular_body_and_stands_on_the_throne_hall_floor() {
+    let scene = scene(&snapshot());
+    let king = ant(&scene, "queen");
+    assert_eq!(king.size, ant(&scene, "working").size);
+    assert_eq!(
+        crate::ui::dwarf::Role::King.scale(),
+        crate::ui::dwarf::Role::Miner.scale()
+    );
+    let foot = king.pos.y + king.size / 2.0;
+    assert!((scene.queen_chamber.bottom() - foot - 0.1 * king.size).abs() < 0.01);
+}
+
+#[test]
 fn state_picks_the_place() {
     use Home::*;
     use NodeState::*;
@@ -171,7 +184,7 @@ fn state_picks_pose_and_mark() {
     assert_eq!(mark(Idle, false), Some(Mark::Sleep));
     assert_eq!(
         mark(Stalled, false),
-        Some(Mark::Whip),
+        Some(Mark::Stalled),
         "stalled differs from idle"
     );
     assert_eq!(mark(NeedsInput, false), Some(Mark::Alert));
@@ -597,20 +610,54 @@ fn assert_fits(s: &FleetSnapshot) -> Scene {
 }
 
 #[test]
-fn routes_go_by_the_gallery_between_areas() {
-    let (from, to) = (pos2(10.0, 300.0), pos2(200.0, 50.0));
-    assert_eq!(route(from, to, true, 120.0), [from, to]);
-    assert_eq!(
-        route(from, to, false, 120.0),
-        [from, pos2(10.0, 120.0), pos2(200.0, 120.0), to]
+fn cart_routes_use_the_chamber_shaft_and_entrance() {
+    let scene = scene(&snapshot());
+    let worker = ant(&scene, "working");
+    let t = &scene.tunnels[tunnel_of(&scene, "working")];
+    let to = pos2(
+        scene.landing.center().x,
+        scene.surface_y - scene.cell() / 2.0,
     );
-    let path = route(from, to, false, 120.0);
-    assert_eq!(along(&path, 0.0).0, from);
+    let path = route(worker.pos, to, &worker.spot, &Spot::Landing(0), &scene);
+    assert_eq!(along(&path, 0.0).0, worker.pos);
     assert_eq!(along(&path, 1.0).0, to);
-    // The first leg is 180 of 440 points: half way is on the gallery, heading right.
-    let (mid, heading) = along(&path, 0.5);
-    assert!((mid.y - 120.0).abs() < 0.01);
-    assert!(heading.x > 0.0);
+    assert!(path.contains(&pos2(t.shaft.center().x, scene.gallery.center().y)));
+    assert!(path.contains(&pos2(scene.entrance_x(), scene.gallery.center().y)));
+    for leg in path.windows(2) {
+        assert!(
+            leg[0].x == leg[1].x || leg[0].y == leg[1].y,
+            "axis-aligned rails and hoists"
+        );
+        let mid = leg[0].lerp(leg[1], 0.5);
+        if mid.y > scene.gallery.bottom() && mid.y < t.chamber.top() {
+            assert!(
+                t.shaft.contains(mid),
+                "cart must stay in the excavated shaft"
+            );
+        }
+    }
+    let back = route(to, worker.pos, &Spot::Landing(0), &worker.spot, &scene);
+    assert_eq!(back, path.iter().copied().rev().collect::<Vec<_>>());
+}
+
+#[test]
+fn dwarves_ride_only_during_travel_and_arrive_in_their_work_pose() {
+    use crate::ui::dwarf::{Action, pose};
+    let scene = scene(&snapshot());
+    let worker = ant(&scene, "working");
+    assert_eq!(
+        super::dwarf_action(worker, true, false, false),
+        Action::Ride
+    );
+    assert_eq!(super::dwarf_action(worker, true, true, false), Action::Ride);
+    assert_eq!(
+        super::dwarf_action(worker, false, false, false),
+        Action::Mine
+    );
+    let seated = pose(Action::Ride, 0.4);
+    assert!(seated.stowed);
+    assert_eq!(seated.stride, 0.0, "feet stay inside the cart");
+    assert!(!seated.nugget, "cargo goes in the cart");
 }
 
 #[test]
@@ -672,14 +719,14 @@ fn a_resize_moves_ants_without_walking() {
     );
 }
 
-/// Clicking an ant reports it, as clicking a node does in the graph; clicking soil reports
+/// Clicking an ant reports it, as clicking a node does in the fleet; clicking soil reports
 /// an empty click.
 #[test]
 fn clicking_an_ant_reports_it() {
     use eframe::egui::{self, Event, PointerButton};
     let s = snapshot();
-    let mut graph = crate::ui::graph::GraphView::new();
-    graph.sync(&s);
+    let mut fleet = crate::ui::fleet_view::FleetView::new();
+    fleet.sync(&s);
     let mut farm = AntFarmView::new();
     let ctx = egui::Context::default();
     let mut time = 0.0;
@@ -694,7 +741,7 @@ fn clicking_an_ant_reports_it() {
         let mut out = None;
         let mut output = ctx.run_ui(input, |ui| {
             let rect = ui.available_rect_before_wrap();
-            out = Some((rect, farm.show(ui, &s, &graph)));
+            out = Some((rect, farm.show(ui, &s, &mut fleet)));
         });
         output.textures_delta.clear();
         out.expect("a frame ran")
@@ -730,13 +777,13 @@ fn clicking_an_ant_reports_it() {
     assert!(responses[1].clicked_empty);
 }
 
-/// Dragging a box from empty ground over a chamber selects the ants in it, as in the graph.
+/// Dragging a box from empty ground over a chamber selects the ants in it, as in the fleet.
 #[test]
 fn dragging_a_box_selects_the_ants_in_it() {
     use eframe::egui::{self, Event, PointerButton};
     let s = snapshot();
-    let mut graph = crate::ui::graph::GraphView::new();
-    graph.sync(&s);
+    let mut fleet = crate::ui::fleet_view::FleetView::new();
+    fleet.sync(&s);
     let mut farm = AntFarmView::new();
     let ctx = egui::Context::default();
     let mut time = 0.0;
@@ -751,7 +798,7 @@ fn dragging_a_box_selects_the_ants_in_it() {
         let mut out = None;
         let mut output = ctx.run_ui(input, |ui| {
             let rect = ui.available_rect_before_wrap();
-            out = Some((rect, farm.show(ui, &s, &graph)));
+            out = Some((rect, farm.show(ui, &s, &mut fleet)));
         });
         output.textures_delta.clear();
         out.expect("a frame ran")
@@ -995,6 +1042,7 @@ fn a_dead_ant_falls_to_the_bottom() {
         facing_right: true,
         coat: super::sprites::Coat::Plain,
         alpha: 1.0,
+        seed: 0,
     };
     let fall = Fall {
         body,
@@ -1350,12 +1398,9 @@ fn comms_room_fits_beside_entrance_at_small_and_large_fleets() {
             assert!(!room.chamber.intersects(scene.queen_chamber));
             assert!(!room.chamber.intersects(scene.storage));
             let entrance = Rect::from_min_max(
+                pos2(scene.entrance_x() - 0.6 * scene.cell(), scene.surface_y),
                 pos2(
-                    scene.landing.center().x - 0.6 * scene.cell(),
-                    scene.surface_y,
-                ),
-                pos2(
-                    scene.landing.center().x + 0.6 * scene.cell(),
+                    scene.entrance_x() + 0.6 * scene.cell(),
                     scene.gallery.center().y,
                 ),
             );
@@ -1366,20 +1411,25 @@ fn comms_room_fits_beside_entrance_at_small_and_large_fleets() {
             }
             assert!(room.shaft.intersects(scene.gallery));
             assert!(room.shaft.intersects(room.chamber));
-            assert_eq!(room.dish, pos2(room.chamber.center().x, scene.surface_y));
+            assert_eq!(
+                room.receiver,
+                pos2(room.chamber.center().x, scene.surface_y)
+            );
             let envoy = ant(&scene, "envoy");
             let ant_cell = Rect::from_center_size(envoy.pos, Vec2::splat(envoy.size));
-            let console = Rect::from_min_max(
-                room.console() + vec2(-10.0, -13.0) * room.px,
-                room.console() + vec2(10.0, 18.0) * room.px,
-            );
+            let basin = room.basin_rect();
             let tray = room.tray_rect();
             assert!(room.chamber.contains_rect(tray));
-            assert!(room.chamber.contains_rect(console));
-            assert!(!tray.intersects(console));
+            assert!(room.chamber.contains_rect(basin));
+            assert!(!tray.intersects(basin));
             assert!(!tray.intersects(ant_cell));
             assert!(!tray.intersects(scene.queen_chamber));
-            assert!(!console.intersects(ant_cell));
+            assert!(basin.center().x >= ant_cell.right());
+            assert!(basin.top() > ant_cell.top(), "rim below the priest's head");
+            assert!(
+                basin.top() < ant_cell.bottom(),
+                "hands can reach across the rim"
+            );
             assert_eq!(room.shaft.center().x, envoy.pos.x);
             assert!(!room.shaft.intersects(scene.queen_chamber));
             assert!(
@@ -1569,4 +1619,51 @@ fn a_lone_ant_is_not_drawn_giant() {
         Rect::from_min_size(Pos2::ZERO, vec2(2400.0, 1600.0)),
     );
     assert_eq!(scene.px, super::rooms::MAX_PX);
+}
+
+#[test]
+fn rune_priest_scries_only_while_working() {
+    use crate::ui::dwarf::{self, Action, Role};
+    let mut ant = scene(&snapshot())
+        .ants
+        .into_iter()
+        .find(|a| a.kind != NodeKind::Queen)
+        .unwrap();
+    ant.kind = NodeKind::Envoy;
+    for state in [
+        NodeState::Working,
+        NodeState::Idle,
+        NodeState::NeedsInput,
+        NodeState::Done,
+        NodeState::Failed,
+        NodeState::Stalled,
+    ] {
+        ant.state = state;
+        let action = super::dwarf_action(&ant, false, false, false);
+        assert_eq!(
+            action,
+            if state == NodeState::Working {
+                Action::Scry
+            } else {
+                Action::Still
+            }
+        );
+        assert_eq!(
+            dwarf::pose(action, 0.0) != dwarf::pose(action, 0.3),
+            state == NodeState::Working
+        );
+        assert_eq!(super::dwarf_look(&ant).role, Role::RunePriest);
+    }
+}
+
+#[test]
+fn stalled_dwarf_holds_still_in_a_helmet_for_the_pebble() {
+    use crate::ui::dwarf::{Action, Hat};
+    let scene = scene(&snapshot());
+    let stalled = ant(&scene, "stalled");
+    assert_eq!(
+        super::dwarf_action(stalled, false, false, false),
+        Action::Wait
+    );
+    assert_eq!(super::dwarf_look(stalled).hat, Hat::Helmet);
 }

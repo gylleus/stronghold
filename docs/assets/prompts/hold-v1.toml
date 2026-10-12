@@ -1,0 +1,46 @@
+schema_version = 1
+
+[art]
+style = "Grim, gritty dark-fantasy pixel art. Soot, grime, worn iron and scarred faces; heavy dark outlines, chunky clusters, muted earth and iron tones with hot ember and gold accents."
+lighting = "Harsh low torchlight from the right, deep shadows, three stepped shades per material."
+facing = "right"
+
+[[assets]]
+id = "king"
+name = "Dwarf overlord king"
+visual_description = "A squat, broad old dwarf king in strict right-facing side profile: scowling, heavy brow, broken nose, a scar across one eye, a long iron-grey beard bound in iron rings, a dented black iron crown with jagged spikes, a soot-stained heavy fur mantle over plate armour, holding a rolled task ledger in one fist. A grumpy, demanding taskmaster, not kind."
+size = 64
+
+[assets.animations.idle]
+description = "Standing in place, scowling, tapping the ledger impatiently against his palm, chest heaving with an irritated breath."
+loop = true
+frames = 8
+columns = 4
+durations_ms = [150, 150, 150, 150, 150, 150, 150, 150]
+
+[assets.animations.command]
+description = "Jabs the ledger forward to the right and barks an order, mouth open, then returns to his scowling stance."
+loop = false
+frames = 6
+columns = 3
+durations_ms = [120, 100, 100, 260, 160, 200]
+
+[[assets]]
+id = "miner"
+name = "Dwarf miner"
+visual_description = "A stout, weary dwarf miner in strict right-facing side profile: grime-streaked face, dark matted beard, battered iron helmet with a guttering candle, soot-blackened green wool hood and tunic, a scorched leather apron, heavy boots, a chipped iron pickaxe."
+size = 48
+
+[assets.animations.mine]
+description = "Swings the pickaxe up over his shoulder and drives it down and forward to the right into the rock face, recoils, and lifts it again; feet planted, staying in place."
+loop = true
+frames = 8
+columns = 4
+durations_ms = [110, 110, 90, 70, 130, 110, 110, 110]
+
+[assets.animations.think]
+description = "Standing in place with the pickaxe resting on his shoulder, frowning and scratching his beard, head tilting, then back."
+loop = true
+frames = 6
+columns = 3
+durations_ms = [200, 160, 160, 240, 160, 160]

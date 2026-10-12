@@ -110,7 +110,7 @@ pub enum Pose {
     Stand,
     /// Digging at the chamber's face (working: reading, searching, thinking).
     Dig,
-    /// Hammering in a hard hat at the chamber's face (editing or building).
+    /// Building at the chamber's face (editing or building).
     Build,
     /// Lying still (idle or stalled).
     Sleep,
@@ -130,8 +130,8 @@ pub enum Mark {
     Alert,
     /// Idle.
     Sleep,
-    /// Stalled: the whip pokes it.
-    Whip,
+    /// Stalled: a pebble bonks the helmet.
+    Stalled,
     Failed,
     /// Done with a PR ready for review.
     PrReady,
@@ -190,7 +190,7 @@ pub struct Bed {
 pub struct CommsRoom {
     pub chamber: Rect,
     pub shaft: Rect,
-    pub dish: Pos2,
+    pub receiver: Pos2,
     pub px: f32,
 }
 
@@ -200,13 +200,23 @@ impl CommsRoom {
     }
 
     pub fn feed(&self) -> Pos2 {
-        self.dish + vec2(3.0, -24.0) * self.px
+        self.receiver + vec2(3.0, -24.0) * self.px
     }
 
-    pub fn console(&self) -> Pos2 {
+    pub fn pool(&self) -> Pos2 {
         pos2(
-            self.chamber.right() - 32.0 * self.px,
+            self.chamber.right() - 40.0 * self.px,
             self.chamber.top() + 23.0 * self.px,
+        )
+    }
+
+    /// Low enough for the priest's raised hands to hover over the water. Its rim
+    /// overlaps the front of his cell; his figure is painted over the basin.
+    pub fn basin_rect(&self) -> Rect {
+        let foot = self.pool() + vec2(0.0, 23.0) * self.px;
+        Rect::from_min_size(
+            foot - vec2(14.0, 18.0) * self.px,
+            vec2(28.0, 18.0) * self.px,
         )
     }
 
@@ -217,12 +227,12 @@ impl CommsRoom {
         )
     }
 
-    pub fn cable_port(&self) -> Pos2 {
-        self.console() + vec2(-8.0, 2.0) * self.px
+    pub fn rune_port(&self) -> Pos2 {
+        self.pool() + vec2(-8.0, 2.0) * self.px
     }
 
-    pub fn cable_elbow(&self) -> Pos2 {
-        pos2(self.dish.x, self.cable_port().y)
+    pub fn rune_turn(&self) -> Pos2 {
+        pos2(self.receiver.x, self.rune_port().y)
     }
 }
 
@@ -254,13 +264,14 @@ impl Scene {
         CELL * self.px
     }
 
+    /// The mine portal stands beside the waiting queue, clear of the rune stone.
+    pub fn entrance_x(&self) -> f32 {
+        self.landing.left() - 0.6 * self.cell()
+    }
+
     /// The middle of the base of Karl's pipe on the surface, where his messages come out.
     pub fn karl_pipe(&self) -> Pos2 {
-        let left = if self.comms.is_some() {
-            self.landing.right()
-        } else {
-            self.rect.left()
-        };
+        let left = self.landing.right();
         pos2(
             left + 0.3 * self.cell() + PIPE_LIP_W / 2.0 * self.px,
             self.surface_y,
@@ -277,7 +288,7 @@ impl Scene {
     }
 }
 
-/// What the farm is drawn from: the graph's snapshot and its filters.
+/// What the farm is drawn from: the fleet's snapshot and its filters.
 pub struct FarmInput<'a> {
     pub snapshot: &'a FleetSnapshot,
     /// Nodes filtered out; they are not drawn.
@@ -320,7 +331,7 @@ impl Band {
     }
 }
 
-// Fitting and placement share the same reservations for the dish, room and waiting ants.
+// Fitting and placement share the same reservations for the rune stone, room and waiting ants.
 pub(super) fn band(size: Vec2, a: f32, crowd: Crowd) -> Band {
     let rows = |n: usize, per_row: usize| n.div_ceil(per_row).max(1) as f32;
     let comms_px = if crowd.envoy {
@@ -468,7 +479,7 @@ pub fn mark(state: NodeState, pr_ready: bool) -> Option<Mark> {
         NodeState::NeedsInput => Some(Mark::Alert),
         NodeState::Idle if pr_ready => Some(Mark::PrReady),
         NodeState::Idle => Some(Mark::Sleep),
-        NodeState::Stalled => Some(Mark::Whip),
+        NodeState::Stalled => Some(Mark::Stalled),
         NodeState::Failed => Some(Mark::Failed),
         NodeState::Done | NodeState::Working => pr_ready.then_some(Mark::PrReady),
     }
@@ -719,7 +730,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
                     gallery.center().y,
                 ),
             ),
-            dish: pos2(chamber.center().x, surface_y),
+            receiver: pos2(chamber.center().x, surface_y),
             px: band.comms_px,
         }
     });
@@ -833,7 +844,10 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             }
             Home::Chamber => continue,
             Home::Comms => (Spot::Comms, comms.expect("Envoy has a room").ant_position()),
-            Home::Queen => (Spot::Queen, queen_chamber.center() + vec2(0.0, 0.2 * a)),
+            Home::Queen => (
+                Spot::Queen,
+                queen_chamber.center_bottom() - vec2(0.0, 0.6 * a),
+            ),
             Home::Landing => {
                 let k = landing_n;
                 landing_n += 1;
@@ -997,11 +1011,6 @@ fn bed_rect(pos: Pos2, a: f32, px: f32) -> Rect {
 
 fn ant(node: &Node, spot: Spot, pos: Pos2, size: f32, home: Home, pr: bool, now_ms: i64) -> Ant {
     let pose = pose(node.kind, node.state, home);
-    let size = if node.kind == NodeKind::Queen {
-        size * 2.0
-    } else {
-        size
-    };
     Ant {
         id: node.id.clone(),
         kind: node.kind,
@@ -1023,7 +1032,7 @@ fn ant(node: &Node, spot: Spot, pos: Pos2, size: f32, home: Home, pr: bool, now_
                 None
             }
         },
-        alpha: crate::ui::graph::fade_alpha(node.released_at_ms, now_ms),
+        alpha: crate::ui::fleet_view::fade_alpha(node.released_at_ms, now_ms),
         agent: node.agent.clone(),
     }
 }

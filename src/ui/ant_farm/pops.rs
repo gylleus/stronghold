@@ -41,7 +41,7 @@ pub fn paint(
         let Some(pop) = of(pops, &ant.id) else {
             continue;
         };
-        let color = pop.cue.color();
+        let color = super::world::GOLD;
         let center = at.pos;
         if behind {
             if pop.flash > 0.0 {

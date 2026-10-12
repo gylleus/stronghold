@@ -121,21 +121,21 @@ struct Harness {
     time: f64,
     output: Option<egui::FullOutput>,
     snapshot: crate::model::FleetSnapshot,
-    graph: crate::ui::graph::GraphView,
+    fleet: crate::ui::fleet_view::FleetView,
     farm: super::AntFarmView,
 }
 
 impl Harness {
     fn new() -> Self {
         let snapshot = super::layout_tests::snapshot();
-        let mut graph = crate::ui::graph::GraphView::new();
-        graph.sync(&snapshot);
+        let mut fleet = crate::ui::fleet_view::FleetView::new();
+        fleet.sync(&snapshot);
         let mut harness = Self {
             ctx: egui::Context::default(),
             time: 0.0,
             output: None,
             snapshot,
-            graph,
+            fleet,
             farm: super::AntFarmView::new(),
         };
         let rect = harness.frame(vec![]).0;
@@ -152,10 +152,10 @@ impl Harness {
             ..Default::default()
         };
         let mut out = None;
-        let (farm, snapshot, graph) = (&mut self.farm, &self.snapshot, &self.graph);
+        let (farm, snapshot, fleet) = (&mut self.farm, &self.snapshot, &mut self.fleet);
         let mut output = self.ctx.run_ui(input, |ui| {
             let rect = ui.available_rect_before_wrap();
-            out = Some((rect, farm.show(ui, snapshot, graph)));
+            out = Some((rect, farm.show(ui, snapshot, fleet)));
         });
         output.textures_delta.clear();
         self.output = Some(output);
@@ -291,7 +291,7 @@ impl Harness {
         envoy.id = super::layout_tests::id("envoy");
         envoy.kind = crate::model::NodeKind::Envoy;
         h.snapshot.nodes.push(envoy);
-        h.graph.sync(&h.snapshot);
+        h.fleet.sync(&h.snapshot);
         h.frame(vec![]);
         h
     }
@@ -416,4 +416,58 @@ fn badge_counts_pending_replies_and_tasks_only() {
     h.farm.set_envoy_pending(0);
     h.frame(vec![]);
     assert!(text_center(h.output.as_ref().unwrap(), "0").is_none());
+}
+
+#[test]
+fn focus_requests_reach_the_camera_and_keep_hit_testing_correct() {
+    let mut h = Harness::new();
+    let id = super::layout_tests::id("working");
+    h.fleet.center_on(&id);
+    h.frame(vec![]);
+    assert!(h.farm.camera.zoom > 1.0);
+    assert!(FULL.contains(h.on_screen("working")));
+    assert_eq!(h.click(h.on_screen("working")).clicked, Some(id.clone()));
+    h.farm.fit_to_screen();
+    assert_eq!(h.farm.camera, Camera::default());
+
+    // Run/repo focus zooms onto the room, even with members elsewhere in the farm.
+    for repo in [false, true] {
+        if repo {
+            h.fleet.focus_repo("repo-r1-coord");
+        } else {
+            h.fleet.focus_run("r1");
+        }
+        h.frame(vec![]);
+        let room = super::layout_tests::scene(&h.snapshot)
+            .tunnels
+            .into_iter()
+            .find(|t| t.key == super::layout::TunnelKey::Run("r1".into()))
+            .unwrap();
+        let transform = h.farm.camera.transform(FULL);
+        assert!(h.farm.camera.zoom > 1.0);
+        assert!(FULL.contains_rect(transform * room.chamber));
+    }
+
+    h.fleet.set_hidden(&[id.clone()].into());
+    h.frame(vec![]);
+    let before = h.farm.camera;
+    h.fleet.focus_nodes(&[id]);
+    h.frame(vec![]);
+    assert_eq!(
+        h.farm.camera, before,
+        "a hidden agent cannot move the camera"
+    );
+}
+
+#[test]
+fn focus_bounds_fit_and_stay_within_the_farm() {
+    let bounds = Rect::from_center_size(RECT.center(), vec2(150.0, 100.0));
+    let mut camera = Camera::default();
+    camera.focus(RECT, bounds);
+    let transform = camera.transform(RECT);
+    assert!(RECT.contains_rect(transform * bounds));
+    assert!(close(transform * bounds.center(), RECT.center()));
+    assert!(camera.zoom > MIN_ZOOM && camera.zoom <= MAX_ZOOM);
+    camera.focus(RECT, RECT);
+    assert_eq!(camera, Camera::default());
 }

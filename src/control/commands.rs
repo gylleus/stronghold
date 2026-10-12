@@ -9,10 +9,9 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender};
 use serde_json::{Value, json};
 
-use crate::app::View;
 use crate::broadcast::{BroadcastPlan, BroadcastSender};
 use crate::control::protocol::{ControlError, ErrorCode, Params};
-use crate::control::view::{kinds_of, parse_view, states_of};
+use crate::control::view::{kinds_of, states_of};
 use crate::model::{NodeKind, NodeState};
 use crate::ui::sidebar::FleetFilter;
 
@@ -104,22 +103,20 @@ pub enum ControlCommand {
         dry_run: Option<bool>,
         notify: Option<bool>,
     },
-    /// Select a node (`None` clears the selection) without moving the graph.
+    /// Select a node (`None` clears the selection) without moving the farm.
     Select {
         agent: Option<String>,
     },
-    /// Select several nodes (the first is the primary) without moving the graph.
+    /// Select several nodes (the first is the primary) without moving the farm.
     SelectMany {
         agents: Vec<String>,
     },
-    /// Select a node and pan/zoom the graph onto it; `raise` also brings the window forward.
+    /// Select a node and pan/zoom the farm onto it; `raise` also brings the window forward.
     Focus {
         agent: String,
         raise: bool,
     },
     Filter(FilterChange),
-    SetView(View),
-    Fit,
     OpenWhipSettings,
     /// Close (kill) the agents' sessions: worker-stop for active dispatches, then
     /// `terminal close`. With `dry_run` only the plan is returned.
@@ -249,15 +246,6 @@ impl ControlCommand {
                 })
             })(),
             "filter" => parse_filter(&p).map(Self::Filter),
-            "view" => (|| {
-                let name = p.required_str("view")?;
-                parse_view(name).map(Self::SetView).ok_or_else(|| {
-                    ControlError::invalid_params(format!(
-                        "unknown view {name:?}; use \"graph\" or \"table\""
-                    ))
-                })
-            })(),
-            "fit" => Ok(Self::Fit),
             "open_whip_settings" => Ok(Self::OpenWhipSettings),
             "close" => (|| {
                 let mut agents = p.strings("ids")?.unwrap_or_default();

@@ -212,7 +212,7 @@ fn entry_line(entry: &Value, now: i64) -> String {
     let mut parts = Vec::new();
     let agent = match (&r.agent, &r.agent_handle) {
         (Some(a), _) => format!("{} `{}`", a.label, a.id),
-        (None, Some(h)) => format!("terminal {h} (not in the graph)"),
+        (None, Some(h)) => format!("terminal {h} (not in the farm)"),
         (None, None) => "unknown agent".into(),
     };
     parts.push(agent);
@@ -570,7 +570,7 @@ mod tests {
         let r = call_tool(&mut server, "review_queue", json!({}));
         let t = text(&r);
         assert!(t.starts_with("Note: Myrstack isn't running"), "{t}");
-        assert!(t.contains("#255 recs: gate legacy config retirement — terminal term_442fcb9f (not in the graph) · CI failing (1 of 4 checks) · no Ankra review · no ready marker"), "{t}");
+        assert!(t.contains("#255 recs: gate legacy config retirement — terminal term_442fcb9f (not in the farm) · CI failing (1 of 4 checks) · no Ankra review · no ready marker"), "{t}");
         assert_eq!(r["structuredContent"]["saved"], true);
     }
 

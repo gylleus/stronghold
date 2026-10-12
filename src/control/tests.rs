@@ -9,7 +9,6 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::*;
-use crate::app::View;
 use crate::broadcast::{BroadcastSelection, plan_broadcast};
 use crate::detect::PromptKind;
 use crate::fleet::FleetData;
@@ -84,7 +83,7 @@ fn status_view() -> StatusView {
         whip_log: Vec::new(),
         quotas: &Quotas::default(),
         alerts: &[],
-        view: View::Table,
+
         selected: Some("term:x"),
         selection: vec!["term:x", "term:y"],
         filter: &filter,
@@ -233,7 +232,6 @@ fn view_summarizes_the_fleet() {
     assert_eq!(loose.kind, "terminal");
     assert_eq!(loose.idle_secs, Some((NOW - 1_789_598_758_208) / 1000));
 
-    assert_eq!(view.dashboard.view, "table");
     assert_eq!(view.dashboard.filter.kinds, vec!["coordinator"]);
     assert_eq!(view.dashboard.filter.hidden, 2);
     assert!(view.whip.dry_run);
@@ -256,7 +254,6 @@ fn names_parse_loosely() {
         Some(NodeState::NeedsInput)
     );
     assert_eq!(view::parse_kind("Worker"), Some(NodeKind::Worker));
-    assert_eq!(view::parse_view("TABLE"), Some(View::Table));
     assert_eq!(view::parse_state("sleepy"), None);
 }
 
@@ -357,7 +354,7 @@ fn a_parked_agent_is_reported_apart_from_the_live_counts() {
         whip_log: Vec::new(),
         quotas: &Quotas::default(),
         alerts: &[],
-        view: View::Graph,
+
         selected: None,
         selection: Vec::new(),
         filter: &FleetFilter::default(),
@@ -539,8 +536,6 @@ fn every_action_reaches_the_handler() {
         ("focus", json!({"id": "a", "raise": true})),
         ("filter", json!({"states": ["needs_input"], "text": "hack"})),
         ("filter", json!({"clear": true})),
-        ("view", json!({"view": "table"})),
-        ("fit", Value::Null),
         ("open_whip_settings", Value::Null),
         ("close", json!({"id": "a"})),
         (
@@ -618,8 +613,6 @@ fn every_action_reaches_the_handler() {
             clear: true,
             ..FilterChange::default()
         }),
-        ControlCommand::SetView(View::Table),
-        ControlCommand::Fit,
         ControlCommand::OpenWhipSettings,
         ControlCommand::Close {
             agents: vec!["a".into()],
@@ -674,7 +667,6 @@ fn invalid_action_params_never_reach_the_handler() {
         ("focus", json!({"id": ""})),
         ("filter", json!({})),
         ("filter", json!({"kinds": ["robot"]})),
-        ("view", json!({"view": "map"})),
         ("whip_settings", json!({"dry_run": "no"})),
         ("close", json!({})),
         ("close", json!({"ids": []})),
@@ -837,11 +829,11 @@ fn app_commands_round_trip() {
     let (handler, rx) = AppCommands::channel(Some(Box::new(move || *w.lock().unwrap() += 1)));
     let app = std::thread::spawn(move || {
         let pending = rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(pending.command, ControlCommand::Fit);
-        pending.reply.send(Ok(json!({"view": "graph"})));
+        assert_eq!(pending.command, ControlCommand::OpenWhipSettings);
+        pending.reply.send(Ok(json!({"open": true})));
     });
-    let result = handler.execute(ControlCommand::Fit).unwrap();
-    assert_eq!(result, json!({"view": "graph"}));
+    let result = handler.execute(ControlCommand::OpenWhipSettings).unwrap();
+    assert_eq!(result, json!({"open": true}));
     app.join().unwrap();
     assert_eq!(*woke.lock().unwrap(), 1);
 }
@@ -850,12 +842,17 @@ fn app_commands_round_trip() {
 fn app_commands_dropped_or_gone() {
     let (handler, rx) = AppCommands::channel(None);
     let app = std::thread::spawn(move || drop(rx.recv().unwrap()));
-    let err = handler.execute(ControlCommand::Fit).unwrap_err();
+    let err = handler
+        .execute(ControlCommand::OpenWhipSettings)
+        .unwrap_err();
     assert_eq!(err.code, ErrorCode::Unavailable);
     app.join().unwrap();
     // Receiver gone: sending fails straight away.
     assert_eq!(
-        handler.execute(ControlCommand::Fit).unwrap_err().code,
+        handler
+            .execute(ControlCommand::OpenWhipSettings)
+            .unwrap_err()
+            .code,
         ErrorCode::Unavailable
     );
 }

@@ -1,5 +1,5 @@
 //! Which repo (Orca project) a node or run acts on, derived from worktree paths alone: the
-//! graph and sidebar group by it on every snapshot, so no git calls.
+//! farm and sidebar group by it on every snapshot, so no git calls.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;

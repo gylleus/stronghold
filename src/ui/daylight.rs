@@ -1,12 +1,11 @@
-//! Day and night by the local clock, for the canvases' backgrounds: the ant farm's sky and
-//! the wash behind the graph. The app's panels keep following the system theme.
+//! Day and night by the local clock, for the farm's sky. The app's panels keep following the system theme.
 //!
 //! [`DAWN_H`], [`DUSK_H`] and [`FADE_H`] are the knobs. `MYRSTACK_HOUR` (a local hour such
 //! as `21.5`) fakes the clock, to check both looks.
 
 use std::time::Duration;
 
-use eframe::egui::{self, Color32, Rect, pos2};
+use eframe::egui::{self, Color32};
 
 /// Local hour the day begins, in the middle of the fade from night.
 pub const DAWN_H: f32 = 6.0;
@@ -74,36 +73,6 @@ pub fn schedule_repaint(ctx: &egui::Context) {
 /// Mixes `night` into `day` by `daylight`.
 pub fn mix(night: Color32, day: Color32, daylight: f32) -> Color32 {
     night.lerp_to_gamma(day, daylight)
-}
-
-/// A sky tint fading down from the top of `rect` over its upper half: pale blue by day, deep
-/// indigo by night, faint enough on either theme that nodes and labels keep their contrast.
-pub fn wash(rect: Rect, daylight: f32, dark_mode: bool) -> egui::Shape {
-    let (day, night) = if dark_mode {
-        (
-            Color32::from_rgb(0x7f, 0xc8, 0xf0).gamma_multiply(0.10),
-            Color32::from_rgb(0x2a, 0x2a, 0x6e).gamma_multiply(0.45),
-        )
-    } else {
-        (
-            Color32::from_rgb(0x7f, 0xc8, 0xf0).gamma_multiply(0.22),
-            Color32::from_rgb(0x3a, 0x3f, 0x9e).gamma_multiply(0.14),
-        )
-    };
-    let top = mix(night, day, daylight);
-    let fade_y = rect.top() + rect.height() * 0.6;
-    let mut mesh = egui::Mesh::default();
-    for (p, c) in [
-        (rect.left_top(), top),
-        (rect.right_top(), top),
-        (pos2(rect.right(), fade_y), Color32::TRANSPARENT),
-        (pos2(rect.left(), fade_y), Color32::TRANSPARENT),
-    ] {
-        mesh.colored_vertex(p, c);
-    }
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    egui::Shape::mesh(mesh)
 }
 
 #[cfg(test)]

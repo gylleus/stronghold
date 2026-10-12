@@ -1,4 +1,4 @@
-//! A short "pop" on an agent that just changed state, shared by the graph and the ant farm:
+//! A short "pop" on an agent that just changed state, shared by the farm:
 //! a green burst when it is done, a softer one when it goes idle, an amber one when it starts
 //! waiting on Karl (whose lasting pulse the views already draw).
 //!

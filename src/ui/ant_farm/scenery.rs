@@ -13,8 +13,6 @@ pub struct Placement {
     pub foot: Pos2,
 }
 
-/// Cloud drift in texels per second.
-const CLOUD_SPEED: f32 = 2.0;
 /// Stars in the night sky.
 const STARS: usize = 36;
 
@@ -32,22 +30,19 @@ fn hash(i: usize, salt: u32) -> u32 {
 pub fn surface(scene: &Scene) -> Vec<Placement> {
     let px = scene.px;
     let a = scene.cell();
-    // With the dish at the left, Karl's pipe stands past the waiting ants.
-    let start = scene.landing.right() + if scene.comms.is_some() { 4.0 * a } else { a };
+    // With the rune stone at the left, Karl's tube stands past the waiting dwarves.
+    let start = scene.karl_pipe().x + 1.5 * a;
     let end = scene.rect.right() - 0.5 * a;
     let mut out = Vec::new();
     let mut x = start;
     for i in 0.. {
         let h = hash(i, 7);
         let deco = match h % 100 {
-            // No trees: on the surface a tree stands for a worktree (see [`super::forest`]).
-            0..20 => Deco::Tuft,
-            20..36 => Deco::Bush,
-            36..62 => {
-                [Deco::FlowerRed, Deco::FlowerYellow, Deco::FlowerPurple][(h / 100 % 3) as usize]
-            }
-            62..80 => Deco::Tuft,
-            80..90 => Deco::Rock,
+            0..40 => Deco::Boulder,
+            40..62 => Deco::Heather,
+            62..75 => Deco::Edelweiss,
+            75..86 => Deco::Gentian,
+            86..94 => Deco::Rock,
             _ => Deco::Mushroom,
         };
         let w = deco.extent(px)[0];
@@ -65,8 +60,8 @@ pub fn surface(scene: &Scene) -> Vec<Placement> {
 }
 
 /// The sky's pieces at `now_s`: the moon (`dark`) or the sun near the top right, and three
-/// clouds drifting right and wrapping around.
-pub fn sky(scene: &Scene, now_s: f64, dark: bool) -> Vec<Placement> {
+/// motionless alpine clouds. The clock changes the lighting, never idle animation.
+pub fn sky(scene: &Scene, _now_s: f64, dark: bool) -> Vec<Placement> {
     let px = scene.px;
     let a = scene.cell();
     let rect = scene.rect;
@@ -79,12 +74,8 @@ pub fn sky(scene: &Scene, now_s: f64, dark: bool) -> Vec<Placement> {
     }];
     let [cloud_w, cloud_h] = Deco::Cloud.extent(px);
     let span = rect.width() + cloud_w;
-    for (i, (base, y)) in [(0.12, 0.30), (0.47, 0.18), (0.78, 0.40)]
-        .iter()
-        .enumerate()
-    {
-        let speed = CLOUD_SPEED * px * (1.0 + i as f32 * 0.3);
-        let travelled = (now_s as f32 * speed + base * span).rem_euclid(span);
+    for (base, y) in [(0.12, 0.30), (0.47, 0.18), (0.78, 0.40)].iter() {
+        let travelled = base * span;
         let left = rect.left() - cloud_w + travelled;
         let top = rect.top() + (y * height).min(height - cloud_h - a).max(0.0);
         out.push(Placement {

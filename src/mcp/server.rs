@@ -31,7 +31,7 @@ pub const INVALID_PARAMS: i64 = -32602;
 pub const INSTRUCTIONS: &str = concat!(
     "\
 Myrstack is Karl's desktop dashboard for the agent fleet running in the Orca agent IDE. It draws \
-every agent as a node in a live graph and runs the \"whip\", which nudges stalled workers. This \
+every agent as a dwarf in a live farm and runs the \"whip\", which nudges stalled workers. This \
 server talks to the running app.
 
 Node kinds: the Queen is the hub that stands for the whole fleet (not an agent; its state is the \

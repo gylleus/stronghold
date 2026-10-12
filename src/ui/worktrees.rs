@@ -19,7 +19,7 @@ use eframe::egui::{self, Color32, RichText, Vec2, pos2, vec2};
 use crate::orca::OrcaClient;
 use crate::orca::spawn::Worktree;
 use crate::ui::ant_farm::forest::SawJob;
-use crate::ui::ant_farm::nature::Deco;
+use crate::ui::ant_farm::forest::art::Deco;
 use crate::worktrees::{self, Census, Outcome, Plan, Removal, SweepMarker, format_bytes};
 
 /// How often disk usage is measured (`du` over every worktree takes a while).

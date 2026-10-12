@@ -6,7 +6,7 @@ use eframe::egui::{RichText, Ui};
 use crate::model::NodeId;
 use crate::playbook::fetches::{NodeFetch, PlaybookStatus};
 use crate::quota::format_duration;
-use crate::ui::graph::kind_label;
+use crate::ui::fleet_view::kind_label;
 
 /// The compact line for the Queen's header; hover lists every agent's newest fetch. Drawn in
 /// the warning colour when someone runs an older version.

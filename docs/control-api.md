@@ -75,7 +75,7 @@ Methods that take an agent `id` accept any of these:
 
 Input matching is loose, so `NeedsInput` and `needs-input` also work.
 
-The **Queen** is the graph's hub node that stands for the whole fleet. It is not an agent, so
+The **Queen** is drawn as the King in the farm and stands for the whole fleet. It is not an agent, so
 `agents` never lists it and `status` reports its state as `fleet.state`. `select` and `focus`
 accept `queen`.
 
@@ -115,7 +115,7 @@ first poll, with `ready: false`.
     "whip":{"enabled":true,"dry_run":true,"last_tick_ms":…,"findings":1,"escalated":[]},
     "alerts":0,
     "notifications":{"total":0,"unread":0,"latest_unread":[]},
-    "dashboard":{"view":"graph","selected":"queen","selection":["queen"],
+    "dashboard":{"selected":"queen","selection":["queen"],
                  "filter":{"repos":[],"states":[],"kinds":[],"text":"","show_loose":true,
                            "show_released":true,"hidden":0},
                  "whip_settings_open":false},
@@ -131,7 +131,7 @@ first poll, with `ready: false`.
 now. `current` is `null` until the app has read the fetch log.
 
 `dashboard.selected` is the primary selected node (whose panel is shown); `dashboard.selection`
-lists every node selected in the graph, several after a box select or Shift/Cmd-click.
+lists every node selected in the farm, several after a box select or Shift/Cmd-click.
 
 ### `agents`
 
@@ -360,7 +360,7 @@ When a setting changes, the result has `"changed":true` and `"message":"Saved."`
 
 ### `select`
 
-Selects a node without moving the graph. Pass `"id": null` to clear the selection.
+Selects a node without moving the farm. Pass `"id": null` to clear the selection.
 
 ```json
 {"v":1,"method":"select","params":{"id":"term:term_…"}}
@@ -368,7 +368,7 @@ Selects a node without moving the graph. Pass `"id": null` to clear the selectio
 ```
 
 Pass `"ids"` (a list, after `id` if both are given) to select several nodes at once, as a box
-select in the graph does; the first is the primary (`selected`). Nodes hidden by the filter
+select in the farm does; the first is the primary (`selected`). Nodes hidden by the filter
 can't be part of a multi-selection: they are listed in `hidden_by_filter` and left out of
 `selection`. An empty `ids` clears the selection.
 
@@ -380,9 +380,9 @@ can't be part of a multi-selection: they are listed in `hidden_by_filter` and le
 
 ### `focus`
 
-Switches to the graph, selects the node, and pans and zooms onto it. With `"raise": true` it
+Selects the agent and pans and zooms the farm camera onto it. With `"raise": true` it
 also brings the Myrstack window to the front. `hidden_by_filter` means the node is selected
-but the current filter hides it, so the graph did not move.
+but the current filter hides it, so the farm did not move.
 
 ```json
 {"v":1,"method":"focus","params":{"id":"term:term_…"}}
@@ -408,24 +408,6 @@ filter to show everything before the other fields apply.
 {"v":1,"method":"filter","params":{"states":["needs_input","stalled"]}}
 → {"ok":true,"result":{"filter":{"repos":[],"states":["needs_input","stalled"],"kinds":[],
    "text":"","show_loose":true,"show_released":true,"hidden":112}}}
-```
-
-### `view`
-
-Switches the dashboard view to `graph` or `table`.
-
-```json
-{"v":1,"method":"view","params":{"view":"table"}}
-→ {"ok":true,"result":{"view":"table"}}
-```
-
-### `fit`
-
-Switches to the graph and fits every node on screen.
-
-```json
-{"v":1,"method":"fit"}
-→ {"ok":true,"result":{"view":"graph"}}
 ```
 
 ### `open_whip_settings`
@@ -627,10 +609,10 @@ the terminal after `closing_in_ms` with the `plan` returned.
 ### `agent_message`
 
 `{"from", "to", "kind"?}`. Draws a message between agents, which happened elsewhere, as an
-envelope flying from `from` to `to` in the graph and the ant farm; nothing is sent. Each end
+envelope flying from `from` to `to` in the farm; nothing is sent. Each end
 is a node id, a terminal handle, `run:<id>` (its coordinator), `dispatch:<id>`, `queen`,
 `envoy` (the live Envoy session), `karl` or `slack` (the outside world: the landing mound
-in the ant farm, the Queen in the graph). `kind` picks the look: `instruction`, `message` (default), `ask` (or `question`,
+in the farm). `kind` picks the look: `instruction`, `message` (default), `ask` (or `question`,
 `escalation`), `merge_ready`, `relay` (or `slack`, `envoy`), `nudge` or `status`. Unknown ends
 are ignored. Bus messages, `send`, `notify`, `ask`, whip nudges and Karl's typing are drawn
 already; this is for traffic the app can't see, such as the Envoy's relays.

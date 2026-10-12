@@ -3,7 +3,7 @@
 use eframe::egui::{self, Color32, RichText};
 
 use super::{SettingsPane, save_row};
-use crate::ui::table::format_age;
+use crate::ui::fleet_view::format_age;
 use crate::whip::{WhipSettings, WhipStatus};
 
 const SEC: i64 = 1_000;

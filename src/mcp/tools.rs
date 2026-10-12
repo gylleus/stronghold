@@ -270,8 +270,8 @@ pub fn definitions() -> Vec<Value> {
             "park_agents",
             "Park or wake agents",
             "Parks agents in the resting area: an ant that finished but that Karl wants to \
-             keep for later. A parked agent leaves the live fleet (its own place in the graph \
-             and the ant farm, out of fleet state, stalled and needs-input counts), the whip \
+             keep for later. A parked agent leaves the live fleet (its own room in the farm, \
+             out of fleet state, stalled and needs-input counts), the whip \
              never nudges it, and no cleanup closes it or removes its worktree unless named \
              explicitly; its terminal, session and worktree stay, so it can continue later. \
              wake=true brings agents back; send_to_agent also wakes a parked agent. Parking \
@@ -390,7 +390,7 @@ pub fn definitions() -> Vec<Value> {
                     "run_id": { "type": "string", "description": "Run to add a worker to (worker mode)." },
                     "terminal": { "type": "string", "description": "Worker mode: agent id, handle or label of a live agent terminal to run the task in." },
                     "title": { "type": "string", "description": "Worker task title (default: the prompt's first line)." },
-                    "label": { "type": "string", "description": "Short human name for the agent (2-4 words), shown in Myrstack's graph and ant farm. Sets the worktree's Orca display name, or a worker's task display name." },
+                    "label": { "type": "string", "description": "Short human name for the agent (2-4 words), shown in Myrstack's dwarf farm. Sets the worktree's Orca display name, or a worker's task display name." },
                     "agent": { "type": "string", "enum": ["claude", "codex"], "default": "claude" },
                     "model": { "type": "string", "description": "Model alias or id, e.g. fable, opus, sonnet, gpt-6-astra. Default: the Ants default in Myrstack's Settings for a Claude ant, else the agent's own." },
                     "effort": { "type": "string", "enum": ["low", "medium", "high", "xhigh", "max"], "description": "Claude only, with a model: --effort level (default: the Ants default's effort when the model is the default too, else the CLI's)." },
@@ -403,7 +403,7 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "focus_agent",
             "Focus an agent",
-            "Switches the dashboard to the graph, selects the node and zooms onto it. Pass \
+            "Selects the agent and zooms the farm camera onto it. Pass \
              id \"queen\" for the Queen.",
             object(
                 json!({
@@ -431,23 +431,6 @@ pub fn definitions() -> Vec<Value> {
                 }),
                 &[],
             ),
-            DASHBOARD,
-        ),
-        tool(
-            "set_view",
-            "Set dashboard view",
-            "Switches the dashboard between the graph, the table and the ant farm.",
-            object(
-                json!({ "view": { "type": "string", "enum": ["graph", "table", "ant_farm"] } }),
-                &["view"],
-            ),
-            DASHBOARD,
-        ),
-        tool(
-            "fit_graph",
-            "Fit graph",
-            "Switches to the graph and fits every node on screen.",
-            object(json!({}), &[]),
             DASHBOARD,
         ),
         tool(
@@ -518,8 +501,6 @@ pub fn call(
         "spawn_session" => spawn_session(control, args),
         "focus_agent" => focus_agent(control, &p),
         "set_filter" => set_filter(control, args),
-        "set_view" => set_view(control, &p),
-        "fit_graph" => simple(control, "fit", "Fitted the graph to the screen."),
         "open_whip_settings" => simple(
             control,
             "open_whip_settings",
@@ -1559,7 +1540,7 @@ fn focus_agent(control: &mut dyn Control, p: &Params) -> ToolResult {
     let raise = p.bool("raise_window")?.unwrap_or(false);
     let result = control.call("focus", json!({ "id": id, "raise": raise }))?;
     let selected = result.get("selected").and_then(Value::as_str).unwrap_or(id);
-    let mut text = format!("Focused {selected} in the graph.");
+    let mut text = format!("Focused {selected} in the farm.");
     if result.get("hidden_by_filter").and_then(Value::as_bool) == Some(true) {
         text.push_str(
             " It is selected but hidden by the current filter (set_filter clear=true shows it).",
@@ -1614,13 +1595,6 @@ fn set_filter(control: &mut dyn Control, args: &Value) -> ToolResult {
         f.get("hidden").and_then(Value::as_u64).unwrap_or(0),
     );
     Ok(ToolOutput::ok(text, result))
-}
-
-fn set_view(control: &mut dyn Control, p: &Params) -> ToolResult {
-    let view = p.required_str("view")?;
-    let result = control.call("view", json!({ "view": view }))?;
-    let view = result.get("view").and_then(Value::as_str).unwrap_or(view);
-    Ok(ToolOutput::ok(format!("Showing the {view} view."), result))
 }
 
 fn simple(control: &mut dyn Control, method: &str, text: &str) -> ToolResult {

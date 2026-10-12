@@ -10,7 +10,7 @@ use eframe::egui::{self, Key, Modifiers, RichText};
 use crate::fleet::FleetData;
 use crate::model::{FleetSnapshot, NO_REPO, Node, NodeId, NodeKind, NodeState, RepoIndex};
 use crate::ui::commands::{self, ACTIONS, ActionContext, ActionId, Recents};
-use crate::ui::graph::{kind_label, state_color, state_label};
+use crate::ui::fleet_view::{kind_label, state_color, state_label};
 
 /// Most agents the palette lists for a query.
 pub const MAX_RESULTS: usize = 12;
@@ -1277,7 +1277,7 @@ mod tests {
         // "fit": the action's title prefix beats the node's worktree word match, so the
         // Actions section comes first.
         let rows = palette_rows(&entries, "fit", &Recents::default(), &cx);
-        assert_eq!(row_names(&entries, &rows)[..2], [">fit_graph", "fits"]);
+        assert_eq!(row_names(&entries, &rows)[..2], [">fit_farm", "fits"]);
         // An exact node label outranks an action matching only by keyword.
         let rows = palette_rows(&entries, "chat", &Recents::default(), &cx);
         assert_eq!(row_names(&entries, &rows)[0], "chat-node");
@@ -1319,7 +1319,7 @@ mod tests {
         assert_eq!(rows[1].item, PaletteItem::Action(ACTIONS[0].id));
 
         let rows = palette_rows(&entries, " > fit", &recents, &cx);
-        assert_eq!(actions(&rows), [ActionId::FitGraph]);
+        assert_eq!(actions(&rows), [ActionId::FitFarm]);
         assert_eq!(rows.len(), 1, "the node named fit is left out");
         assert!(palette_rows(&entries, ">zzzz", &recents, &cx).is_empty());
     }
@@ -1338,14 +1338,14 @@ mod tests {
         assert_eq!(actions(&rows), SUGGESTED);
 
         let mut recents = Recents::default();
-        for id in [ActionId::FitGraph, ActionId::OpenChat, ActionId::FitGraph] {
+        for id in [ActionId::FitFarm, ActionId::OpenChat, ActionId::FitFarm] {
             recents.push(id);
         }
         let rows = palette_rows(&entries, "  ", &recents, &cx);
         assert_eq!(
             row_names(&entries, &rows),
             [
-                ">fit_graph",
+                ">fit_farm",
                 ">open_chat",
                 "n0",
                 "n1",
@@ -1467,11 +1467,11 @@ mod tests {
 
         palette.query = ">fit".into();
         let (outcome, _) = run_palette(&mut palette, &snapshot, &cx, vec![enter]);
-        assert_eq!(outcome, Some(SearchOutcome::Run(ActionId::FitGraph)));
+        assert_eq!(outcome, Some(SearchOutcome::Run(ActionId::FitFarm)));
         assert!(!palette.is_open());
         assert_eq!(
             palette.recents().ids().collect::<Vec<_>>(),
-            [ActionId::FitGraph]
+            [ActionId::FitFarm]
         );
     }
 }

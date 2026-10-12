@@ -66,8 +66,6 @@ pub const ACTION_METHODS: &[&str] = &[
     "select",
     "focus",
     "filter",
-    "view",
-    "fit",
     "open_whip_settings",
     "close",
     "whip",

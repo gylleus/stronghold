@@ -6,7 +6,7 @@ use eframe::egui::{self, RichText, Sense, Ui};
 
 use crate::model::{FleetSnapshot, Node, NodeId, NodeKind, NodeState, RepoIndex, TaskCounts};
 use crate::park::RESTING_AREA;
-use crate::ui::graph::{kind_label, state_color, state_label};
+use crate::ui::fleet_view::{kind_label, state_color, state_label};
 
 pub use crate::model::{NO_REPO, node_repo, repo_of};
 
@@ -28,7 +28,7 @@ const ALL_KINDS: [NodeKind; 6] = [
 ];
 const DOT_RADIUS: f32 = 5.0;
 
-/// Which nodes the graph shows. Empty sets mean "all".
+/// Which nodes the farm shows. Empty sets mean "all".
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct FleetFilter {
@@ -315,11 +315,11 @@ pub fn task_summary(counts: &TaskCounts) -> String {
 /// What the user did in the sidebar this frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SidebarResponse {
-    /// A run was clicked: focus the graph on it.
+    /// A run was clicked: focus the farm on it.
     pub focus_run: Option<String>,
-    /// A repo header was clicked: focus the graph on its region.
+    /// A repo header was clicked: focus the farm on its region.
     pub focus_repo: Option<String>,
-    /// A loose terminal was clicked: pan the graph onto it (it is also in `select`).
+    /// A loose terminal was clicked: pan the farm onto it (it is also in `select`).
     pub focus_node: Option<NodeId>,
     /// A node to select (the clicked run's coordinator).
     pub select: Option<NodeId>,
@@ -492,7 +492,7 @@ fn repos_section(
     if groups.is_empty() {
         crate::ui::art::empty_state(
             ui,
-            crate::ui::art::anthill(),
+            crate::ui::art::Portrait::Sleeping,
             140.0,
             "No ants",
             "The colony is quiet. New ants show up here.",

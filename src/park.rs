@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::fleet::FleetData;
 use crate::model::{Node, NodeId, NodeKind};
 
-/// Where parked agents are shown: the graph region and sidebar group they gather in, in place
+/// Where parked agents are shown: the farm region and sidebar group they gather in, in place
 /// of their repo's, and the ant farm's chamber.
 pub const RESTING_AREA: &str = "Resting area";
 

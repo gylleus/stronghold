@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::app::View;
 use crate::control::server::{Backend, handle_line, now_ms};
 use crate::control::view::{StatusView, ViewInputs};
 use crate::control::{
@@ -150,7 +149,6 @@ impl HeadlessControl {
             whip_log: Vec::new(),
             quotas: &quotas,
             alerts: &[],
-            view: View::Graph,
             selected: None,
             selection: Vec::new(),
             filter: &FleetFilter::default(),
