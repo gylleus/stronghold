@@ -1,105 +1,69 @@
-//! The colony artwork (see `assets/LICENSES.md`): the Queen's avatar, a worker ant in a comb
-//! cell and an anthill, as SVGs rasterized by egui_extras' loader at the size they are drawn.
+//! Pixel portraits drawn from the same dwarf parts as the farm.
+use crate::ui::dwarf::{self, Action, Look, cutout::Finish, pixel};
+use eframe::egui::{self, RichText, Ui};
 
-use eframe::egui::load::{SizeHint, TexturePoll};
-use eframe::egui::{self, ImageSource, RichText, TextureId, Ui};
-
-const QUEEN_URI: &str = "bytes://myrstack/queen.svg";
-const QUEEN: &[u8] = include_bytes!("../../assets/art/queen.svg");
-const ANT_CELL_URI: &str = "bytes://myrstack/ant_cell.svg";
-const ANT_CELL: &[u8] = include_bytes!("../../assets/art/ant_cell.svg");
-const ANTHILL_URI: &str = "bytes://myrstack/anthill.svg";
-const ANTHILL: &[u8] = include_bytes!("../../assets/art/anthill.svg");
-
-/// Rasterized size of the Queen's avatar in the graph; drawn scaled from there, so zooming
-/// never re-rasterizes it.
-const GRAPH_AVATAR_PX: u32 = 256;
-
-/// The Queen's avatar: a crowned ant on a honey hexagon, the shape of her graph node.
-pub fn queen() -> ImageSource<'static> {
-    ImageSource::Bytes {
-        uri: QUEEN_URI.into(),
-        bytes: QUEEN.into(),
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Portrait {
+    King,
+    Still,
+    Sleeping,
 }
 
-/// A worker ant in a comb cell.
-pub fn ant_cell() -> ImageSource<'static> {
-    ImageSource::Bytes {
-        uri: ANT_CELL_URI.into(),
-        bytes: ANT_CELL.into(),
-    }
+/// Cached code-drawn portrait with nearest-neighbour scaling.
+pub fn portrait(ctx: &egui::Context, who: Portrait, size: f32) -> egui::Image<'static> {
+    let id = egui::Id::new(("dwarf_portrait", who));
+    let texture = ctx
+        .data_mut(|data| data.get_temp::<egui::TextureHandle>(id))
+        .unwrap_or_else(|| {
+            let look = if who == Portrait::King {
+                Look::king()
+            } else {
+                Look::from_seed(7)
+            };
+            let action = if who == Portrait::Sleeping {
+                Action::Sleep
+            } else {
+                Action::Still
+            };
+            let drawing = dwarf::draw(
+                egui::pos2(48.0, 89.0),
+                64.0,
+                &look,
+                &dwarf::pose(action, 0.0),
+                true,
+                &Finish {
+                    outline: 1.6,
+                    ..Finish::INK
+                },
+            );
+            let image = pixel::rasterize(
+                &drawing.shapes,
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(96.0, 96.0)),
+                [96, 96],
+                1,
+            );
+            let texture = ctx.load_texture(
+                format!("dwarf_portrait/{who:?}"),
+                image,
+                egui::TextureOptions::NEAREST,
+            );
+            ctx.data_mut(|data| data.insert_temp(id, texture.clone()));
+            texture
+        });
+    egui::Image::new((texture.id(), egui::Vec2::splat(size)))
+        .texture_options(egui::TextureOptions::NEAREST)
 }
 
-/// An anthill with its chambers and a few ants.
-pub fn anthill() -> ImageSource<'static> {
-    ImageSource::Bytes {
-        uri: ANTHILL_URI.into(),
-        bytes: ANTHILL.into(),
-    }
+pub fn queen_avatar(ctx: &egui::Context, size: f32) -> egui::Image<'static> {
+    portrait(ctx, Portrait::King, size)
 }
 
-/// Installs the image loaders and registers the artwork's bytes, so it can be loaded by uri
-/// outside of an `egui::Image` too (the graph's Queen).
-pub fn install(ctx: &egui::Context) {
-    egui_extras::install_image_loaders(ctx);
-    ctx.include_bytes(QUEEN_URI, QUEEN);
-}
-
-/// The Queen's avatar as a texture for the graph, or `None` while it is not loaded (the node
-/// then draws its vector fallback).
-pub fn queen_texture(ctx: &egui::Context) -> Option<TextureId> {
-    let options = egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
-    let hint = SizeHint::Size {
-        width: GRAPH_AVATAR_PX,
-        height: GRAPH_AVATAR_PX,
-        maintain_aspect_ratio: true,
-    };
-    match ctx.try_load_texture(QUEEN_URI, options, hint) {
-        Ok(TexturePoll::Ready { texture }) => Some(texture.id),
-        _ => None,
-    }
-}
-
-/// The Queen's avatar, `size` points square.
-pub fn queen_avatar(size: f32) -> egui::Image<'static> {
-    egui::Image::new(queen()).fit_to_exact_size(egui::vec2(size, size))
-}
-
-/// A centered empty state: `image` `width` points wide, a title and a hint under it.
-pub fn empty_state(ui: &mut Ui, image: ImageSource<'static>, width: f32, title: &str, hint: &str) {
+pub fn empty_state(ui: &mut Ui, who: Portrait, width: f32, title: &str, hint: &str) {
     ui.vertical_centered(|ui| {
         ui.add_space(16.0);
-        ui.add(egui::Image::new(image).max_width(width));
+        ui.add(portrait(ui.ctx(), who, width));
         ui.add_space(8.0);
         ui.label(RichText::new(title).strong());
         ui.weak(hint);
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The SVGs parse, rasterize and come back as textures.
-    #[test]
-    fn artwork_loads() {
-        let ctx = egui::Context::default();
-        crate::ui::theme::install(&ctx);
-        ctx.run_ui(egui::RawInput::default(), |_| {})
-            .drop_without_applying_deltas();
-        assert!(queen_texture(&ctx).is_some());
-        for source in [queen(), ant_cell(), anthill()] {
-            let ImageSource::Bytes { uri, bytes } = source else {
-                unreachable!()
-            };
-            ctx.include_bytes(uri.clone(), bytes);
-            let poll = ctx.try_load_texture(
-                &uri,
-                egui::TextureOptions::LINEAR,
-                SizeHint::Scale(1.0.into()),
-            );
-            assert!(matches!(poll, Ok(TexturePoll::Ready { .. })), "{uri}");
-        }
-    }
 }

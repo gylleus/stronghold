@@ -11,6 +11,11 @@ Bead: `myr-bov`.
 
 ## 0. Current direction: code-drawn paper-cutout dwarves
 
+**2026-10-12 cleanup:** Removed the graph and table views, ant sprites, paper finish
+and smooth rendering. The dwarf farm is the only fleet view; dwarves always render
+as pixels, with size and palette pickers in Settings → Art. The notes below record
+the earlier art experiments.
+
 What Karl asked for:
 - simpler and more unique art;
 - no GPT/cloud generation;

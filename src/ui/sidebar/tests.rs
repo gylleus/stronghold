@@ -274,7 +274,7 @@ fn sidebar_renders_headless() {
 }
 
 /// Regression: a row wider than the panel made the resizable sidebar grow every frame until the
-/// graph was squeezed out.
+/// farm was squeezed out.
 #[test]
 fn sidebar_panel_width_is_stable() {
     let ctx = egui::Context::default();

@@ -3,7 +3,7 @@
 //! back into the farm for hit testing.
 //!
 //! A mouse wheel, a trackpad pinch and ⌘+scroll zoom around the pointer; a trackpad swipe,
-//! right- or middle-drag and the arrow keys pan (see [`crate::ui::graph::nav`]); a double-click
+//! right- or middle-drag and the arrow keys pan (see [`crate::ui::ant_farm::nav`]); a double-click
 //! on empty ground fits the farm again.
 
 use eframe::egui::{self, Pos2, Rect, Shape, Vec2, emath::TSTransform, layers::ShapeIdx, vec2};
@@ -64,6 +64,16 @@ impl Camera {
     /// Moves the farm by `delta` screen points.
     pub fn pan(&mut self, rect: Rect, delta: Vec2) {
         self.center -= delta / (self.zoom * rect.size());
+        self.clamp();
+    }
+
+    /// Fits a figure or room into the viewport, within the farm's zoom limits.
+    pub fn focus(&mut self, rect: Rect, bounds: Rect) {
+        let size = bounds.size() * 1.25;
+        self.zoom = (rect.width() / size.x)
+            .min(rect.height() / size.y)
+            .clamp(MIN_ZOOM, MAX_ZOOM);
+        self.center = (bounds.center() - rect.min) / rect.size();
         self.clamp();
     }
 

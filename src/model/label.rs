@@ -1,4 +1,4 @@
-//! Display labels for graph nodes.
+//! Display labels for farm nodes.
 
 use crate::orca::{Task, Terminal, Worker};
 

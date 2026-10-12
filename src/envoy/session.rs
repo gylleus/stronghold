@@ -627,10 +627,8 @@ mod tests {
             "ask_karl",
             "finish_session",
             "mark_pr_ready",
-            "set_view",
             "set_filter",
             "focus_agent",
-            "fit_graph",
             "open_whip_settings",
             "clean_worktrees",
         ] {

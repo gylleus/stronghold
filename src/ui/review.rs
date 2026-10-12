@@ -5,7 +5,7 @@ use eframe::egui::{self, Color32, RichText, Ui};
 use crate::model::NodeId;
 use crate::review::github::Ci;
 use crate::review::view::ReviewRow;
-use crate::ui::graph::pr_color;
+use crate::ui::fleet_view::pr_color;
 
 /// What the user did with the queue this frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,7 +27,7 @@ pub struct SectionState {
     pub scroll: bool,
 }
 
-/// Compact links for one agent, using exactly the rows behind the graph's PR badge.
+/// Compact links for one agent, using exactly the rows behind the fleet's PR badge.
 /// Excess links live in a menu so they cannot displace the header's other controls.
 pub fn agent_pr_buttons(ui: &mut Ui, node: &NodeId, rows: &[ReviewRow]) -> Option<ReviewAction> {
     let rows: Vec<_> = rows
@@ -128,7 +128,7 @@ pub fn review_section(
             }
             if rows.is_empty() {
                 ui.horizontal_top(|ui| {
-                    ui.add(egui::Image::new(crate::ui::art::ant_cell()).max_width(28.0));
+                    ui.add(crate::ui::art::portrait(ui.ctx(), crate::ui::art::Portrait::Still, 28.0));
                     ui.add(
                         egui::Label::new(
                             RichText::new("Nothing waiting. Agents call mark_pr_ready (or send merge_ready) when a PR is ready.").weak(),
@@ -221,7 +221,7 @@ fn review_row(ui: &mut Ui, row: &ReviewRow, now_ms: i64) -> Option<ReviewAction>
                         }
                     }
                     None => {
-                        agent.on_hover_text("The marking terminal is not in the graph");
+                        agent.on_hover_text("The marking terminal is not in the fleet");
                     }
                 }
                 sep(ui);
@@ -295,7 +295,7 @@ fn review_row(ui: &mut Ui, row: &ReviewRow, now_ms: i64) -> Option<ReviewAction>
                     sep(ui);
                 }
                 ui.label(
-                    RichText::new(crate::ui::table::format_age(now_ms - row.marked_ms))
+                    RichText::new(crate::ui::fleet_view::format_age(now_ms - row.marked_ms))
                         .small()
                         .weak(),
                 )
@@ -530,7 +530,7 @@ mod tests {
         use crate::fleet::FleetData;
         use crate::model::FleetSnapshot;
         use crate::orca::Terminal;
-        use crate::ui::graph::GraphView;
+        use crate::ui::fleet_view::FleetView;
         let data = FleetData {
             terminals: vec![Terminal {
                 handle: "term_a".into(),
@@ -539,19 +539,16 @@ mod tests {
             ..FleetData::default()
         };
         let snapshot = FleetSnapshot::build(&data, 0);
-        let mut graph = GraphView::new();
-        graph.sync(&snapshot);
+        let mut fleet = FleetView::new();
+        fleet.sync(&snapshot);
         let id = NodeId::terminal("term_a");
-        let pr = |g: &GraphView| {
-            let idx = g.node_index(&id).unwrap();
-            g.graph().node(idx).unwrap().payload().pr_ready
-        };
-        assert!(!pr(&graph));
-        graph.set_pr_ready([id.clone()].into());
-        assert!(pr(&graph));
-        graph.sync(&snapshot);
-        assert!(pr(&graph), "kept across syncs");
-        graph.set_pr_ready(Default::default());
-        assert!(!pr(&graph));
+        let pr = |g: &FleetView| g.pr_ready().contains(&id);
+        assert!(!pr(&fleet));
+        fleet.set_pr_ready([id.clone()].into());
+        assert!(pr(&fleet));
+        fleet.sync(&snapshot);
+        assert!(pr(&fleet), "kept across syncs");
+        fleet.set_pr_ready(Default::default());
+        assert!(!pr(&fleet));
     }
 }

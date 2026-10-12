@@ -17,7 +17,7 @@ pub fn primary_button(ui: &Ui, enabled: bool, text: &str) -> egui::Button<'stati
 /// The top bar's title: the Queen's avatar and the app name.
 pub fn app_title(ui: &mut Ui) {
     let size = ui.text_style_height(&egui::TextStyle::Heading) + 4.0;
-    ui.add(crate::ui::art::queen_avatar(size));
+    ui.add(crate::ui::art::queen_avatar(ui.ctx(), size));
     ui.heading(crate::APP_NAME);
 }
 

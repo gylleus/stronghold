@@ -8,8 +8,8 @@ use eframe::egui::{self, Align2, Color32, RichText, TextStyle, Ui};
 
 use crate::notify::Severity;
 use crate::notify::history::Entry;
+use crate::ui::fleet_view::format_age;
 use crate::ui::icons;
-use crate::ui::table::format_age;
 
 /// Toasts shown at once; older ones make room.
 const MAX_TOASTS: usize = 4;

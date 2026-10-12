@@ -1,4 +1,4 @@
-//! Hover tooltip for a graph node.
+//! Hover tooltip for a farm node.
 
 use eframe::egui::{RichText, TextStyle, Ui};
 
@@ -143,4 +143,14 @@ pub fn coordinator_gone_note(ui: &mut Ui) {
         ui.visuals().warn_fg_color,
         "Coordinator gone: no live terminal coordinates this run; events wait at the attendant",
     );
+}
+
+pub fn format_age(age_ms: i64) -> String {
+    let secs = age_ms.max(0) / 1000;
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 60 * 60 => format!("{}m", s / 60),
+        s if s < 24 * 60 * 60 => format!("{}h", s / (60 * 60)),
+        s => format!("{}d", s / (24 * 60 * 60)),
+    }
 }

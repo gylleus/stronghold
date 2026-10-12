@@ -11,7 +11,7 @@ use crate::model::{FleetSnapshot, NodeId, NodeKind, NodeState};
 use crate::playbook::fetches::PlaybookStatus;
 use crate::quota::Quotas;
 use crate::ui::broadcast::BroadcastComposer;
-use crate::ui::graph::{ALL_STATES, kind_label, queen_color, state_color, state_label};
+use crate::ui::fleet_view::{ALL_STATES, kind_label, queen_color, state_color, state_label};
 use crate::ui::icons;
 use crate::ui::sidebar::run_rows;
 use crate::whip::WhipStatus;
@@ -215,7 +215,10 @@ pub enum QueenQuickAction {
 pub fn quick_actions(ui: &mut Ui, status_disabled: Option<&str>) -> Option<QueenQuickAction> {
     let mut action = None;
     let dark = ui.visuals().dark_mode;
-    let avatar = crate::ui::art::queen_avatar(ui.text_style_height(&egui::TextStyle::Button) + 2.0);
+    let avatar = crate::ui::art::queen_avatar(
+        ui.ctx(),
+        ui.text_style_height(&egui::TextStyle::Button) + 2.0,
+    );
     let queen = egui::Button::image_and_text(
         avatar,
         RichText::new("Queen")
@@ -248,7 +251,7 @@ pub fn quick_actions(ui: &mut Ui, status_disabled: Option<&str>) -> Option<Queen
 
 /// The Queen's avatar with a dot in the fleet state's colour.
 fn queen_badge(ui: &mut Ui, fleet: NodeState, dark: bool) {
-    let rect = ui.add(crate::ui::art::queen_avatar(28.0)).rect;
+    let rect = ui.add(crate::ui::art::queen_avatar(ui.ctx(), 28.0)).rect;
     let center = rect.center() + egui::vec2(10.0, -10.0);
     let painter = ui.painter();
     painter.circle_filled(center, 5.0, ui.visuals().panel_fill);

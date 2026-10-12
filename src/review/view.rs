@@ -1,4 +1,4 @@
-//! What the queue shows: one [`ReviewRow`] per listed PR with its agent resolved to a graph
+//! What the queue shows: one [`ReviewRow`] per listed PR with its agent resolved to a farm
 //! node, for the Queen panel, the control API (`review_queue`) and the MCP tool.
 
 use serde::Serialize;
@@ -10,7 +10,7 @@ use crate::review::github::{Ci, PrState};
 use crate::review::mark::Origin;
 use crate::review::queue::{Entry, ReviewQueue};
 
-/// The graph node of the agent that marked a PR.
+/// The farm node of the agent that marked a PR.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AgentRef {
     pub id: NodeId,
@@ -71,7 +71,7 @@ pub struct ReviewRow {
     pub title: String,
     pub summary: Option<String>,
     pub agent: Option<AgentRef>,
-    /// The marking terminal's handle, when it isn't a node of the graph.
+    /// The marking terminal's handle, when it isn't a node of the farm.
     pub agent_handle: Option<String>,
     /// `tool`, `cli` or `bus`.
     pub source: &'static str,

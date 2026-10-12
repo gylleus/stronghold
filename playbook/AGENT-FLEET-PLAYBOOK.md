@@ -19,7 +19,7 @@ Karl: talks only to the coordinator. Does not read tickets.
  │       ├─ Task → Dispatch → Codex worker terminal in its own worktree (one track)
  │       │    └─ review subagents inside the worker: fresh context, read-only, Opus 5.5
  │       └─ Task → Dispatch → soak/verification track (telemetry only, ships no code)
- ├─ Myrstack: Karl's desktop view of the whole fleet (graph, terminals, alerts). It types each
+ ├─ Myrstack: Karl's desktop view of the whole fleet (dwarf farm, terminals, alerts). It types each
  │  real bus event into the coordinator (`Fleet event: …`) and its whip nudges stalled agents
  │  (`Myrstack: …` from `myrstack-whip`). No LLM watches the bus.
  └─ Envoy: one session Myrstack starts to read Slack for Karl, draft replies he approves,

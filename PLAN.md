@@ -1,7 +1,7 @@
 # Myrstack — plan
 
-A native desktop view of the agent fleet running in Orca: a live graph of
-coordinators, their worker agents and their subagents, where clicking a node
+A native desktop view of the agent fleet running in Orca: a dwarf farm of
+coordinators, their worker agents and their subagents, where clicking a dwarf
 shows that agent's terminal and lets you type into it.
 
 Orca stays the place agents are launched and the message bus they talk over.
@@ -9,8 +9,8 @@ Myrstack only observes and talks to them through Orca.
 
 ## Goals
 
-1. **See the fleet:** every live agent as a node, runs clustered around their
-   coordinator, colored by state (working, needs input, stalled, done).
+1. **See the fleet:** every live agent as a pixel dwarf, with runs in rooms and
+   pose and location showing state (working, needs input, stalled, done).
 2. **Talk to any agent:** select a node to see its screen and send it input.
 3. **Whip stalled coordinators:** detect runs that have gone quiet with work
    still open, then nudge them or alert you.
@@ -29,12 +29,8 @@ the better fit:
   isn't needed.
 - It's one binary with no localhost server, it can call `orca` as a child
   process directly, and it can raise macOS notifications and bind a global hotkey.
-- `egui_graphs` offers force-directed graph layout. If that's not enough, a
-  custom painter over the egui canvas is small.
+- The farm uses egui's painter, a room layout and a camera for pan and zoom.
 
-A web UI (or Tauri) would win on graph library richness and colored terminal
-rendering. If Orca's internal streaming API ever becomes usable, that
-trade-off is worth revisiting.
 
 ## Data sources (verified against Orca 1.4.192)
 
@@ -63,10 +59,10 @@ hook shows `ORCA_PANE_KEY` and `ORCA_TAB_ID` are in the agent's environment.
 Subagent state: running while its jsonl was written recently and the parent
 transcript has no `tool_result` for its `toolUseId`, done once it does.
 
-## Graph model
+## Fleet model
 
 ```
-Run cluster:   [coordinator] ── [worker terminal] ── [subagent] ── [sub-subagent]
+Run room:      [coordinator] ── [worker terminal] ── [subagent] ── [sub-subagent]
 Loose:         terminals that aren't in any run (plain Claude or Codex tabs)
 ```
 
@@ -75,7 +71,7 @@ Loose:         terminals that aren't in any run (plain Claude or Codex tabs)
   permission or choice prompt), Idle, Stalled (see Whip), Done/Released,
   Failed.
 - Released workers and finished subagents fade out after a set time so
-  the graph stays readable.
+  the farm stays readable.
 
 ## Architecture
 
@@ -91,23 +87,25 @@ src/
                    sends snapshots over a channel; UI never blocks on I/O
   whip.rs          stall rules plus nudge/notify actions
   ui/
-    graph.rs       force-directed view, cluster per run, state colors, click to select
+    fleet_view.rs  selection, filters, badges, tooltip data and focus requests
+    ant_farm/      rooms, pixel dwarves, camera, input and traffic effects
+    dwarf/         code-drawn parts, poses and pixel rendering
     terminal.rs    screen panel, input box, Send / Interrupt / Open in Orca
     sidebar.rs     run list, filters (repo, state), stall list
 ```
 
-Crates: `eframe`/`egui`, `egui_graphs` (or a custom painter), `serde`/`serde_json`,
+Crates: `eframe`/`egui`, `serde`/`serde_json`,
 `notify`, `crossbeam-channel`, `notify-rust` or `mac-notification-sys`.
 
 ## Milestones
 
 **M0 — Skeleton.** eframe window; `orca` client with typed `terminal list`,
-`run-list` and `worker-list`; a plain table of terminals refreshing every 2 s.
-*Done when:* the table matches `orca terminal list`.
+`run-list` and `worker-list`; a fleet snapshot refreshing every 2 s.
+*Done when:* the snapshot matches `orca terminal list`.
 
-**M1 — Graph.** Build the snapshot, render runs as clusters with the coordinator
-in the center, color nodes by state, show loose terminals separately, fade
-released workers. *Done when:* the commerce-platform wave run shows its
+**M1 — Farm.** Build the snapshot, render runs in rooms with their coordinators,
+show agent state through dwarf poses and locations, group loose terminals by repo,
+and fade released workers. *Done when:* the commerce-platform wave run shows its
 coordinator and workers correctly.
 
 **M2 — Attach.** Select a node to open the side panel with a 500 ms screen
@@ -125,7 +123,7 @@ then live. *Done when:* a deliberately paused worker, and separately a paused
 coordinator, each get one nudge per cooldown, escalate to a notification when
 ignored, and are never nudged while they're waiting on you.
 
-**M5 — Polish.** Persist layout and filters, search, global hotkey,
+**M5 — Polish.** Persist room and pane layouts and filters, search, global hotkey,
 keyboard navigation (j/k across nodes, `i` to type), and cost/usage if Orca
 exposes it.
 

@@ -5,15 +5,10 @@ Everything here is compiled into the binary (`include_bytes!`); nothing is fetch
 | File | Source | License |
 | --- | --- | --- |
 | `fonts/Phosphor-Bold.ttf` | [Phosphor Icons](https://phosphoricons.com) 2.1, `@phosphor-icons/web@2.1.2`, bold weight, unmodified | MIT |
-| `art/queen.svg` | Ant and Crown from [Microsoft Fluent Emoji](https://github.com/microsoft/fluentui-emoji) (Flat), composed on a honey hexagon drawn for Myrstack | MIT (Fluent parts); hexagon: Myrstack |
-| `art/ant_cell.svg` | Ant from Fluent Emoji (Flat) on a comb cell drawn for Myrstack | MIT (Fluent parts); cell: Myrstack |
-| `art/anthill.svg` | Ants from Fluent Emoji (Flat) on an anthill drawn for Myrstack | MIT (Fluent parts); mound: Myrstack |
-| `art/farm/ant_grey.png`, `art/farm/ant_red.png` | ["16x16 Ant Enemies"](https://opengameart.org/content/16x16-ant-enemies) by ARoachIFoundOnMyPillow, grey and red sprite sheets, unmodified | CC0 |
 | `art/farm/emote_*.png` | [Emotes Pack](https://opengameart.org/content/emotes-pack) by Kenney (kenney.nl), pixel style 1, unmodified | CC0 |
-| `art/farm/crown.png`, `art/farm/coin.png`, `art/farm/coin_pile.png` | [Gold treasure icons 16x16](https://opengameart.org/node/60941) by Bonsaiheldin (bonsaiheld.org), icons 9, 2 and 3, unmodified | CC0 |
+| `art/farm/coin_pile.png` | [Gold treasure icons 16x16](https://opengameart.org/node/60941) by Bonsaiheldin (bonsaiheld.org), icon 3, unmodified | CC0 |
 
-Both licenses are permissive and allow commercial use and modification; they ask that the
-copyright notice and license text travel with copies, which this file does. The ant farm's
+The Phosphor font uses the MIT license; its notice and license text are included below. The ant farm's
 pixel art (`art/farm`) is CC0 (public domain): no notice is required, the credits above are
 a courtesy. Its soil, grass and tunnel tiles are generated in `src/ui/ant_farm/sprites.rs`.
 
@@ -23,7 +18,7 @@ To add an icon, pick it at phosphoricons.com and add its codepoint (from the pac
 ## Palettes (`palettes/`)
 
 Colour palettes from [Lospec](https://lospec.com/palette-list), unmodified JSON, used by the
-dwarf lab's pixel experiment (`examples/dwarf_lab.rs`). A palette is a list of colours, not
+dwarf farm and the dwarf lab (`examples/dwarf_lab.rs`). A palette is a list of colours, not
 artwork; the authors are credited here as a courtesy.
 
 | File | Palette |
@@ -69,30 +64,4 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
-
-## Fluent Emoji
-
-```
-MIT License
-
-Copyright (c) Microsoft Corporation.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE
 ```

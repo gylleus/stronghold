@@ -127,12 +127,7 @@ fn each_section_renders_headless() {
         ),
         (
             Section::Art,
-            &[
-                art::DWARVES_LABEL,
-                art::PIXELS_LABEL,
-                art::PALETTE_LABEL,
-                "Own colours",
-            ],
+            &[art::PIXELS_LABEL, art::PALETTE_LABEL, "Own colours"],
         ),
         (
             Section::General,

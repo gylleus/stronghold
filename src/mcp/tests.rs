@@ -7,7 +7,6 @@ use serde_json::{Value, json};
 use super::backend::HeadlessControl;
 use super::server::{INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR};
 use super::*;
-use crate::app::View;
 use crate::control::server::{Backend, ScreenRead, ScreenReader};
 use crate::control::view::{StatusView, ViewInputs};
 use crate::control::{
@@ -85,7 +84,7 @@ struct Refuse;
 impl CommandHandler for Refuse {
     fn execute(&self, command: ControlCommand) -> Result<Value, ControlError> {
         match command {
-            ControlCommand::SetView(_) => Ok(json!({"view": "table"})),
+            ControlCommand::OpenWhipSettings => Ok(json!({"open": true})),
             _ => Err(ControlError::not_found("no agent \"missing\"")),
         }
     }
@@ -143,7 +142,7 @@ fn status_view() -> StatusView {
         whip_log: Vec::new(),
         quotas: &Quotas::default(),
         alerts: &[],
-        view: View::Graph,
+
         selected: None,
         selection: Vec::new(),
         filter: &FleetFilter::default(),
@@ -237,7 +236,7 @@ fn old_protocol_versions_get_no_structured_content() {
         "initialize",
         json!({"protocolVersion": "2025-03-26"}),
     );
-    let r = call(&mut server, "fit_graph", json!({}));
+    let r = call(&mut server, "open_whip_settings", json!({}));
     assert!(r.get("structuredContent").is_none());
 
     let mut server = McpServer::new(FakeControl::default());
@@ -246,8 +245,8 @@ fn old_protocol_versions_get_no_structured_content() {
         "initialize",
         json!({"protocolVersion": "2025-11-25"}),
     );
-    let r = call(&mut server, "fit_graph", json!({}));
-    assert_eq!(r["structuredContent"], json!({"ok": "fit"}));
+    let r = call(&mut server, "open_whip_settings", json!({}));
+    assert_eq!(r["structuredContent"], json!({"ok": "open_whip_settings"}));
 }
 
 #[test]
@@ -347,7 +346,7 @@ fn serve_answers_each_request_line_over_pipes() {
         "",
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
         "garbage",
-        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"set_view","arguments":{"view":"table"}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"open_whip_settings","arguments":{}}}"#,
     ]
     .join("\n");
     let mut out = Vec::new();
@@ -367,7 +366,7 @@ fn serve_answers_each_request_line_over_pipes() {
     assert_eq!(replies[3]["id"], 3);
     assert_eq!(
         server.control().calls,
-        vec![("view".to_string(), json!({"view": "table"}))]
+        vec![("open_whip_settings".to_string(), Value::Null)]
     );
 }
 
@@ -443,8 +442,6 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "spawn_session",
         "focus_agent",
         "set_filter",
-        "set_view",
-        "fit_graph",
         "open_whip_settings",
         "alerts",
         "quotas",
@@ -659,12 +656,6 @@ fn each_tool_maps_to_its_control_request() {
             )],
         ),
         (
-            "set_view",
-            json!({"view": "graph"}),
-            vec![("view", json!({"view": "graph"}))],
-        ),
-        ("fit_graph", json!({}), vec![("fit", Value::Null)]),
-        (
             "open_whip_settings",
             Value::Null,
             vec![("open_whip_settings", Value::Null)],
@@ -794,15 +785,9 @@ fn invalid_arguments_are_tool_errors_and_call_nothing() {
 
 #[test]
 fn app_not_running_is_a_clear_tool_error() {
-    for tool in [
-        "get_agent",
-        "send_to_agent",
-        "close_agents",
-        "set_view",
-        "quotas",
-    ] {
+    for tool in ["get_agent", "send_to_agent", "close_agents", "quotas"] {
         let control = FakeControl {
-            replies: ["agent", "send", "close", "view", "quotas"]
+            replies: ["agent", "send", "close", "quotas"]
                 .into_iter()
                 .map(|m| (m.to_string(), Err(CallError::NotRunning)))
                 .collect(),
@@ -812,7 +797,7 @@ fn app_not_running_is_a_clear_tool_error() {
         let r = call(
             &mut server,
             tool,
-            json!({"id": "a", "text": "x", "ids": ["a"], "view": "graph"}),
+            json!({"id": "a", "text": "x", "ids": ["a"]}),
         );
         assert!(is_error(&r));
         assert_eq!(
@@ -1003,8 +988,8 @@ fn socket_control_talks_to_the_control_server() {
     let r = call(&mut mcp, "fleet_status", json!({}));
     assert!(!is_error(&r), "{}", text(&r));
     assert!(text(&r).starts_with("Fleet: "));
-    let r = call(&mut mcp, "set_view", json!({"view": "table"}));
-    assert_eq!(text(&r), "Showing the table view.");
+    let r = call(&mut mcp, "open_whip_settings", json!({}));
+    assert_eq!(text(&r), "Opened the Whip settings window.");
     let r = call(&mut mcp, "focus_agent", json!({"id": "missing"}));
     assert!(text(&r).starts_with("Not found"), "{}", text(&r));
     drop(server);
@@ -2485,7 +2470,7 @@ fn tool_calls_on_agents_emit_one_beam_each() {
     let mut server = McpServer::new(control);
     call(&mut server, "get_agent", json!({"id": "a"}));
     call(&mut server, "close_agents", json!({"ids": ["b"]}));
-    call(&mut server, "fit_graph", json!({}));
+    call(&mut server, "open_whip_settings", json!({}));
     // A failed call draws nothing.
     call(&mut server, "press_key", json!({"id": "a", "key": "enter"}));
     let emitted = &server.control().emitted;

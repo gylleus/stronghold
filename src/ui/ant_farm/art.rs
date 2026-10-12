@@ -1,5 +1,4 @@
-//! What the farm's figures look like: the ant sprites, or code-drawn dwarves
-//! ([`crate::ui::dwarf`]) drawn smooth or as pixels and optionally in a fixed palette. The
+//! The farm's code-drawn pixel dwarves, optionally in a fixed palette. The
 //! `art` section of `settings.json`, edited in the Settings window's Art section.
 //!
 //! Give every new field a serde default (the struct is `#[serde(default)]`) so older settings
@@ -18,28 +17,25 @@ use crate::ui::dwarf::{self, Action, Look};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ArtSettings {
-    /// Code-drawn dwarves in place of the ant sprites.
-    pub dwarves: bool,
     pub pixels: Pixels,
     /// A bundled palette's file name ([`pixel::BUNDLED`]); empty for the drawing's own colours.
     pub palette: String,
 }
 
-/// How dwarves are drawn: smooth shapes, or rasterized to pixels.
+/// The resolution dwarves are rasterized at.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Pixels {
-    #[default]
-    Off,
-    /// One pixel per farm texel, matching the rest of the farm.
-    Farm,
     /// A dwarf this many pixels tall, whatever the zoom.
     Height(u32),
+    /// One pixel per farm texel, matching the rest of the farm.
+    #[default]
+    #[serde(other)]
+    Farm,
 }
 
 impl Pixels {
-    pub const CHOICES: [Pixels; 7] = [
-        Pixels::Off,
+    pub const CHOICES: [Pixels; 6] = [
         Pixels::Farm,
         Pixels::Height(16),
         Pixels::Height(24),
@@ -50,7 +46,6 @@ impl Pixels {
 
     pub fn label(self) -> String {
         match self {
-            Pixels::Off => "Smooth".into(),
             Pixels::Farm => "Farm pixels".into(),
             Pixels::Height(h) => format!("{h} px"),
         }
@@ -154,26 +149,6 @@ impl DwarfArt {
             pose
         };
         let palette = art.palette.clone();
-        if art.pixels == Pixels::Off {
-            let mut drawing = dwarf::draw(
-                foot,
-                height,
-                &figure.look,
-                &pose(now_s),
-                figure.facing_right,
-                &Finish::INK,
-            );
-            if let Some(mapper) = self.mapper(&palette) {
-                pixel::recolor(&mut drawing.shapes, mapper);
-            }
-            let mut painter = painter.clone();
-            painter.multiply_opacity(figure.alpha);
-            painter.extend(drawing.shapes);
-            if let Some((at, size)) = drawing.question {
-                dwarf::question(&painter, at, size);
-            }
-            return;
-        }
         let h = match art.pixels {
             Pixels::Height(h) => h.clamp(8, 256) as f32,
             _ => (height / farm_px).round().max(8.0),
@@ -260,11 +235,24 @@ mod tests {
         assert_eq!(
             art,
             ArtSettings {
-                dwarves: true,
-                pixels: Pixels::Off,
+                pixels: Pixels::Farm,
                 palette: String::new(),
             }
         );
+    }
+
+    #[test]
+    fn removed_settings_are_ignored_and_unknown_pixels_use_farm() {
+        let settings: crate::whip::settings::Settings = serde_json::from_str(
+            r#"{"art":{"dwarves":false,"pixels":"off","palette":"apollo","paper":true},"unused":42}"#,
+        ).unwrap();
+        assert_eq!(settings.art.pixels, Pixels::Farm);
+        assert_eq!(settings.art.palette, "apollo");
+        let saved = serde_json::to_value(&settings.art).unwrap();
+        assert!(saved.get("dwarves").is_none());
+        assert!(saved.get("paper").is_none());
+        let future: ArtSettings = serde_json::from_str(r#"{"pixels":"unknown"}"#).unwrap();
+        assert_eq!(future.pixels, Pixels::Farm);
     }
 
     #[test]

@@ -3,7 +3,7 @@
 
 use eframe::egui;
 
-use super::{MyrstackApp, View};
+use super::MyrstackApp;
 use crate::ui::commands::{self, ActionContext, ActionId, Dispatch};
 use crate::ui::selection::{close_targets, whip_targets};
 use crate::ui::sidebar::FleetFilter;
@@ -12,7 +12,7 @@ impl MyrstackApp {
     /// What the palette's actions need to know about the app now.
     pub(super) fn palette_context(&self) -> ActionContext {
         let current = self.selected.as_ref();
-        let selection = self.graph.selection();
+        let selection = self.fleet.selection();
         let selected_terminal = current
             .and_then(|id| self.snapshot.as_ref()?.node(id))
             .and_then(crate::ui::terminal::watch_handle)
@@ -22,7 +22,6 @@ impl MyrstackApp {
             whip_targets: whip_targets(current, &selection).len(),
             close_targets: close_targets(current, &selection).len(),
             selected_terminal,
-            view: self.view,
             dry_run: self.whip_window.whip().dry_run,
             filters_active: self.filter != FleetFilter::default(),
             show_loose: self.filter.show_loose,
@@ -60,13 +59,8 @@ impl MyrstackApp {
             Dispatch::WhipSettings => self.whip_window.open_window(),
             Dispatch::OpenSettings => self.open_settings(),
             Dispatch::ToggleDryRun => self.toggle_whip_dry_run(),
-            Dispatch::ResetLayout => {
-                self.view = View::Graph;
-                self.graph.reset_layout();
-            }
             Dispatch::ResetPanes => self.reset_panes(),
             Dispatch::ToggleNotifications => self.toggle_notifications(),
-            Dispatch::SetView(view) => self.view = view,
             Dispatch::ClearFilters => self.clear_filters(),
             Dispatch::ShowOnly(state) => {
                 self.filter.states = [state].into();
@@ -90,7 +84,7 @@ impl MyrstackApp {
     /// Hides what the filter excludes, as a sidebar filter change does.
     fn apply_filter(&mut self) {
         if let Some(snapshot) = &self.snapshot {
-            self.graph.set_hidden(&self.filter.hidden(snapshot));
+            self.fleet.set_hidden(&self.filter.hidden(snapshot));
         }
     }
 

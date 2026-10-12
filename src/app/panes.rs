@@ -4,7 +4,7 @@ use eframe::egui;
 use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::{DockArea, TabViewer};
 
-use super::{MyrstackApp, View};
+use super::MyrstackApp;
 use crate::ui;
 use crate::ui::dock::Pane;
 
@@ -24,9 +24,7 @@ impl TabViewer for Panes<'_> {
     fn title(&mut self, tab: &mut Pane) -> egui::WidgetText {
         match tab {
             Pane::Sidebar => "Fleet".into(),
-            Pane::Graph if self.app.view == View::Table => "Table".into(),
-            Pane::Graph if self.app.view == View::AntFarm => "Ant farm".into(),
-            Pane::Graph => "Graph".into(),
+            Pane::Farm => "Dwarf farm".into(),
             Pane::Details => "Details".into(),
             Pane::Conversation => self.app.conversation_title().into(),
             Pane::Notifications => self.app.notifications_title().into(),
@@ -38,7 +36,7 @@ impl TabViewer for Panes<'_> {
         let now_ms = self.now_ms;
         match tab {
             Pane::Sidebar => self.app.sidebar_pane(ui, now_ms),
-            Pane::Graph => self.app.graph_pane(ui, now_ms),
+            Pane::Farm => self.app.farm_pane(ui, now_ms),
             Pane::Details => self.app.details_pane(ui, now_ms),
             Pane::Conversation => {
                 self.app.conversation_left = Some(ui.max_rect().left());
@@ -66,7 +64,7 @@ impl TabViewer for Panes<'_> {
         false
     }
 
-    /// Each pane scrolls its own content; the graph, chat and terminal fill theirs.
+    /// Each pane scrolls its own content; the fleet, chat and terminal fill theirs.
     fn scroll_bars(&self, _tab: &Pane) -> [bool; 2] {
         [false, false]
     }
@@ -115,7 +113,7 @@ impl MyrstackApp {
 
     /// The conversation tab's title: whom it talks to.
     fn conversation_title(&self) -> String {
-        let count = self.graph.selection().len();
+        let count = self.fleet.selection().len();
         if count > 1 {
             format!("{count} selected")
         } else if self.shows_chat() {
@@ -144,7 +142,7 @@ impl MyrstackApp {
     pub(super) fn hide_conversation(&mut self) {
         self.chat_hidden = true;
         self.selected = None;
-        self.graph.set_selected(None);
+        self.fleet.set_selected(None);
     }
 
     /// Filters, runs and the whip log.
@@ -165,19 +163,19 @@ impl MyrstackApp {
             })
             .inner;
         if response.filter_changed {
-            self.graph.set_hidden(&self.filter.hidden(snapshot));
+            self.fleet.set_hidden(&self.filter.hidden(snapshot));
         }
         if let Some(run_id) = &response.focus_run {
-            self.graph.focus_run(run_id);
+            self.fleet.focus_run(run_id);
         }
         if let Some(repo) = &response.focus_repo {
-            self.graph.focus_repo(repo);
+            self.fleet.focus_repo(repo);
         }
         if let Some(id) = &response.focus_node {
-            self.graph.center_on(id);
+            self.fleet.center_on(id);
         }
         if let Some(id) = response.select {
-            self.graph.set_selected(Some(&id));
+            self.fleet.set_selected(Some(&id));
             self.selected = Some(id);
         }
         if response.close_shown {
@@ -191,18 +189,10 @@ impl MyrstackApp {
         }
     }
 
-    /// The graph with its legend and hidden-selection notice, or the table.
-    fn graph_pane(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+    /// The farm with its hidden-selection notice.
+    fn farm_pane(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         self.stale_banner(ui, now_ms);
         self.hidden_selection_notice(ui);
-        if self.view == View::Graph {
-            egui::Panel::bottom("legend")
-                .frame(
-                    egui::Frame::side_top_panel(ui.style())
-                        .inner_margin(egui::Margin::symmetric(10, 6)),
-                )
-                .show(ui, ui::graph::legend);
-        }
         let receipt = ui::envoy_receipt::ReceiptCue::at(
             self.envoy_core.shake_started_ms,
             now_ms,
@@ -212,7 +202,7 @@ impl MyrstackApp {
             None => {
                 ui.vertical_centered(|ui| {
                     ui.add_space(ui.available_height() * 0.3);
-                    ui.add(egui::Image::new(ui::art::ant_cell()).max_width(96.0));
+                    ui.add(ui::art::portrait(ui.ctx(), ui::art::Portrait::Still, 96.0));
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.spinner();
@@ -220,81 +210,58 @@ impl MyrstackApp {
                     });
                 });
             }
-            Some(data) => match self.view {
-                View::Graph => {
-                    self.graph.set_envoy_receipt(receipt);
-                    let response = self.graph.show(ui);
-                    // A node selected while filtered out is not in the graph; keep it.
-                    let hidden_selected = self
-                        .selected
-                        .as_ref()
-                        .is_some_and(|id| self.graph.hidden().contains(id));
-                    if response.selected.is_some() || !hidden_selected {
-                        self.selected = response.selected;
-                    }
-                    if !response.close_requested.is_empty() {
-                        self.close
-                            .request(ui::close::CloseRequest::Nodes(response.close_requested));
-                    }
-                    if !response.whip_requested.is_empty() {
-                        self.request_whip(response.whip_requested);
-                    }
-                    self.park_from_menu(response.park_requested, response.wake_requested);
+            Some(_) => {
+                self.ant_farm.set_envoy_receipt(receipt);
+                let Some(snapshot) = &self.snapshot else {
+                    return;
+                };
+                self.ant_farm.set_art(self.whip_window.art());
+                self.ant_farm.set_queen_busy(self.queen_thinking());
+                self.ant_farm.set_queen_focused(self.shows_chat());
+                self.ant_farm.set_envoy_health(self.envoy_status().health());
+                self.ant_farm
+                    .set_envoy_pending(self.envoy_core.pending_count());
+                let farm = egui::Rect::from_min_size(ui.cursor().min, ui.available_size());
+                let response = self.ant_farm.show(ui, snapshot, &mut self.fleet);
+                self.worktrees.broom_in_farm(ui, farm);
+                self.broom_in_farm = true;
+                if response.open_envoy {
+                    self.envoy_core.open_request = true;
                 }
-                View::Table => ui::table::terminal_table(ui, data, now_ms),
-                View::AntFarm => {
-                    self.ant_farm.set_envoy_receipt(receipt);
-                    let Some(snapshot) = &self.snapshot else {
-                        return;
+                if let Some(id) = &response.clicked {
+                    let additive = ui.input(|i| ui::fleet_view::is_additive(i.modifiers));
+                    self.fleet.click_node(id, additive);
+                    self.selected = self.fleet.selected();
+                } else if response.clicked_empty
+                    && !ui.input(|i| ui::fleet_view::is_additive(i.modifiers))
+                {
+                    self.fleet.set_selected(None);
+                    self.selected = None;
+                }
+                if let Some((hits, additive)) = response.boxed {
+                    let mut selection = if additive {
+                        self.fleet.selection()
+                    } else {
+                        Default::default()
                     };
-                    self.ant_farm.set_art(self.whip_window.art());
-                    self.ant_farm.set_queen_busy(self.queen_thinking());
-                    self.ant_farm.set_queen_focused(self.shows_chat());
-                    self.ant_farm.set_envoy_health(self.envoy_status().health());
-                    self.ant_farm
-                        .set_envoy_pending(self.envoy_core.pending_count());
-                    let farm = egui::Rect::from_min_size(ui.cursor().min, ui.available_size());
-                    let response = self.ant_farm.show(ui, snapshot, &self.graph);
-                    self.worktrees.broom_in_farm(ui, farm);
-                    self.broom_in_farm = true;
-                    if response.open_envoy {
-                        self.envoy_core.open_request = true;
-                    }
-                    if let Some(id) = &response.clicked {
-                        let additive = ui.input(|i| ui::graph::is_additive(i.modifiers));
-                        self.graph.click_node(id, additive);
-                        self.selected = self.graph.selected();
-                    } else if response.clicked_empty
-                        && !ui.input(|i| ui::graph::is_additive(i.modifiers))
-                    {
-                        self.graph.set_selected(None);
-                        self.selected = None;
-                    }
-                    if let Some((hits, additive)) = response.boxed {
-                        let mut selection = if additive {
-                            self.graph.selection()
-                        } else {
-                            Default::default()
-                        };
-                        selection.extend(hits.iter().cloned());
-                        let primary = self
-                            .graph
-                            .selected()
-                            .filter(|p| selection.contains(p))
-                            .or_else(|| hits.first().cloned());
-                        self.graph.set_selection(&selection, primary.as_ref());
-                        self.selected = self.graph.selected();
-                    }
-                    if !response.close_requested.is_empty() {
-                        self.close
-                            .request(ui::close::CloseRequest::Nodes(response.close_requested));
-                    }
-                    if !response.whip_requested.is_empty() {
-                        self.request_whip(response.whip_requested);
-                    }
-                    self.park_from_menu(response.park_requested, response.wake_requested);
+                    selection.extend(hits.iter().cloned());
+                    let primary = self
+                        .fleet
+                        .selected()
+                        .filter(|p| selection.contains(p))
+                        .or_else(|| hits.first().cloned());
+                    self.fleet.set_selection(&selection, primary.as_ref());
+                    self.selected = self.fleet.selected();
                 }
-            },
+                if !response.close_requested.is_empty() {
+                    self.close
+                        .request(ui::close::CloseRequest::Nodes(response.close_requested));
+                }
+                if !response.whip_requested.is_empty() {
+                    self.request_whip(response.whip_requested);
+                }
+                self.park_from_menu(response.park_requested, response.wake_requested);
+            }
         });
         if self
             .freshness(now_ms)

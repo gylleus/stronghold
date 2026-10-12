@@ -117,7 +117,7 @@ pub fn with_icon(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::graph::ALL_STATES;
+    use crate::ui::fleet_view::ALL_STATES;
 
     const ALL_KINDS: [NodeKind; 6] = [
         NodeKind::Queen,

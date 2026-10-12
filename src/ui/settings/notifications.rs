@@ -73,7 +73,7 @@ pub(super) fn section(
         &mut d.pop_sounds,
         "Soft sound when an agent is done or needs input",
     )
-    .on_hover_text("Plays with its pop in the graph and the ant farm; not in quiet mode");
+    .on_hover_text("Plays with its pop in the farm; not in quiet mode");
     ui.add_space(6.0);
 
     ui.horizontal(|ui| {

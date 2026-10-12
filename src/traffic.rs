@@ -1,5 +1,5 @@
 //! Who talks to whom: one [`AgentMessage`] per message between agents, the Queen, Karl and the
-//! outside world, which the graph and the ant farm draw as an envelope flying from sender to
+//! outside world, which the farm draw as an envelope flying from sender to
 //! receiver.
 //!
 //! Sources, all streams the app already has (no tool exists just for the animation):
@@ -129,9 +129,9 @@ impl AgentMessage {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Endpoint {
     Node(NodeId),
-    /// Karl himself; the graph draws him as the Queen.
+    /// Karl himself; the farm draws him as the Queen.
     Karl,
-    /// The world outside the fleet (Slack); the graph draws it as the Queen too.
+    /// The world outside the fleet (Slack); the farm draws it as the Queen too.
     Outside,
 }
 
