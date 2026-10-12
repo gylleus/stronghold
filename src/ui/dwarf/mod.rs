@@ -43,7 +43,6 @@ impl Role {
     pub fn scale(self) -> f32 {
         match self {
             Role::Apprentice => 0.8,
-            Role::King => 1.08,
             _ => 1.0,
         }
     }

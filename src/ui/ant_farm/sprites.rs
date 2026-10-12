@@ -11,7 +11,7 @@ use eframe::egui::{
     self, Color32, ColorImage, Painter, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2,
 };
 use std::cell::RefCell;
-const TILE: usize = 128;
+const TILE: usize = 256;
 
 /// Agent guild colours and crests; identity stays visible in every state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,7 +213,7 @@ impl Sprites {
             painter.rect_filled(
                 Rect::from_min_size(pos2(x, rect.top() - px), vec2(4.0 * px, depth)),
                 0.0,
-                rgb(0x756958),
+                rgb(0x6b6a61),
             );
             x += 9.0 * px;
         }
@@ -276,10 +276,39 @@ impl Sprites {
                 1.0,
             );
             let foot = pos2(x + 24.0 * px, rect.bottom() - 3.0 * px);
+            self.prop(
+                painter,
+                Prop::Soot,
+                Rect::from_min_size(
+                    pos2(foot.x - 6.0 * px, rect.top() + px),
+                    vec2(12.0 * px, rect.height() - 2.0 * px),
+                ),
+                1.0,
+            );
             self.glow(painter, foot - vec2(0.0, 11.0 * px), 12.0 * px, GOLD, 0.32);
             self.standing(painter, Prop::Torch, foot, px, 1.0);
             x += 96.0 * px;
         }
+    }
+    /// Narrow working sidings under each row, joining the shaft hoist.
+    pub fn siding(&self, painter: &Painter, chamber: Rect, floor: f32, px: f32) {
+        let left = chamber.left() + 5.0 * px;
+        let right = chamber.right() - 5.0 * px;
+        let y = (floor / px).round() * px;
+        let mut x = left;
+        while x < right {
+            painter.rect_filled(
+                Rect::from_min_size(pos2(x, y - px), vec2(2.0 * px, 3.0 * px)),
+                0.0,
+                WOOD_DARK,
+            );
+            x += 9.0 * px;
+        }
+        painter.rect_filled(
+            Rect::from_min_max(pos2(left, y), pos2(right, y + px)),
+            0.0,
+            IRON,
+        );
     }
     pub fn throne_hall(&self, painter: &Painter, rect: Rect, px: f32) {
         let floor = rect.bottom() - 2.0 * px;
@@ -307,6 +336,60 @@ impl Sprites {
             );
             self.glow(painter, foot - vec2(0.0, 15.0 * px), 12.0 * px, GOLD, 0.4);
             self.standing(painter, Prop::Brazier, foot, px * 0.65, 1.0);
+        }
+    }
+    /// The hoist cage sits behind the rider. Cable length follows the actual journey.
+    pub fn cart_hoist(&self, painter: &Painter, cell: Rect, ceiling: f32, px: f32, alpha: f32) {
+        let foot = cell.center_bottom();
+        let top = foot.y - 22.0 * px;
+        let cable_x = (foot.x / self.px).round() * self.px;
+        if ceiling < top {
+            painter.rect_filled(
+                Rect::from_min_max(pos2(cable_x, ceiling), pos2(cable_x + self.px, top)),
+                0.0,
+                IRON.gamma_multiply(alpha),
+            );
+            let mut y = ceiling;
+            while y < top {
+                painter.rect_filled(
+                    Rect::from_min_size(pos2(cable_x - self.px, y), vec2(3.0 * self.px, self.px)),
+                    0.0,
+                    STONE_LIGHT.gamma_multiply(alpha),
+                );
+                y += 4.0 * self.px;
+            }
+        }
+        self.standing(painter, Prop::CartYoke, foot, px * 0.77, alpha);
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn cart(
+        &self,
+        painter: &Painter,
+        cell: Rect,
+        px: f32,
+        cargo: bool,
+        hoisted: bool,
+        now_s: f64,
+        alpha: f32,
+    ) {
+        let size = vec2(20.0, 11.0) * px;
+        let bounds = Rect::from_min_size(cell.center_bottom() - vec2(size.x / 2.0, size.y), size);
+        // Hoisted wheels stop; ground travel turns the spokes. No parked cart idles.
+        let frame = if hoisted {
+            0
+        } else {
+            Prop::MineCart.frame(now_s)
+        };
+        self.world
+            .borrow_mut()
+            .paint(painter, Prop::MineCart, bounds, self.px, frame, alpha);
+        if cargo {
+            self.prop(
+                painter,
+                Prop::Treasure(0),
+                Rect::from_min_size(bounds.min + vec2(10.0, -2.0) * px, vec2(7.0, 5.0) * px),
+                alpha,
+            );
         }
     }
     pub fn bed(&self, painter: &Painter, rect: Rect, _px: f32) {
@@ -508,23 +591,31 @@ pub fn rock_tile(worked: bool) -> ColorImage {
     let base = if worked {
         super::excavation::WALL
     } else {
-        rgb(0x756958)
+        rgb(0x6b6a61)
     };
-    let dark = if worked { rgb(0x484138) } else { rgb(0x695e50) };
-    let light = if worked { rgb(0x595043) } else { rgb(0x81735f) };
+    let dark = if worked { rgb(0x44453e) } else { rgb(0x5f6058) };
+    let light = if worked { rgb(0x585a50) } else { rgb(0x77766a) };
     let mut image = ColorImage::filled([TILE, TILE], base);
     for y in 0..TILE {
         for x in 0..TILE {
-            // Wrapped coordinates keep bedding planes continuous over repeat boundaries.
-            let strata = (y + x / 4 + (x / 9 % 3)) % 32;
-            let fracture = (x + y / 2 + (y / 13 % 3) * 2) % 43;
-            image[(x, y)] = if strata < 2 || (fracture == 0 && strata < 13) {
+            // Folded bands wrap across the tile; interrupted faces keep the mountain
+            // from looking like a repeated diagonal stripe pattern.
+            let phase = std::f32::consts::TAU * x as f32 / TILE as f32;
+            let folded = y as f32 + (phase * 2.0).sin() * 7.0 + (phase * 5.0).sin() * 2.0;
+            let strata = folded.rem_euclid(64.0);
+            let segment = noise(x / 17, (folded.rem_euclid(TILE as f32) / 64.0) as usize, 17);
+            image[(x, y)] = if strata < 1.4 && !segment.is_multiple_of(3) {
                 dark
-            } else if strata < 7 && fracture > 24 {
+            } else if strata < 5.0 && segment.is_multiple_of(5) {
                 light
             } else {
                 base
             };
+            // Short fissures and granite flecks: sparse enough to leave quiet areas.
+            let fracture = noise(x / 23, y / 19, 29);
+            if fracture.is_multiple_of(7) && x % 23 == (y % 19) / 3 + 6 && y % 19 < 11 {
+                image[(x, y)] = dark;
+            }
             if worked && (x + y * 3) % 31 == 0 && y % 9 < 2 {
                 image[(x, y)] = light;
             }
@@ -545,6 +636,49 @@ pub fn rock_tile(worked: bool) -> ColorImage {
                 if x == 49 && y == 20 {
                     image[(x, y)] = rgb(0x426665);
                 }
+            }
+        }
+    }
+    if !worked {
+        // A branching quartz seam, oxidised edges and a small exposed crystal pocket.
+        // These are geological inclusions in the tile, not animated decoration.
+        for i in 0..25 {
+            let x = 93 + i;
+            let y = 104 - i / 3 + (i / 7) % 2;
+            image[(x, y + 1)] = dark;
+            image[(x, y)] = rgb(0x9a9789);
+            if i % 7 < 3 {
+                image[(x, y - 1)] = rgb(0x77796e);
+            }
+            if (9..16).contains(&i) {
+                image[(x, 101 + (i - 9) / 2)] = rgb(0x8d8b7e);
+            }
+        }
+        for y in 0..9 {
+            for x in 0..15 {
+                let dx = x as f32 - 7.0;
+                let dy = y as f32 - 4.0;
+                if dx * dx / 49.0 + dy * dy / 16.0 < 1.0 {
+                    image[(173 + x, 187 + y)] = rgb(0x454941);
+                    if y == 1 || (x + y) % 7 == 0 {
+                        image[(173 + x, 187 + y)] = dark;
+                    }
+                }
+            }
+        }
+        for (x, y, h) in [(177, 190, 3), (181, 189, 4), (184, 191, 2)] {
+            for d in 0..h {
+                image[(x, y + d)] = rgb(0x6e8e8c);
+                image[(x + 1, y + d)] = rgb(0x4c6868);
+            }
+            image[(x, y)] = rgb(0xa5b4a6);
+        }
+        for i in 0..16 {
+            let x = 34 + i;
+            let y = 220 + i / 5;
+            image[(x, y)] = rgb(0x7a6250);
+            if i % 4 < 2 {
+                image[(x, y + 1)] = rgb(0x8b765c);
             }
         }
     }

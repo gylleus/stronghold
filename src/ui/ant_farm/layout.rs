@@ -844,7 +844,10 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             }
             Home::Chamber => continue,
             Home::Comms => (Spot::Comms, comms.expect("Envoy has a room").ant_position()),
-            Home::Queen => (Spot::Queen, queen_chamber.center() + vec2(0.0, 0.2 * a)),
+            Home::Queen => (
+                Spot::Queen,
+                queen_chamber.center_bottom() - vec2(0.0, 0.6 * a),
+            ),
             Home::Landing => {
                 let k = landing_n;
                 landing_n += 1;
@@ -1008,11 +1011,6 @@ fn bed_rect(pos: Pos2, a: f32, px: f32) -> Rect {
 
 fn ant(node: &Node, spot: Spot, pos: Pos2, size: f32, home: Home, pr: bool, now_ms: i64) -> Ant {
     let pose = pose(node.kind, node.state, home);
-    let size = if node.kind == NodeKind::Queen {
-        size * 2.0
-    } else {
-        size
-    };
     Ant {
         id: node.id.clone(),
         kind: node.kind,

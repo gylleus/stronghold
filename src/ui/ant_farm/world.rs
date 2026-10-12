@@ -38,11 +38,17 @@ pub enum Prop {
     Peaks,
     Roots,
     Entrance,
+    PitheadWinch,
+    Spoil,
+    Soot,
     Tube,
     Scroll,
     Support,
     Shoring,
     Torch,
+    MineCart,
+    CartYoke,
+    ToolRack,
     Throne,
     Banner,
     Brazier,
@@ -69,11 +75,17 @@ impl Prop {
             Self::Peaks => [192, 52],
             Self::Roots => [24, 12],
             Self::Entrance => [40, 28],
+            Self::PitheadWinch => [24, 18],
+            Self::Spoil => [26, 10],
+            Self::Soot => [14, 20],
             Self::Tube => [24, 26],
             Self::Scroll => [18, 12],
             Self::Support => [36, 22],
             Self::Shoring => [20, 10],
             Self::Torch => [12, 18],
+            Self::MineCart => [26, 14],
+            Self::CartYoke => [26, 29],
+            Self::ToolRack => [23, 21],
             Self::Throne => [26, 32],
             Self::Banner => [14, 24],
             Self::Brazier => [16, 22],
@@ -90,10 +102,11 @@ impl Prop {
         }
     }
 
-    /// Only lit fires, a receipt, and work at the pool change frame. All other props rest.
+    /// Fires, work and moving cart wheels change frame. A cart is drawn only during travel.
     pub fn frame(self, now_s: f64) -> u8 {
         match self {
-            Self::Torch
+            Self::MineCart
+            | Self::Torch
             | Self::Brazier
             | Self::Entrance
             | Self::ScryingBasin
@@ -503,6 +516,81 @@ fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
             timber(c, 16.0, 1.0, 3.0, 8.0);
             timber(c, 1.0, 2.0, 18.0, 2.0);
         }
+        Prop::Soot => {
+            let stain = rgb(0x343630);
+            c.paint(
+                pts(&[
+                    (3.0, 1.0),
+                    (6.0, 3.0),
+                    (9.0, 1.0),
+                    (8.0, 6.0),
+                    (11.0, 8.0),
+                    (9.0, 12.0),
+                    (12.0, 15.0),
+                    (9.0, 19.0),
+                    (4.0, 19.0),
+                    (2.0, 15.0),
+                    (4.0, 11.0),
+                    (2.0, 7.0),
+                    (4.0, 5.0),
+                ]),
+                stain,
+            );
+            c.detail(1.0, 4.0, 1.0, 3.0, stain);
+            c.detail(11.0, 5.0, 1.0, 2.0, stain);
+        }
+        Prop::Spoil => {
+            c.cut(
+                pts(&[
+                    (1.0, 8.0),
+                    (4.0, 5.0),
+                    (9.0, 5.0),
+                    (12.0, 1.0),
+                    (17.0, 3.0),
+                    (20.0, 6.0),
+                    (23.0, 6.0),
+                    (25.0, 9.0),
+                ]),
+                STONE_DARK,
+            );
+            for (x, y) in [(6.0, 6.0), (12.0, 4.0), (17.0, 6.0), (21.0, 8.0)] {
+                c.paint(
+                    pts(&[
+                        (x - 3.0, y + 1.0),
+                        (x - 1.0, y - 2.0),
+                        (x + 2.0, y - 1.0),
+                        (x + 3.0, y + 1.0),
+                    ]),
+                    STONE,
+                );
+                c.line((x - 1.0, y - 1.0), (x + 1.0, y - 1.0), 0.5, STONE_LIGHT);
+            }
+        }
+        Prop::PitheadWinch => {
+            // Hand-cranked drum with rope, a ratchet and splayed timber feet.
+            for x in [5.0, 18.0] {
+                c.cut(
+                    pts(&[
+                        (x - 3.0, 16.0),
+                        (x - 1.0, 4.0),
+                        (x + 1.0, 4.0),
+                        (x + 3.0, 16.0),
+                    ]),
+                    WOOD_DARK,
+                );
+                c.line((x - 1.0, 6.0), (x - 2.0, 15.0), 0.5, WOOD);
+            }
+            c.rect(4.0, 5.0, 15.0, 7.0, WOOD);
+            for x in [7.0, 9.0, 11.0, 13.0, 15.0] {
+                c.line((x, 5.0), (x, 11.0), 0.5, WOOD_LIGHT);
+            }
+            c.line((14.0, 11.0), (22.0, 16.0), 0.6, WOOD_LIGHT);
+            c.rect(3.0, 4.0, 2.0, 9.0, IRON);
+            c.rect(18.0, 4.0, 2.0, 9.0, IRON);
+            c.line((19.0, 8.0), (22.0, 8.0), 0.7, IRON);
+            c.line((22.0, 8.0), (22.0, 3.0), 0.8, IRON);
+            c.line((21.0, 3.0), (23.0, 3.0), 0.8, WOOD);
+        }
         Prop::Entrance => {
             c.cut(
                 pts(&[
@@ -577,6 +665,79 @@ fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
             c.detail(4.0, 6.0, 10.0, 1.0, WOOD_DARK);
             c.oval(9.0, 7.0, 2.0, 2.0, RED);
             c.detail(8.0, 6.0, 1.0, 1.0, rgb(0xf17d60));
+        }
+        Prop::CartYoke => {
+            c.cut(
+                pts(&[
+                    (2.0, 26.0),
+                    (2.0, 6.0),
+                    (8.0, 2.0),
+                    (18.0, 2.0),
+                    (24.0, 6.0),
+                    (24.0, 26.0),
+                    (22.0, 26.0),
+                    (22.0, 7.0),
+                    (17.0, 4.0),
+                    (9.0, 4.0),
+                    (4.0, 7.0),
+                    (4.0, 26.0),
+                ]),
+                IRON,
+            );
+            c.oval(13.0, 2.0, 2.0, 1.5, STONE_LIGHT);
+        }
+        Prop::MineCart => {
+            // Open passenger tub, drawn over the rider's boots and lower body.
+            c.cut(
+                pts(&[(1.0, 2.0), (25.0, 2.0), (22.0, 9.0), (5.0, 9.0)]),
+                IRON,
+            );
+            c.detail(5.0, 6.0, 17.0, 3.0, rgb(0x353b3c));
+            c.line((2.0, 2.0), (24.0, 2.0), 0.65, STONE_LIGHT);
+            for x in [5.0, 21.0] {
+                c.detail(x, 4.0, 1.0, 1.0, STONE_LIGHT);
+            }
+            for x in [7.0, 20.0] {
+                c.oval(x, 10.0, 3.0, 3.0, rgb(0x353b3c));
+                if frame.is_multiple_of(2) {
+                    c.line((x - 1.5, 10.0), (x + 1.5, 10.0), 0.5, STONE);
+                } else {
+                    c.line((x, 8.5), (x, 11.5), 0.5, STONE);
+                }
+            }
+        }
+        Prop::ToolRack => {
+            timber(c, 2.0, 7.0, 19.0, 2.0);
+            // A pick, shovel and loop of rope, hung from pegs on the rock wall.
+            c.cut(capsule(pos2(6.0, 4.0), pos2(8.0, 19.0), 0.7), WOOD);
+            c.cut(
+                pts(&[
+                    (1.0, 5.0),
+                    (4.0, 2.0),
+                    (10.0, 2.0),
+                    (13.0, 6.0),
+                    (9.0, 4.0),
+                    (4.0, 4.0),
+                ]),
+                IRON,
+            );
+            c.cut(capsule(pos2(17.0, 3.0), pos2(16.0, 14.0), 0.7), WOOD);
+            c.cut(
+                pts(&[
+                    (13.0, 13.0),
+                    (19.0, 13.0),
+                    (19.0, 17.0),
+                    (16.0, 20.0),
+                    (13.0, 17.0),
+                ]),
+                IRON,
+            );
+            c.line((14.0, 14.0), (14.0, 17.0), 0.45, STONE_LIGHT);
+            c.cut(ellipse(pos2(5.0, 13.0), 2.5, 3.5, 12), WOOD_DARK);
+            c.paint(
+                ellipse(pos2(5.0, 13.0), 1.0, 2.0, 10),
+                super::excavation::WALL,
+            );
         }
         Prop::Torch => {
             c.rect(4.0, 10.0, 4.0, 6.0, IRON);
@@ -767,6 +928,27 @@ fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
                 ]),
                 STONE_LIGHT,
             );
+            c.paint(
+                pts(&[(22.0, 7.0), (25.0, 12.0), (26.0, 38.0), (21.0, 37.0)]),
+                STONE_DARK,
+            );
+            // Recessed rune panel, chipped border and fine tool marks on the stone.
+            c.line((11.0, 8.0), (10.0, 34.0), 0.5, STONE_DARK);
+            c.line((10.0, 34.0), (19.0, 36.0), 0.5, STONE_DARK);
+            c.line((12.0, 8.0), (19.0, 7.0), 0.5, STONE_LIGHT);
+            for (x, y) in [(8.0, 16.0), (21.0, 18.0), (9.0, 27.0), (21.0, 31.0)] {
+                c.line((x, y), (x + 1.0, y - 2.0), 0.45, STONE_DARK);
+            }
+            c.paint(
+                pts(&[
+                    (5.0, 36.0),
+                    (8.0, 35.0),
+                    (10.0, 38.0),
+                    (7.0, 40.0),
+                    (4.0, 39.0),
+                ]),
+                rgb(0x52604a),
+            );
             c.rect(2.0, 39.0, 26.0, 3.0, STONE_DARK);
             let glow = match prop {
                 Prop::ReceivingStone => {
@@ -779,9 +961,12 @@ fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
                 Prop::CrackedStone => INK,
                 _ => rgb(0x46606a),
             };
-            for (x, y) in [(15.0, 10.0), (14.0, 20.0), (16.0, 29.0)] {
-                rune(c, x, y, glow);
-            }
+            rune(c, 15.0, 10.0, glow);
+            c.line((14.0, 20.0), (14.0, 25.0), 0.6, glow);
+            c.line((12.0, 21.0), (16.0, 24.0), 0.6, glow);
+            c.line((12.0, 24.0), (16.0, 21.0), 0.6, glow);
+            c.line((16.0, 29.0), (13.0, 32.0), 0.6, glow);
+            c.line((13.0, 32.0), (16.0, 34.0), 0.6, glow);
             if prop == Prop::CrackedStone {
                 c.line((22.0, 6.0), (16.0, 17.0), 0.6, INK);
                 c.line((16.0, 17.0), (20.0, 23.0), 0.6, INK);
@@ -925,11 +1110,17 @@ mod tests {
             Prop::Peaks,
             Prop::Roots,
             Prop::Entrance,
+            Prop::PitheadWinch,
+            Prop::Spoil,
+            Prop::Soot,
             Prop::Tube,
             Prop::Scroll,
             Prop::Support,
             Prop::Shoring,
             Prop::Torch,
+            Prop::MineCart,
+            Prop::CartYoke,
+            Prop::ToolRack,
             Prop::Throne,
             Prop::Banner,
             Prop::Brazier,
@@ -986,11 +1177,12 @@ mod tests {
     }
 
     #[test]
-    fn only_fire_receipts_and_scrying_animate() {
+    fn only_fire_work_receipts_and_travelling_cart_wheels_animate() {
         for prop in props() {
             let active = matches!(
                 prop,
-                Prop::Entrance
+                Prop::MineCart
+                    | Prop::Entrance
                     | Prop::Torch
                     | Prop::Brazier
                     | Prop::ReceivingStone
@@ -1012,7 +1204,7 @@ mod tests {
             world.begin_frame(name);
             let mut ink = ColorImage::filled([1, 1], INK);
             let mut wall = ColorImage::filled([1, 1], super::super::excavation::WALL);
-            let mut rock = ColorImage::filled([1, 1], rgb(0x756958));
+            let mut rock = ColorImage::filled([1, 1], rgb(0x6b6a61));
             world.map(&mut ink);
             world.map_stone(&mut wall, true);
             world.map_stone(&mut rock, false);

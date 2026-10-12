@@ -115,6 +115,19 @@ fn tunnel_of(scene: &Scene, name: &str) -> usize {
 }
 
 #[test]
+fn king_has_a_regular_body_and_stands_on_the_throne_hall_floor() {
+    let scene = scene(&snapshot());
+    let king = ant(&scene, "queen");
+    assert_eq!(king.size, ant(&scene, "working").size);
+    assert_eq!(
+        crate::ui::dwarf::Role::King.scale(),
+        crate::ui::dwarf::Role::Miner.scale()
+    );
+    let foot = king.pos.y + king.size / 2.0;
+    assert!((scene.queen_chamber.bottom() - foot - 0.1 * king.size).abs() < 0.01);
+}
+
+#[test]
 fn state_picks_the_place() {
     use Home::*;
     use NodeState::*;
@@ -597,20 +610,54 @@ fn assert_fits(s: &FleetSnapshot) -> Scene {
 }
 
 #[test]
-fn routes_go_by_the_gallery_between_areas() {
-    let (from, to) = (pos2(10.0, 300.0), pos2(200.0, 50.0));
-    assert_eq!(route(from, to, true, 120.0), [from, to]);
-    assert_eq!(
-        route(from, to, false, 120.0),
-        [from, pos2(10.0, 120.0), pos2(200.0, 120.0), to]
+fn cart_routes_use_the_chamber_shaft_and_entrance() {
+    let scene = scene(&snapshot());
+    let worker = ant(&scene, "working");
+    let t = &scene.tunnels[tunnel_of(&scene, "working")];
+    let to = pos2(
+        scene.landing.center().x,
+        scene.surface_y - scene.cell() / 2.0,
     );
-    let path = route(from, to, false, 120.0);
-    assert_eq!(along(&path, 0.0).0, from);
+    let path = route(worker.pos, to, &worker.spot, &Spot::Landing(0), &scene);
+    assert_eq!(along(&path, 0.0).0, worker.pos);
     assert_eq!(along(&path, 1.0).0, to);
-    // The first leg is 180 of 440 points: half way is on the gallery, heading right.
-    let (mid, heading) = along(&path, 0.5);
-    assert!((mid.y - 120.0).abs() < 0.01);
-    assert!(heading.x > 0.0);
+    assert!(path.contains(&pos2(t.shaft.center().x, scene.gallery.center().y)));
+    assert!(path.contains(&pos2(scene.entrance_x(), scene.gallery.center().y)));
+    for leg in path.windows(2) {
+        assert!(
+            leg[0].x == leg[1].x || leg[0].y == leg[1].y,
+            "axis-aligned rails and hoists"
+        );
+        let mid = leg[0].lerp(leg[1], 0.5);
+        if mid.y > scene.gallery.bottom() && mid.y < t.chamber.top() {
+            assert!(
+                t.shaft.contains(mid),
+                "cart must stay in the excavated shaft"
+            );
+        }
+    }
+    let back = route(to, worker.pos, &Spot::Landing(0), &worker.spot, &scene);
+    assert_eq!(back, path.iter().copied().rev().collect::<Vec<_>>());
+}
+
+#[test]
+fn dwarves_ride_only_during_travel_and_arrive_in_their_work_pose() {
+    use crate::ui::dwarf::{Action, pose};
+    let scene = scene(&snapshot());
+    let worker = ant(&scene, "working");
+    assert_eq!(
+        super::dwarf_action(worker, true, false, false),
+        Action::Ride
+    );
+    assert_eq!(super::dwarf_action(worker, true, true, false), Action::Ride);
+    assert_eq!(
+        super::dwarf_action(worker, false, false, false),
+        Action::Mine
+    );
+    let seated = pose(Action::Ride, 0.4);
+    assert!(seated.stowed);
+    assert_eq!(seated.stride, 0.0, "feet stay inside the cart");
+    assert!(!seated.nugget, "cargo goes in the cart");
 }
 
 #[test]
