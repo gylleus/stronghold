@@ -4,6 +4,7 @@
 //! [`layout`] decides where everything goes, [`motion`] walks ants to new places and
 //! [`sprites`] draws them; this module ties them to egui and handles input.
 
+pub mod art;
 mod beams;
 mod comms;
 pub mod death;
@@ -30,8 +31,10 @@ use eframe::egui::{self, Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, 
 
 use crate::model::{FleetSnapshot, NodeId};
 use crate::ui::daylight;
+use crate::ui::dwarf::{self, Action, Look};
 use crate::ui::graph::GraphView;
 use crate::ui::graph::nav::{self, ScrollAction, ScrollSource, route_scroll};
+use art::{ArtSettings, DwarfArt, Figure};
 use death::{Body, Fall};
 use layout::{FarmInput, Pose, Scene, Spot, TunnelKey, layout_in};
 use motion::{Walk, route};
@@ -219,6 +222,9 @@ pub struct AntFarmView {
     advanced_rect: Option<Rect>,
     /// Reduce motion as set for tests; the system's setting otherwise.
     reduce_motion: Option<bool>,
+    /// Ants or dwarves, pixels, palette; see [`art`].
+    art: ArtSettings,
+    dwarf_art: DwarfArt,
 }
 
 /// A room's chamber, shaft and label relative to the farm's rect (see [`motion::to_unit`]).
@@ -370,6 +376,13 @@ impl AntFarmView {
 
     /// Ripples a call of the Queen across the farm, from the next frame it is drawn. Calls
     /// made while the farm is not shown are dropped then.
+    /// How the farm's figures are drawn (the Settings window's Art section).
+    pub fn set_art(&mut self, art: &ArtSettings) {
+        if self.art != *art {
+            self.art = art.clone();
+        }
+    }
+
     /// Whether the Queen is busy (thinking on a chat turn). Otherwise she sits still.
     pub fn set_queen_busy(&mut self, busy: bool) {
         self.queen_busy = busy;
@@ -516,9 +529,15 @@ impl AntFarmView {
             .filter(|_| !tray_hovered)
             .and_then(|p| hit(&scene, &placed, p));
         pops::paint(&painter, sprites, &scene, &placed, &pops, true);
+        self.dwarf_art.begin_frame();
+        let mut figures = Figures {
+            art: &self.art,
+            dwarves: &mut self.dwarf_art,
+        };
         paint_ants(
             &painter,
             sprites,
+            &mut figures,
             &scene,
             &placed,
             now_s,
@@ -528,7 +547,7 @@ impl AntFarmView {
             ui,
         );
         pops::paint(&painter, sprites, &scene, &placed, &pops, false);
-        paint_falls(&painter, sprites, &scene, &self.falls, now_s);
+        paint_falls(&painter, sprites, &mut figures, &scene, &self.falls, now_s);
         mail::paint(&painter, &scene, &placed, self.mail.tick(now_s), now_s);
         beams::paint(&painter, &scene, &placed, self.beams.tick(now_s), now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
@@ -897,6 +916,7 @@ impl AntFarmView {
                 },
                 coat: Coat::new(ant.agent.as_ref(), ant.pose == Pose::Failed),
                 alpha: ant.alpha,
+                seed: dwarf::seed_of(ant.id.as_str()),
             });
             current.insert(&ant.id, at);
             placed.push(at);
@@ -1079,6 +1099,7 @@ fn paint_ground(
 fn paint_ants(
     painter: &egui::Painter,
     sprites: &Sprites,
+    figures: &mut Figures,
     scene: &Scene,
     placed: &[Placed],
     now_s: f64,
@@ -1160,8 +1181,25 @@ fn paint_ants(
             upside_down: matches!(ant.pose, Pose::Failed | Pose::Sleep) && !walking,
             alpha: ant.alpha,
         };
+        let dwarves = figures.art.dwarves;
+        let action = match ant.pose {
+            _ if walking => Action::Walk,
+            Pose::Dig | Pose::Build => Action::Mine,
+            Pose::Queen if effects.queen_busy => Action::Study,
+            _ => Action::Still,
+        };
+        let figure = Figure {
+            key: ant.id.as_str(),
+            look: dwarf_look(ant),
+            action,
+            lying: !walking && matches!(ant.pose, Pose::Sleep | Pose::Failed),
+            upside_down: false,
+            facing_right,
+            alpha: ant.alpha,
+        };
         if ant.pose == Pose::Queen {
-            sprites.ant(painter, cell, look);
+            figures.body(painter, sprites, &figure, look, cell, px, now_s);
+            // The King wears his own crown.
             let crown = Rect::from_center_size(
                 cell.center_top()
                     + vec2(
@@ -1170,7 +1208,9 @@ fn paint_ants(
                     ),
                 Vec2::splat(ant.size * 0.5),
             );
-            sprites.item(painter, crown, Item::Crown, 1.0);
+            if !dwarves {
+                sprites.item(painter, crown, Item::Crown, 1.0);
+            }
             // Ringed while selected or while her chat is the conversation shown.
             if selection.contains(&ant.id) || effects.queen_focused {
                 let ring = cell.expand(px);
@@ -1185,7 +1225,7 @@ fn paint_ants(
             }
             continue;
         }
-        sprites.ant(painter, cell, look);
+        figures.body(painter, sprites, &figure, look, cell, px, now_s);
         if let Some(bed) = bed {
             sprites.blanket(painter, bed.rect, cell, tpx, ant.alpha);
         }
@@ -1200,7 +1240,7 @@ fn paint_ants(
             );
             sprites.item(painter, crumb, Item::Crumb, ant.alpha);
         }
-        if ant.kind == crate::model::NodeKind::Envoy {
+        if ant.kind == crate::model::NodeKind::Envoy && !dwarves {
             comms::headphones(painter, cell, tpx, facing_right, ant.alpha);
         }
         if !walking && ant.pose == Pose::Dig {
@@ -1208,7 +1248,7 @@ fn paint_ants(
             let t = (now_s * 6.0).floor() / 6.0;
             sprites.dirt(painter, cell, facing_right, tpx, t, seed);
         }
-        if !walking && ant.pose == Pose::Build {
+        if !walking && ant.pose == Pose::Build && !dwarves {
             sprites.builder(painter, cell, facing_right, tpx, step);
         }
         if !walking && ant.mark == Some(layout::Mark::Whip) {
@@ -1258,10 +1298,51 @@ fn paint_ants(
     }
 }
 
+/// What the farm's figures are drawn as this frame: the ant sprites or dwarves.
+struct Figures<'a> {
+    art: &'a ArtSettings,
+    dwarves: &'a mut DwarfArt,
+}
+
+impl Figures<'_> {
+    /// Draws one figure in `cell`: `ant` as a sprite, or `figure` as a dwarf.
+    #[allow(clippy::too_many_arguments)]
+    fn body(
+        &mut self,
+        painter: &egui::Painter,
+        sprites: &Sprites,
+        figure: &Figure,
+        ant: AntLook,
+        cell: Rect,
+        px: f32,
+        now_s: f64,
+    ) {
+        if self.art.dwarves {
+            self.dwarves
+                .paint(painter, self.art, figure, cell, px, now_s);
+        } else {
+            sprites.ant(painter, cell, ant);
+        }
+    }
+}
+
+/// The dwarf standing in for `ant`: the King for the Queen, otherwise one picked by its id,
+/// dressed in its agent's livery.
+fn dwarf_look(ant: &layout::Ant) -> Look {
+    if ant.pose == Pose::Queen {
+        return Look::king();
+    }
+    let mut look = Look::from_seed(dwarf::seed_of(ant.id.as_str()));
+    let coat = Coat::new(ant.agent.as_ref(), ant.pose == Pose::Failed);
+    look.tunic = art::livery(coat).unwrap_or(look.tunic);
+    look
+}
+
 /// Ants that left the fleet, falling legs up.
 fn paint_falls(
     painter: &egui::Painter,
     sprites: &Sprites,
+    figures: &mut Figures,
     scene: &Scene,
     falls: &[Fall],
     now_s: f64,
@@ -1277,11 +1358,20 @@ fn paint_falls(
             upside_down: frame.upside_down,
             alpha: frame.alpha,
         };
-        sprites.ant(
-            painter,
-            Rect::from_center_size(frame.pos, Vec2::splat(fall.body.size)),
-            look,
-        );
+        let mut dwarf = Look::from_seed(fall.body.seed);
+        dwarf.tunic = art::livery(fall.body.coat).unwrap_or(dwarf.tunic);
+        let key = format!("fall {}", fall.body.seed);
+        let figure = Figure {
+            key: &key,
+            look: dwarf,
+            action: Action::Still,
+            lying: false,
+            upside_down: frame.upside_down,
+            facing_right: fall.body.facing_right,
+            alpha: frame.alpha,
+        };
+        let cell = Rect::from_center_size(frame.pos, Vec2::splat(fall.body.size));
+        figures.body(painter, sprites, &figure, look, cell, scene.px, now_s);
     }
 }
 

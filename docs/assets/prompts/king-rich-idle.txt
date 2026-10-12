@@ -1,0 +1,12 @@
+Draw a pixel-art sprite sheet of Dwarf overlord king.
+Appearance: A squat, broad old dwarf king facing the camera, front view, a grumpy, greedy taskmaster overlord grown obscenely rich: scowling, broken nose, a scar across one eye, iron-grey beard braided with thick gold rings and gems, a massive spiked dark-gold crown set with rubies and emeralds, black plate armour inlaid with gold, a gold chain with a huge ruby pendant, gold rings on every finger, a fur mantle lined with crimson velvet, a heavy gold scepter topped with a glowing ruby.
+Style: Grim, gritty dark-fantasy pixel art. Soot, grime, worn iron and scarred faces; heavy dark outlines, chunky clusters, muted earth and iron tones with hot ember and gold accents.
+Lighting: Harsh low torchlight from the right, deep shadows, three stepped shades per material.
+Action: Glares at the viewer and taps the heavy scepter impatiently on the floor, lifting and thumping it once per half cycle; his chest heaves with an irritated huff, brows twitch, beard and gold rings sway, the ruby glints. Clearly visible motion between poses, feet planted.
+Proportions: a proper fantasy dwarf, not a short human: about 2.5 to 3 heads tall, nearly as wide as tall, oversized head and beard, barrel chest, very short stubby legs, oversized hands and boots. Keep these proportions identical in every pose.
+Exactly 8 discrete full-subject poses in 4 columns and 2 rows, read left to right then top to bottom.
+Face the camera throughout, front view. Equal cells, generous clearance, fixed camera and subject scale. Keep the whole subject and equipment inside each cell.
+Use one plain flat light-grey background (#c8c8c8) across the whole sheet. No labels, borders, floor, cast shadows or extra subjects.
+Preserve anatomy, markings, equipment and material colours from every supplied identity reference.
+Keep support contacts at a consistent cell-relative height; describe intentional lift in the action. Do not fit or rescale individual poses.
+One cycle, sampled at distinct phases. The first pose follows the last; do not append a duplicate closing pose.

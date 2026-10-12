@@ -994,6 +994,7 @@ fn a_dead_ant_falls_to_the_bottom() {
         facing_right: true,
         coat: super::sprites::Coat::Plain,
         alpha: 1.0,
+        seed: 0,
     };
     let fall = Fall {
         body,
