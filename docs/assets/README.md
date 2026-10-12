@@ -1,14 +1,56 @@
 # Myrstack art: inventory, Paleccino and asset descriptions
 
-Status: **draft, being shaped with Karl.** Theme (2026-10-11): the ant colony becomes
-**dwarves living underground, mining for gold and treasure**. The look is **grim and
-gritty**, the dwarves are **proper dwarves** (squat, not short humans), and sprites are
-**48 px** (the King 64 px). Miners face sideways; the King and the Envoy face the camera.
-Animations are drawn as **pose sheets by Codex's image model**, not by local video (section
-2b). Palettes are swapped at runtime (4j). Only test art exists so far; the app's art and
-theme code are unchanged.
+Status: **direction changed on 2026-10-12.** Karl disliked the generated comic art and
+dropped cloud generation. **The dwarves are now drawn in code as paper cutouts** (section
+0): layered parts tinted from single colours, randomised per agent, animated by rotating
+pinned pieces. Local generation (Paleccino) stays an option for the *other* assets: tiles,
+props, set pieces. Sections 2b–4 record how we got here; the generated-sprite plans there
+are superseded for the dwarves.
 
 Bead: `myr-bov`.
+
+## 0. Current direction: code-drawn paper-cutout dwarves
+
+What Karl asked for:
+- simpler and more unique art;
+- no GPT/cloud generation;
+- animation done in the game rather than baked into frames;
+- dwarves built like a character creator, with swappable parts (hair, beard, skin and so
+  on) in different colours;
+- the dwarves possibly coded entirely, with image generation kept for other assets.
+
+Built (commit 8f7716c, bead `myr-bov.1`):
+
+- **`src/ui/dwarf/paper.rs`, the cutout painter.** A piece is a few polygons cut from one
+  card. Each piece is drawn as a drop shadow, then a cream border, then flat fills, and
+  later pieces cast their shadow on the ones below. Ear-clipping triangulation lets concave
+  shapes (beards, boots) fill correctly in egui. Smooth outlines come from a few control
+  points (Catmull-Rom), placed by an affine transform. Brass split pins mark the joints.
+- **`src/ui/dwarf/mod.rs`, the dwarf.**
+  - **Look:** 6 skins, 8 hair and beard colours, 6 tunics, 3 trousers; 5 beards (long,
+    forked, bushy, short, braided), 5 hats (helmet, candle helmet, cap, bald, crown, the
+    last for kings only) and 3 tools (pickaxe, hammer, shovel); nose size and girth.
+    `Look::from_seed` gives every agent a stable dwarf. That is already tens of thousands
+    of combinations, and adding a style is one function.
+  - **Rig:** back arm, boots, body, head (with beard and hat) and front arm with tool,
+    pinned at the neck and shoulder. Each pose sets the arm angles, head tilt, lean,
+    squash and stretch, hop, stride and brows.
+  - **Actions:** `Still` (idle, done and parked never move), `Study` (thinking: leans in,
+    squints, scratches under the hat, a "?" pops), `Mine` (slow wind-up with stretch, a
+    fast strike with squash and sparks, wobbly recoil) and `Walk`.
+- **`examples/dwarf_lab.rs`:** `cargo run --example dwarf_lab`. Dress one dwarf (beard, hat,
+  tool, colour swatches or pickers, nose, girth), pick the action and facing, tune the card
+  border and shadow, and watch a seeded crowd at work beside him.
+
+![The lab](tests/paper-dwarf-lab.png)
+![Wind-up, strike, study](tests/paper-dwarf-poses.png)
+
+Next, if Karl likes the direction:
+- the King (front-facing, crown and scepter) and the foreman, apprentice and ravenmaster as
+  styles on the same rig;
+- more parts (hair styles, eyebrows, eyepatch, apron, hood);
+- `Carry` and `Build` actions;
+- wiring dwarves into the ant farm in place of the ant sprites.
 
 ## 1. What Myrstack ships today
 
