@@ -31,7 +31,7 @@ use eframe::egui::{self, Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, 
 
 use crate::model::{FleetSnapshot, NodeId};
 use crate::ui::daylight;
-use crate::ui::dwarf::{self, Action, Look};
+use crate::ui::dwarf::{self, Action, Look, Role};
 use crate::ui::graph::GraphView;
 use crate::ui::graph::nav::{self, ScrollAction, ScrollSource, route_scroll};
 use art::{ArtSettings, DwarfArt, Figure};
@@ -1182,17 +1182,12 @@ fn paint_ants(
             alpha: ant.alpha,
         };
         let dwarves = figures.art.dwarves;
-        let action = match ant.pose {
-            _ if walking => Action::Walk,
-            Pose::Dig | Pose::Build => Action::Mine,
-            Pose::Queen if effects.queen_busy => Action::Study,
-            _ => Action::Still,
-        };
+        let carrying =
+            ant.pose == Pose::Carry || (walking && ant.state == crate::model::NodeState::Done);
         let figure = Figure {
             key: ant.id.as_str(),
             look: dwarf_look(ant),
-            action,
-            lying: !walking && matches!(ant.pose, Pose::Sleep | Pose::Failed),
+            action: dwarf_action(ant, walking, carrying, effects.queen_busy),
             upside_down: false,
             facing_right,
             alpha: ant.alpha,
@@ -1229,7 +1224,8 @@ fn paint_ants(
         if let Some(bed) = bed {
             sprites.blanket(painter, bed.rect, cell, tpx, ant.alpha);
         }
-        if ant.pose == Pose::Carry || (walking && ant.state == crate::model::NodeState::Done) {
+        // A dwarf carries his own nugget.
+        if carrying && !dwarves {
             let crumb = Rect::from_center_size(
                 cell.center()
                     + vec2(
@@ -1326,16 +1322,40 @@ impl Figures<'_> {
     }
 }
 
-/// The dwarf standing in for `ant`: the King for the Queen, otherwise one picked by its id,
-/// dressed in its agent's livery.
+/// The dwarf standing in for `ant`: the King for the Queen, otherwise one in the role of its
+/// kind picked by its id, dressed in its agent's livery.
 fn dwarf_look(ant: &layout::Ant) -> Look {
-    if ant.pose == Pose::Queen {
-        return Look::king();
-    }
-    let mut look = Look::from_seed(dwarf::seed_of(ant.id.as_str()));
+    use crate::model::NodeKind;
+    let role = match ant.kind {
+        NodeKind::Queen => return Look::king(),
+        NodeKind::Coordinator | NodeKind::Attendant => Role::Foreman,
+        NodeKind::Subagent => Role::Apprentice,
+        NodeKind::Envoy => Role::Ravenmaster,
+        NodeKind::Worker | NodeKind::Terminal => Role::Miner,
+    };
+    let mut look = Look::for_role(role, dwarf::seed_of(ant.id.as_str()));
     let coat = Coat::new(ant.agent.as_ref(), ant.pose == Pose::Failed);
     look.tunic = art::livery(coat).unwrap_or(look.tunic);
     look
+}
+
+/// What `ant`'s dwarf is doing. Only work moves: waiting, sleeping and failed dwarves hold
+/// a pose.
+fn dwarf_action(ant: &layout::Ant, walking: bool, carrying: bool, queen_busy: bool) -> Action {
+    use crate::model::NodeState;
+    match ant.pose {
+        _ if walking && carrying => Action::Carry,
+        _ if walking => Action::Walk,
+        _ if carrying => Action::Hold,
+        Pose::Dig => Action::Mine,
+        Pose::Build => Action::Build,
+        Pose::Wait => Action::Wait,
+        Pose::Sleep => Action::Sleep,
+        Pose::Failed => Action::KnockedOut,
+        Pose::Queen if queen_busy => Action::Study,
+        Pose::Stand if ant.state == NodeState::Working => Action::Study,
+        _ => Action::Still,
+    }
 }
 
 /// Ants that left the fleet, falling legs up.
@@ -1364,8 +1384,7 @@ fn paint_falls(
         let figure = Figure {
             key: &key,
             look: dwarf,
-            action: Action::Still,
-            lying: false,
+            action: Action::KnockedOut,
             upside_down: frame.upside_down,
             facing_right: fall.body.facing_right,
             alpha: frame.alpha,

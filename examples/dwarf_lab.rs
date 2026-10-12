@@ -3,7 +3,7 @@
 //! and maps them to a palette (the bundled Lospec palettes, `pixel::BUNDLED`); the palette view shows
 //! the dressed dwarf in every palette at once.
 //!
-//! `cargo run --release --example dwarf_lab [--shot out.png] [--action mine|study|walk|still]
+//! `cargo run --release --example dwarf_lab [--shot out.png] [--action NAME]
 //! [--t SECS] [--paper] [--pixel HEIGHT] [--palette NAME] [--palettes]`: `--t` freezes time
 //! (for comparable screenshots); `--paper` starts with the paper finish; `--pixel` starts in
 //! pixel mode with dwarves HEIGHT pixels tall; `--palette` picks a palette by file name (such
@@ -16,7 +16,9 @@ use std::time::Instant;
 use eframe::egui::{self, Color32, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
 use myrstack::ui::dwarf::cutout::Finish;
 use myrstack::ui::dwarf::pixel::{self, Mapper, Palette};
-use myrstack::ui::dwarf::{self, Action, Beard, HAIRS, Hat, Look, SKINS, TUNICS, Tool};
+use myrstack::ui::dwarf::{
+    self, Action, Beard, Brows, Garment, HAIRS, Hair, Hat, Look, Nose, Role, SKINS, TUNICS, Tool,
+};
 
 const WINDOW: [f32; 2] = [1440.0, 860.0];
 const CROWD: usize = 15;
@@ -31,12 +33,13 @@ fn main() -> eframe::Result {
             .and_then(|i| args.get(i + 1).cloned())
     };
     let flag = |f: &str| args.iter().any(|a| a == f);
-    let action = match value("--action").as_deref() {
-        Some("study") => Action::Study,
-        Some("walk") => Action::Walk,
-        Some("still") => Action::Still,
-        _ => Action::Mine,
-    };
+    let action = value("--action")
+        .and_then(|name| {
+            Action::ALL
+                .into_iter()
+                .find(|a| format!("{a:?}").eq_ignore_ascii_case(&name))
+        })
+        .unwrap_or(Action::Mine);
     let frozen = value("--t").and_then(|t| t.parse::<f64>().ok());
     let shot = value("--shot");
     let finish = if flag("--paper") {
@@ -273,6 +276,13 @@ impl Lab {
         ground(painter, stage, foot.y);
         let look = self.look;
         let palette = self.pixel.palette;
+        painter.text(
+            pos2(stage.center().x, stage.top() + 40.0),
+            egui::Align2::CENTER_TOP,
+            dwarf::name(self.seed),
+            egui::FontId::proportional(26.0),
+            Color32::from_rgb(0xf0, 0xe2, 0xc0),
+        );
         self.sprite(
             painter,
             Sprite {
@@ -291,7 +301,15 @@ impl Lab {
         let cell = vec2(crowd.width() / cols as f32, crowd.height() / rows as f32);
         for i in 0..CROWD {
             let seed = 1000 + i as u64;
-            let look = Look::from_seed(seed);
+            // Mostly miners, then a foreman, an apprentice, the ravenmaster and the King.
+            let role = match i {
+                2 => Role::Foreman,
+                6 | 11 => Role::Apprentice,
+                8 => Role::Ravenmaster,
+                12 => Role::King,
+                _ => Role::Miner,
+            };
+            let look = Look::for_role(role, seed);
             let action = if self.crowd_mixed {
                 Action::ALL[(seed as usize * 7 + 3) % Action::ALL.len()]
             } else {
@@ -362,17 +380,34 @@ impl Lab {
         ui.horizontal(|ui| {
             ui.label("Seed");
             if ui.add(egui::DragValue::new(&mut self.seed)).changed() {
-                self.look = Look::from_seed(self.seed);
+                self.look = Look::for_role(self.look.role, self.seed);
             }
             if ui.button("Random").clicked() {
                 self.seed = self.seed.wrapping_mul(6364136223846793005).wrapping_add(1) % 100_000;
-                self.look = Look::from_seed(self.seed);
+                self.look = Look::for_role(self.look.role, self.seed);
             }
         });
+        ui.label(dwarf::name(self.seed));
+        let mut role = self.look.role;
+        pick(ui, "Role", &mut role, &Role::ALL);
+        if role != self.look.role {
+            self.look = Look::for_role(role, self.seed);
+        }
         ui.separator();
+        pick(ui, "Hair", &mut self.look.hair_style, &Hair::ALL);
         pick(ui, "Beard", &mut self.look.beard, &Beard::ALL);
+        pick(ui, "Brows", &mut self.look.brows, &Brows::ALL);
+        pick(ui, "Nose", &mut self.look.nose, &Nose::ALL);
         pick(ui, "Hat", &mut self.look.hat, &Hat::ALL);
+        pick(ui, "Garment", &mut self.look.garment, &Garment::ALL);
         pick(ui, "Tool", &mut self.look.tool, &Tool::ALL);
+        ui.horizontal_wrapped(|ui| {
+            let x = &mut self.look.extras;
+            ui.checkbox(&mut x.eyepatch, "Eyepatch");
+            ui.checkbox(&mut x.pipe, "Pipe");
+            ui.checkbox(&mut x.earring, "Earring");
+            ui.checkbox(&mut x.scar, "Scar");
+        });
         ui.separator();
         swatches(ui, "Skin", &mut self.look.skin, &SKINS);
         swatches(ui, "Hair", &mut self.look.hair, &HAIRS);
@@ -381,7 +416,7 @@ impl Lab {
             ui.label("Trousers");
             ui.color_edit_button_srgba(&mut self.look.trousers);
         });
-        ui.add(egui::Slider::new(&mut self.look.nose, 0.7..=1.5).text("Nose"));
+        ui.add(egui::Slider::new(&mut self.look.nose_size, 0.7..=1.5).text("Nose size"));
         ui.add(egui::Slider::new(&mut self.look.girth, 0.85..=1.2).text("Girth"));
         ui.separator();
         ui.heading("Doing");

@@ -109,11 +109,58 @@ Also fixed after Karl's notes:
   head, over the top and down in front; before, it swung underarm.
 - The pickaxe head curves back towards the hands.
 
+**Roles, parts and poses** (Karl: "more roles and more parts … and any other things you can
+think of"; the front-facing King and Envoy were dropped as unnecessary complexity). The dwarf
+module is now split into `mod.rs` (look, names, assembly), `pose.rs` and `parts.rs`.
+
+- **Roles, by agent kind:**
+  - **Miner** for workers and terminals;
+  - **Foreman** for coordinators and attendants: older, cap, vest with a brass badge,
+    lantern on a pole;
+  - **Apprentice** for subagents: 80 % size, stubble or goatee, a helmet a size too big,
+    a little lantern;
+  - **Ravenmaster** for the Envoy: dark feathered hood, a raven on his shoulder, a brass
+    ear trumpet;
+  - **King** for the Queen.
+
+  `Look::for_role(role, seed)`: faces and colours vary freely, and the role sets the kit.
+- **Parts:**
+  - hair: short, long, ponytail, braid;
+  - beards: long, forked, bushy, short, braided, mutton chops, goatee, stubble;
+  - brows: bushy, thin, wild;
+  - noses: round, long, hooked (plus size);
+  - hats: helmet, candle helmet, horned helmet, cap, hood, bandana, bald, crown;
+  - clothes: tunic, leather apron, vest;
+  - tools: pickaxe, hammer, shovel, lantern, ear trumpet, scepter;
+  - extras: eyepatch, pipe, earring, scar.
+- **Actions** (only work moves):
+  - Still;
+  - **Wait** (fists on his planted tool, chin up, glaring);
+  - Study;
+  - Mine;
+  - **Build** (short chest-high blows);
+  - Walk;
+  - **Carry** and **Hold** (lugging a big gold nugget against his belly);
+  - **Sleep** (on his back in a nightcap, eyes shut);
+  - **KnockedOut** (on his back, eyes crossed).
+
+  Lying dwarves put their tool away.
+- **Farm mapping:**
+  - waiting on Karl → Wait;
+  - building → Build;
+  - working coordinators and the Envoy → Study;
+  - done → Carry or Hold (the crumb sprite is dropped for dwarves);
+  - asleep → Sleep;
+  - failed and falling → KnockedOut.
+- **Names:** `dwarf::name(seed)` gives a stable dwarvish name ("Rurur Ironfoot") from
+  invented syllables, avoiding Tolkien's. The lab shows it.
+
+![Every action (pixel off, ink finish)](tests/dwarf-actions.png)
+![The lab crowd: roles and parts](tests/dwarf-roles-crowd.png)
+![The farm with roles](tests/farm-dwarf-roles.png)
+
 Next, if Karl likes the direction:
-- the King (front-facing, crown and scepter) and the foreman, apprentice and ravenmaster as
-  styles on the same rig;
-- more parts (hair styles, eyebrows, eyepatch, apron, hood);
-- `Carry` and `Build` actions;
+- showing each agent's dwarf name somewhere in the app (tooltip or details);
 - a lighter farm backdrop, or a per-palette outline colour, where a palette's darkest
   colour swallows the outline;
 - dwarf-specific overlays (a hard hat for builders, an ear trumpet for the Envoy).

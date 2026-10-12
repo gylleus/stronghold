@@ -78,8 +78,6 @@ pub struct Figure<'a> {
     pub key: &'a str,
     pub look: Look,
     pub action: Action,
-    /// On his back (asleep or failed).
-    pub lying: bool,
     /// Head down (falling out of the fleet).
     pub upside_down: bool,
     pub facing_right: bool,
@@ -152,9 +150,6 @@ impl DwarfArt {
             if figure.upside_down {
                 pose.roll = std::f32::consts::PI;
                 pose.hop = 45.0;
-            } else if figure.lying {
-                pose.roll = -std::f32::consts::FRAC_PI_2;
-                pose.hop = -24.0;
             }
             pose
         };
