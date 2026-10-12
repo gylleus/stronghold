@@ -2,13 +2,13 @@
 //! dress and pose on the left, a crowd of seeded dwarves at work on the right.
 //!
 //! `cargo run --example dwarf_lab [--shot out.png] [--action mine|study|walk|still] [--t SECS]`:
-//! `--t` freezes time (for comparable screenshots); with `--shot`, it saves a screenshot after
-//! a few frames and exits.
+//! `--t` freezes time (for comparable screenshots); `--paper` starts with the paper finish; with
+//! `--shot`, it saves a screenshot after a few frames and exits.
 
 use std::time::Instant;
 
 use eframe::egui::{self, Color32, Pos2, Rect, pos2, vec2};
-use myrstack::ui::dwarf::paper::Card;
+use myrstack::ui::dwarf::cutout::Finish;
 use myrstack::ui::dwarf::{self, Action, Beard, HAIRS, Hat, Look, SKINS, TUNICS, Tool};
 
 const WINDOW: [f32; 2] = [1440.0, 860.0];
@@ -29,6 +29,11 @@ fn main() -> eframe::Result {
     };
     let frozen = value("--t").and_then(|t| t.parse::<f64>().ok());
     let shot = value("--shot");
+    let finish = if args.iter().any(|a| a == "--paper") {
+        Finish::PAPER
+    } else {
+        Finish::INK
+    };
     eframe::run_native(
         "dwarf lab",
         eframe::NativeOptions {
@@ -43,8 +48,7 @@ fn main() -> eframe::Result {
                 look: Look::from_seed(7),
                 action,
                 facing_right: true,
-                card: Card::default(),
-                shadow: true,
+                finish,
                 crowd_mixed: true,
                 frozen,
                 start: Instant::now(),
@@ -60,8 +64,7 @@ struct Lab {
     look: Look,
     action: Action,
     facing_right: bool,
-    card: Card,
-    shadow: bool,
+    finish: Finish,
     /// Each crowd dwarf does its own thing, or all do the lab's action.
     crowd_mixed: bool,
     frozen: Option<f64>,
@@ -85,14 +88,7 @@ impl eframe::App for Lab {
                 let rect = ui.max_rect();
                 let painter = ui.painter_at(rect);
                 backdrop(&painter, rect);
-                let card = Card {
-                    shadow_color: if self.shadow {
-                        self.card.shadow_color
-                    } else {
-                        Color32::TRANSPARENT
-                    },
-                    ..self.card
-                };
+                let finish = self.finish;
                 // The dressed dwarf, big.
                 let stage = Rect::from_min_size(rect.min, vec2(rect.width() * 0.42, rect.height()));
                 let foot = pos2(stage.center().x, stage.bottom() - 120.0);
@@ -104,7 +100,7 @@ impl eframe::App for Lab {
                     &self.look,
                     &dwarf::pose(self.action, t),
                     self.facing_right,
-                    &card,
+                    &finish,
                 );
                 // The crowd: a different dwarf from each seed.
                 let crowd = Rect::from_min_max(pos2(stage.right(), rect.top()), rect.max);
@@ -130,7 +126,7 @@ impl eframe::App for Lab {
                         &look,
                         &dwarf::pose(action, t + seed as f64 * 0.37),
                         !seed.is_multiple_of(3),
-                        &card,
+                        &finish,
                     );
                 }
             });
@@ -176,13 +172,29 @@ impl Lab {
         ui.checkbox(&mut self.facing_right, "Facing right");
         ui.checkbox(&mut self.crowd_mixed, "Crowd does mixed things");
         ui.separator();
-        ui.heading("Card");
-        ui.add(egui::Slider::new(&mut self.card.border, 0.0..=3.0).text("Border"));
+        ui.heading("Finish");
         ui.horizontal(|ui| {
-            ui.label("Border colour");
-            ui.color_edit_button_srgba(&mut self.card.border_color);
+            for (name, preset) in [("Ink", Finish::INK), ("Paper", Finish::PAPER)] {
+                if ui.selectable_label(self.finish == preset, name).clicked() {
+                    self.finish = preset;
+                }
+            }
         });
-        ui.checkbox(&mut self.shadow, "Drop shadow");
+        ui.add(egui::Slider::new(&mut self.finish.outline, 0.0..=3.0).text("Outline"));
+        ui.horizontal(|ui| {
+            ui.label("Outline colour");
+            ui.color_edit_button_srgba(&mut self.finish.outline_color);
+        });
+        let mut shadow = self.finish.shadow_color.a() > 0;
+        if ui.checkbox(&mut shadow, "Drop shadow").changed() {
+            self.finish.shadow = Finish::PAPER.shadow;
+            self.finish.shadow_color = if shadow {
+                Finish::PAPER.shadow_color
+            } else {
+                Color32::TRANSPARENT
+            };
+        }
+        ui.checkbox(&mut self.finish.pins, "Pins at the joints");
     }
 
     fn screenshot(&mut self, ui: &egui::Ui) {

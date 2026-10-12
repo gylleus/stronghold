@@ -1,6 +1,7 @@
-//! Paper cutouts: flat shapes with a cream border and a drop shadow, as if cut from card and
-//! laid on the scene. A piece is a set of polygons in its own coordinates, placed by an
-//! affine [`Xf`]; pieces drawn later lie on top and cast their shadow on the ones below.
+//! Cutout pieces: flat shapes, each placed by an affine [`Xf`] so a figure is built from parts
+//! that rotate about their joints. A [`Finish`] says how pieces are drawn: an ink outline by
+//! default, or as paper cards with a cream border and drop shadow. Pieces drawn later lie on
+//! top (and, as paper, cast their shadow on the ones below).
 //!
 //! egui fills only convex paths, so polygons are triangulated here (ear clipping) and drawn
 //! as meshes. Shape helpers build smooth outlines from a few control points.
@@ -83,11 +84,11 @@ impl Xf {
 pub struct Poly {
     pub points: Vec<Pos2>,
     pub fill: Color32,
-    /// Whether it adds to the piece's border and shadow (false for details drawn inside it).
+    /// Whether it adds to the piece's outline and shadow (false for details drawn inside it).
     pub outline: bool,
 }
 
-/// Shapes cut from one card: they share a border and a shadow.
+/// Shapes that move as one part: they share an outline (and a shadow).
 #[derive(Debug, Clone, Default)]
 pub struct Piece {
     pub polys: Vec<Poly>,
@@ -116,42 +117,59 @@ impl Piece {
     }
 }
 
-/// How the cutouts look.
+/// How pieces are drawn.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Card {
-    /// Border width in piece units.
-    pub border: f32,
-    pub border_color: Color32,
+pub struct Finish {
+    /// Outline width in piece units, drawn outside the shape.
+    pub outline: f32,
+    pub outline_color: Color32,
     /// Shadow offset in piece units, before the piece's placement.
     pub shadow: Vec2,
+    /// Transparent for no shadow.
     pub shadow_color: Color32,
+    /// Whether joints show a brass split pin.
+    pub pins: bool,
 }
 
-impl Default for Card {
+impl Finish {
+    /// A thin dark ink line round each piece; no shadow, no pins.
+    pub const INK: Self = Self {
+        outline: 0.9,
+        outline_color: Color32::from_rgb(0x1e, 0x16, 0x14),
+        shadow: Vec2::ZERO,
+        shadow_color: Color32::TRANSPARENT,
+        pins: false,
+    };
+    /// Cards: a cream border, a drop shadow and brass pins at the joints.
+    pub const PAPER: Self = Self {
+        outline: 1.6,
+        outline_color: Color32::from_rgb(0xee, 0xe2, 0xc6),
+        shadow: vec2(1.6, 2.2),
+        shadow_color: Color32::from_black_alpha(120),
+        pins: true,
+    };
+}
+
+impl Default for Finish {
     fn default() -> Self {
-        Self {
-            border: 1.6,
-            border_color: Color32::from_rgb(0xee, 0xe2, 0xc6),
-            shadow: vec2(1.6, 2.2),
-            shadow_color: Color32::from_black_alpha(120),
-        }
+        Self::INK
     }
 }
 
-/// Draws `piece` placed by `xf` (after its own placement): shadow, border, then fills.
-pub fn draw(painter: &Painter, piece: &Piece, xf: Xf, card: &Card) {
+/// Draws `piece` placed by `xf` (after its own placement): shadow, outline, then fills.
+pub fn draw(painter: &Painter, piece: &Piece, xf: Xf, finish: &Finish) {
     let xf = piece.xf.map_or(xf, |own| xf.then(own));
     let outlined = || piece.polys.iter().filter(|p| p.outline);
-    let width = 2.0 * card.border * xf.length_scale();
-    if card.shadow_color.a() > 0 {
-        let shadow = xf.vec(card.shadow);
+    let width = 2.0 * finish.outline * xf.length_scale();
+    if finish.shadow_color.a() > 0 {
+        let shadow = xf.vec(finish.shadow);
         for poly in outlined() {
             let points: Vec<Pos2> = poly.points.iter().map(|p| xf.apply(*p) + shadow).collect();
-            fill(painter, &points, card.shadow_color);
+            fill(painter, &points, finish.shadow_color);
             if width > 0.0 {
                 painter.add(Shape::closed_line(
                     points,
-                    Stroke::new(width, card.shadow_color),
+                    Stroke::new(width, finish.shadow_color),
                 ));
             }
         }
@@ -161,7 +179,7 @@ pub fn draw(painter: &Painter, piece: &Piece, xf: Xf, card: &Card) {
             let points: Vec<Pos2> = poly.points.iter().map(|p| xf.apply(*p)).collect();
             painter.add(Shape::closed_line(
                 points,
-                Stroke::new(width, card.border_color),
+                Stroke::new(width, finish.outline_color),
             ));
         }
     }
@@ -171,8 +189,11 @@ pub fn draw(painter: &Painter, piece: &Piece, xf: Xf, card: &Card) {
     }
 }
 
-/// A brass split pin at `at` (piece units), placed by `xf`.
-pub fn pin(painter: &Painter, at: Pos2, radius: f32, xf: Xf) {
+/// A brass split pin at `at` (piece units), placed by `xf`, if the finish has pins.
+pub fn pin(painter: &Painter, at: Pos2, radius: f32, xf: Xf, finish: &Finish) {
+    if !finish.pins {
+        return;
+    }
     let c = xf.apply(at);
     let r = radius * xf.length_scale();
     painter.circle_filled(c, r, Color32::from_rgb(0x6b, 0x4a, 0x1c));

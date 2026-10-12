@@ -21,9 +21,11 @@ What Karl asked for:
 
 Built (commit 8f7716c, bead `myr-bov.1`):
 
-- **`src/ui/dwarf/paper.rs`, the cutout painter.** A piece is a few polygons cut from one
-  card. Each piece is drawn as a drop shadow, then a cream border, then flat fills, and
-  later pieces cast their shadow on the ones below. Ear-clipping triangulation lets concave
+- **`src/ui/dwarf/cutout.rs`, the piece painter.** A piece is a few polygons that move as
+  one part. A `Finish` sets how pieces are drawn. **Ink** is the default: a thin dark
+  outline, flat fills, no shadow. **Paper** is the first try: a cream border, drop shadows
+  and brass pins. Karl: "how the character is composed and behaves, but it doesn't need to
+  look like it's made of paper." Ear-clipping triangulation lets concave
   shapes (beards, boots) fill correctly in egui. Smooth outlines come from a few control
   points (Catmull-Rom), placed by an affine transform. Brass split pins mark the joints.
 - **`src/ui/dwarf/mod.rs`, the dwarf.**
@@ -42,10 +44,13 @@ Built (commit 8f7716c, bead `myr-bov.1`):
   tool, colour swatches or pickers, nose, girth), pick the action and facing, tune the card
   border and shadow, and watch a seeded crowd at work beside him.
 
-![The lab](tests/paper-dwarf-lab.png)
+![The lab, ink finish (default)](tests/dwarf-lab-ink.png)
+![The first try, paper finish](tests/paper-dwarf-lab.png)
 ![Wind-up, strike, study](tests/paper-dwarf-poses.png)
 
 Next, if Karl likes the direction:
+- the pixelisation experiment Karl asked for: render the code-drawn dwarf small, then
+  map it to a palette;
 - the King (front-facing, crown and scepter) and the foreman, apprentice and ravenmaster as
   styles on the same rig;
 - more parts (hair styles, eyebrows, eyepatch, apron, hood);

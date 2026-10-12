@@ -1,15 +1,15 @@
-//! Dwarves drawn in code as paper cutouts: a few pieces (boots, body, arms, head, tool) cut
-//! from card, each tinted from one colour, pinned at the neck and shoulder and posed per
+//! Dwarves drawn in code, built like cutout puppets: a few pieces (boots, body, arms, head,
+//! tool), each tinted from one colour, jointed at the neck and shoulders and posed per
 //! frame. A [`Look`] picks the styles and colours, so any number of different dwarves come
 //! from a seed; an [`Action`] and the time pick the pose.
 //!
 //! Units: a dwarf is about 100 units tall, standing on the origin and facing right (+x),
 //! y down. [`paint`] scales and mirrors him into place.
 
-pub mod paper;
+pub mod cutout;
 
+use cutout::{Finish, Piece, Xf, blob, capsule, ellipse};
 use eframe::egui::{Align2, Color32, FontId, Painter, Pos2, pos2, vec2};
-use paper::{Card, Piece, Xf, blob, capsule, ellipse};
 
 /// What a dwarf is doing. There is no idle loop: an idle dwarf stands still.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -133,6 +133,7 @@ const WOOD: Color32 = Color32::from_rgb(0x8a, 0x5a, 0x30);
 const GOLD: Color32 = Color32::from_rgb(0xe0, 0xa8, 0x30);
 const RUBY: Color32 = Color32::from_rgb(0xc8, 0x20, 0x30);
 const INK: Color32 = Color32::from_rgb(0x1e, 0x16, 0x14);
+const QUESTION: Color32 = Color32::from_rgb(0xf4, 0xe8, 0xc8);
 
 impl Look {
     /// A dwarf picked from `seed`; the same seed always gives the same dwarf. Crowns are left
@@ -328,7 +329,7 @@ const NECK: Pos2 = pos2(3.0, -50.0);
 const SHOULDER: Pos2 = pos2(5.0, -43.0);
 const BACK_SHOULDER: Pos2 = pos2(-9.0, -44.0);
 
-/// Draws a dwarf standing on `foot`, `height` points tall, doing `action` at `t` seconds.
+/// Draws a dwarf standing on `foot`, `height` points tall, in `pose`, with `finish`.
 pub fn paint(
     painter: &Painter,
     foot: Pos2,
@@ -336,7 +337,7 @@ pub fn paint(
     look: &Look,
     pose: &Pose,
     facing_right: bool,
-    card: &Card,
+    finish: &Finish,
 ) {
     let k = height / 100.0;
     let place = Xf::translate(foot.to_vec2() - vec2(0.0, pose.hop * k))
@@ -345,26 +346,36 @@ pub fn paint(
     let body = place
         .then(Xf::rotate(pose.lean))
         .then(Xf::scale(1.0 - pose.stretch * 0.6, 1.0 + pose.stretch));
-    let card = Card {
+    let finish = Finish {
         shadow: if facing_right {
-            card.shadow
+            finish.shadow
         } else {
-            vec2(-card.shadow.x, card.shadow.y)
+            vec2(-finish.shadow.x, finish.shadow.y)
         },
-        ..*card
+        ..*finish
     };
     let head = body.then(Xf::rotate_about(NECK, pose.head));
     let arm = body.then(Xf::rotate_about(SHOULDER, -pose.arm));
     let back_arm = body.then(Xf::rotate_about(BACK_SHOULDER, -pose.back_arm));
 
-    paper::draw(painter, &back_arm_piece(look), back_arm, &card);
-    paper::draw(painter, &boot(-6.0 - pose.stride, look, true), place, &card);
-    paper::draw(painter, &body_piece(look), body, &card);
-    paper::draw(painter, &boot(6.0 + pose.stride, look, false), place, &card);
-    paper::draw(painter, &head_piece(look, pose), head, &card);
-    paper::pin(painter, NECK + vec2(-6.0, 3.0), 1.6, head);
-    paper::draw(painter, &arm_piece(look), arm, &card);
-    paper::pin(painter, SHOULDER, 1.8, arm);
+    cutout::draw(painter, &back_arm_piece(look), back_arm, &finish);
+    cutout::draw(
+        painter,
+        &boot(-6.0 - pose.stride, look, true),
+        place,
+        &finish,
+    );
+    cutout::draw(painter, &body_piece(look), body, &finish);
+    cutout::draw(
+        painter,
+        &boot(6.0 + pose.stride, look, false),
+        place,
+        &finish,
+    );
+    cutout::draw(painter, &head_piece(look, pose), head, &finish);
+    cutout::pin(painter, NECK + vec2(-6.0, 3.0), 1.6, head, &finish);
+    cutout::draw(painter, &arm_piece(look), arm, &finish);
+    cutout::pin(painter, SHOULDER, 1.8, arm, &finish);
 
     if let Some(s) = pose.since_strike.filter(|s| *s < 0.16) {
         sparks(painter, arm.apply(tool_tip(look.tool)), s, k);
@@ -380,7 +391,7 @@ pub fn paint(
             font.clone(),
             Color32::from_black_alpha(140),
         );
-        painter.text(at, Align2::CENTER_CENTER, "?", font, card.border_color);
+        painter.text(at, Align2::CENTER_CENTER, "?", font, QUESTION);
     }
 }
 
@@ -839,7 +850,7 @@ fn sparks(painter: &Painter, tip: Pos2, s: f32, k: f32) {
             at + vec2(-r * 1.8, 0.0),
             at + vec2(-r * 0.5, -r * 0.5),
         ];
-        paper::fill(painter, &star, Color32::from_rgb(0xff, 0xd8, 0x60));
+        cutout::fill(painter, &star, Color32::from_rgb(0xff, 0xd8, 0x60));
     }
 }
 
