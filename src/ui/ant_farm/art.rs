@@ -52,14 +52,16 @@ impl Pixels {
     }
 }
 
-/// A dwarf's tunic for an agent's coat: Claude amber, Codex slate, failed red; `None` keeps
-/// his own.
-pub fn livery(coat: Coat) -> Option<Color32> {
-    match coat {
-        Coat::Plain => None,
-        Coat::Claude => Some(Color32::from_rgb(0xd0, 0x8a, 0x3e)),
-        Coat::Codex => Some(Color32::from_rgb(0x3a, 0x4c, 0x54)),
-        Coat::Failed => Some(Color32::from_rgb(0xa8, 0x2c, 0x26)),
+/// Guild cloth, painted helmets and a shaped crest keep agent identity visible at farm
+/// size. Failed dwarves retain their guild; the red failure bubble shows their state.
+pub fn dress(look: &mut Look, coat: Coat) {
+    look.crest = match coat {
+        Coat::Plain => dwarf::Crest::None,
+        Coat::Claude => dwarf::Crest::Sun,
+        Coat::Codex => dwarf::Crest::Diamond,
+    };
+    if let Some(color) = look.crest.color() {
+        look.tunic = color;
     }
 }
 
@@ -227,6 +229,61 @@ impl DwarfArt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_crests_remain_distinct_at_small_sizes_in_every_palette() {
+        // Exercise the real rasterizer, including asleep/failed poses and the
+        // apron/vests that obscure tunic colours. Tiny palettes may collapse the hues.
+        for height in [16.0, 24.0] {
+            for role in [
+                dwarf::Role::Miner,
+                dwarf::Role::Foreman,
+                dwarf::Role::Apprentice,
+            ] {
+                for action in [
+                    Action::Still,
+                    Action::Mine,
+                    Action::Sleep,
+                    Action::KnockedOut,
+                ] {
+                    let image = |coat| {
+                        let mut look = Look::for_role(role, 7);
+                        dress(&mut look, coat);
+                        let size = [(height * 1.5) as usize, (height * 1.5) as usize];
+                        let finish = Finish {
+                            outline: 100.0 / height,
+                            ..Finish::INK
+                        };
+                        let drawing = dwarf::draw(
+                            pos2(height * 0.7, height * 1.4),
+                            height,
+                            &look,
+                            &dwarf::pose(action, 0.3),
+                            true,
+                            &finish,
+                        );
+                        pixel::rasterize(
+                            &drawing.shapes,
+                            Rect::from_min_size(Pos2::ZERO, vec2(size[0] as f32, size[1] as f32)),
+                            size,
+                            1,
+                        )
+                    };
+                    let claude = image(Coat::Claude);
+                    let codex = image(Coat::Codex);
+                    assert_ne!(claude, codex, "{height} {role:?} {action:?}");
+                    for palette in pixel::bundled() {
+                        let mut a = claude.clone();
+                        let mut b = codex.clone();
+                        let mut mapper = Mapper::new(&palette);
+                        mapper.apply(&mut a);
+                        mapper.apply(&mut b);
+                        assert_ne!(a, b, "{} {height} {role:?} {action:?}", palette.name);
+                    }
+                }
+            }
+        }
+    }
 
     /// Older settings files have no `art` section, or only part of one.
     #[test]

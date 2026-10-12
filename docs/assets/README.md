@@ -17,8 +17,13 @@ fixed heights affect only dwarves. World art always uses one image pixel per far
   `blob`, `capsule`, `ellipse`, `Xf` and `Finish::INK`. Adjust the material constants here
   for worn timber, grey stone, iron, brass, parchment, gold and blue rune light. Leave a
   texel around silhouettes for the outline.
+- `excavation.rs` draws working rooms as jagged caves: overhangs, exposed planes, fractures,
+  ore seams and loose chips. It draws at the requested texel size, so resizing a chamber
+  adds rock detail instead of stretching it. `Prop::Cave` shares the prop texture cache;
+  the seed changes the rock face. `Prop::Masonry` gives the throne hall, Envoy and treasury
+  staggered, chipped stone blocks. Adjust `WALL` and the face colours here.
 - `sprites.rs` places the props and generates granite, worked stone and alpine turf tiles.
-  `rock_tile` controls strata, chisel marks, pebbles and sparse veins. `gallery`, `shoring`
+  `rock_tile` controls sloping strata, fractures, chisel marks, pebbles and sparse veins. `gallery`, `shoring`
   and `throne_hall` place rails, supports, torches, banners and braziers. `nature.rs` draws
   pine, spruce, boulders, heather, edelweiss, gentian, mushrooms and celestial pieces;
   `scenery.rs` controls their deterministic placement. `Prop::Peaks` repeats across the
@@ -32,6 +37,11 @@ fixed heights affect only dwarves. World art always uses one image pixel per far
   stretches only as a message leaves. Fire has four frames at six frames per second;
   the tube, receiving stone and pool animate on events/work. Scenery and waiting figures
   stay still. Snore z's and the pebble bonk use the same material colours as the bubbles.
+- Agent guilds use both colour and shape: Claude has amber cloth and a round sun crest;
+  Codex has blue cloth and a tall diamond crest. Helmets, caps and bandanas carry the guild
+  colour too. `art::dress` assigns `dwarf::Crest`; `dwarf/parts.rs` cuts the actual brooches.
+  Identity remains visible when sleeping or failed (failure is shown by the red bubble).
+  The farm demo includes both agents, and the dwarf lab has a crest picker.
 - `pixel::Mapper::apply` maps texture colours before upload. `Mapper::shape` maps the
   scene's code-drawn colours (preserving alpha) before camera zoom; it skips image tints,
   since those textures are already mapped. This also covers labels and all transient effects.

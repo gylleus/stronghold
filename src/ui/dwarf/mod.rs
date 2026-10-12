@@ -180,10 +180,29 @@ pub struct Extras {
     pub scar: bool,
 }
 
+/// A guild emblem carried on the hat. Shape survives even a tiny colour palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Crest {
+    #[default]
+    None,
+    Sun,
+    Diamond,
+}
+impl Crest {
+    pub fn color(self) -> Option<Color32> {
+        match self {
+            Self::None => None,
+            Self::Sun => Some(Color32::from_rgb(0xd9, 0x8c, 0x40)),
+            Self::Diamond => Some(Color32::from_rgb(0x53, 0x9d, 0xbf)),
+        }
+    }
+}
+
 /// Everything that makes one dwarf look like himself.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Look {
     pub role: Role,
+    pub crest: Crest,
     pub skin: Color32,
     pub hair: Color32,
     pub tunic: Color32,
@@ -260,6 +279,7 @@ impl Look {
         let mut r = Rng(seed ^ 0x9e37_79b9_7f4a_7c15);
         let mut look = Self {
             role,
+            crest: Crest::None,
             skin: r.pick(&SKINS),
             hair: r.pick(&HAIRS),
             tunic: r.pick(&TUNICS),
@@ -336,6 +356,7 @@ impl Look {
     pub fn king() -> Self {
         Self {
             role: Role::King,
+            crest: Crest::None,
             skin: SKINS[1],
             hair: HAIRS[6],
             tunic: Color32::from_rgb(0x8c, 0x1c, 0x24),

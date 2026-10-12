@@ -8,6 +8,7 @@ pub mod art;
 mod beams;
 mod comms;
 pub mod death;
+mod excavation;
 pub mod layout;
 #[cfg(test)]
 mod layout_tests;
@@ -1001,7 +1002,7 @@ impl AntFarmView {
                     Some(h) if h.x.abs() > 0.1 => h.x > 0.0,
                     _ => ant.facing_right,
                 },
-                coat: Coat::new(ant.agent.as_ref(), ant.pose == Pose::Failed),
+                coat: Coat::new(ant.agent.as_ref()),
                 alpha: ant.alpha,
                 seed: dwarf::seed_of(ant.id.as_str()),
             });
@@ -1103,11 +1104,11 @@ fn paint_ground(
     for plant in &plants {
         sprites.deco(painter, plant.deco, plant.foot, px, 1.0);
     }
-    sprites.passage(painter, scene.queen_chamber, px);
+    sprites.masonry(painter, scene.queen_chamber);
     sprites.throne_hall(painter, scene.queen_chamber, px);
-    sprites.passage(painter, scene.storage, px);
+    sprites.masonry(painter, scene.storage);
     for tunnel in &scene.tunnels {
-        sprites.passage(painter, tunnel.chamber, px);
+        sprites.cave(painter, tunnel.chamber, dwarf::seed_of(&tunnel.label) as u8);
     }
     for bed in &scene.beds {
         sprites.bed(painter, bed.rect, px);
@@ -1378,8 +1379,8 @@ fn dwarf_look(ant: &layout::Ant) -> Look {
         NodeKind::Worker | NodeKind::Terminal => Role::Miner,
     };
     let mut look = Look::for_role(role, dwarf::seed_of(ant.id.as_str()));
-    let coat = Coat::new(ant.agent.as_ref(), ant.pose == Pose::Failed);
-    look.tunic = art::livery(coat).unwrap_or(look.tunic);
+    let coat = Coat::new(ant.agent.as_ref());
+    art::dress(&mut look, coat);
     if ant.state == crate::model::NodeState::Stalled && role != Role::RunePriest {
         look.hat = dwarf::Hat::Helmet;
     }
@@ -1426,7 +1427,7 @@ fn paint_falls(
             continue;
         };
         let mut dwarf = Look::from_seed(fall.body.seed);
-        dwarf.tunic = art::livery(fall.body.coat).unwrap_or(dwarf.tunic);
+        art::dress(&mut dwarf, fall.body.coat);
         let key = format!("fall {}", fall.body.seed);
         let figure = Figure {
             key: &key,
