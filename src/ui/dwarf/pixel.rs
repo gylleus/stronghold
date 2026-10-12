@@ -105,36 +105,6 @@ pub fn bundled() -> Vec<Palette> {
         .collect()
 }
 
-/// Recolours flat shapes (meshes, paths, circles) to `mapper`'s palette, keeping alpha.
-pub fn recolor(shapes: &mut [Shape], mapper: &mut Mapper) {
-    let mut map = |c: &mut Color32| {
-        if c.a() > 0 {
-            let m = mapper.map(c.to_opaque());
-            *c = Color32::from_rgba_unmultiplied(m.r(), m.g(), m.b(), c.a());
-        }
-    };
-    for shape in shapes {
-        match shape {
-            Shape::Mesh(mesh) => {
-                for v in &mut std::sync::Arc::make_mut(mesh).vertices {
-                    map(&mut v.color);
-                }
-            }
-            Shape::Path(path) => {
-                map(&mut path.fill);
-                if let eframe::egui::epaint::ColorMode::Solid(c) = &mut path.stroke.color {
-                    map(c);
-                }
-            }
-            Shape::Circle(circle) => {
-                map(&mut circle.fill);
-                map(&mut circle.stroke.color);
-            }
-            _ => {}
-        }
-    }
-}
-
 /// Maps colours to their nearest palette colour (in CIELAB), remembering past answers.
 pub struct Mapper {
     lab: Vec<[f32; 3]>,

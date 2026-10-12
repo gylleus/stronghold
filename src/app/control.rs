@@ -7,12 +7,12 @@ use crossbeam_channel::Receiver;
 use eframe::egui;
 use serde_json::{Value, json};
 
-use super::{MyrstackApp, View, now_ms, repaint_once};
+use super::{MyrstackApp, now_ms, repaint_once};
 use crate::actions::{Action, ActionId, ActionResult, Key};
 use crate::broadcast::{BroadcastSelection, plan_broadcast};
 use crate::close::{CloseOptions, ClosePlan, plan_bulk_close, plan_close};
 use crate::control::commands::deliver_broadcast;
-use crate::control::view::{filter_view, kind_name, view_name, whip_settings_json};
+use crate::control::view::{filter_view, kind_name, whip_settings_json};
 use crate::control::{
     AppCommands, Backend, ControlCommand, ControlError, ControlServer, ErrorCode, PendingCommand,
     Reply, SharedStatus, StatusView, TerminalKey, ViewInputs,
@@ -63,7 +63,6 @@ struct Fingerprint {
     whip_settings: WhipSettings,
     quotas_at_ms: i64,
     alerts: u64,
-    view: View,
     selected: Option<NodeId>,
     selection: BTreeSet<NodeId>,
     filter: FleetFilter,
@@ -122,9 +121,8 @@ impl MyrstackApp {
             whip_settings: self.whip_window.whip().clone(),
             quotas_at_ms: self.quotas.fetched_at_ms,
             alerts: self.notifications.generation(),
-            view: self.view,
             selected: self.selected.clone(),
-            selection: self.graph.selection(),
+            selection: self.fleet.selection(),
             filter: self.filter.clone(),
             whip_window_open: self.whip_window.open,
             playbook: self.playbook_watch.generation,
@@ -148,7 +146,6 @@ impl MyrstackApp {
             whip_log: self.whip_log.entries().iter().collect(),
             quotas: &self.quotas,
             alerts: self.notifications.entries(),
-            view: self.view,
             selected: self.selected.as_ref().map(NodeId::as_str),
             selection: fingerprint.selection.iter().map(NodeId::as_str).collect(),
             filter: &self.filter,
@@ -277,7 +274,7 @@ impl MyrstackApp {
             } => self.control_whip_settings(enabled, dry_run, notify),
             ControlCommand::Select { agent: None } => {
                 self.selected = None;
-                self.graph.set_selected(None);
+                self.fleet.set_selected(None);
                 Ok(json!({ "selected": null }))
             }
             ControlCommand::SelectMany { agents } => self.control_select_many(&agents),
@@ -285,7 +282,7 @@ impl MyrstackApp {
                 .control_node(&agent)
                 .map(|node| node.id.clone())
                 .map(|id| {
-                    self.graph.set_selected(Some(&id));
+                    self.fleet.set_selected(Some(&id));
                     self.selected = Some(id.clone());
                     json!({ "selected": id })
                 }),
@@ -293,8 +290,8 @@ impl MyrstackApp {
                 .control_node(&agent)
                 .map(|node| node.id.clone())
                 .map(|id| {
-                    let hidden = self.graph.hidden().contains(&id);
-                    self.focus_in_graph(id.clone());
+                    let hidden = self.fleet.hidden().contains(&id);
+                    self.select_and_focus(id.clone());
                     if raise {
                         for cmd in [
                             egui::ViewportCommand::Minimized(false),
@@ -309,20 +306,11 @@ impl MyrstackApp {
             ControlCommand::Filter(change) => {
                 change.apply(&mut self.filter);
                 if let Some(snapshot) = &self.snapshot {
-                    self.graph.set_hidden(&self.filter.hidden(snapshot));
+                    self.fleet.set_hidden(&self.filter.hidden(snapshot));
                 }
                 let empty = crate::model::FleetSnapshot::default();
                 let snapshot = self.snapshot.as_ref().unwrap_or(&empty);
                 Ok(json!({ "filter": filter_view(&self.filter, snapshot) }))
-            }
-            ControlCommand::SetView(view) => {
-                self.view = view;
-                Ok(json!({ "view": view_name(view) }))
-            }
-            ControlCommand::Fit => {
-                self.view = View::Graph;
-                self.graph.fit_to_screen();
-                Ok(json!({ "view": "graph" }))
             }
             ControlCommand::OpenWhipSettings => {
                 self.whip_window.open_window();
@@ -379,14 +367,14 @@ impl MyrstackApp {
                 ids.push(id);
             }
         }
-        let hidden: Vec<&NodeId> = ids.iter().filter(|id| !self.graph.is_visible(id)).collect();
+        let hidden: Vec<&NodeId> = ids.iter().filter(|id| !self.fleet.is_visible(id)).collect();
         let hidden = json!(hidden);
         let set: BTreeSet<NodeId> = ids.iter().cloned().collect();
-        self.graph.set_selection(&set, ids.first());
-        self.selected = self.graph.selected().or_else(|| ids.first().cloned());
+        self.fleet.set_selection(&set, ids.first());
+        self.selected = self.fleet.selected().or_else(|| ids.first().cloned());
         Ok(json!({
             "selected": self.selected,
-            "selection": self.graph.selection(),
+            "selection": self.fleet.selection(),
             "hidden_by_filter": hidden,
         }))
     }

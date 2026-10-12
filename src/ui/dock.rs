@@ -1,4 +1,4 @@
-//! The window's panes as dock tabs (egui_dock): the sidebar, the graph or table, the details
+//! The window's panes as dock tabs (egui_dock): the sidebar, the farm, the details
 //! and the conversation can be dragged, split, tabbed together and resized; the arrangement is
 //! saved between launches.
 //!
@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 pub enum Pane {
     /// Filters, runs and the whip log.
     Sidebar,
-    /// The graph or the table.
-    Graph,
+    /// The farm.
+    Farm,
     /// The selected node's attributes and actions, or the Queen's review queue and summary.
     Details,
     /// The Queen's chat, the selected agent's screen and input, a subagent's transcript or the
@@ -32,7 +32,7 @@ pub enum Pane {
 }
 
 /// Panes that are always in the layout; the conversation and notifications can be taken out.
-const FIXED: [Pane; 3] = [Pane::Sidebar, Pane::Graph, Pane::Details];
+const FIXED: [Pane; 3] = [Pane::Sidebar, Pane::Farm, Pane::Details];
 
 // Default widths as shares of the window, matching the old fixed columns on a 1728 pt
 // window: sidebar 260, details 270, conversation 45 %.
@@ -101,17 +101,17 @@ impl std::fmt::Debug for PaneLayout {
     }
 }
 
-/// Sidebar | graph | details | conversation, as the columns were before docking.
+/// Sidebar | farm | details | conversation, as the columns were before docking.
 pub fn default_dock() -> DockState<Pane> {
-    let mut dock = DockState::new(vec![Pane::Graph]);
+    let mut dock = DockState::new(vec![Pane::Farm]);
     let tree = dock.main_surface_mut();
     let [rest, _] = tree.split_right(
         NodeIndex::root(),
         1.0 - CONVERSATION_SHARE,
         vec![Pane::Conversation],
     );
-    let [graph, _] = tree.split_left(rest, SIDEBAR_SHARE_OF_REST, vec![Pane::Sidebar]);
-    tree.split_right(graph, 1.0 - DETAILS_SHARE_OF_MIDDLE, vec![Pane::Details]);
+    let [farm, _] = tree.split_left(rest, SIDEBAR_SHARE_OF_REST, vec![Pane::Sidebar]);
+    tree.split_right(farm, 1.0 - DETAILS_SHARE_OF_MIDDLE, vec![Pane::Details]);
     dock
 }
 
@@ -374,12 +374,7 @@ mod tests {
         let order: Vec<Pane> = placed.iter().map(|c| c.0).collect();
         assert_eq!(
             order,
-            [
-                Pane::Sidebar,
-                Pane::Graph,
-                Pane::Details,
-                Pane::Conversation
-            ]
+            [Pane::Sidebar, Pane::Farm, Pane::Details, Pane::Conversation]
         );
         let width = |pane| placed.iter().find(|c| c.0 == pane).unwrap().2;
         assert!((width(Pane::Conversation) - 0.45 * 1728.0).abs() < 1.0);
@@ -409,10 +404,10 @@ mod tests {
         let no_graph = DockState::new(vec![Pane::Sidebar, Pane::Details]);
         let saved = ron::to_string(&no_graph).unwrap();
         assert!(PaneLayout::decode(&saved).is_none());
-        let twice = DockState::new(vec![Pane::Sidebar, Pane::Graph, Pane::Details, Pane::Graph]);
+        let twice = DockState::new(vec![Pane::Sidebar, Pane::Farm, Pane::Details, Pane::Farm]);
         let saved = ron::to_string(&twice).unwrap();
         assert!(PaneLayout::decode(&saved).is_none());
-        let no_conversation = DockState::new(vec![Pane::Sidebar, Pane::Graph, Pane::Details]);
+        let no_conversation = DockState::new(vec![Pane::Sidebar, Pane::Farm, Pane::Details]);
         let saved = ron::to_string(&no_conversation).unwrap();
         assert!(PaneLayout::decode(&saved).is_some());
     }
@@ -421,11 +416,11 @@ mod tests {
     fn reset_restores_the_default() {
         let mut layout = PaneLayout::default();
         layout.set_conversation(false);
-        let graph = layout.dock.find_tab(&Pane::Graph).unwrap();
+        let farm = layout.dock.find_tab(&Pane::Farm).unwrap();
         let sidebar = layout.dock.find_tab(&Pane::Sidebar).unwrap();
         layout
             .dock
-            .move_tab(graph, (sidebar.node_path(), egui_dock::TabInsert::Append));
+            .move_tab(farm, (sidebar.node_path(), egui_dock::TabInsert::Append));
         layout.reset();
         assert_eq!(leaves(&layout.dock), leaves(&default_dock()));
         assert!(layout.stashed.is_none());
@@ -434,12 +429,12 @@ mod tests {
     #[test]
     fn conversation_returns_where_it_was() {
         let mut layout = PaneLayout::default();
-        // Tab it in with the graph.
+        // Tab it in with the farm.
         let conversation = layout.dock.find_tab(&Pane::Conversation).unwrap();
-        let graph = layout.dock.find_tab(&Pane::Graph).unwrap();
+        let farm = layout.dock.find_tab(&Pane::Farm).unwrap();
         layout.dock.move_tab(
             conversation,
-            (graph.node_path(), egui_dock::TabInsert::Append),
+            (farm.node_path(), egui_dock::TabInsert::Append),
         );
         let arranged = leaves(&layout.dock);
         layout.set_conversation(false);
@@ -453,10 +448,10 @@ mod tests {
         let mut layout = PaneLayout::default();
         layout.set_conversation(false);
         let details = layout.dock.find_tab(&Pane::Details).unwrap();
-        let graph = layout.dock.find_tab(&Pane::Graph).unwrap();
+        let farm = layout.dock.find_tab(&Pane::Farm).unwrap();
         layout
             .dock
-            .move_tab(details, (graph.node_path(), egui_dock::TabInsert::Append));
+            .move_tab(details, (farm.node_path(), egui_dock::TabInsert::Append));
         layout.set_conversation(true);
         assert!(layout.contains(Pane::Conversation));
         let root = &layout.dock.main_surface()[NodeIndex::root()];
@@ -469,17 +464,17 @@ mod tests {
     fn a_tab_behind_another_is_not_visible_until_activated() {
         let mut layout = PaneLayout::default();
         let conversation = layout.dock.find_tab(&Pane::Conversation).unwrap();
-        let graph = layout.dock.find_tab(&Pane::Graph).unwrap();
+        let farm = layout.dock.find_tab(&Pane::Farm).unwrap();
         layout.dock.move_tab(
             conversation,
-            (graph.node_path(), egui_dock::TabInsert::Insert(TabIndex(0))),
+            (farm.node_path(), egui_dock::TabInsert::Insert(TabIndex(0))),
         );
-        let graph = layout.dock.find_tab(&Pane::Graph).unwrap();
-        let _ = layout.dock.set_active_tab(graph);
+        let farm = layout.dock.find_tab(&Pane::Farm).unwrap();
+        let _ = layout.dock.set_active_tab(farm);
         assert!(!layout.is_visible(Pane::Conversation));
         layout.activate(Pane::Conversation);
         assert!(layout.is_visible(Pane::Conversation));
-        assert!(!layout.is_visible(Pane::Graph));
+        assert!(!layout.is_visible(Pane::Farm));
     }
 
     #[test]

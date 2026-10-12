@@ -1,5 +1,5 @@
 //! The ant farm: a side view of the fleet where an ant's place shows its state. An
-//! alternative to the graph, drawn from the same snapshot, filters and selection.
+//! drawn from the fleet snapshot, filters and selection.
 //!
 //! [`layout`] decides where everything goes, [`motion`] walks ants to new places and
 //! [`sprites`] draws them; this module ties them to egui and handles input.
@@ -14,6 +14,7 @@ mod layout_tests;
 pub mod mail;
 pub mod motion;
 pub mod nature;
+pub mod nav;
 mod pops;
 pub mod rooms;
 #[cfg(test)]
@@ -30,15 +31,15 @@ use std::time::Duration;
 use eframe::egui::{self, Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, vec2};
 
 use crate::model::{FleetSnapshot, NodeId};
+use crate::ui::ant_farm::nav::{ScrollAction, ScrollSource, route_scroll};
 use crate::ui::daylight;
 use crate::ui::dwarf::{self, Action, Look, Role};
-use crate::ui::graph::GraphView;
-use crate::ui::graph::nav::{self, ScrollAction, ScrollSource, route_scroll};
+use crate::ui::fleet_view::FleetView;
 use art::{ArtSettings, DwarfArt, Figure};
 use death::{Body, Fall};
 use layout::{FarmInput, Pose, Scene, Spot, TunnelKey, layout_in};
 use motion::{Walk, route};
-use sprites::{AntLook, Coat, Item, Palette, Sprites};
+use sprites::{Coat, Palette, Sprites};
 use zoom::Camera;
 
 /// Redraw interval while an ant walks.
@@ -47,7 +48,6 @@ const WALK_FRAME: Duration = Duration::from_millis(33);
 /// stepped like pixel art, and slow enough that a farm full of working ants stays cheap.
 const STEP_FRAME: Duration = Duration::from_millis(150);
 /// Walk frames per second.
-const WALK_FPS: f64 = 8.0;
 /// Dig and wave steps per second; matches [`STEP_FRAME`].
 const STEP_FPS: f64 = 4.0;
 /// The busy Queen's hop, in texels per step.
@@ -135,7 +135,7 @@ pub fn hop(dist: f32, radius: f32, width: f32, height: f32) -> f32 {
 pub struct AntFarmResponse {
     /// The ant clicked this frame.
     pub clicked: Option<NodeId>,
-    /// Empty ground was clicked (clears the selection, as in the graph).
+    /// Empty ground was clicked (clears the selection, as in the fleet).
     pub clicked_empty: bool,
     pub open_envoy: bool,
     pub hovered: Option<NodeId>,
@@ -222,7 +222,7 @@ pub struct AntFarmView {
     advanced_rect: Option<Rect>,
     /// Reduce motion as set for tests; the system's setting otherwise.
     reduce_motion: Option<bool>,
-    /// Ants or dwarves, pixels, palette; see [`art`].
+    /// Dwarf pixel resolution and palette; see [`art`].
     art: ArtSettings,
     dwarf_art: DwarfArt,
 }
@@ -428,6 +428,53 @@ impl AntFarmView {
         self.pending.push(pulse);
     }
 
+    /// Shows the whole farm again.
+    pub fn fit_to_screen(&mut self) {
+        self.camera = Camera::default();
+    }
+
+    fn focus(
+        &mut self,
+        scene: &Scene,
+        placed: &[Placed],
+        fleet: &FleetView,
+        focus: crate::ui::fleet_view::Focus,
+    ) {
+        use crate::ui::fleet_view::Focus;
+        let mut bounds = Rect::NOTHING;
+        for room in &scene.tunnels {
+            let matches = match (&focus, &room.key) {
+                (Focus::Run(run), TunnelKey::Run(key)) => run == key,
+                (Focus::Repo(repo), TunnelKey::Repo(key)) => repo == key,
+                (Focus::Repo(repo), TunnelKey::Run(run)) => {
+                    fleet.run_repo(run) == Some(repo.as_str())
+                }
+                (Focus::Repo(repo), TunnelKey::RestingArea) => repo == crate::park::RESTING_AREA,
+                _ => false,
+            };
+            if matches {
+                bounds = bounds.union(room.chamber.expand(scene.cell() * 0.5));
+            }
+        }
+        // Runs with everyone above ground may have no chamber yet. Focus their figures.
+        if !bounds.is_finite() {
+            for (ant, at) in scene.ants.iter().zip(placed) {
+                let matches = match &focus {
+                    Focus::Nodes(ids) => ids.contains(&ant.id),
+                    Focus::Run(run) => fleet.node_run(&ant.id) == Some(run.as_str()),
+                    Focus::Repo(repo) => fleet.node_repo(&ant.id) == Some(repo.as_str()),
+                };
+                if matches {
+                    bounds =
+                        bounds.union(Rect::from_center_size(at.pos, Vec2::splat(ant.size * 2.0)));
+                }
+            }
+        }
+        if bounds.is_finite() && bounds.is_positive() {
+            self.camera.focus(scene.rect, bounds);
+        }
+    }
+
     /// Carries a message between ants, asked for at `now_s` (egui time); `still` for Reduce
     /// motion.
     pub fn message(&mut self, flight: crate::traffic::Flight, now_s: f64, still: bool) {
@@ -446,22 +493,21 @@ impl AntFarmView {
     }
 
     /// Draws the farm filling the available space and handles clicks, hover and the context
-    /// menu. `graph` supplies the filters, selection, PR badges, tooltips and menu, so both
-    /// views act alike.
+    /// menu. `fleet` supplies the shared selection, filters, badges, tooltips and actions.
     pub fn show(
         &mut self,
         ui: &mut Ui,
         snapshot: &FleetSnapshot,
-        graph: &GraphView,
+        fleet: &mut FleetView,
     ) -> AntFarmResponse {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.navigate(ui, &response);
         let now_s = ui.input(|i| i.time);
         let input = FarmInput {
             snapshot,
-            hidden: graph.hidden(),
-            pr_ready: graph.pr_ready(),
-            building: graph.building(),
+            hidden: fleet.hidden(),
+            pr_ready: fleet.pr_ready(),
+            building: fleet.building(),
             now_ms: now_ms(),
         };
         let mut scene = layout_in(&input, rect, &mut self.rooms);
@@ -483,6 +529,9 @@ impl AntFarmView {
         self.falls.retain(|f| now_s - f.start_s < f.duration());
         self.bury(&scene, snapshot, now_s, death::reduce_motion);
         let placed = self.advance(&scene, now_s);
+        if let Some(focus) = fleet.take_focus() {
+            self.focus(&scene, &placed, fleet, focus);
+        }
         let pops = self.pops.frames(now_s);
         let effects = Effects {
             ripples: &self.ripples,
@@ -500,7 +549,7 @@ impl AntFarmView {
             .unwrap_or(egui::layers::ShapeIdx(0));
         let daylight = daylight::daylight();
         let palette = Palette::new(daylight);
-        let selection = graph.selection();
+        let selection = fleet.selection();
 
         let pipe_stretch = mail::pipe_stretch(self.mail.tick(now_s), now_s);
         paint_ground(
@@ -546,8 +595,33 @@ impl AntFarmView {
             &effects,
             ui,
         );
+        for (ant, at) in scene.ants.iter().zip(&placed) {
+            if let Some(badge) = fleet.unread(&ant.id) {
+                let center = at.pos + vec2(ant.size * 0.45, -ant.size * 0.45);
+                let radius = (ant.size * 0.2).max(5.0);
+                painter.circle_filled(
+                    center,
+                    radius,
+                    crate::ui::notifications::severity_color(
+                        badge.severity,
+                        ui.visuals().dark_mode,
+                    ),
+                );
+                painter.text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    if badge.count > 9 {
+                        "9+".into()
+                    } else {
+                        badge.count.to_string()
+                    },
+                    egui::FontId::proportional(radius * 1.3),
+                    egui::Color32::WHITE,
+                );
+            }
+        }
         pops::paint(&painter, sprites, &scene, &placed, &pops, false);
-        paint_falls(&painter, sprites, &mut figures, &scene, &self.falls, now_s);
+        paint_falls(&painter, &mut figures, &scene, &self.falls, now_s);
         mail::paint(&painter, &scene, &placed, self.mail.tick(now_s), now_s);
         beams::paint(&painter, &scene, &placed, self.beams.tick(now_s), now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
@@ -604,14 +678,14 @@ impl AntFarmView {
         if let Some(id) = &hovered {
             response
                 .clone()
-                .on_hover_ui_at_pointer(|ui| graph.node_tooltip_ui(ui, id));
+                .on_hover_ui_at_pointer(|ui| fleet.node_tooltip_ui(ui, id));
         }
         if response.secondary_clicked() {
             self.context_node = hovered.clone();
         }
         let boxed = self.box_select(ui, &response, &scene, &placed);
         let menu = match &self.context_node {
-            Some(id) => graph.node_menu(&response, id),
+            Some(id) => fleet.node_menu(&response, id),
             None => Default::default(),
         };
         AntFarmResponse {
@@ -628,7 +702,7 @@ impl AntFarmView {
     }
 
     /// Starts, draws and finishes a selection box dragged with the primary button from empty
-    /// ground, as in the graph. Returns the ants it covers once released.
+    /// ground, as in the fleet. Returns the ants it covers once released.
     fn box_select(
         &mut self,
         ui: &Ui,
@@ -651,7 +725,7 @@ impl AntFarmView {
             || !ui.input(|i| i.pointer.primary_down());
         if released {
             self.box_origin = None;
-            let additive = ui.input(|i| crate::ui::graph::is_additive(i.modifiers));
+            let additive = ui.input(|i| crate::ui::fleet_view::is_additive(i.modifiers));
             let farm = Rect::from_two_pos(
                 self.camera.to_farm(scene.rect, rect.min),
                 self.camera.to_farm(scene.rect, rect.max),
@@ -1086,12 +1160,7 @@ fn paint_ground(
                 2.0 * px + col as f32 * 10.0 * px + (row % 2) as f32 * 5.0 * px,
                 -a - row as f32 * 8.0 * px,
             );
-        sprites.item(
-            painter,
-            Rect::from_min_size(min, Vec2::splat(a)),
-            Item::Pile,
-            1.0,
-        );
+        sprites.pile(painter, Rect::from_min_size(min, Vec2::splat(a)), 1.0);
     }
 }
 
@@ -1111,7 +1180,6 @@ fn paint_ants(
     let px = scene.px;
     let origin = queen_center(scene);
     let max_r = farthest(scene, origin);
-    let walk_frame = (now_s * WALK_FPS) as usize;
     let step = (now_s * STEP_FPS) as usize;
     let accent = ui.visuals().selection.bg_fill;
     let palette = Palette::new(daylight::daylight());
@@ -1127,19 +1195,13 @@ fn paint_ants(
             Some(h) if h.x.abs() > 0.1 => h.x > 0.0,
             _ => ant.facing_right,
         };
-        let frame = match ant.pose {
-            _ if walking => walk_frame,
-            Pose::Dig | Pose::Build => step,
-            Pose::Queen if effects.queen_busy => step,
-            _ => 0,
-        };
         if !walking {
             match ant.pose {
                 Pose::Wait => cell = cell.translate(vec2(0.0, -((step % 2) as f32) * 2.0 * tpx)),
                 Pose::Dig | Pose::Build => {
                     cell = cell.translate(vec2(0.0, -((step % 2) as f32) * tpx))
                 }
-                // Belly up: the flipped sprite needs lowering to lie on the floor.
+                // Resting figures sit lower on the floor.
                 Pose::Sleep | Pose::Failed => cell = cell.translate(vec2(0.0, 2.0 * tpx)),
                 // A busy Queen hops about; otherwise she sits still.
                 Pose::Queen if effects.queen_busy => {
@@ -1174,14 +1236,6 @@ fn paint_ants(
         if bed.is_some() {
             cell = cell.translate(vec2(0.0, -layout::SLEEPER_LIFT * tpx));
         }
-        let look = AntLook {
-            coat: Coat::new(ant.agent.as_ref(), ant.pose == Pose::Failed),
-            frame,
-            facing_right,
-            upside_down: matches!(ant.pose, Pose::Failed | Pose::Sleep) && !walking,
-            alpha: ant.alpha,
-        };
-        let dwarves = figures.art.dwarves;
         let carrying =
             ant.pose == Pose::Carry || (walking && ant.state == crate::model::NodeState::Done);
         let figure = Figure {
@@ -1193,19 +1247,7 @@ fn paint_ants(
             alpha: ant.alpha,
         };
         if ant.pose == Pose::Queen {
-            figures.body(painter, sprites, &figure, look, cell, px, now_s);
-            // The King wears his own crown.
-            let crown = Rect::from_center_size(
-                cell.center_top()
-                    + vec2(
-                        if facing_right { 0.25 } else { -0.25 } * ant.size,
-                        ant.size * 0.3,
-                    ),
-                Vec2::splat(ant.size * 0.5),
-            );
-            if !dwarves {
-                sprites.item(painter, crown, Item::Crown, 1.0);
-            }
+            figures.body(painter, &figure, cell, px, now_s);
             // Ringed while selected or while her chat is the conversation shown.
             if selection.contains(&ant.id) || effects.queen_focused {
                 let ring = cell.expand(px);
@@ -1220,32 +1262,14 @@ fn paint_ants(
             }
             continue;
         }
-        figures.body(painter, sprites, &figure, look, cell, px, now_s);
+        figures.body(painter, &figure, cell, px, now_s);
         if let Some(bed) = bed {
             sprites.blanket(painter, bed.rect, cell, tpx, ant.alpha);
-        }
-        // A dwarf carries his own nugget.
-        if carrying && !dwarves {
-            let crumb = Rect::from_center_size(
-                cell.center()
-                    + vec2(
-                        if facing_right { 0.35 } else { -0.35 } * ant.size,
-                        -0.1 * ant.size,
-                    ),
-                Vec2::splat(ant.size * 0.5),
-            );
-            sprites.item(painter, crumb, Item::Crumb, ant.alpha);
-        }
-        if ant.kind == crate::model::NodeKind::Envoy && !dwarves {
-            comms::headphones(painter, cell, tpx, facing_right, ant.alpha);
         }
         if !walking && ant.pose == Pose::Dig {
             let seed = (ant.pos.x * 0.37 + ant.pos.y * 0.11).rem_euclid(1.0);
             let t = (now_s * 6.0).floor() / 6.0;
             sprites.dirt(painter, cell, facing_right, tpx, t, seed);
-        }
-        if !walking && ant.pose == Pose::Build && !dwarves {
-            sprites.builder(painter, cell, facing_right, tpx, step);
         }
         if !walking && ant.mark == Some(layout::Mark::Whip) {
             sprites.whip(painter, cell, tpx, step);
@@ -1294,31 +1318,16 @@ fn paint_ants(
     }
 }
 
-/// What the farm's figures are drawn as this frame: the ant sprites or dwarves.
+/// Pixel rendering settings and cache for this frame's dwarves.
 struct Figures<'a> {
     art: &'a ArtSettings,
     dwarves: &'a mut DwarfArt,
 }
 
 impl Figures<'_> {
-    /// Draws one figure in `cell`: `ant` as a sprite, or `figure` as a dwarf.
-    #[allow(clippy::too_many_arguments)]
-    fn body(
-        &mut self,
-        painter: &egui::Painter,
-        sprites: &Sprites,
-        figure: &Figure,
-        ant: AntLook,
-        cell: Rect,
-        px: f32,
-        now_s: f64,
-    ) {
-        if self.art.dwarves {
-            self.dwarves
-                .paint(painter, self.art, figure, cell, px, now_s);
-        } else {
-            sprites.ant(painter, cell, ant);
-        }
+    fn body(&mut self, painter: &egui::Painter, figure: &Figure, cell: Rect, px: f32, now_s: f64) {
+        self.dwarves
+            .paint(painter, self.art, figure, cell, px, now_s);
     }
 }
 
@@ -1361,7 +1370,6 @@ fn dwarf_action(ant: &layout::Ant, walking: bool, carrying: bool, queen_busy: bo
 /// Ants that left the fleet, falling legs up.
 fn paint_falls(
     painter: &egui::Painter,
-    sprites: &Sprites,
     figures: &mut Figures,
     scene: &Scene,
     falls: &[Fall],
@@ -1370,13 +1378,6 @@ fn paint_falls(
     for fall in falls {
         let Some(frame) = fall.frame(scene.rect, now_s) else {
             continue;
-        };
-        let look = AntLook {
-            coat: fall.body.coat,
-            frame: 0,
-            facing_right: fall.body.facing_right,
-            upside_down: frame.upside_down,
-            alpha: frame.alpha,
         };
         let mut dwarf = Look::from_seed(fall.body.seed);
         dwarf.tunic = art::livery(fall.body.coat).unwrap_or(dwarf.tunic);
@@ -1390,7 +1391,7 @@ fn paint_falls(
             alpha: frame.alpha,
         };
         let cell = Rect::from_center_size(frame.pos, Vec2::splat(fall.body.size));
-        figures.body(painter, sprites, &figure, look, cell, scene.px, now_s);
+        figures.body(painter, &figure, cell, scene.px, now_s);
     }
 }
 

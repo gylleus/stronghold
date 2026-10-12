@@ -1,8 +1,11 @@
 # Myrstack
 
 A native Rust/egui desktop app that shows the agent fleet running in the
-Orca agent IDE as a live graph: coordinators, their
-workers and their subagents. Select a node to see its terminal and type into it.
+Orca agent IDE as a dwarf farm: coordinators, their
+workers and their subagents. Select a dwarf to see its terminal and type into it.
+
+The farm is the only fleet view. Settings → Art controls pixel size and palette;
+`f` or Fit shows the whole farm, and selecting a run or repo focuses its rooms.
 
 **Ant**: one dedicated agent session working on a task (what the Queen, or "New ant…",
 starts). The fleet is the colony of ants.

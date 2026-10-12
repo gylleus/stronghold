@@ -20,7 +20,7 @@ use crate::notify::{
     self, Incoming, NotificationCenter, NotifySettings, Outcome, Post, Severity, Sound, Source,
 };
 use crate::ui::dock::{Pane, Side};
-use crate::ui::graph::UnreadBadge;
+use crate::ui::fleet_view::UnreadBadge;
 use crate::ui::notifications::{NoticeAction, NotificationsPanel, PanelAction, Toasts};
 
 /// How long queued notifications wait for the first fleet snapshot before they are taken anyway.
@@ -407,7 +407,7 @@ impl MyrstackApp {
             badge.count += 1;
             badge.severity = badge.severity.max(entry.severity);
         }
-        self.graph.set_unread(badges);
+        self.fleet.set_unread(badges);
     }
 
     /// The top bar's bell: opens the notifications panel, or collapses it when it is in front.

@@ -25,7 +25,7 @@ pub fn paint(
     } else {
         Color32::from_rgb(188, 215, 219)
     };
-    let accent = crate::ui::graph::envoy_color(painter.ctx().global_style().visuals.dark_mode);
+    let accent = crate::ui::fleet_view::envoy_color(painter.ctx().global_style().visuals.dark_mode);
     let white = Color32::from_rgb(229, 244, 239);
     let pixel = |origin: Pos2, x: f32, y: f32, w: f32, h: f32, color| {
         painter.rect_filled(
@@ -147,25 +147,6 @@ pub fn paint(
         FontId::monospace(5.0 * px + 2.0),
         metal,
     );
-}
-
-pub fn headphones(painter: &Painter, cell: Rect, px: f32, facing_right: bool, alpha: f32) {
-    let dir = if facing_right { 1.0 } else { -1.0 };
-    let head = cell.center() + vec2(dir * 3.0, -2.0) * px;
-    let color = Color32::from_rgb(127, 220, 224).gamma_multiply(alpha);
-    for (offset, size) in [
-        (vec2(-3.0, -4.0), vec2(6.0, 1.0)),
-        (vec2(-3.0, -3.0), vec2(1.0, 3.0)),
-        (vec2(2.0, -3.0), vec2(1.0, 3.0)),
-        (vec2(-4.0, -1.0), vec2(2.0, 3.0)),
-        (vec2(2.0, -1.0), vec2(2.0, 3.0)),
-    ] {
-        painter.rect_filled(
-            Rect::from_min_size(head + offset * px, size * px),
-            0.0,
-            color,
-        );
-    }
 }
 
 pub fn tray(painter: &Painter, scene: &Scene, pending: usize, hovered: bool, offset: f32) {

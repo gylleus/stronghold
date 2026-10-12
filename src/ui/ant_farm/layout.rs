@@ -110,7 +110,7 @@ pub enum Pose {
     Stand,
     /// Digging at the chamber's face (working: reading, searching, thinking).
     Dig,
-    /// Hammering in a hard hat at the chamber's face (editing or building).
+    /// Building at the chamber's face (editing or building).
     Build,
     /// Lying still (idle or stalled).
     Sleep,
@@ -277,7 +277,7 @@ impl Scene {
     }
 }
 
-/// What the farm is drawn from: the graph's snapshot and its filters.
+/// What the farm is drawn from: the fleet's snapshot and its filters.
 pub struct FarmInput<'a> {
     pub snapshot: &'a FleetSnapshot,
     /// Nodes filtered out; they are not drawn.
@@ -1023,7 +1023,7 @@ fn ant(node: &Node, spot: Spot, pos: Pos2, size: f32, home: Home, pr: bool, now_
                 None
             }
         },
-        alpha: crate::ui::graph::fade_alpha(node.released_at_ms, now_ms),
+        alpha: crate::ui::fleet_view::fade_alpha(node.released_at_ms, now_ms),
         agent: node.agent.clone(),
     }
 }

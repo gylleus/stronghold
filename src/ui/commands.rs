@@ -3,7 +3,6 @@
 
 use std::collections::VecDeque;
 
-use crate::app::View;
 use crate::model::NodeState;
 use crate::ui::keys::KeyCommand;
 
@@ -25,13 +24,9 @@ pub enum ActionId {
     WhipSettings,
     Settings,
     ToggleDryRun,
-    FitGraph,
-    ResetLayout,
+    FitFarm,
     ResetPanes,
     ToggleNotifications,
-    GraphView,
-    TableView,
-    AntFarmView,
     ClearFilters,
     ShowNeedsInput,
     ShowStalled,
@@ -189,18 +184,11 @@ pub const ACTIONS: &[Action] = &[
         None,
     ),
     action(
-        ActionId::FitGraph,
-        "fit_graph",
-        "Fit graph",
+        ActionId::FitFarm,
+        "fit_farm",
+        "Fit farm",
         "zoom screen view all center",
         Some("f"),
-    ),
-    action(
-        ActionId::ResetLayout,
-        "reset_layout",
-        "Reset layout",
-        "graph positions arrange relayout",
-        None,
     ),
     action(
         ActionId::ResetPanes,
@@ -214,27 +202,6 @@ pub const ACTIONS: &[Action] = &[
         "toggle_notifications",
         "Show/hide notifications",
         "notifications inbox bell panel history alerts unread collapse",
-        None,
-    ),
-    action(
-        ActionId::GraphView,
-        "graph_view",
-        "Graph view",
-        "switch view nodes",
-        None,
-    ),
-    action(
-        ActionId::TableView,
-        "table_view",
-        "Table view",
-        "switch view terminals list",
-        None,
-    ),
-    action(
-        ActionId::AntFarmView,
-        "ant_farm_view",
-        "Ant farm view",
-        "switch view ants colony tunnels farm",
         None,
     ),
     action(
@@ -389,7 +356,6 @@ pub struct ActionContext {
     pub close_targets: usize,
     /// The selected node has a terminal (to open in Orca or type into).
     pub selected_terminal: bool,
-    pub view: View,
     pub dry_run: bool,
     /// Any sidebar filter differs from the default.
     pub filters_active: bool,
@@ -415,7 +381,6 @@ impl Default for ActionContext {
             whip_targets: 0,
             close_targets: 0,
             selected_terminal: false,
-            view: View::Graph,
             dry_run: true,
             filters_active: false,
             show_loose: true,
@@ -462,14 +427,11 @@ pub fn disabled_reason(id: ActionId, cx: &ActionContext) -> Option<&'static str>
         }
         StatusReport if !cx.chat_ready => "The Queen's chat is busy or not ready",
         StopSpeaking if !cx.speaking => "The Queen is not speaking",
-        GraphView if cx.view == View::Graph => "Already in graph view",
-        TableView if cx.view == View::Table => "Already in table view",
-        AntFarmView if cx.view == View::AntFarm => "Already in ant farm view",
         ClearFilters if !cx.filters_active => "No filters are set",
         HistoryBack if !cx.can_back => "No earlier selection",
         HistoryForward if !cx.can_forward => "No later selection",
         WhipSelected | CloseSelected | WhipStalled | NextRepo | PrevRepo | NextRun | PrevRun
-        | NextNode | PrevNode | FitGraph | ResetLayout | KeyboardHelp
+        | NextNode | PrevNode | FitFarm | KeyboardHelp
             if !cx.has_data =>
         {
             "Waiting for the first fleet poll"
@@ -504,12 +466,10 @@ pub enum Dispatch {
     /// Open the Settings window (⌘,).
     OpenSettings,
     ToggleDryRun,
-    ResetLayout,
     /// Put the dock's panes back in their default arrangement.
     ResetPanes,
     /// Open the notifications panel, or collapse it when it is in front.
     ToggleNotifications,
-    SetView(View),
     ClearFilters,
     ShowOnly(NodeState),
     ToggleLoose,
@@ -538,13 +498,9 @@ pub fn dispatch(id: ActionId) -> Dispatch {
         A::WhipSettings => Dispatch::WhipSettings,
         A::Settings => Dispatch::OpenSettings,
         A::ToggleDryRun => Dispatch::ToggleDryRun,
-        A::FitGraph => Dispatch::Key(KeyCommand::Fit),
-        A::ResetLayout => Dispatch::ResetLayout,
+        A::FitFarm => Dispatch::Key(KeyCommand::Fit),
         A::ResetPanes => Dispatch::ResetPanes,
         A::ToggleNotifications => Dispatch::ToggleNotifications,
-        A::GraphView => Dispatch::SetView(View::Graph),
-        A::TableView => Dispatch::SetView(View::Table),
-        A::AntFarmView => Dispatch::SetView(View::AntFarm),
         A::ClearFilters => Dispatch::ClearFilters,
         A::ShowNeedsInput => Dispatch::ShowOnly(NodeState::NeedsInput),
         A::ShowStalled => Dispatch::ShowOnly(NodeState::Stalled),
@@ -689,13 +645,9 @@ mod tests {
             (A::WhipSettings, Dispatch::WhipSettings),
             (A::Settings, Dispatch::OpenSettings),
             (A::ToggleDryRun, Dispatch::ToggleDryRun),
-            (A::FitGraph, Dispatch::Key(KeyCommand::Fit)),
-            (A::ResetLayout, Dispatch::ResetLayout),
+            (A::FitFarm, Dispatch::Key(KeyCommand::Fit)),
             (A::ResetPanes, Dispatch::ResetPanes),
             (A::ToggleNotifications, Dispatch::ToggleNotifications),
-            (A::GraphView, Dispatch::SetView(View::Graph)),
-            (A::TableView, Dispatch::SetView(View::Table)),
-            (A::AntFarmView, Dispatch::SetView(View::AntFarm)),
             (A::ClearFilters, Dispatch::ClearFilters),
             (A::ShowNeedsInput, Dispatch::ShowOnly(NodeState::NeedsInput)),
             (A::ShowStalled, Dispatch::ShowOnly(NodeState::Stalled)),
@@ -734,8 +686,6 @@ mod tests {
         assert!(disabled_reason(ActionId::CloseSelected, &cx).is_some());
         assert!(disabled_reason(ActionId::OpenInOrca, &cx).is_some());
         assert!(disabled_reason(ActionId::StatusReport, &cx).is_some());
-        assert!(disabled_reason(ActionId::GraphView, &cx).is_some());
-        assert_eq!(disabled_reason(ActionId::TableView, &cx), None);
         assert!(disabled_reason(ActionId::ClearFilters, &cx).is_some());
         assert_eq!(disabled_reason(ActionId::OpenChat, &cx), None);
         assert_eq!(
@@ -802,28 +752,24 @@ mod tests {
             title(ActionId::ToggleReleased, &cx),
             "Show recently released"
         );
-        assert_eq!(title(ActionId::FitGraph, &cx), "Fit graph");
+        assert_eq!(title(ActionId::FitFarm, &cx), "Fit farm");
     }
 
     #[test]
     fn recents_are_newest_first_unique_and_capped() {
         let mut r = Recents::default();
         for id in [
-            ActionId::FitGraph,
+            ActionId::FitFarm,
             ActionId::OpenChat,
             ActionId::WhipStalled,
-            ActionId::FitGraph,
+            ActionId::FitFarm,
         ] {
             r.push(id);
         }
         let ids: Vec<_> = r.ids().collect();
         assert_eq!(
             ids,
-            [
-                ActionId::FitGraph,
-                ActionId::WhipStalled,
-                ActionId::OpenChat
-            ]
+            [ActionId::FitFarm, ActionId::WhipStalled, ActionId::OpenChat]
         );
         for a in ACTIONS {
             r.push(a.id);
@@ -833,8 +779,8 @@ mod tests {
 
         let restored = Recents::from_keys(&r.keys());
         assert_eq!(restored, r);
-        let partial = Recents::from_keys(&["fit_graph", "gone", "open_chat", "fit_graph"]);
+        let partial = Recents::from_keys(&["fit_farm", "gone", "open_chat", "fit_farm"]);
         let ids: Vec<_> = partial.ids().collect();
-        assert_eq!(ids, [ActionId::FitGraph, ActionId::OpenChat]);
+        assert_eq!(ids, [ActionId::FitFarm, ActionId::OpenChat]);
     }
 }

@@ -1,5 +1,8 @@
 # UI polish investigation: egui vs migration
 
+Historical investigation. The graph, its vendored dependency and the comparison
+screenshots were removed on 2026-10-12; Myrstack now uses the dwarf farm alone.
+
 *September 2026, for myr-a7v. Question: the Myrstack UI feels rough next to Orca — how far
 can egui take us, and what would a migration to another Rust UI stack cost?*
 
@@ -145,10 +148,6 @@ permission card, live input echo) with a "Polished theme" toggle: HelveticaNeue/
 font, 14.5px body, indigo accent, 8px corners, roomier spacing — **no changes to any pane
 code**. `cargo run --example chat_theme_poc` (`-- stock` starts unthemed). The delta over
 stock is exactly the theme pass proposed above:
-
-| Stock (today's app) | Polished (same pane code) |
-|---|---|
-| ![stock](docs/ui-poc-stock.png) | ![polished](docs/ui-poc-polished.png) |
 
 ## Question 2: migration candidates
 

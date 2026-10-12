@@ -15,8 +15,6 @@ path = "src/main.rs"
 
 [dependencies]
 eframe = { version = "0.36", features = ["persistence"] }
-egui_graphs = "0.32"
-petgraph = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 crossbeam-channel = "0.5"
@@ -28,7 +26,6 @@ log = "0.4"
 env_logger = "0.11"
 jiff = "0.2"
 global-hotkey = "0.8"
-egui_extras = { version = "0.36", features = ["svg"] }
 sherpa-rs = { version = "0.6.8", features = ["static"] }
 cpal = "0.18"
 sha2 = "0.10"
@@ -47,9 +44,3 @@ objc2-user-notifications = { version = "0.3", default-features = false, features
 
 [dev-dependencies]
 tempfile = "3"
-# Screenshots in examples/graph_groups.rs; already in the tree through eframe.
-image = { version = "0.25", default-features = false, features = ["png"] }
-
-# Vendored with a local patch that lets an idle graph view stop repainting every frame.
-[patch.crates-io]
-egui_graphs = { path = "vendor/egui_graphs" }

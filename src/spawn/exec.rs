@@ -84,7 +84,7 @@ pub struct SpawnOutcome {
 }
 
 impl SpawnOutcome {
-    /// The graph node the new session appears as.
+    /// The farm node the new session appears as.
     pub fn node_id(&self) -> Option<NodeId> {
         let ctx = &self.context;
         match (&ctx.run_id, &ctx.dispatch_id, &ctx.handle) {

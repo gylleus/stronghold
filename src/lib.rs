@@ -1,4 +1,4 @@
-//! Myrstack: a live graph view of the Orca agent fleet.
+//! Myrstack: a live farm view of the Orca agent fleet.
 
 // Stub modules are filled in by later milestones.
 #![allow(dead_code)]

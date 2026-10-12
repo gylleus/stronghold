@@ -8,7 +8,6 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::app::View;
 use crate::claude::ClaudeData;
 use crate::claude::usage::TokenCounts;
 use crate::detect::PromptKind;
@@ -131,7 +130,7 @@ impl From<&TaskCounts> for TaskCountsView {
     }
 }
 
-/// One node of the graph: a coordinator, worker, loose terminal or Claude subagent.
+/// One node of the farm: a coordinator, worker, loose terminal or Claude subagent.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AgentView {
     /// Stable node id: `term:<handle>`, `dispatch:<run>:<dispatch>` or `sub:<session>:<agent>`.
@@ -366,11 +365,9 @@ impl AlertView {
 /// What the dashboard currently shows.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DashboardView {
-    /// `graph` or `table`.
-    pub view: String,
     pub selected: Option<String>,
     /// Every selected node (several after a box select or Shift/Cmd-click); includes
-    /// `selected` when it is shown in the graph.
+    /// `selected` when it is shown in the farm.
     #[serde(default)]
     pub selection: Vec<String>,
     pub filter: FilterView,
@@ -442,23 +439,6 @@ pub fn parse_kind(s: &str) -> Option<NodeKind> {
     ALL.into_iter().find(|k| squash(kind_name(*k)) == squash(s))
 }
 
-pub fn view_name(view: View) -> &'static str {
-    match view {
-        View::Graph => "graph",
-        View::Table => "table",
-        View::AntFarm => "ant_farm",
-    }
-}
-
-pub fn parse_view(s: &str) -> Option<View> {
-    match squash(s).as_str() {
-        "graph" => Some(View::Graph),
-        "table" => Some(View::Table),
-        "antfarm" | "farm" | "ants" => Some(View::AntFarm),
-        _ => None,
-    }
-}
-
 fn squash(s: &str) -> String {
     s.chars()
         .filter(|c| c.is_alphanumeric())
@@ -489,7 +469,7 @@ pub struct ViewInputs<'a> {
     pub quotas: &'a Quotas,
     /// The notification inbox, oldest first.
     pub alerts: &'a [Entry],
-    pub view: View,
+
     pub selected: Option<&'a str>,
     pub selection: Vec<&'a str>,
     pub filter: &'a FleetFilter,
@@ -521,7 +501,6 @@ impl StatusView {
                 .map(|a| AlertView::build(a, snapshot))
                 .collect(),
             dashboard: DashboardView {
-                view: view_name(inputs.view).into(),
                 selected: inputs.selected.map(str::to_owned),
                 selection: inputs.selection.iter().map(|s| (*s).to_owned()).collect(),
                 filter: filter_view(inputs.filter, snapshot),

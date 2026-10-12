@@ -1,6 +1,6 @@
 //! The app side of the review queue: ingests marks (control API, the pending file, `merge_ready`
 //! bus messages), applies GitHub reads, notifies, saves, and draws the queue in the Queen panel,
-//! the top bar and the graph's "PR" badges.
+//! the top bar and the fleet's "PR" badges.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -105,7 +105,7 @@ impl MyrstackApp {
     }
 
     /// Per frame: reads new bus messages, applies GitHub reads, prunes, keeps the poller's
-    /// watch list current, notifies about new entries, marks graph nodes and saves.
+    /// watch list current, notifies about new entries, marks fleet nodes and saves.
     pub(super) fn poll_review(&mut self) {
         let now = now_ms();
         self.ingest_bus(now);
@@ -141,7 +141,7 @@ impl MyrstackApp {
             .iter()
             .filter_map(|r| r.agent.as_ref().map(|a| a.id.clone()))
             .collect();
-        self.graph.set_pr_ready(nodes);
+        self.fleet.set_pr_ready(nodes);
         self.save_review();
     }
 

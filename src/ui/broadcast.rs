@@ -10,7 +10,7 @@ use crate::broadcast::{
     run_choices,
 };
 use crate::model::FleetSnapshot;
-use crate::ui::graph::{state_color, state_label};
+use crate::ui::fleet_view::{state_color, state_label};
 
 enum Stage {
     Compose,

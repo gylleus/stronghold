@@ -4,9 +4,8 @@
 //! the dressed dwarf in every palette at once.
 //!
 //! `cargo run --release --example dwarf_lab [--shot out.png] [--action NAME]
-//! [--t SECS] [--paper] [--pixel HEIGHT] [--palette NAME] [--palettes]`: `--t` freezes time
-//! (for comparable screenshots); `--paper` starts with the paper finish; `--pixel` starts in
-//! pixel mode with dwarves HEIGHT pixels tall; `--palette` picks a palette by file name (such
+//! [--t SECS] [--pixel HEIGHT] [--palette NAME] [--palettes]`: `--t` freezes time
+//! (for comparable screenshots); `--pixel` sets the dwarf height in pixels; `--palette` picks a palette by file name (such
 //! as `endesga-32`); `--palettes` opens the palette view; with `--shot`, it saves a screenshot
 //! after a few frames and exits.
 
@@ -42,11 +41,6 @@ fn main() -> eframe::Result {
         .unwrap_or(Action::Mine);
     let frozen = value("--t").and_then(|t| t.parse::<f64>().ok());
     let shot = value("--shot");
-    let finish = if flag("--paper") {
-        Finish::PAPER
-    } else {
-        Finish::INK
-    };
     let pixel_height = value("--pixel").and_then(|h| h.parse::<usize>().ok());
     let palette = value("--palette")
         .and_then(|name| pixel::BUNDLED.iter().position(|(file, _)| *file == name))
@@ -67,10 +61,8 @@ fn main() -> eframe::Result {
                 look: Look::from_seed(7),
                 action,
                 facing_right: true,
-                finish,
                 crowd_mixed: true,
                 pixel: Pixels {
-                    on: pixel_height.is_some() || palette_view,
                     height: pixel_height.unwrap_or(48),
                     palette,
                     fps: 12,
@@ -95,7 +87,6 @@ struct Lab {
     look: Look,
     action: Action,
     facing_right: bool,
-    finish: Finish,
     /// Each crowd dwarf does its own thing, or all do the lab's action.
     crowd_mixed: bool,
     pixel: Pixels,
@@ -109,7 +100,6 @@ struct Lab {
 
 /// Pixel mode: dwarves rasterized small, optionally in a palette.
 struct Pixels {
-    on: bool,
     /// Dwarf height in pixels.
     height: usize,
     /// 0 for no palette, else 1 + an index into `palettes`.
@@ -254,19 +244,7 @@ impl eframe::App for Lab {
 
 impl Lab {
     fn sprite(&mut self, painter: &egui::Painter, sprite: Sprite, palette: usize) {
-        if self.pixel.on {
-            self.pixel.draw(painter, &sprite, &self.finish, palette);
-        } else {
-            dwarf::paint(
-                painter,
-                sprite.foot,
-                sprite.height,
-                sprite.look,
-                &dwarf::pose(sprite.action, sprite.t),
-                sprite.facing_right,
-                &self.finish,
-            );
-        }
+        self.pixel.draw(painter, &sprite, &Finish::INK, palette);
     }
 
     /// The dressed dwarf big on the left, a crowd of seeded dwarves on the right.
@@ -429,8 +407,7 @@ impl Lab {
         ui.checkbox(&mut self.crowd_mixed, "Crowd does mixed things");
         ui.separator();
         ui.heading("Pixels");
-        ui.checkbox(&mut self.pixel.on, "Pixel mode");
-        ui.add_enabled_ui(self.pixel.on, |ui| {
+        ui.scope(|ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Height");
                 for h in HEIGHTS {
@@ -457,37 +434,7 @@ impl Lab {
             ui.checkbox(&mut self.pixel.thick_outline, "Outline at least 1 px");
             ui.checkbox(&mut self.pixel.blend, "Blend edges (4×4 samples per pixel)");
         });
-        if ui
-            .checkbox(&mut self.palette_view, "Every palette at once")
-            .changed()
-            && self.palette_view
-        {
-            self.pixel.on = true;
-        }
-        ui.separator();
-        ui.heading("Finish");
-        ui.horizontal(|ui| {
-            for (name, preset) in [("Ink", Finish::INK), ("Paper", Finish::PAPER)] {
-                if ui.selectable_label(self.finish == preset, name).clicked() {
-                    self.finish = preset;
-                }
-            }
-        });
-        ui.add(egui::Slider::new(&mut self.finish.outline, 0.0..=3.0).text("Outline"));
-        ui.horizontal(|ui| {
-            ui.label("Outline colour");
-            ui.color_edit_button_srgba(&mut self.finish.outline_color);
-        });
-        let mut shadow = self.finish.shadow_color.a() > 0;
-        if ui.checkbox(&mut shadow, "Drop shadow").changed() {
-            self.finish.shadow = Finish::PAPER.shadow;
-            self.finish.shadow_color = if shadow {
-                Finish::PAPER.shadow_color
-            } else {
-                Color32::TRANSPARENT
-            };
-        }
-        ui.checkbox(&mut self.finish.pins, "Pins at the joints");
+        ui.checkbox(&mut self.palette_view, "Every palette at once");
     }
 
     fn screenshot(&mut self, ui: &egui::Ui) {

@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use eframe::egui::{self, Color32, RichText, Ui};
 
 use crate::model::{Node, NodeId};
-use crate::ui::graph::{kind_label, state_color, state_label};
+use crate::ui::fleet_view::{kind_label, state_color, state_label};
 
 /// What was clicked in the selection panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn close_targets_of_a_single_selection_is_the_primary_but_never_the_queen() {
         assert_eq!(close_targets(Some(&id("a")), &set(&["a"])), vec![id("a")]);
-        // A primary hidden by filter is not in the graph's selection.
+        // A primary hidden by filter is not in the farm's selection.
         assert_eq!(close_targets(Some(&id("a")), &set(&[])), vec![id("a")]);
         let queen = NodeId::queen();
         assert!(close_targets(Some(&queen), &[queen.clone()].into()).is_empty());

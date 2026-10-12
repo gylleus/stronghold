@@ -2,7 +2,7 @@
 //! positions and poses from [`super::layout`]; it draws pixel-art sprites from
 //! `assets/art/farm` (see `assets/LICENSES.md`) and generates the soil tiles.
 //!
-//! To change the art, replace the PNGs (16×16 cells; the ant sheets stack two walk frames),
+//! To change the scenery, replace the PNGs (16×16 cells),
 //! the tile generators below or the surface's pixel maps in [`super::nature`]; nothing outside
 //! these files draws farm art.
 
@@ -14,10 +14,6 @@ use super::layout::{MATTRESS_TOP, Mark, PIPE_H, PIPE_LIP_W};
 use super::nature::Deco;
 use crate::orca::AgentIdentity;
 
-const ANT_GREY: &[u8] = include_bytes!("../../../assets/art/farm/ant_grey.png");
-const ANT_RED: &[u8] = include_bytes!("../../../assets/art/farm/ant_red.png");
-const CROWN: &[u8] = include_bytes!("../../../assets/art/farm/crown.png");
-const COIN: &[u8] = include_bytes!("../../../assets/art/farm/coin.png");
 const COIN_PILE: &[u8] = include_bytes!("../../../assets/art/farm/coin_pile.png");
 const EMOTE_ALERT: &[u8] = include_bytes!("../../../assets/art/farm/emote_exclamation.png");
 const EMOTE_SLEEP: &[u8] = include_bytes!("../../../assets/art/farm/emote_sleeps.png");
@@ -25,17 +21,13 @@ const EMOTE_WHIP: &[u8] = include_bytes!("../../../assets/art/farm/emote_anger.p
 const EMOTE_FAILED: &[u8] = include_bytes!("../../../assets/art/farm/emote_cross.png");
 const EMOTE_PR: &[u8] = include_bytes!("../../../assets/art/farm/emote_star.png");
 
-/// Frames stacked in an ant sheet.
-pub const ANT_FRAMES: usize = 2;
 /// Side of a generated soil tile in texels.
 const TILE: usize = 32;
 
-/// An ant's body colors. Claude and Codex ants differ in brightness as well as hue (light
-/// amber against dark slate with teal glints), so they stay apart under color blindness; red
-/// means failed whatever the agent, and amber is kept light so it never reads as red.
+/// The agent colours used for dwarf livery. Failed always takes precedence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Coat {
-    /// No known agent, and the Queen: the sprite's own grey.
+    /// No known agent, and the Queen: the dwarf's own colours.
     Plain,
     Claude,
     Codex,
@@ -51,56 +43,6 @@ impl Coat {
             _ => Coat::Plain,
         }
     }
-}
-
-/// The grey sprite's colors, outline first, then body, shade, highlight, dark and darkest.
-const GREY_COATS: [[u8; 3]; 6] = [
-    [4, 28, 34],
-    [139, 164, 172],
-    [111, 128, 133],
-    [190, 213, 221],
-    [69, 89, 94],
-    [55, 71, 77],
-];
-/// [`GREY_COATS`] recolored for Claude: light amber.
-const CLAUDE_COATS: [[u8; 3]; 6] = [
-    [44, 22, 6],
-    [226, 162, 94],
-    [192, 126, 68],
-    [250, 212, 156],
-    [142, 86, 42],
-    [112, 66, 34],
-];
-/// [`GREY_COATS`] recolored for Codex: dark slate with teal glints.
-const CODEX_COATS: [[u8; 3]; 6] = [
-    [2, 8, 10],
-    [62, 78, 86],
-    [46, 60, 66],
-    [84, 200, 186],
-    [32, 42, 46],
-    [24, 32, 36],
-];
-
-/// How to draw one ant.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AntLook {
-    pub coat: Coat,
-    /// Walk frame, wrapped to [`ANT_FRAMES`].
-    pub frame: usize,
-    pub facing_right: bool,
-    /// Belly up (failed).
-    pub upside_down: bool,
-    pub alpha: f32,
-}
-
-/// Something carried or stored.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Item {
-    Crown,
-    /// A crumb carried to storage.
-    Crumb,
-    /// One PR's crumbs on the storage pile.
-    Pile,
 }
 
 /// The farm's palette, picked by the local time of day.
@@ -141,12 +83,6 @@ impl Palette {
 
 /// The loaded textures; create once per egui context with [`Sprites::load`].
 pub struct Sprites {
-    ant_grey: TextureHandle,
-    ant_red: TextureHandle,
-    ant_claude: TextureHandle,
-    ant_codex: TextureHandle,
-    crown: TextureHandle,
-    coin: TextureHandle,
     pile: TextureHandle,
     alert: TextureHandle,
     sleep: TextureHandle,
@@ -168,13 +104,6 @@ impl Sprites {
                 TextureOptions::NEAREST,
             )
         };
-        let recolored = |name: &str, coats: [[u8; 3]; 6]| {
-            ctx.load_texture(
-                format!("ant_farm/{name}"),
-                recolor(decode(ANT_GREY), &GREY_COATS, &coats),
-                TextureOptions::NEAREST,
-            )
-        };
         let tile = |name: &str, image: ColorImage| {
             ctx.load_texture(
                 format!("ant_farm/{name}"),
@@ -183,12 +112,6 @@ impl Sprites {
             )
         };
         Self {
-            ant_grey: png("ant_grey", ANT_GREY),
-            ant_red: png("ant_red", ANT_RED),
-            ant_claude: recolored("ant_claude", CLAUDE_COATS),
-            ant_codex: recolored("ant_codex", CODEX_COATS),
-            crown: png("crown", CROWN),
-            coin: png("coin", COIN),
             pile: png("pile", COIN_PILE),
             alert: png("alert", EMOTE_ALERT),
             sleep: png("sleep", EMOTE_SLEEP),
@@ -361,32 +284,6 @@ impl Sprites {
         painter.rect_filled(edge, 0.0, fold);
     }
 
-    /// An ant filling `cell`.
-    pub fn ant(&self, painter: &Painter, cell: Rect, look: AntLook) {
-        let texture = match look.coat {
-            Coat::Plain => &self.ant_grey,
-            Coat::Claude => &self.ant_claude,
-            Coat::Codex => &self.ant_codex,
-            Coat::Failed => &self.ant_red,
-        };
-        let frame = look.frame % ANT_FRAMES;
-        let h = 1.0 / ANT_FRAMES as f32;
-        let (y0, y1) = (frame as f32 * h, (frame + 1) as f32 * h);
-        let (y0, y1) = if look.upside_down { (y1, y0) } else { (y0, y1) };
-        let (x0, x1) = if look.facing_right {
-            (1.0, 0.0)
-        } else {
-            (0.0, 1.0)
-        };
-        let uv = Rect::from_min_max(pos2(x0, y0), pos2(x1, y1));
-        painter.image(
-            texture.id(),
-            cell,
-            uv,
-            Color32::WHITE.gamma_multiply(look.alpha),
-        );
-    }
-
     /// A speech bubble with `mark`, its tail on `anchor` (the top of the ant's head).
     pub fn bubble(&self, painter: &Painter, anchor: Pos2, size: f32, mark: Mark, alpha: f32) {
         let texture = match mark {
@@ -405,14 +302,9 @@ impl Sprites {
         );
     }
 
-    pub fn item(&self, painter: &Painter, rect: Rect, item: Item, alpha: f32) {
-        let texture = match item {
-            Item::Crown => &self.crown,
-            Item::Crumb => &self.coin,
-            Item::Pile => &self.pile,
-        };
+    pub fn pile(&self, painter: &Painter, rect: Rect, alpha: f32) {
         painter.image(
-            texture.id(),
+            self.pile.id(),
             rect,
             unit_uv(),
             Color32::WHITE.gamma_multiply(alpha),
@@ -562,54 +454,6 @@ impl Sprites {
         painter.text(pos, egui::Align2::CENTER_CENTER, "z", font, color);
     }
 
-    /// A builder's hard hat and hammer on the ant at `cell`; the hammer is raised on even
-    /// `step`s and strikes the face on odd ones, with a spark.
-    pub fn builder(&self, painter: &Painter, cell: Rect, facing_right: bool, px: f32, step: usize) {
-        let hat = Color32::from_rgb(0xf2, 0xc1, 0x2e);
-        let brim = Color32::from_rgb(0xc8, 0x8e, 0x1a);
-        let wood = Color32::from_rgb(0x8a, 0x4b, 0x1c);
-        let iron = Color32::from_rgb(0x8f, 0x96, 0x9e);
-        // Texel `(x, y)` of the left-facing sprite, mirrored when the ant faces right.
-        let dot = |x: i32, y: i32, color: Color32| {
-            let x = if facing_right { 15 - x } else { x };
-            let min = cell.min + vec2(x as f32 * px, y as f32 * px);
-            painter.rect_filled(Rect::from_min_size(min, vec2(px, px)), 0.0, color);
-        };
-        for x in 2..=4 {
-            dot(x, 5, hat);
-        }
-        for x in 1..=5 {
-            dot(x, 6, hat);
-        }
-        for x in 0..=6 {
-            dot(x, 7, brim);
-        }
-        let raised = step.is_multiple_of(2);
-        type Texels = &'static [(i32, i32)];
-        let (handle, head): (Texels, Texels) = if raised {
-            (
-                &[(1, 11), (0, 10), (-1, 9), (-2, 8)],
-                &[(-4, 6), (-3, 6), (-2, 6), (-4, 7), (-3, 7), (-2, 7)],
-            )
-        } else {
-            (
-                &[(1, 12), (0, 12), (-1, 12), (-2, 12)],
-                &[(-4, 11), (-3, 11), (-4, 12), (-3, 12), (-4, 13), (-3, 13)],
-            )
-        };
-        for &(x, y) in handle {
-            dot(x, y, wood);
-        }
-        for &(x, y) in head {
-            dot(x, y, iron);
-        }
-        if !raised {
-            let spark = Color32::from_rgb(0xff, 0xf0, 0x8a);
-            dot(-6, 11, spark);
-            dot(-5, 14, spark);
-        }
-    }
-
     /// Dirt flying from the digger's feet at `now_s`: clods kicked up and back behind it,
     /// falling in arcs and fading. `seed` staggers diggers so they don't throw in step.
     pub fn dirt(
@@ -670,18 +514,6 @@ fn decode(bytes: &[u8]) -> ColorImage {
         .to_rgba8();
     let size = [image.width() as usize, image.height() as usize];
     ColorImage::from_rgba_unmultiplied(size, image.as_flat_samples().as_slice())
-}
-
-/// `image` with each color of `from` swapped for the same slot of `to`; others kept.
-fn recolor(mut image: ColorImage, from: &[[u8; 3]], to: &[[u8; 3]]) -> ColorImage {
-    for pixel in &mut image.pixels {
-        let [r, g, b, a] = pixel.to_srgba_unmultiplied();
-        if let Some(i) = from.iter().position(|c| *c == [r, g, b]) {
-            let [r, g, b] = to[i];
-            *pixel = Color32::from_rgba_unmultiplied(r, g, b, a);
-        }
-    }
-    image
 }
 
 /// Soil shades, darkest last; the last is used sparsely for pebbles.
@@ -751,27 +583,6 @@ pub fn grass_tile() -> ColorImage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::graph::contrast_ratio;
-
-    #[test]
-    fn coats_cover_every_color_of_the_grey_ant() {
-        let image = decode(ANT_GREY);
-        for pixel in image.pixels.iter().filter(|p| p.a() > 0) {
-            let [r, g, b, _] = pixel.to_srgba_unmultiplied();
-            assert!(GREY_COATS.contains(&[r, g, b]), "unmapped {pixel:?}");
-        }
-    }
-
-    /// Claude and Codex ants must differ in brightness, not only hue.
-    #[test]
-    fn claude_and_codex_differ_in_brightness() {
-        let body = |coats: [[u8; 3]; 6]| {
-            let [r, g, b] = coats[1];
-            Color32::from_rgb(r, g, b)
-        };
-        let ratio = contrast_ratio(body(CLAUDE_COATS), body(CODEX_COATS));
-        assert!(ratio > 3.0, "{ratio}");
-    }
 
     #[test]
     fn failed_wins_over_the_agent() {

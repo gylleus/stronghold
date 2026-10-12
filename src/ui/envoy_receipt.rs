@@ -1,4 +1,4 @@
-//! A brief receipt cue shared by the graph and ant farm.
+//! A brief receipt cue shared by the farm.
 
 use std::time::Duration;
 

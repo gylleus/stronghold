@@ -435,24 +435,6 @@ pub struct Drawing {
     pub question: Option<(Pos2, f32)>,
 }
 
-/// Draws a dwarf standing on `foot`, `height` points tall (for a miner), in `pose`, with
-/// `finish`.
-pub fn paint(
-    painter: &Painter,
-    foot: Pos2,
-    height: f32,
-    look: &Look,
-    pose: &Pose,
-    facing_right: bool,
-    finish: &Finish,
-) {
-    let drawing = draw(foot, height, look, pose, facing_right, finish);
-    painter.extend(drawing.shapes);
-    if let Some((at, size)) = drawing.question {
-        question(painter, at, size);
-    }
-}
-
 /// A "?" `size` points tall centred on `at`, with a soft shadow.
 pub fn question(painter: &Painter, at: Pos2, size: f32) {
     let font = FontId::proportional(size);
@@ -484,44 +466,34 @@ pub fn draw(
     let body = place
         .then(Xf::rotate(pose.lean))
         .then(Xf::scale(1.0 - pose.stretch * 0.6, 1.0 + pose.stretch));
-    let finish = Finish {
-        shadow: if facing_right {
-            finish.shadow
-        } else {
-            vec2(-finish.shadow.x, finish.shadow.y)
-        },
-        ..*finish
-    };
     let head = body.then(Xf::rotate_about(NECK, pose.head));
     let arm = body.then(Xf::rotate_about(SHOULDER, -pose.arm));
     let back_arm = body.then(Xf::rotate_about(BACK_SHOULDER, -pose.back_arm));
 
     let mut out = Vec::new();
     let o = &mut out;
-    cutout::draw(o, &parts::back_arm(look), back_arm, &finish);
+    cutout::draw(o, &parts::back_arm(look), back_arm, finish);
     cutout::draw(
         o,
         &parts::boot(-6.0 - pose.stride, look, true),
         place,
-        &finish,
+        finish,
     );
-    cutout::draw(o, &parts::body(look), body, &finish);
+    cutout::draw(o, &parts::body(look), body, finish);
     cutout::draw(
         o,
         &parts::boot(6.0 + pose.stride, look, false),
         place,
-        &finish,
+        finish,
     );
     if look.role == Role::Ravenmaster {
-        cutout::draw(o, &parts::raven(), body, &finish);
+        cutout::draw(o, &parts::raven(), body, finish);
     }
-    cutout::draw(o, &parts::head(look, pose), head, &finish);
-    cutout::pin(o, NECK + vec2(-6.0, 3.0), 1.6, head, &finish);
+    cutout::draw(o, &parts::head(look, pose), head, finish);
     if pose.nugget {
-        cutout::draw(o, &parts::nugget(), body, &finish);
+        cutout::draw(o, &parts::nugget(), body, finish);
     }
-    cutout::draw(o, &parts::arm(look, pose), arm, &finish);
-    cutout::pin(o, SHOULDER, 1.8, arm, &finish);
+    cutout::draw(o, &parts::arm(look, pose), arm, finish);
     if let Some(s) = pose.since_strike.filter(|s| *s < 0.16) {
         let tip =
             Xf::rotate_about(pos2(SHOULDER.x, -25.5), -pose.grip).apply(parts::tool_tip(look.tool));

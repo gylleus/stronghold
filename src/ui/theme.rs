@@ -30,7 +30,6 @@ const SYMBOL_FONT_FILES: [&str; 2] = [
 /// Installs the fonts, image loaders and both theme styles on `ctx`.
 pub fn install(ctx: &egui::Context) {
     ctx.set_fonts(fonts());
-    super::art::install(ctx);
     ctx.set_style_of(egui::Theme::Dark, style(egui::Theme::Dark));
     ctx.set_style_of(egui::Theme::Light, style(egui::Theme::Light));
 }

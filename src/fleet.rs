@@ -1,4 +1,4 @@
-//! `FleetData`: one poll's raw Orca data, shared by the poller (producer), the graph model and
+//! `FleetData`: one poll's raw Orca data, shared by the poller (producer), the farm model and
 //! the whip (consumers).
 
 mod roles;

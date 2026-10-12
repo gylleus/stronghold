@@ -9,7 +9,7 @@ use eframe::egui::{self, Color32, RichText, Sense, Ui};
 use jiff::tz::TimeZone;
 
 use crate::model::{FleetSnapshot, NodeId};
-use crate::ui::table::format_age;
+use crate::ui::fleet_view::format_age;
 use crate::whip::{WhipLogItem, WhipStatus};
 
 /// Most entries kept in the app.

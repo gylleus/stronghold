@@ -140,7 +140,7 @@ pub fn chat_ui(ui: &mut Ui, state: &mut ChatPanelState, view: ChatView<'_>) -> V
     if view.transcript.items.is_empty() {
         crate::ui::art::empty_state(
             ui,
-            crate::ui::art::queen(),
+            crate::ui::art::Portrait::King,
             96.0,
             "Ask the Queen",
             "Ask her about the fleet, or press Status report above.",
@@ -312,6 +312,7 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
     let running = view.transcript.running;
     ui.horizontal(|ui| {
         ui.add(crate::ui::art::queen_avatar(
+            ui.ctx(),
             ui.text_style_height(&egui::TextStyle::Body) + 4.0,
         ));
         ui.label(RichText::new("Chat").strong());
@@ -736,7 +737,7 @@ fn tool_row(ui: &mut Ui, call: &ToolCall) {
         ),
         Some(_) => (
             crate::ui::icons::CHECK,
-            crate::ui::graph::state_color(crate::model::NodeState::Done, visuals.dark_mode),
+            crate::ui::fleet_view::state_color(crate::model::NodeState::Done, visuals.dark_mode),
             visuals.weak_text_color(),
         ),
         None => (

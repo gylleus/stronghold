@@ -1,7 +1,6 @@
 //! Cutout pieces: flat shapes, each placed by an affine [`Xf`] so a figure is built from parts
-//! that rotate about their joints. A [`Finish`] says how pieces are drawn: an ink outline by
-//! default, or as paper cards with a cream border and drop shadow. Pieces drawn later lie on
-//! top (and, as paper, cast their shadow on the ones below).
+//! that rotate about their joints. A [`Finish`] sets the ink outline for pixel rendering.
+//! Pieces drawn later lie on top.
 //!
 //! egui fills only convex paths, so polygons are triangulated here (ear clipping) and drawn
 //! as meshes. Shape helpers build smooth outlines from a few control points.
@@ -84,11 +83,11 @@ impl Xf {
 pub struct Poly {
     pub points: Vec<Pos2>,
     pub fill: Color32,
-    /// Whether it adds to the piece's outline and shadow (false for details drawn inside it).
+    /// Whether it adds to the piece's outline (false for details drawn inside it).
     pub outline: bool,
 }
 
-/// Shapes that move as one part: they share an outline (and a shadow).
+/// Shapes that move as one part: they share an outline.
 #[derive(Debug, Clone, Default)]
 pub struct Piece {
     pub polys: Vec<Poly>,
@@ -123,30 +122,13 @@ pub struct Finish {
     /// Outline width in piece units, drawn outside the shape.
     pub outline: f32,
     pub outline_color: Color32,
-    /// Shadow offset in piece units, before the piece's placement.
-    pub shadow: Vec2,
-    /// Transparent for no shadow.
-    pub shadow_color: Color32,
-    /// Whether joints show a brass split pin.
-    pub pins: bool,
 }
 
 impl Finish {
-    /// A thin dark ink line round each piece; no shadow, no pins.
+    /// A thin dark ink line round each piece.
     pub const INK: Self = Self {
         outline: 0.9,
         outline_color: Color32::from_rgb(0x1e, 0x16, 0x14),
-        shadow: Vec2::ZERO,
-        shadow_color: Color32::TRANSPARENT,
-        pins: false,
-    };
-    /// Cards: a cream border, a drop shadow and brass pins at the joints.
-    pub const PAPER: Self = Self {
-        outline: 1.6,
-        outline_color: Color32::from_rgb(0xee, 0xe2, 0xc6),
-        shadow: vec2(1.6, 2.2),
-        shadow_color: Color32::from_black_alpha(120),
-        pins: true,
     };
 }
 
@@ -156,24 +138,12 @@ impl Default for Finish {
     }
 }
 
-/// Draws `piece` placed by `xf` (after its own placement): shadow, outline, then fills.
+/// Draws `piece` placed by `xf` (after its own placement): outline, then fills.
 pub fn draw(out: &mut Vec<Shape>, piece: &Piece, xf: Xf, finish: &Finish) {
     let xf = piece.xf.map_or(xf, |own| xf.then(own));
     let outlined = || piece.polys.iter().filter(|p| p.outline);
     let width = 2.0 * finish.outline * xf.length_scale();
-    if finish.shadow_color.a() > 0 {
-        let shadow = xf.vec(finish.shadow);
-        for poly in outlined() {
-            let points: Vec<Pos2> = poly.points.iter().map(|p| xf.apply(*p) + shadow).collect();
-            fill(out, &points, finish.shadow_color);
-            if width > 0.0 {
-                out.push(Shape::closed_line(
-                    points,
-                    Stroke::new(width, finish.shadow_color),
-                ));
-            }
-        }
-    }
+
     if width > 0.0 {
         for poly in outlined() {
             let points: Vec<Pos2> = poly.points.iter().map(|p| xf.apply(*p)).collect();
@@ -187,30 +157,6 @@ pub fn draw(out: &mut Vec<Shape>, piece: &Piece, xf: Xf, finish: &Finish) {
         let points: Vec<Pos2> = poly.points.iter().map(|p| xf.apply(*p)).collect();
         fill(out, &points, poly.fill);
     }
-}
-
-/// A brass split pin at `at` (piece units), placed by `xf`, if the finish has pins.
-pub fn pin(out: &mut Vec<Shape>, at: Pos2, radius: f32, xf: Xf, finish: &Finish) {
-    if !finish.pins {
-        return;
-    }
-    let c = xf.apply(at);
-    let r = radius * xf.length_scale();
-    out.push(Shape::circle_filled(
-        c,
-        r,
-        Color32::from_rgb(0x6b, 0x4a, 0x1c),
-    ));
-    out.push(Shape::circle_filled(
-        c,
-        r * 0.72,
-        Color32::from_rgb(0xd9, 0xa8, 0x3e),
-    ));
-    out.push(Shape::circle_filled(
-        c - vec2(r, r) * 0.25,
-        r * 0.28,
-        Color32::from_rgb(0xff, 0xe6, 0x9a),
-    ));
 }
 
 /// Fills a simple polygon (convex or not) of any winding.

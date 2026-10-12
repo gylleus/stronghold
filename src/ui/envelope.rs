@@ -1,6 +1,6 @@
 //! Messages in flight: an envelope (or, for a nudge or a status, a small ping) travels from
 //! sender to receiver and pulses on arrival. With the system's Reduce motion on, the path
-//! between them lights up briefly instead. Shared by the graph and the ant farm, which
+//! between them lights up briefly instead. Shared by the farm, which
 //! supply the screen positions and the path.
 //!
 //! Bursts stay calm: a repeat of a message still in the air adds to its count (`×3`) rather

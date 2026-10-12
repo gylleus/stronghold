@@ -66,7 +66,12 @@ pub fn health_badge(ui: &mut Ui, report: &HealthReport, now_ms: i64) -> Option<H
             ui.horizontal(|ui| {
                 let checked = report.checked_at_ms.map_or_else(
                     || "checking…".to_owned(),
-                    |at| format!("checked {} ago", crate::ui::table::format_age(now_ms - at)),
+                    |at| {
+                        format!(
+                            "checked {} ago",
+                            crate::ui::fleet_view::format_age(now_ms - at)
+                        )
+                    },
                 );
                 ui.label(RichText::new(checked).small().weak());
                 if ui.button("Check now").clicked() {

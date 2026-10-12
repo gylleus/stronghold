@@ -13,7 +13,7 @@ use crate::actions::{ActionId, ActionResult};
 use crate::close::{self, CloseOptions, ClosePlan, CloseStep};
 use crate::model::{FleetSnapshot, NodeId};
 use crate::orca::Terminal;
-use crate::ui::graph::kind_label;
+use crate::ui::fleet_view::kind_label;
 
 /// How many finished closes the log keeps.
 const MAX_LOG: usize = 20;
@@ -21,7 +21,7 @@ const MAX_LOG: usize = 20;
 /// What to close.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseRequest {
-    /// These nodes (one from the panel, graph menu or `x`).
+    /// These nodes (one from the panel, farm menu or `x`).
     Nodes(Vec<NodeId>),
     /// Every node the filter shows that is a loose terminal or worker (and coordinators when
     /// ticked), re-evaluated while the dialog is open.
@@ -291,7 +291,7 @@ impl CloseDialog {
         let mut clear = false;
         ui.menu_button(title, |ui| {
             for entry in self.log.iter().rev() {
-                let age = crate::ui::table::format_age(now_ms - entry.at_ms);
+                let age = crate::ui::fleet_view::format_age(now_ms - entry.at_ms);
                 let text = format!("{} ({age} ago)", entry.summary);
                 let text = if entry.ok {
                     RichText::new(text)

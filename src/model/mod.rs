@@ -26,7 +26,7 @@ pub use state::{StateInputs, WORKING_WINDOW_MS, derive_state, dispatch_ended};
 /// How long a released worker stays in the snapshot after its release, so the UI can fade it.
 pub const RELEASED_FADE_MS: i64 = 10 * 60 * 1_000;
 
-/// Identifies a node across polls; the graph view keys layout positions by it.
+/// Identifies a node across polls; the farm view keys layout positions by it.
 ///
 /// Live terminals use `term:<handle>`; worker nodes without a live terminal use
 /// `dispatch:<run id>:<dispatch id>`; Claude subagents use `sub:<session id>:<agent id>`; the

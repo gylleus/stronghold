@@ -15,7 +15,7 @@ claude mcp add --scope user myrstack -- /path/to/myrstack/target/release/myrstac
 
 Start Myrstack (`myrstack`) as usual, then ask the chat things like "what's the fleet
 status?", "who needs my input?", "show me the screen of the AI agent playbook coordinator" or
-"focus the graph on it".
+"focus the farm on it".
 
 The server honours `MYRSTACK_CONTROL_SOCKET` and `MYRSTACK_DATA_DIR` in the same way the app
 does, so pass the same values to both if you override them
@@ -58,8 +58,6 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `whip_agents` | `ids`, or `stalled: true` | `whip` (action) | destructive |
 | `focus_agent` | `id` (or `queen`), `raise_window` | `focus` | idempotent |
 | `set_filter` | `clear`, `repos`, `states`, `kinds`, `text`, `show_loose`, `show_released` | `filter` | idempotent |
-| `set_view` | `view`: `graph` \| `table` | `view` | idempotent |
-| `fit_graph` | – | `fit` | idempotent |
 | `open_whip_settings` | – | `open_whip_settings` | idempotent |
 | `alerts` | `limit` (default 20), `unread_only` | `alerts` | read-only |
 | `quotas` | – | `quotas` | read-only |
@@ -122,7 +120,7 @@ forced problems are recorded. Past the guards the app records the outcome in
 `finished.jsonl` in the data dir, notifies Karl (info, or warn when forced; the PR url folds
 into its review notification), shows the node done and closes the terminal 2 s after replying
 with the same plan as `close_agents` (pane only). The worktree and branch are always kept.
-A closed finished terminal stays in the graph as a fading done node for 10 minutes. When to
+A closed finished terminal stays in the farm as a fading done dwarf for 10 minutes. When to
 call both is in the tool descriptions and the server instructions (`src/mcp/lifecycle.rs`,
 `rules_text!`), and in the playbook's _Human in the loop_.
 
@@ -153,8 +151,7 @@ works.
 ### Parked agents
 
 Karl parks an agent he is done with for now but wants to keep (`park_agents`, or Park in a
-node's or ant's context menu). A parked agent sleeps in the resting area: its own region in
-the graph and its own chamber in the ant farm. Its terminal, session and worktree are kept. It
+dwarf's context menu). A parked agent sleeps in the resting area's chamber in the farm. Its terminal, session and worktree are kept. It
 is out of the Queen's state, `by_state`, `needs_input` and `stalled` (`fleet.parked` lists
 it), the whip never nudges, escalates or notifies about it, "Close shown…" skips it and the
 worktree cleanup keeps its worktree. `close_agents` closes it only when it is named, with a

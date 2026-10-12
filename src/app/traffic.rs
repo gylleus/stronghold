@@ -1,4 +1,4 @@
-//! Feeds the graph and the ant farm the messages agents send each other, and the beams of MCP
+//! Feeds the farm the messages agents send each other, and the beams of MCP
 //! tool calls; see [`crate::traffic`] and [`crate::traffic::beam`].
 
 use eframe::egui;
@@ -52,7 +52,6 @@ impl MyrstackApp {
         let still = crate::ui::ant_farm::death::reduce_motion();
         for flight in flights {
             log::debug!("traffic: {:?}", flight);
-            self.graph.message(flight.clone(), now_s, still);
             self.ant_farm.message(flight, now_s, still);
         }
         ctx.request_repaint();
@@ -78,7 +77,6 @@ impl MyrstackApp {
         let still = crate::ui::ant_farm::death::reduce_motion();
         for (id, cue) in &cues {
             log::debug!("pop: {id:?} {cue:?}");
-            self.graph.pop(id.clone(), *cue, now_s, still);
             self.ant_farm.pop(id.clone(), *cue, now_s, still);
         }
         self.pop_sound(cues.iter().map(|(_, cue)| *cue));
@@ -138,7 +136,6 @@ impl MyrstackApp {
         let still = crate::ui::ant_farm::death::reduce_motion();
         for beam in beams {
             log::debug!("beam: {:?}", beam);
-            self.graph.beam(beam.clone(), now_s, still);
             self.ant_farm.beam(beam, now_s, still);
         }
         ctx.request_repaint();

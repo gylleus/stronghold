@@ -672,14 +672,14 @@ fn a_resize_moves_ants_without_walking() {
     );
 }
 
-/// Clicking an ant reports it, as clicking a node does in the graph; clicking soil reports
+/// Clicking an ant reports it, as clicking a node does in the fleet; clicking soil reports
 /// an empty click.
 #[test]
 fn clicking_an_ant_reports_it() {
     use eframe::egui::{self, Event, PointerButton};
     let s = snapshot();
-    let mut graph = crate::ui::graph::GraphView::new();
-    graph.sync(&s);
+    let mut fleet = crate::ui::fleet_view::FleetView::new();
+    fleet.sync(&s);
     let mut farm = AntFarmView::new();
     let ctx = egui::Context::default();
     let mut time = 0.0;
@@ -694,7 +694,7 @@ fn clicking_an_ant_reports_it() {
         let mut out = None;
         let mut output = ctx.run_ui(input, |ui| {
             let rect = ui.available_rect_before_wrap();
-            out = Some((rect, farm.show(ui, &s, &graph)));
+            out = Some((rect, farm.show(ui, &s, &mut fleet)));
         });
         output.textures_delta.clear();
         out.expect("a frame ran")
@@ -730,13 +730,13 @@ fn clicking_an_ant_reports_it() {
     assert!(responses[1].clicked_empty);
 }
 
-/// Dragging a box from empty ground over a chamber selects the ants in it, as in the graph.
+/// Dragging a box from empty ground over a chamber selects the ants in it, as in the fleet.
 #[test]
 fn dragging_a_box_selects_the_ants_in_it() {
     use eframe::egui::{self, Event, PointerButton};
     let s = snapshot();
-    let mut graph = crate::ui::graph::GraphView::new();
-    graph.sync(&s);
+    let mut fleet = crate::ui::fleet_view::FleetView::new();
+    fleet.sync(&s);
     let mut farm = AntFarmView::new();
     let ctx = egui::Context::default();
     let mut time = 0.0;
@@ -751,7 +751,7 @@ fn dragging_a_box_selects_the_ants_in_it() {
         let mut out = None;
         let mut output = ctx.run_ui(input, |ui| {
             let rect = ui.available_rect_before_wrap();
-            out = Some((rect, farm.show(ui, &s, &graph)));
+            out = Some((rect, farm.show(ui, &s, &mut fleet)));
         });
         output.textures_delta.clear();
         out.expect("a frame ran")

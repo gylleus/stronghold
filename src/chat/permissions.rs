@@ -23,8 +23,6 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "kickoff",
     "focus_agent",
     "set_filter",
-    "set_view",
-    "fit_graph",
     "open_whip_settings",
 ];
 

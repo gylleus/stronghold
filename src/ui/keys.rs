@@ -95,18 +95,15 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
         "Leave the input box, then clear the selection (several: keep one)",
     ),
     ("o", "Open the terminal in Orca"),
-    ("f", "Fit the graph to the screen"),
+    ("f", "Fit the farm to the screen"),
     ("x  ⌫  ⌦", "Close (kill) the selected sessions…"),
     ("w", "Whip: nudge the selected agents now"),
     ("drag", "Select the nodes in a box (⇧/⌘ adds)"),
     ("⇧/⌘ click", "Add or remove a node from the selection"),
-    ("right-drag", "Pan the graph"),
-    ("two-finger swipe", "Pan the graph (trackpad)"),
-    (
-        "pinch  ⌘ scroll",
-        "Zoom the graph (a mouse wheel zooms too)",
-    ),
-    ("← ↑ ↓ →", "Pan the graph"),
+    ("right-drag", "Pan the farm"),
+    ("two-finger swipe", "Pan the farm (trackpad)"),
+    ("pinch  ⌘ scroll", "Zoom the farm (a mouse wheel zooms too)"),
+    ("← ↑ ↓ →", "Pan the farm"),
     ("?", "Toggle this help"),
 ];
 
@@ -438,7 +435,6 @@ pub fn help_window(ctx: &egui::Context, open: &mut bool) {
 mod tests {
     use super::*;
     use crate::model::{Edge, Node, NodeState, RunSummary};
-    use crate::ui::graph::center_pan;
     use eframe::egui::Modifiers;
 
     fn key(key: Key, modifiers: Modifiers) -> Event {
@@ -801,13 +797,5 @@ mod tests {
         assert_eq!(step_run(&groups, Some(&id("w_old")), 1), Some(id("c_new")));
         assert_eq!(step_run(&groups, Some(&id("w_a")), -1), Some(id("c_old")));
         assert_eq!(step_run(&groups, Some(&id("loose")), 1), Some(id("c_new")));
-    }
-
-    #[test]
-    fn center_pan_puts_point_in_the_middle() {
-        let view = egui::vec2(800.0, 600.0);
-        let point = egui::pos2(100.0, -50.0);
-        let pan = center_pan(point, view, 2.0);
-        assert_eq!(point.to_vec2() * 2.0 + pan, view / 2.0);
     }
 }

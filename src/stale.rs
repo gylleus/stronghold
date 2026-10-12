@@ -46,7 +46,7 @@ pub fn freshness(
 
 /// The top bar's age label: `None` while fresh.
 pub fn age_label(freshness: Freshness) -> Option<String> {
-    let age = |ms: i64| format!("updated {} ago", crate::ui::table::format_age(ms));
+    let age = |ms: i64| format!("updated {} ago", crate::ui::fleet_view::format_age(ms));
     match freshness {
         Freshness::Fresh => None,
         Freshness::Stale { age_ms } => Some(age(age_ms)),

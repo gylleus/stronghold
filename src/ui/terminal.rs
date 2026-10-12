@@ -10,7 +10,7 @@ use crate::model::{Node, NodeId, NodeKind, NodeState};
 use crate::orca::{Terminal, TerminalInput, TerminalStatus};
 use crate::poller::ScreenUpdate;
 use crate::ui::chat::TranscriptView;
-use crate::ui::graph::state_color;
+use crate::ui::fleet_view::state_color;
 use crate::ui::styled_view::styled_view;
 use crate::ui::term_style::AgentKind;
 
@@ -274,7 +274,7 @@ pub fn take_submit_enter(events: &mut Vec<egui::Event>) -> bool {
 /// Input for the selected node's terminal, from the app.
 pub struct PanelInput<'a> {
     pub state: &'a mut InputPanelState,
-    /// The same live rows that drive the graph PR badges.
+    /// The same live rows that drive the farm PR badges.
     pub review_rows: &'a [crate::review::view::ReviewRow],
     /// The node's row in `terminal list`, if live.
     pub terminal: Option<&'a Terminal>,
@@ -857,7 +857,7 @@ pub fn format_screen_age(age_ms: i64) -> String {
     if age_ms < 60_000 {
         format!("{:.1}s", age_ms as f64 / 1000.0)
     } else {
-        crate::ui::table::format_age(age_ms)
+        crate::ui::fleet_view::format_age(age_ms)
     }
 }
 
