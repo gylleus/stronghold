@@ -7,8 +7,8 @@ use eframe::egui::{Color32, Pos2, pos2, vec2};
 use super::cutout::{Piece, Xf, blob, capsule, ellipse, place};
 use super::pose::{Eyes, Pose};
 use super::{
-    BACK_SHOULDER, Beard, Brows, GOLD, Garment, Hair, Hat, INK, IRON, LEATHER, Look, Nose, RUBY,
-    Role, SHOULDER, Tool, WOOD, shade, tint,
+    BACK_SHOULDER, Beard, Brows, Crest, GOLD, Garment, Hair, Hat, INK, IRON, LEATHER, Look, Nose,
+    RUBY, Role, SHOULDER, Tool, WOOD, shade, tint,
 };
 
 const BRASS: Color32 = Color32::from_rgb(0xc8, 0x96, 0x3c);
@@ -443,9 +443,11 @@ pub(super) fn head(look: &Look, pose: &Pose) -> Piece {
     }
     if pose.nightcap {
         nightcap(&mut p, look);
+        crest(&mut p, look);
     } else {
         let start = p.polys.len();
         hat(&mut p, look);
+        crest(&mut p, look);
         if look.role == Role::Apprentice {
             // A hat a size too big, down over his brow.
             let big = Xf::translate(vec2(0.0, 3.0)).then(scale_about(pos2(4.0, -73.0), 1.15));
@@ -783,7 +785,42 @@ fn helmet_dome() -> Vec<Pos2> {
         .collect()
 }
 
+/// A round sun brooch or tall diamond, large enough to read on a farm-sized hat.
+fn crest(p: &mut Piece, look: &Look) {
+    let Some(color) = look.crest.color() else {
+        return;
+    };
+    let at = pos2(-5.0, -87.0);
+    match look.crest {
+        Crest::None => {}
+        Crest::Sun => {
+            p.cut(ellipse(at, 8.0, 8.0, 12), color);
+            p.paint(ellipse(at, 3.0, 3.0, 10), tint(color, 0.65));
+        }
+        Crest::Diamond => {
+            p.cut(
+                vec![
+                    at + vec2(0.0, -11.0),
+                    at + vec2(8.0, 0.0),
+                    at + vec2(0.0, 9.0),
+                    at + vec2(-8.0, 0.0),
+                ],
+                color,
+            );
+            p.paint(
+                vec![
+                    at + vec2(0.0, -7.0),
+                    at + vec2(4.0, 0.0),
+                    at + vec2(0.0, 5.0),
+                ],
+                tint(color, 0.65),
+            );
+        }
+    }
+}
+
 fn hat(p: &mut Piece, look: &Look) {
+    let metal = look.crest.color().unwrap_or(IRON);
     match look.hat {
         Hat::Helmet | Hat::CandleHelmet | Hat::HornedHelmet => {
             if look.hat == Hat::CandleHelmet {
@@ -834,14 +871,14 @@ fn hat(p: &mut Piece, look: &Look) {
                     shade(horn, 0.2),
                 );
             }
-            p.cut(helmet_dome(), IRON);
-            p.paint(ellipse(pos2(-2.0, -84.0), 4.5, 2.2, 10), tint(IRON, 0.35));
+            p.cut(helmet_dome(), metal);
+            p.paint(ellipse(pos2(-2.0, -84.0), 4.5, 2.2, 10), tint(metal, 0.35));
             p.cut(
                 capsule(pos2(-15.0, -73.0), pos2(25.0, -73.0), 2.6),
-                shade(IRON, 0.3),
+                shade(metal, 0.3),
             );
             for x in [-8.0, 2.0, 12.0] {
-                p.paint(ellipse(pos2(x, -73.0), 1.1, 1.1, 6), tint(IRON, 0.5));
+                p.paint(ellipse(pos2(x, -73.0), 1.1, 1.1, 6), tint(metal, 0.5));
             }
         }
         Hat::Cap => {
@@ -857,7 +894,7 @@ fn hat(p: &mut Piece, look: &Look) {
                     ],
                     6,
                 ),
-                shade(LEATHER, -0.4),
+                look.crest.color().unwrap_or(shade(LEATHER, -0.4)),
             );
             p.paint(capsule(pos2(-12.0, -75.0), pos2(18.0, -75.0), 1.4), LEATHER);
         }
@@ -907,7 +944,7 @@ fn hat(p: &mut Piece, look: &Look) {
                     ],
                     6,
                 ),
-                BANDANA,
+                look.crest.color().unwrap_or(BANDANA),
             );
             p.cut(
                 blob(
@@ -919,7 +956,7 @@ fn hat(p: &mut Piece, look: &Look) {
                     ],
                     4,
                 ),
-                shade(BANDANA, 0.2),
+                shade(look.crest.color().unwrap_or(BANDANA), 0.2),
             );
             for (x, y) in [(-1.0, -82.0), (9.0, -80.0), (-7.0, -78.0)] {
                 p.paint(ellipse(pos2(x, y), 1.0, 1.0, 6), tint(BANDANA, 0.6));

@@ -16,7 +16,8 @@ use eframe::egui::{self, Color32, Pos2, Rect, TextureHandle, TextureOptions, pos
 use myrstack::ui::dwarf::cutout::Finish;
 use myrstack::ui::dwarf::pixel::{self, Mapper, Palette};
 use myrstack::ui::dwarf::{
-    self, Action, Beard, Brows, Garment, HAIRS, Hair, Hat, Look, Nose, Role, SKINS, TUNICS, Tool,
+    self, Action, Beard, Brows, Crest, Garment, HAIRS, Hair, Hat, Look, Nose, Role, SKINS, TUNICS,
+    Tool,
 };
 
 const WINDOW: [f32; 2] = [1440.0, 860.0];
@@ -386,6 +387,12 @@ impl Lab {
         pick(ui, "Brows", &mut self.look.brows, &Brows::ALL);
         pick(ui, "Nose", &mut self.look.nose, &Nose::ALL);
         pick(ui, "Hat", &mut self.look.hat, &Hat::ALL);
+        pick(
+            ui,
+            "Crest",
+            &mut self.look.crest,
+            &[Crest::None, Crest::Sun, Crest::Diamond],
+        );
         pick(ui, "Garment", &mut self.look.garment, &Garment::ALL);
         pick(ui, "Tool", &mut self.look.tool, &Tool::ALL);
         ui.horizontal_wrapped(|ui| {

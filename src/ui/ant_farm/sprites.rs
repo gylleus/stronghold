@@ -13,20 +13,18 @@ use eframe::egui::{
 use std::cell::RefCell;
 const TILE: usize = 128;
 
-/// The agent colours used for dwarf livery. Failed always takes precedence.
+/// Agent guild colours and crests; identity stays visible in every state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Coat {
     /// No known agent, and the Queen: the dwarf's own colours.
     Plain,
     Claude,
     Codex,
-    Failed,
 }
 
 impl Coat {
-    pub fn new(agent: Option<&AgentIdentity>, failed: bool) -> Self {
+    pub fn new(agent: Option<&AgentIdentity>) -> Self {
         match agent {
-            _ if failed => Coat::Failed,
             Some(AgentIdentity::Claude) => Coat::Claude,
             Some(AgentIdentity::Codex) => Coat::Codex,
             _ => Coat::Plain,
@@ -208,12 +206,28 @@ impl Sprites {
     pub fn passage(&self, painter: &Painter, rect: Rect, px: f32) {
         painter.rect_filled(rect.expand(px), 0.0, INK);
         tiled(painter, self.tunnel.id(), rect, px);
-        // The freshly cut upper edge catches a little light.
-        painter.rect_filled(
-            Rect::from_min_size(rect.min, vec2(rect.width(), px)),
-            0.0,
-            rgb(0x686761),
+        // Broken, shallow notches leave passages cut into the mountain, not framed panels.
+        let mut x = rect.left();
+        while x + 5.0 * px < rect.right() {
+            let depth = (1 + noise((x / px) as usize, 0, 7) % 2) as f32 * px;
+            painter.rect_filled(
+                Rect::from_min_size(pos2(x, rect.top() - px), vec2(4.0 * px, depth)),
+                0.0,
+                rgb(0x756958),
+            );
+            x += 9.0 * px;
+        }
+    }
+    pub fn cave(&self, painter: &Painter, rect: Rect, seed: u8) {
+        self.prop(
+            painter,
+            Prop::Cave(seed % 8),
+            rect.expand(2.0 * self.px),
+            1.0,
         );
+    }
+    pub fn masonry(&self, painter: &Painter, rect: Rect) {
+        self.prop(painter, Prop::Masonry, rect, 1.0);
     }
     pub fn shoring(&self, painter: &Painter, shaft: Rect, px: f32) {
         let mut y = shaft.top() + 6.0 * px;
@@ -489,36 +503,36 @@ fn noise(x: usize, y: usize, salt: u32) -> u32 {
     h
 }
 
-/// Broad, quiet rock planes with faint strata; small marks read as chisel cuts in tunnels.
+/// Sloping strata and irregular fractured planes; no rectangular noise patches.
 pub fn rock_tile(worked: bool) -> ColorImage {
-    let base = if worked { rgb(0x46484a) } else { rgb(0x625f59) };
-    let dark = if worked { rgb(0x424447) } else { rgb(0x5e5b56) };
-    let light = if worked { rgb(0x4f5253) } else { rgb(0x69665e) };
+    let base = if worked {
+        super::excavation::WALL
+    } else {
+        rgb(0x756958)
+    };
+    let dark = if worked { rgb(0x484138) } else { rgb(0x695e50) };
+    let light = if worked { rgb(0x595043) } else { rgb(0x81735f) };
     let mut image = ColorImage::filled([TILE, TILE], base);
     for y in 0..TILE {
         for x in 0..TILE {
-            let plane = noise(x / 12, y / 8, 9) % 9;
-            image[(x, y)] = if plane == 0 {
-                light
-            } else if plane == 1 {
+            // Wrapped coordinates keep bedding planes continuous over repeat boundaries.
+            let strata = (y + x / 4 + (x / 9 % 3)) % 32;
+            let fracture = (x + y / 2 + (y / 13 % 3) * 2) % 43;
+            image[(x, y)] = if strata < 2 || (fracture == 0 && strata < 13) {
                 dark
+            } else if strata < 7 && fracture > 24 {
+                light
             } else {
                 base
             };
-            let strata = (y + (x / 12) % 3) % 16;
-            if strata == 0 && noise(x / 5, y / 16, 7).is_multiple_of(3) {
-                image[(x, y)] = dark;
+            if worked && (x + y * 3) % 31 == 0 && y % 9 < 2 {
+                image[(x, y)] = light;
             }
-            if worked {
-                if (x + y * 3) % 17 == 0 && y % 7 < 2 {
-                    image[(x, y)] = light;
-                }
-            } else {
+            if !worked {
                 let n = noise(x / 2, y / 2, 31);
                 if n.is_multiple_of(151) {
                     image[(x, y)] = if y % 2 == 0 { light } else { dark };
                 }
-                // One thin interrupted vein, with a fork and one jewel glint per repeat.
                 if (20..35).contains(&x) && y == 42 - (x - 20) / 3 && x % 6 != 0 {
                     image[(x, y)] = GOLD_DARK_TILE;
                 }
@@ -575,9 +589,9 @@ mod tests {
     }
 
     #[test]
-    fn failed_wins_over_the_agent() {
-        assert_eq!(Coat::new(Some(&AgentIdentity::Claude), true), Coat::Failed);
-        assert_eq!(Coat::new(Some(&AgentIdentity::Codex), false), Coat::Codex);
-        assert_eq!(Coat::new(None, false), Coat::Plain);
+    fn agent_guilds_are_distinct() {
+        assert_eq!(Coat::new(Some(&AgentIdentity::Claude)), Coat::Claude);
+        assert_eq!(Coat::new(Some(&AgentIdentity::Codex)), Coat::Codex);
+        assert_eq!(Coat::new(None), Coat::Plain);
     }
 }

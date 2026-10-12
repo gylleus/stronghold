@@ -33,6 +33,8 @@ pub const PARCHMENT: Color32 = rgb(0xeee0b9);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Prop {
     Nature(Deco),
+    Cave(u8),
+    Masonry,
     Peaks,
     Roots,
     Entrance,
@@ -63,6 +65,7 @@ impl Prop {
     pub fn size(self) -> [usize; 2] {
         match self {
             Self::Nature(d) => d.size(),
+            Self::Cave(_) | Self::Masonry => [96, 64],
             Self::Peaks => [192, 52],
             Self::Roots => [24, 12],
             Self::Entrance => [40, 28],
@@ -159,11 +162,18 @@ impl WorldArt {
             mapper.map(c)
         }
         let ink = mapper.map(INK);
-        let floor = distinct(mapper, rgb(0x46484a), &[ink]);
+        let floor = distinct(mapper, super::excavation::WALL, &[ink]);
         let avoid = if worked { vec![ink] } else { vec![ink, floor] };
         let mut colors = HashMap::new();
         for c in &mut image.pixels {
             let source = *c;
+            if source.a() == 0 {
+                continue;
+            }
+            if source == INK {
+                *c = ink;
+                continue;
+            }
             *c = *colors
                 .entry(source)
                 .or_insert_with(|| distinct(mapper, source, &avoid));
@@ -208,7 +218,11 @@ impl WorldArt {
         };
         if !self.textures.contains_key(&key) {
             let mut image = render(prop, size, frame);
-            self.map(&mut image);
+            if matches!(prop, Prop::Cave(_) | Prop::Masonry) {
+                self.map_stone(&mut image, true);
+            } else {
+                self.map(&mut image);
+            }
             let texture = painter.ctx().load_texture(
                 format!("mine/{prop:?}/{size:?}/{frame}/{}", self.palette),
                 image,
@@ -247,7 +261,8 @@ impl WorldArt {
 }
 
 pub fn render(prop: Prop, size: [usize; 2], frame: u8) -> ColorImage {
-    let [w, h] = prop.size().map(|n| n as f32);
+    let room = matches!(prop, Prop::Cave(_) | Prop::Masonry);
+    let [w, h] = if room { size } else { prop.size() }.map(|n| n as f32);
     let mut c = Canvas {
         shapes: Vec::new(),
         finish: Finish {
@@ -255,7 +270,11 @@ pub fn render(prop: Prop, size: [usize; 2], frame: u8) -> ColorImage {
             ..Finish::INK
         },
     };
-    draw(&mut c, prop, frame);
+    match prop {
+        Prop::Cave(seed) => super::excavation::cave(&mut c, w, h, seed),
+        Prop::Masonry => super::excavation::masonry(&mut c, w, h),
+        _ => draw(&mut c, prop, frame),
+    }
     // Scale shapes first: rasterize expects square texels even when a prop is stretched.
     let sx = size[0] as f32 / w;
     let sy = size[1] as f32 / h;
@@ -403,6 +422,7 @@ fn coins(c: &mut Canvas, x: f32, y: f32) {
 }
 fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
     match prop {
+        Prop::Cave(_) | Prop::Masonry => unreachable!("rooms draw at their actual size"),
         Prop::Nature(d) => super::nature::draw(c, d),
         Prop::Peaks => {
             // Matching edge heights make the distant range repeat without a seam.
@@ -922,6 +942,9 @@ mod tests {
             Prop::Basin,
             Prop::ScryingBasin,
             Prop::Tablets,
+            Prop::Cave(0),
+            Prop::Cave(3),
+            Prop::Masonry,
             Prop::Snore,
             Prop::Pebble,
         ];
@@ -988,13 +1011,39 @@ mod tests {
             let mut world = WorldArt::default();
             world.begin_frame(name);
             let mut ink = ColorImage::filled([1, 1], INK);
-            let mut wall = ColorImage::filled([1, 1], rgb(0x46484a));
-            let mut rock = ColorImage::filled([1, 1], rgb(0x625f59));
+            let mut wall = ColorImage::filled([1, 1], super::super::excavation::WALL);
+            let mut rock = ColorImage::filled([1, 1], rgb(0x756958));
             world.map(&mut ink);
             world.map_stone(&mut wall, true);
             world.map_stone(&mut rock, false);
             assert_ne!(wall.pixels[0], ink.pixels[0], "{name}: silhouette");
             assert_ne!(wall.pixels[0], rock.pixels[0], "{name}: excavated wall");
+        }
+    }
+
+    #[test]
+    fn cave_corners_stay_open_and_ink_survives_palette_mapping() {
+        for (name, _) in pixel::BUNDLED {
+            let mut world = WorldArt::default();
+            world.begin_frame(name);
+            for size in [[48, 36], [96, 64], [150, 42]] {
+                let mut image = render(Prop::Cave(2), size, 0);
+                let before = image.clone();
+                world.map_stone(&mut image, true);
+                assert_eq!(image[(0, 0)].a(), 0, "{name}");
+                assert_eq!(image[(size[0] / 2, size[1] / 2)].a(), 255);
+                for (a, b) in image.pixels.iter().zip(before.pixels) {
+                    assert_eq!(a.a(), b.a(), "{name}: alpha");
+                }
+                let mut ink = ColorImage::filled([1, 1], INK);
+                world.map(&mut ink);
+                assert!(image.pixels.contains(&ink.pixels[0]), "{name}: outline");
+                assert_ne!(
+                    image[(size[0] / 2, size[1] / 2)],
+                    ink.pixels[0],
+                    "{name}: wall"
+                );
+            }
         }
     }
 

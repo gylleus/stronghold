@@ -29,7 +29,7 @@ pub fn paint(
     let px = room.px;
     sprites.passage(painter, room.shaft, scene.px);
     sprites.shoring(painter, room.shaft, scene.px);
-    sprites.passage(painter, room.chamber, scene.px);
+    sprites.masonry(painter, room.chamber);
     let offset = vec2(receipt.offset, 0.0);
     room.chamber = room.chamber.translate(offset);
     room.receiver += offset;

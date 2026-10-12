@@ -21,6 +21,7 @@ use eframe::egui;
 use myrstack::model::{
     Edge, EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
 };
+use myrstack::orca::AgentIdentity;
 use myrstack::traffic::{AgentMessage, MessageKind};
 use myrstack::ui::ant_farm::art::{ArtSettings, Pixels};
 use myrstack::ui::ant_farm::{AntFarmView, Pulse};
@@ -383,7 +384,13 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState, repo: &
         run_id: run.map(str::to_string),
         task_id: None,
         dispatch_id: None,
-        agent: None,
+        agent: if matches!(kind, NodeKind::Queen | NodeKind::Envoy) {
+            None
+        } else if myrstack::ui::dwarf::seed_of(name).is_multiple_of(2) {
+            Some(AgentIdentity::Claude)
+        } else {
+            Some(AgentIdentity::Codex)
+        },
         worktree_path: Some(format!("/x/orca/workspaces/{repo}/{name}")),
         branch: None,
         last_output_ms: None,
