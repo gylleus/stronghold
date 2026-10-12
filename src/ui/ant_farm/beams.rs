@@ -1,4 +1,4 @@
-//! Tool calls as beams straight through the soil, from the caller's ant to the ants it acted
+//! Tool calls as beams straight through the rock, from the caller's ant to the ants it acted
 //! on; see [`crate::ui::beam`].
 
 use eframe::egui::Painter;
@@ -25,6 +25,6 @@ pub fn paint(painter: &Painter, scene: &Scene, placed: &[Placed], lit: &[Lit], n
             continue;
         };
         let targets: Vec<_> = l.beam.targets.iter().filter_map(end).collect();
-        beam::paint(painter, l, from, &targets, size, now_s);
+        beam::paint(painter, l, from, &targets, size, now_s, super::world::GOLD);
     }
 }

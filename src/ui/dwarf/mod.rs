@@ -24,8 +24,8 @@ pub enum Role {
     Foreman,
     /// Subagents: small, barely bearded, a helmet too big for him, a little lantern.
     Apprentice,
-    /// The Envoy: a feathered hood, a raven on his shoulder, an ear trumpet.
-    Ravenmaster,
+    /// The Envoy: a hooded robe, braided beard, rune staff and blue crystal.
+    RunePriest,
     /// The Queen: a crown, white braids and a scepter.
     King,
 }
@@ -35,7 +35,7 @@ impl Role {
         Role::Miner,
         Role::Foreman,
         Role::Apprentice,
-        Role::Ravenmaster,
+        Role::RunePriest,
         Role::King,
     ];
 
@@ -139,10 +139,11 @@ pub enum Garment {
     Tunic,
     Apron,
     Vest,
+    Robe,
 }
 
 impl Garment {
-    pub const ALL: [Garment; 3] = [Garment::Tunic, Garment::Apron, Garment::Vest];
+    pub const ALL: [Garment; 4] = [Garment::Tunic, Garment::Apron, Garment::Vest, Garment::Robe];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -151,8 +152,8 @@ pub enum Tool {
     Hammer,
     Shovel,
     Lantern,
-    /// The Ravenmaster's ear trumpet.
-    Trumpet,
+    /// The rune priest's crystal-topped staff.
+    Staff,
     /// The King's.
     Scepter,
 }
@@ -163,7 +164,7 @@ impl Tool {
         Tool::Hammer,
         Tool::Shovel,
         Tool::Lantern,
-        Tool::Trumpet,
+        Tool::Staff,
         Tool::Scepter,
     ];
     /// What miners carry.
@@ -318,12 +319,14 @@ impl Look {
                 look.extras = Extras::default();
                 look.girth = 0.92;
             }
-            Role::Ravenmaster => {
-                look.beard = r.pick(&[Beard::Long, Beard::Forked, Beard::Braided]);
+            Role::RunePriest => {
+                look.beard = Beard::Braided;
+                look.hair = HAIRS[5];
                 look.hat = Hat::Hood;
-                look.garment = Garment::Tunic;
-                look.tool = Tool::Trumpet;
-                look.extras.pipe = false;
+                look.garment = Garment::Robe;
+                look.tunic = Color32::from_rgb(0x3b, 0x50, 0x62);
+                look.tool = Tool::Staff;
+                look.extras = Extras::default();
             }
         }
         look
@@ -486,8 +489,8 @@ pub fn draw(
         place,
         finish,
     );
-    if look.role == Role::Ravenmaster {
-        cutout::draw(o, &parts::raven(), body, finish);
+    if look.role == Role::RunePriest && !pose.stowed {
+        cutout::draw(o, &parts::priest_staff(pose), body, finish);
     }
     cutout::draw(o, &parts::head(look, pose), head, finish);
     if pose.nugget {
@@ -556,7 +559,7 @@ mod tests {
             Role::Miner,
             Role::Foreman,
             Role::Apprentice,
-            Role::Ravenmaster,
+            Role::RunePriest,
         ] {
             for s in 0..300 {
                 let look = Look::for_role(role, s);
@@ -577,8 +580,10 @@ mod tests {
             assert!(Tool::DIGGING.contains(&Look::for_role(Role::Miner, s).tool));
             let foreman = Look::for_role(Role::Foreman, s);
             assert_eq!((foreman.hat, foreman.tool), (Hat::Cap, Tool::Lantern));
-            let raven = Look::for_role(Role::Ravenmaster, s);
-            assert_eq!((raven.hat, raven.tool), (Hat::Hood, Tool::Trumpet));
+            let priest = Look::for_role(Role::RunePriest, s);
+            assert_eq!((priest.hat, priest.tool), (Hat::Hood, Tool::Staff));
+            assert_eq!(priest.garment, Garment::Robe);
+            assert_eq!(priest.beard, Beard::Braided);
             let small = Look::for_role(Role::Apprentice, s);
             assert!(matches!(small.beard, Beard::Stubble | Beard::Goatee));
         }
@@ -587,7 +592,10 @@ mod tests {
     /// Every part turns up somewhere in a crowd.
     #[test]
     fn crowds_use_every_part() {
-        let crowd: Vec<Look> = (0..400).map(Look::from_seed).collect();
+        let crowd: Vec<Look> = Role::ALL
+            .into_iter()
+            .flat_map(|role| (0..400).map(move |seed| Look::for_role(role, seed)))
+            .collect();
         for hair in Hair::ALL {
             assert!(crowd.iter().any(|l| l.hair_style == hair), "{hair:?}");
         }

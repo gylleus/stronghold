@@ -4,7 +4,7 @@
 //! the dressed dwarf in every palette at once.
 //!
 //! `cargo run --release --example dwarf_lab [--shot out.png] [--action NAME]
-//! [--t SECS] [--pixel HEIGHT] [--palette NAME] [--palettes]`: `--t` freezes time
+//! [--role RunePriest] [--t SECS] [--pixel HEIGHT] [--palette NAME] [--palettes]`: `--t` freezes time
 //! (for comparable screenshots); `--pixel` sets the dwarf height in pixels; `--palette` picks a palette by file name (such
 //! as `endesga-32`); `--palettes` opens the palette view; with `--shot`, it saves a screenshot
 //! after a few frames and exits.
@@ -39,6 +39,13 @@ fn main() -> eframe::Result {
                 .find(|a| format!("{a:?}").eq_ignore_ascii_case(&name))
         })
         .unwrap_or(Action::Mine);
+    let role = value("--role")
+        .and_then(|name| {
+            Role::ALL
+                .into_iter()
+                .find(|r| format!("{r:?}").eq_ignore_ascii_case(&name))
+        })
+        .unwrap_or(Role::Miner);
     let frozen = value("--t").and_then(|t| t.parse::<f64>().ok());
     let shot = value("--shot");
     let pixel_height = value("--pixel").and_then(|h| h.parse::<usize>().ok());
@@ -58,7 +65,7 @@ fn main() -> eframe::Result {
             let palettes: Vec<Palette> = pixel::bundled();
             Ok(Box::new(Lab {
                 seed: 7,
-                look: Look::from_seed(7),
+                look: Look::for_role(role, 7),
                 action,
                 facing_right: true,
                 crowd_mixed: true,
@@ -279,16 +286,18 @@ impl Lab {
         let cell = vec2(crowd.width() / cols as f32, crowd.height() / rows as f32);
         for i in 0..CROWD {
             let seed = 1000 + i as u64;
-            // Mostly miners, then a foreman, an apprentice, the ravenmaster and the King.
+            // Mostly miners, then a foreman, an apprentice, the rune priest and the King.
             let role = match i {
                 2 => Role::Foreman,
                 6 | 11 => Role::Apprentice,
-                8 => Role::Ravenmaster,
+                8 => Role::RunePriest,
                 12 => Role::King,
                 _ => Role::Miner,
             };
             let look = Look::for_role(role, seed);
-            let action = if self.crowd_mixed {
+            let action = if self.crowd_mixed && role == Role::RunePriest {
+                Action::Scry
+            } else if self.crowd_mixed {
                 Action::ALL[(seed as usize * 7 + 3) % Action::ALL.len()]
             } else {
                 self.action

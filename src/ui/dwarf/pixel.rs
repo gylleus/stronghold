@@ -142,6 +142,87 @@ impl Mapper {
         best
     }
 
+    /// Maps a premultiplied drawing colour without changing opacity. Texture modulation
+    /// stays white: the texture itself is mapped before upload.
+    pub fn translucent(&mut self, c: Color32) -> Color32 {
+        if c == Color32::PLACEHOLDER || c.a() == 0 {
+            return c;
+        }
+        let [r, g, b, a] = c.to_srgba_unmultiplied();
+        let mapped = self.map(Color32::from_rgb(r, g, b));
+        Color32::from_rgba_unmultiplied(mapped.r(), mapped.g(), mapped.b(), a)
+    }
+
+    /// Recolour all code-drawn farm shapes, including text plates and effects. Image
+    /// meshes have already passed through `apply`; remapping their white tint would
+    /// incorrectly tint every pixel a second time.
+    pub fn shape(&mut self, shape: &mut Shape) {
+        use eframe::egui::epaint::ColorMode;
+        use std::sync::Arc;
+        let stroke = |m: &mut Self, s: &mut ColorMode| {
+            if let ColorMode::Solid(c) = s {
+                *c = m.translucent(*c);
+            }
+        };
+        match shape {
+            Shape::Vec(shapes) => {
+                for s in shapes {
+                    self.shape(s);
+                }
+            }
+            Shape::LineSegment { stroke, .. } => stroke.color = self.translucent(stroke.color),
+            Shape::Circle(s) => {
+                s.fill = self.translucent(s.fill);
+                s.stroke.color = self.translucent(s.stroke.color);
+            }
+            Shape::Ellipse(s) => {
+                s.fill = self.translucent(s.fill);
+                s.stroke.color = self.translucent(s.stroke.color);
+            }
+            Shape::Rect(s) => {
+                s.fill = self.translucent(s.fill);
+                s.stroke.color = self.translucent(s.stroke.color);
+            }
+            Shape::Path(s) => {
+                s.fill = self.translucent(s.fill);
+                stroke(self, &mut s.stroke.color);
+            }
+            Shape::QuadraticBezier(s) => {
+                s.fill = self.translucent(s.fill);
+                stroke(self, &mut s.stroke.color);
+            }
+            Shape::CubicBezier(s) => {
+                s.fill = self.translucent(s.fill);
+                stroke(self, &mut s.stroke.color);
+            }
+            Shape::Mesh(mesh) if mesh.texture_id == eframe::egui::TextureId::default() => {
+                for v in &mut Arc::make_mut(mesh).vertices {
+                    v.color = self.translucent(v.color);
+                }
+            }
+            Shape::Text(t) => {
+                t.fallback_color = self.translucent(t.fallback_color);
+                t.override_text_color = t.override_text_color.map(|c| self.translucent(c));
+                t.underline.color = self.translucent(t.underline.color);
+                let galley = Arc::make_mut(&mut t.galley);
+                let job = Arc::make_mut(&mut galley.job);
+                for section in &mut job.sections {
+                    let f = &mut section.format;
+                    f.color = self.translucent(f.color);
+                    f.background = self.translucent(f.background);
+                    f.underline.color = self.translucent(f.underline.color);
+                    f.strikethrough.color = self.translucent(f.strikethrough.color);
+                }
+                for row in &mut galley.rows {
+                    for v in &mut Arc::make_mut(&mut row.row).visuals.mesh.vertices {
+                        v.color = self.translucent(v.color);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Every opaque pixel of `image` mapped; transparent ones stay transparent.
     pub fn apply(&mut self, image: &mut ColorImage) {
         for px in &mut image.pixels {
@@ -307,6 +388,63 @@ mod tests {
         let mut m = Mapper::new(&palette);
         assert_eq!(m.map(Color32::from_rgb(30, 20, 25)), Color32::BLACK);
         assert_eq!(m.map(Color32::from_rgb(230, 240, 220)), Color32::WHITE);
+    }
+
+    #[test]
+    fn shape_mapping_preserves_alpha_and_image_tints_but_maps_text_and_plates() {
+        use eframe::egui::{self, pos2, vec2};
+        let palette = bundled().into_iter().find(|p| p.name == "Oil 6").unwrap();
+        let mut mapper = Mapper::new(&palette);
+        let source = Color32::from_rgba_unmultiplied(196, 117, 43, 130);
+        let mapped = mapper.translucent(source);
+        assert_eq!(mapped.a(), source.a());
+        let mut plate = Shape::rect_filled(
+            Rect::from_min_size(Pos2::ZERO, vec2(10.0, 10.0)),
+            0.0,
+            source,
+        );
+        mapper.shape(&mut plate);
+        assert!(matches!(plate,Shape::Rect(ref r) if r.fill==mapped));
+        let mut texture = Mesh::with_texture(egui::TextureId::Managed(7));
+        texture.add_rect_with_uv(
+            Rect::from_min_size(Pos2::ZERO, vec2(5.0, 5.0)),
+            Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
+            Color32::WHITE.gamma_multiply(0.5),
+        );
+        let mut shape = Shape::mesh(texture);
+        let original = shape.clone();
+        mapper.shape(&mut shape);
+        assert_eq!(
+            shape, original,
+            "palette-mapped images must not be tinted twice"
+        );
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            let galley = ui.painter().layout_no_wrap(
+                "Mine".into(),
+                egui::FontId::monospace(12.0),
+                Color32::from_rgb(210, 170, 63),
+            );
+            let mut shape = Shape::galley(Pos2::ZERO, galley, Color32::WHITE);
+            mapper.shape(&mut shape);
+            let Shape::Text(text) = shape else {
+                panic!("text")
+            };
+            assert!(
+                palette
+                    .colors
+                    .contains(&text.galley.job.sections[0].format.color),
+                "zoom reuses this job"
+            );
+            for row in &text.galley.rows {
+                for vertex in &row.row.visuals.mesh.vertices {
+                    if vertex.color.a() == 255 {
+                        assert!(palette.colors.contains(&vertex.color));
+                    }
+                }
+            }
+        });
+        output.textures_delta.clear();
     }
 
     /// A square covering the left half of the region fills exactly the left half of the

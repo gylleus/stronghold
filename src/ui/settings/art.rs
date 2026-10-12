@@ -1,11 +1,11 @@
-//! The Art section: dwarf pixel size and palette. Changes apply at once.
+//! The Art section: dwarf pixel size and a palette for the whole mine. Changes apply at once.
 
 use eframe::egui;
 
 use crate::ui::ant_farm::art::{ArtSettings, Pixels};
 use crate::ui::dwarf::pixel;
 
-pub const PIXELS_LABEL: &str = "Dwarf pixels";
+pub const PIXELS_LABEL: &str = "Pixels";
 pub const PALETTE_LABEL: &str = "Palette";
 
 /// Draws the section; returns the new settings when one was changed.
@@ -21,7 +21,7 @@ pub(super) fn section(ui: &mut egui::Ui, applied: &ArtSettings) -> Option<ArtSet
                     ui.selectable_value(&mut art.pixels, choice, choice.label())
                         .on_hover_text(match choice {
                             Pixels::Farm => "One pixel per farm pixel, like the rest of the farm.",
-                            Pixels::Height(_) => "Rendered this many pixels tall, then scaled.",
+                            Pixels::Height(_) => "Dwarves render this many pixels tall. The world keeps the farm grid.",
                         });
                 }
             });

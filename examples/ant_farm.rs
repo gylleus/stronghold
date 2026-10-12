@@ -3,6 +3,7 @@
 //!
 //! `cargo run --example ant_farm [--light] [--sweep] [--shot out.png]`.
 //! `--receipt-at-ms 31` freezes a receipt mid-shake; `--reduced-motion` shows its flash.
+//! `--scrying` shows the working rune priest; `--stopped` darkens the rune stone.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
 //! terminals in the resting area; `--ants N` keeps only the first N agents. `--sweep` flies the worktree cleanup's broom around the
 //! farm. Every few seconds one worker
@@ -38,7 +39,10 @@ fn main() -> eframe::Result {
         .position(|a| a == "--shot")
         .and_then(|i| args.get(i + 1).cloned());
     let light = args.iter().any(|a| a == "--light");
-    let health = if args.iter().any(|a| a == "--bridge-down") {
+    let scrying = args.iter().any(|a| a == "--scrying");
+    let health = if args.iter().any(|a| a == "--stopped") {
+        myrstack::envoy::EnvoyHealth::Stopped
+    } else if args.iter().any(|a| a == "--bridge-down") {
         myrstack::envoy::EnvoyHealth::BridgeDown
     } else if args.iter().any(|a| a == "--approval") {
         myrstack::envoy::EnvoyHealth::AwaitingApproval
@@ -100,6 +104,14 @@ fn main() -> eframe::Result {
                 .find(|n| n.kind == NodeKind::Envoy)
                 .unwrap()
                 .label = format!("Envoy · {}", health.label());
+            if scrying {
+                snapshot
+                    .nodes
+                    .iter_mut()
+                    .find(|n| n.kind == NodeKind::Envoy)
+                    .unwrap()
+                    .state = NodeState::Working;
+            }
             let mut fleet = FleetView::new();
             fleet.sync(&snapshot);
             fleet.set_pr_ready(HashSet::from([

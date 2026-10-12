@@ -171,7 +171,7 @@ fn state_picks_pose_and_mark() {
     assert_eq!(mark(Idle, false), Some(Mark::Sleep));
     assert_eq!(
         mark(Stalled, false),
-        Some(Mark::Whip),
+        Some(Mark::Stalled),
         "stalled differs from idle"
     );
     assert_eq!(mark(NeedsInput, false), Some(Mark::Alert));
@@ -1350,12 +1350,9 @@ fn comms_room_fits_beside_entrance_at_small_and_large_fleets() {
             assert!(!room.chamber.intersects(scene.queen_chamber));
             assert!(!room.chamber.intersects(scene.storage));
             let entrance = Rect::from_min_max(
+                pos2(scene.entrance_x() - 0.6 * scene.cell(), scene.surface_y),
                 pos2(
-                    scene.landing.center().x - 0.6 * scene.cell(),
-                    scene.surface_y,
-                ),
-                pos2(
-                    scene.landing.center().x + 0.6 * scene.cell(),
+                    scene.entrance_x() + 0.6 * scene.cell(),
                     scene.gallery.center().y,
                 ),
             );
@@ -1366,20 +1363,25 @@ fn comms_room_fits_beside_entrance_at_small_and_large_fleets() {
             }
             assert!(room.shaft.intersects(scene.gallery));
             assert!(room.shaft.intersects(room.chamber));
-            assert_eq!(room.dish, pos2(room.chamber.center().x, scene.surface_y));
+            assert_eq!(
+                room.receiver,
+                pos2(room.chamber.center().x, scene.surface_y)
+            );
             let envoy = ant(&scene, "envoy");
             let ant_cell = Rect::from_center_size(envoy.pos, Vec2::splat(envoy.size));
-            let console = Rect::from_min_max(
-                room.console() + vec2(-10.0, -13.0) * room.px,
-                room.console() + vec2(10.0, 18.0) * room.px,
-            );
+            let basin = room.basin_rect();
             let tray = room.tray_rect();
             assert!(room.chamber.contains_rect(tray));
-            assert!(room.chamber.contains_rect(console));
-            assert!(!tray.intersects(console));
+            assert!(room.chamber.contains_rect(basin));
+            assert!(!tray.intersects(basin));
             assert!(!tray.intersects(ant_cell));
             assert!(!tray.intersects(scene.queen_chamber));
-            assert!(!console.intersects(ant_cell));
+            assert!(basin.center().x >= ant_cell.right());
+            assert!(basin.top() > ant_cell.top(), "rim below the priest's head");
+            assert!(
+                basin.top() < ant_cell.bottom(),
+                "hands can reach across the rim"
+            );
             assert_eq!(room.shaft.center().x, envoy.pos.x);
             assert!(!room.shaft.intersects(scene.queen_chamber));
             assert!(
@@ -1569,4 +1571,51 @@ fn a_lone_ant_is_not_drawn_giant() {
         Rect::from_min_size(Pos2::ZERO, vec2(2400.0, 1600.0)),
     );
     assert_eq!(scene.px, super::rooms::MAX_PX);
+}
+
+#[test]
+fn rune_priest_scries_only_while_working() {
+    use crate::ui::dwarf::{self, Action, Role};
+    let mut ant = scene(&snapshot())
+        .ants
+        .into_iter()
+        .find(|a| a.kind != NodeKind::Queen)
+        .unwrap();
+    ant.kind = NodeKind::Envoy;
+    for state in [
+        NodeState::Working,
+        NodeState::Idle,
+        NodeState::NeedsInput,
+        NodeState::Done,
+        NodeState::Failed,
+        NodeState::Stalled,
+    ] {
+        ant.state = state;
+        let action = super::dwarf_action(&ant, false, false, false);
+        assert_eq!(
+            action,
+            if state == NodeState::Working {
+                Action::Scry
+            } else {
+                Action::Still
+            }
+        );
+        assert_eq!(
+            dwarf::pose(action, 0.0) != dwarf::pose(action, 0.3),
+            state == NodeState::Working
+        );
+        assert_eq!(super::dwarf_look(&ant).role, Role::RunePriest);
+    }
+}
+
+#[test]
+fn stalled_dwarf_holds_still_in_a_helmet_for_the_pebble() {
+    use crate::ui::dwarf::{Action, Hat};
+    let scene = scene(&snapshot());
+    let stalled = ant(&scene, "stalled");
+    assert_eq!(
+        super::dwarf_action(stalled, false, false, false),
+        Action::Wait
+    );
+    assert_eq!(super::dwarf_look(stalled).hat, Hat::Helmet);
 }

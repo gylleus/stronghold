@@ -12,6 +12,8 @@ pub enum Action {
     Wait,
     /// Working something out: head tilting, scratching under the hat, a "?" popping.
     Study,
+    /// Hands raised over a scrying basin; only active work pulses the runes.
+    Scry,
     /// Swinging the tool overhead into the rock.
     Mine,
     /// Hammering at chest height (editing, building).
@@ -28,10 +30,11 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 10] = [
+    pub const ALL: [Action; 11] = [
         Action::Still,
         Action::Wait,
         Action::Study,
+        Action::Scry,
         Action::Mine,
         Action::Build,
         Action::Walk,
@@ -45,7 +48,12 @@ impl Action {
     pub fn moves(self) -> bool {
         matches!(
             self,
-            Action::Study | Action::Mine | Action::Build | Action::Walk | Action::Carry
+            Action::Study
+                | Action::Scry
+                | Action::Mine
+                | Action::Build
+                | Action::Walk
+                | Action::Carry
         )
     }
 }
@@ -92,6 +100,8 @@ pub struct Pose {
     pub question: f32,
     /// The whole dwarf turned about his middle, radians clockwise (lying down, tumbling).
     pub roll: f32,
+    /// Blue crystal and rune pulse, zero except while scrying.
+    pub scry: f32,
 }
 
 /// The pose for `action` at `t` seconds (each dwarf passes its own phase offset in `t`).
@@ -191,6 +201,18 @@ pub fn pose(action: Action, t: f64) -> Pose {
                 stretch: if strike.is_some() { -0.04 } else { 0.0 },
                 brows: -1.0,
                 since_strike: strike,
+                ..rest
+            }
+        }
+        Action::Scry => {
+            let wave = (t as f32 * 3.0).sin();
+            Pose {
+                arm: 1.35 + wave * 0.08,
+                back_arm: 1.55 - wave * 0.06,
+                head: 0.12,
+                lean: 0.05,
+                brows: -0.5,
+                scry: 0.55 + 0.45 * wave,
                 ..rest
             }
         }

@@ -21,6 +21,7 @@ pub mod rooms;
 mod rooms_tests;
 pub mod scenery;
 pub mod sprites;
+mod world;
 pub mod zoom;
 #[cfg(test)]
 mod zoom_tests;
@@ -44,7 +45,7 @@ use zoom::Camera;
 
 /// Redraw interval while an ant walks.
 const WALK_FRAME: Duration = Duration::from_millis(33);
-/// Redraw interval of the idle animations (digging and its dirt, waving, snoring, the whip):
+/// Redraw interval for mining chips, fire, snores, scrying and the pebble bonk:
 /// stepped like pixel art, and slow enough that a farm full of working ants stays cheap.
 const STEP_FRAME: Duration = Duration::from_millis(150);
 /// Walk frames per second.
@@ -84,7 +85,7 @@ impl Pulse {
     fn color(self) -> egui::Color32 {
         match self {
             Pulse::Broadcast => egui::Color32::from_rgb(0xff, 0xd5, 0x4a),
-            Pulse::StatusReport => egui::Color32::from_rgb(0x6f, 0xe3, 0xff),
+            Pulse::StatusReport => world::LIGHT,
         }
     }
 }
@@ -330,7 +331,7 @@ impl FrameShape {
                 (Some(a), Some(b)) => Some(layout::CommsRoom {
                     chamber: rect(a.chamber, b.chamber),
                     shaft: rect(a.shaft, b.shaft),
-                    dish: a.dish.lerp(b.dish, t),
+                    receiver: a.receiver.lerp(b.receiver, t),
                     px: num(a.px, b.px),
                 }),
                 (_, to) => to,
@@ -542,6 +543,7 @@ impl AntFarmView {
             pops: &pops,
         };
         let sprites = self.sprites.get_or_insert_with(|| Sprites::load(ui.ctx()));
+        sprites.begin_frame(&self.art.palette, scene.px, now_s);
         let painter = ui.painter_at(rect);
         let first_shape = ui
             .ctx()
@@ -622,16 +624,28 @@ impl AntFarmView {
         }
         pops::paint(&painter, sprites, &scene, &placed, &pops, false);
         paint_falls(&painter, &mut figures, &scene, &self.falls, now_s);
-        mail::paint(&painter, &scene, &placed, self.mail.tick(now_s), now_s);
+        mail::paint(
+            &painter,
+            sprites,
+            &scene,
+            &placed,
+            self.mail.tick(now_s),
+            now_s,
+        );
         beams::paint(&painter, &scene, &placed, self.beams.tick(now_s), now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
         comms::tray(
             &painter,
+            sprites,
             &scene,
             self.envoy_pending,
             tray_hovered,
             self.envoy_receipt.offset,
         );
+        sprites
+            .world
+            .borrow_mut()
+            .map_scene(ui.ctx(), painter.layer_id(), first_shape);
         zoom::apply(
             ui.ctx(),
             painter.layer_id(),
@@ -643,8 +657,7 @@ impl AntFarmView {
             self.camera = Camera::default();
         }
 
-        // Smooth while ants walk or a call ripples; stepped while anyone digs, waves, sleeps
-        // or is whipped (the Queen always breathes).
+        // Smooth travel and calls; stepped fire, work, snores and pebble bonks.
         let walking = placed.iter().any(|p| p.heading.is_some())
             || !self.ripples.is_empty()
             || !self.births.is_empty()
@@ -657,11 +670,11 @@ impl AntFarmView {
         let stepping = scene.ants.iter().any(|a| {
             matches!(a.pose, Pose::Dig | Pose::Build | Pose::Wait | Pose::Sleep)
                 || (a.pose == Pose::Queen && self.queen_busy)
-                || a.mark == Some(layout::Mark::Whip)
+                || a.mark == Some(layout::Mark::Stalled)
         });
         if walking {
             ui.ctx().request_repaint_after(WALK_FRAME);
-        } else if stepping || scene.comms.is_some() {
+        } else if stepping || scene.comms.is_some() || scene.gallery.is_positive() {
             ui.ctx().request_repaint_after(STEP_FRAME);
         }
         daylight::schedule_repaint(ui.ctx());
@@ -1055,6 +1068,8 @@ fn paint_ground(
         };
         sprites.deco(painter, piece.deco, piece.foot, px, alpha);
     }
+    sprites.peaks(painter, scene);
+    sprites.surface_edge(painter, scene.rect, scene.surface_y, px);
     let plants = scenery::surface(scene);
     for (i, plant) in plants.iter().enumerate() {
         if plant.deco.rooted() {
@@ -1068,7 +1083,7 @@ fn paint_ground(
         Rect::from_min_max(egui::pos2(x - 0.6 * a, top), egui::pos2(x + 0.6 * a, gy))
     };
     for shaft in [
-        up(scene.landing.center().x, scene.surface_y - px),
+        up(scene.entrance_x(), scene.surface_y - px),
         up(
             scene.queen_chamber.center().x,
             scene.queen_chamber.bottom() - px,
@@ -1076,16 +1091,20 @@ fn paint_ground(
         up(scene.storage.center().x, scene.storage.bottom() - px),
     ] {
         sprites.passage(painter, shaft, px);
+        sprites.shoring(painter, shaft, px);
     }
     for tunnel in &scene.tunnels {
         sprites.passage(painter, tunnel.shaft, px);
+        sprites.shoring(painter, tunnel.shaft, px);
     }
     sprites.passage(painter, scene.gallery, px);
-    sprites.mound(painter, scene.landing.center().x, scene.surface_y, a, px);
+    sprites.gallery(painter, scene.gallery, px);
+    sprites.entrance(painter, scene.entrance_x(), scene.surface_y, px);
     for plant in &plants {
         sprites.deco(painter, plant.deco, plant.foot, px, 1.0);
     }
     sprites.passage(painter, scene.queen_chamber, px);
+    sprites.throne_hall(painter, scene.queen_chamber, px);
     sprites.passage(painter, scene.storage, px);
     for tunnel in &scene.tunnels {
         sprites.passage(painter, tunnel.chamber, px);
@@ -1119,9 +1138,9 @@ fn paint_ground(
                 vec2(bar_w, 2.0 * px),
             );
             painter.rect_filled(bar.expand(px), 0.0, palette.label_shadow);
-            painter.rect_filled(bar, 0.0, egui::Color32::from_rgb(0x5a, 0x3a, 0x22));
+            painter.rect_filled(bar, 0.0, world::WOOD_DARK);
             let filled = Rect::from_min_size(bar.min, vec2(bar.width() * progress, bar.height()));
-            painter.rect_filled(filled, 0.0, egui::Color32::from_rgb(0x8f, 0xd0, 0x5a));
+            painter.rect_filled(filled, 0.0, world::GOLD);
             label(
                 painter,
                 egui::pos2(top.x, bar.bottom() + 2.0 * px),
@@ -1146,21 +1165,36 @@ fn paint_ground(
         painter,
         scene.storage.left_top() + vec2(4.0 * px, 3.0 * px),
         Align2::LEFT_TOP,
-        "Ready for review",
+        "Treasury · Ready for review",
         font,
         scene.storage.width(),
         px,
         palette,
     );
-    // PR-ready crumbs pile up in storage, left of the ants.
-    for i in 0..scene.pr_ready {
+    sprites.standing(
+        painter,
+        world::Prop::Chest,
+        scene.storage.left_bottom() + vec2(18.0, -3.0) * px,
+        px,
+        1.0,
+    );
+    // Each PR adds gold and one cut gem to the treasury.
+    for (i, dwarf) in scene
+        .ants
+        .iter()
+        .filter(|a| {
+            matches!(a.spot, layout::Spot::Storage(_)) && a.mark == Some(layout::Mark::PrReady)
+        })
+        .enumerate()
+    {
         let (row, col) = (i / 4, i % 4);
-        let min = scene.storage.left_bottom()
-            + vec2(
-                2.0 * px + col as f32 * 10.0 * px + (row % 2) as f32 * 5.0 * px,
-                -a - row as f32 * 8.0 * px,
-            );
-        sprites.pile(painter, Rect::from_min_size(min, Vec2::splat(a)), 1.0);
+        let min = scene.storage.left_top()
+            + vec2(30.0 + col as f32 * 20.0, 13.0 + row as f32 * 12.0) * px;
+        sprites.pile(
+            painter,
+            Rect::from_min_size(min, vec2(18.0, 14.0) * px),
+            (dwarf::seed_of(dwarf.id.as_str()) % 3) as u8,
+        );
     }
 }
 
@@ -1197,12 +1231,13 @@ fn paint_ants(
         };
         if !walking {
             match ant.pose {
-                Pose::Wait => cell = cell.translate(vec2(0.0, -((step % 2) as f32) * 2.0 * tpx)),
                 Pose::Dig | Pose::Build => {
                     cell = cell.translate(vec2(0.0, -((step % 2) as f32) * tpx))
                 }
                 // Resting figures sit lower on the floor.
-                Pose::Sleep | Pose::Failed => cell = cell.translate(vec2(0.0, 2.0 * tpx)),
+                Pose::Sleep | Pose::Failed if ant.state != crate::model::NodeState::Stalled => {
+                    cell = cell.translate(vec2(0.0, 2.0 * tpx))
+                }
                 // A busy Queen hops about; otherwise she sits still.
                 Pose::Queen if effects.queen_busy => {
                     cell = cell.translate(vec2(0.0, -QUEEN_HOP[step % QUEEN_HOP.len()] * tpx))
@@ -1271,13 +1306,13 @@ fn paint_ants(
             let t = (now_s * 6.0).floor() / 6.0;
             sprites.dirt(painter, cell, facing_right, tpx, t, seed);
         }
-        if !walking && ant.mark == Some(layout::Mark::Whip) {
-            sprites.whip(painter, cell, tpx, step);
+        if !walking && ant.mark == Some(layout::Mark::Stalled) {
+            sprites.bonk(painter, cell, tpx, step);
         }
         if let Some(mark) = ant.mark
             && !walking
         {
-            let size = layout::CELL * (tpx - 1.0).max(1.0);
+            let size = (16.0 * px).max(layout::CELL * (tpx - 1.0).max(1.0));
             let mut anchor = cell.center() + vec2(0.25 * ant.size, -tpx);
             if mark == layout::Mark::Sleep {
                 // The bubble floats, and z's drift up from it and fade.
@@ -1339,12 +1374,15 @@ fn dwarf_look(ant: &layout::Ant) -> Look {
         NodeKind::Queen => return Look::king(),
         NodeKind::Coordinator | NodeKind::Attendant => Role::Foreman,
         NodeKind::Subagent => Role::Apprentice,
-        NodeKind::Envoy => Role::Ravenmaster,
+        NodeKind::Envoy => Role::RunePriest,
         NodeKind::Worker | NodeKind::Terminal => Role::Miner,
     };
     let mut look = Look::for_role(role, dwarf::seed_of(ant.id.as_str()));
     let coat = Coat::new(ant.agent.as_ref(), ant.pose == Pose::Failed);
     look.tunic = art::livery(coat).unwrap_or(look.tunic);
+    if ant.state == crate::model::NodeState::Stalled && role != Role::RunePriest {
+        look.hat = dwarf::Hat::Helmet;
+    }
     look
 }
 
@@ -1352,10 +1390,18 @@ fn dwarf_look(ant: &layout::Ant) -> Look {
 /// a pose.
 fn dwarf_action(ant: &layout::Ant, walking: bool, carrying: bool, queen_busy: bool) -> Action {
     use crate::model::NodeState;
+    if ant.kind == crate::model::NodeKind::Envoy {
+        return if ant.state == NodeState::Working {
+            Action::Scry
+        } else {
+            Action::Still
+        };
+    }
     match ant.pose {
         _ if walking && carrying => Action::Carry,
         _ if walking => Action::Walk,
         _ if carrying => Action::Hold,
+        _ if ant.state == NodeState::Stalled => Action::Wait,
         Pose::Dig => Action::Mine,
         Pose::Build => Action::Build,
         Pose::Wait => Action::Wait,
@@ -1525,7 +1571,7 @@ fn paint_calls(
     }
 }
 
-/// A room's label: light text on a rounded dark plate so it reads over any soil or sky, cut to
+/// A room's label: light text on a rounded dark plate so it reads over any rock or sky, cut to
 /// `width`; returns where the text went.
 #[allow(clippy::too_many_arguments)]
 fn label(
