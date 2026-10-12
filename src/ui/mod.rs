@@ -11,6 +11,7 @@ pub mod commands;
 pub mod daylight;
 pub mod dictation;
 pub mod dock;
+pub mod dwarf;
 pub mod envelope;
 pub mod envoy;
 pub mod envoy_receipt;
