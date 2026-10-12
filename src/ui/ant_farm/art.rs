@@ -1,8 +1,5 @@
-//! The farm's code-drawn pixel dwarves, optionally in a fixed palette. The
-//! `art` section of `settings.json`, edited in the Settings window's Art section.
-//!
-//! Give every new field a serde default (the struct is `#[serde(default)]`) so older settings
-//! files keep loading.
+//! Pixel dwarves, their texture cache, and shared world art settings. Palette and ink
+//! width apply to the whole mine; fixed pixel heights apply only to dwarves.
 
 use std::collections::HashMap;
 
@@ -10,7 +7,9 @@ use eframe::egui::{Color32, Painter, Pos2, Rect, TextureHandle, TextureOptions, 
 use serde::{Deserialize, Serialize};
 
 use super::sprites::Coat;
+#[cfg(test)]
 use crate::ui::dwarf::cutout::Finish;
+use crate::ui::dwarf::cutout::Outline;
 use crate::ui::dwarf::pixel::{self, Mapper};
 use crate::ui::dwarf::{self, Action, Look};
 
@@ -18,6 +17,7 @@ use crate::ui::dwarf::{self, Action, Look};
 #[serde(default)]
 pub struct ArtSettings {
     pub pixels: Pixels,
+    pub outline: Outline,
     /// A bundled palette's file name ([`pixel::BUNDLED`]); empty for the drawing's own colours.
     pub palette: String,
 }
@@ -159,10 +159,7 @@ impl DwarfArt {
         let pose = pose(t);
         let size = [(h * 1.5).ceil() as usize, (h * 1.45).ceil() as usize];
         let canvas_foot = pos2(size[0] as f32 * 0.5, size[1] as f32 - h * 0.08);
-        let finish = Finish {
-            outline: Finish::INK.outline.max(100.0 / h),
-            ..Finish::INK
-        };
+        let finish = art.outline.finish(100.0 / (h * figure.look.role.scale()));
         let drawing = dwarf::draw(
             canvas_foot,
             h,
@@ -172,8 +169,8 @@ impl DwarfArt {
             &finish,
         );
         let drawn = format!(
-            "{h} {palette} {:?} {pose:?} {}",
-            figure.look, figure.facing_right
+            "{h} {palette} {:?} {pose:?} {} {:?}",
+            figure.look, figure.facing_right, art.outline
         );
         let frame = self.frame;
         let stale = self
@@ -294,6 +291,7 @@ mod tests {
             ArtSettings {
                 pixels: Pixels::Farm,
                 palette: String::new(),
+                outline: Outline::Fine,
             }
         );
     }
@@ -321,6 +319,83 @@ mod tests {
             };
             let json = serde_json::to_string(&art).unwrap();
             assert_eq!(serde_json::from_str::<ArtSettings>(&json).unwrap(), art);
+        }
+    }
+
+    #[test]
+    fn outline_choices_persist_and_change_dwarf_pixels() {
+        let mut previous = None;
+        for outline in Outline::ALL {
+            let art = ArtSettings {
+                outline,
+                ..Default::default()
+            };
+            let json = serde_json::to_string(&art).unwrap();
+            assert_eq!(serde_json::from_str::<ArtSettings>(&json).unwrap(), art);
+            let d = dwarf::draw(
+                pos2(40.0, 68.0),
+                48.0,
+                &Look::king(),
+                &dwarf::pose(Action::Still, 0.0),
+                true,
+                &outline.finish(100.0 / 48.0),
+            );
+            let image = pixel::rasterize(
+                &d.shapes,
+                Rect::from_min_size(Pos2::ZERO, vec2(80.0, 80.0)),
+                [80, 80],
+                1,
+            );
+            assert!(image.pixels.iter().all(|c| c.a() == 0 || c.a() == 255));
+            let ink = image
+                .pixels
+                .iter()
+                .filter(|c| **c == Finish::INK.outline_color)
+                .count();
+            if let Some(before) = previous {
+                assert!(ink > before, "{outline:?}");
+            }
+            previous = Some(ink);
+        }
+    }
+
+    #[test]
+    fn changing_outline_refreshes_a_stationary_dwarf() {
+        let ctx = eframe::egui::Context::default();
+        let mut renderer = DwarfArt::default();
+        let figure = Figure {
+            key: "king",
+            look: Look::king(),
+            action: Action::Still,
+            upside_down: false,
+            facing_right: true,
+            alpha: 1.0,
+        };
+        for outline in Outline::ALL {
+            renderer.begin_frame();
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                renderer.paint(
+                    ui.painter(),
+                    &ArtSettings {
+                        outline,
+                        ..Default::default()
+                    },
+                    &figure,
+                    Rect::from_min_size(pos2(50.0, 50.0), vec2(48.0, 48.0)),
+                    1.0,
+                    0.0,
+                );
+            });
+            let texture = renderer.textures["king"].texture.id();
+            assert!(
+                output
+                    .textures_delta
+                    .set
+                    .iter()
+                    .any(|(id, _)| *id == texture),
+                "{outline:?}"
+            );
+            output.textures_delta.clear();
         }
     }
 

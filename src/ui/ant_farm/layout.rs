@@ -26,9 +26,9 @@ use super::rooms::{Demand, LABEL_GAP, RoomPlan};
 
 /// Side of a sprite cell in texels.
 pub const CELL: f32 = 16.0;
-/// Karl's pipe in texels: the lip's width and the height above the surface.
-pub const PIPE_LIP_W: f32 = 22.0;
-pub const PIPE_H: f32 = 24.0;
+/// Karl's rune portal in texels.
+pub const PORTAL_W: f32 = 32.0;
+pub const PORTAL_H: f32 = 40.0;
 /// Characters of a tunnel label before it is cut.
 const LABEL_CHARS: usize = 28;
 /// Tunnel depth, as a share of the room below the gallery, for a run without task counts.
@@ -269,18 +269,18 @@ impl Scene {
         self.landing.left() - 0.6 * self.cell()
     }
 
-    /// The middle of the base of Karl's pipe on the surface, where his messages come out.
-    pub fn karl_pipe(&self) -> Pos2 {
+    /// The middle of the base of Karl's portal on the surface.
+    pub fn karl_portal(&self) -> Pos2 {
         let left = self.landing.right();
         pos2(
-            left + 0.3 * self.cell() + PIPE_LIP_W / 2.0 * self.px,
+            left + 0.3 * self.cell() + PORTAL_W / 2.0 * self.px,
             self.surface_y,
         )
     }
 
-    /// The middle of the pipe's mouth, its top `stretch` texels higher while it pops one out.
-    pub fn karl_pipe_mouth(&self, stretch: f32) -> Pos2 {
-        self.karl_pipe() - vec2(0.0, (PIPE_H + stretch) * self.px)
+    /// The heart of the portal, where scrolls materialise and disappear.
+    pub fn karl_portal_focus(&self) -> Pos2 {
+        self.karl_portal() - vec2(0.0, PORTAL_H * 0.525 * self.px)
     }
 
     pub fn ant(&self, id: &NodeId) -> Option<&Ant> {

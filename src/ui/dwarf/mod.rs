@@ -24,9 +24,9 @@ pub enum Role {
     Foreman,
     /// Subagents: small, barely bearded, a helmet too big for him, a little lantern.
     Apprentice,
-    /// The Envoy: a hooded robe, braided beard, rune staff and blue crystal.
+    /// The Envoy: a broad rune hat, long robe and beard, rune staff and blue crystal.
     RunePriest,
-    /// The Queen: a crown, white braids and a scepter.
+    /// The Queen: a crown, heavy brows, white braids and embroidered regalia.
     King,
 }
 
@@ -91,10 +91,12 @@ pub enum Brows {
     Bushy,
     Thin,
     Wild,
+    /// Heavy sweeping brows completely hide the eyes.
+    Shaggy,
 }
 
 impl Brows {
-    pub const ALL: [Brows; 3] = [Brows::Bushy, Brows::Thin, Brows::Wild];
+    pub const ALL: [Brows; 4] = [Brows::Bushy, Brows::Thin, Brows::Wild, Brows::Shaggy];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -114,7 +116,7 @@ pub enum Hat {
     CandleHelmet,
     HornedHelmet,
     Cap,
-    Hood,
+    RuneHat,
     Bandana,
     Bald,
     Crown,
@@ -126,7 +128,7 @@ impl Hat {
         Hat::CandleHelmet,
         Hat::HornedHelmet,
         Hat::Cap,
-        Hat::Hood,
+        Hat::RuneHat,
         Hat::Bandana,
         Hat::Bald,
         Hat::Crown,
@@ -153,8 +155,8 @@ pub enum Tool {
     Lantern,
     /// The rune priest's crystal-topped staff.
     Staff,
-    /// The King's.
-    Scepter,
+    /// Empty hands, including the King.
+    None,
 }
 
 impl Tool {
@@ -164,7 +166,7 @@ impl Tool {
         Tool::Shovel,
         Tool::Lantern,
         Tool::Staff,
-        Tool::Scepter,
+        Tool::None,
     ];
     /// What miners carry.
     pub const DIGGING: [Tool; 3] = [Tool::Pickaxe, Tool::Hammer, Tool::Shovel];
@@ -270,7 +272,7 @@ impl Look {
     }
 
     /// A dwarf in `role` picked from `seed`. Faces, hair and colours vary freely; the role
-    /// sets the kit. Crowns and scepters are left to the King.
+    /// sets the kit. Crowns are left to the King.
     pub fn for_role(role: Role, seed: u64) -> Self {
         if role == Role::King {
             return Self::king();
@@ -340,8 +342,10 @@ impl Look {
             }
             Role::RunePriest => {
                 look.beard = Beard::Braided;
-                look.hair = HAIRS[5];
-                look.hat = Hat::Hood;
+                look.hair = HAIRS[6];
+                look.brows = Brows::Shaggy;
+                look.hair_style = Hair::Long;
+                look.hat = Hat::RuneHat;
                 look.garment = Garment::Robe;
                 look.tunic = Color32::from_rgb(0x3b, 0x50, 0x62);
                 look.tool = Tool::Staff;
@@ -351,7 +355,7 @@ impl Look {
         look
     }
 
-    /// The King: white braids, a crown, a red robe and a scepter.
+    /// The King: white braids, heavy brows, a crown and embroidered red regalia.
     pub fn king() -> Self {
         Self {
             role: Role::King,
@@ -362,11 +366,11 @@ impl Look {
             trousers: Color32::from_rgb(0x3a, 0x2a, 0x30),
             hair_style: Hair::Long,
             beard: Beard::Braided,
-            brows: Brows::Bushy,
+            brows: Brows::Shaggy,
             nose: Nose::Round,
             hat: Hat::Crown,
             garment: Garment::Tunic,
-            tool: Tool::Scepter,
+            tool: Tool::None,
             extras: Extras {
                 earring: true,
                 ..Extras::default()
@@ -517,7 +521,10 @@ pub fn draw(
         cutout::draw(o, &parts::nugget(), body, finish);
     }
     cutout::draw(o, &parts::arm(look, pose), arm, finish);
-    if let Some(s) = pose.since_strike.filter(|s| *s < 0.16) {
+    if let Some(s) = pose
+        .since_strike
+        .filter(|s| *s < 0.16 && look.tool != Tool::None)
+    {
         let tip =
             Xf::rotate_about(pos2(SHOULDER.x, -25.5), -pose.grip).apply(parts::tool_tip(look.tool));
         sparks(o, arm.apply(tip), s, k);
@@ -574,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn crowns_and_scepters_are_left_to_the_king() {
+    fn crowns_are_left_to_the_king() {
         for role in [
             Role::Miner,
             Role::Foreman,
@@ -584,10 +591,7 @@ mod tests {
             for s in 0..300 {
                 let look = Look::for_role(role, s);
                 assert_eq!(look.role, role);
-                assert!(
-                    look.hat != Hat::Crown && look.tool != Tool::Scepter,
-                    "{look:?}"
-                );
+                assert!(look.hat != Hat::Crown, "{look:?}");
             }
         }
         assert_eq!(Look::for_role(Role::King, 7), Look::king());
@@ -601,9 +605,12 @@ mod tests {
             let foreman = Look::for_role(Role::Foreman, s);
             assert_eq!((foreman.hat, foreman.tool), (Hat::Cap, Tool::Lantern));
             let priest = Look::for_role(Role::RunePriest, s);
-            assert_eq!((priest.hat, priest.tool), (Hat::Hood, Tool::Staff));
+            assert_eq!((priest.hat, priest.tool), (Hat::RuneHat, Tool::Staff));
             assert_eq!(priest.garment, Garment::Robe);
             assert_eq!(priest.beard, Beard::Braided);
+            assert_eq!(priest.brows, Brows::Shaggy);
+            assert_eq!(Look::king().brows, Brows::Shaggy);
+            assert_eq!(Look::king().tool, Tool::None);
             let small = Look::for_role(Role::Apprentice, s);
             assert!(matches!(small.beard, Beard::Stubble | Beard::Goatee));
         }

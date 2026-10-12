@@ -2,9 +2,11 @@
 //! `nature`, rasterized at one image pixel per farm texel with NEAREST filtering.
 //! Granite, worked stone and alpine turf are procedural `ColorImage`s. No farm art
 //! is loaded from assets. Palette mapping covers textures and the final scene's shapes.
+//! Art settings choose the ink width for shared cutouts, including Karl's rune portal.
 
+use super::art::ArtSettings;
 use super::forest::art::Deco as ForestDeco;
-use super::layout::{MATTRESS_TOP, Mark, PIPE_H, PIPE_LIP_W};
+use super::layout::{MATTRESS_TOP, Mark, PORTAL_H, PORTAL_W};
 use super::nature::Deco;
 use super::world::{GOLD, INK, IRON, LIGHT, Prop, STONE, STONE_LIGHT, WOOD_DARK, WorldArt, rgb};
 use crate::orca::AgentIdentity;
@@ -112,10 +114,11 @@ impl Sprites {
             now_s: 0.0,
         }
     }
-    pub fn begin_frame(&mut self, palette: &str, px: f32, now_s: f64) {
+    pub fn begin_frame(&mut self, art: &ArtSettings, px: f32, now_s: f64) {
+        let palette = art.palette.as_str();
         self.px = px;
         self.now_s = now_s;
-        self.world.borrow_mut().begin_frame(palette);
+        self.world.borrow_mut().begin_frame(palette, art.outline);
         if self.palette != palette {
             self.palette = palette.to_owned();
             for (deco, texture) in &mut self.forest {
@@ -467,22 +470,24 @@ impl Sprites {
     pub fn pile(&self, painter: &Painter, rect: Rect, variant: u8) {
         self.prop(painter, Prop::Treasure(variant % 3), rect, 1.0);
     }
-    /// Riveted brass pneumatic tube, with a name plate. Only a departing message stretches it.
-    pub fn pipe(
+    /// Carved rune arch. Only a scroll entering or leaving lights the threshold.
+    pub fn portal(
         &self,
         painter: &Painter,
         foot: Pos2,
         px: f32,
-        stretch: f32,
+        flare: u8,
         text: &str,
         font: egui::FontId,
     ) {
         let rect = Rect::from_min_size(
-            foot - vec2((PIPE_LIP_W + 2.0) * px / 2.0, (PIPE_H + stretch) * px),
-            vec2((PIPE_LIP_W + 2.0) * px, (PIPE_H + stretch + 1.0) * px),
+            foot - vec2(PORTAL_W * px / 2.0, PORTAL_H * px),
+            vec2(PORTAL_W, PORTAL_H) * px,
         );
-        self.prop(painter, Prop::Tube, rect, 1.0);
-        let room = 12.0 * px;
+        self.world
+            .borrow_mut()
+            .paint(painter, Prop::Portal, rect, self.px, flare, 1.0);
+        let room = 20.0 * px;
         let mut galley = painter.layout_no_wrap(text.to_owned(), font.clone(), INK);
         if galley.size().x > room {
             galley = painter.layout_no_wrap(
@@ -494,7 +499,7 @@ impl Sprites {
         painter.galley(
             pos2(
                 foot.x - galley.size().x / 2.0,
-                rect.top() + rect.height() * 0.62 - galley.size().y / 2.0,
+                rect.top() + rect.height() * 0.8875 - galley.size().y / 2.0,
             ),
             galley,
             INK,

@@ -4,7 +4,7 @@
 //! the dressed dwarf in every palette at once.
 //!
 //! `cargo run --release --example dwarf_lab [--shot out.png] [--action NAME]
-//! [--role RunePriest] [--t SECS] [--pixel HEIGHT] [--palette NAME] [--palettes]`: `--t` freezes time
+//! [--role RunePriest] [--outline fine|regular|bold] [--t SECS] [--pixel HEIGHT] [--palette NAME] [--palettes]`: `--t` freezes time
 //! (for comparable screenshots); `--pixel` sets the dwarf height in pixels; `--palette` picks a palette by file name (such
 //! as `endesga-32`); `--palettes` opens the palette view; with `--shot`, it saves a screenshot
 //! after a few frames and exits.
@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use eframe::egui::{self, Color32, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
-use myrstack::ui::dwarf::cutout::Finish;
+use myrstack::ui::dwarf::cutout::{Finish, Outline};
 use myrstack::ui::dwarf::pixel::{self, Mapper, Palette};
 use myrstack::ui::dwarf::{
     self, Action, Beard, Brows, Crest, Garment, HAIRS, Hair, Hat, Look, Nose, Role, SKINS, TUNICS,
@@ -54,6 +54,12 @@ fn main() -> eframe::Result {
         .and_then(|name| pixel::BUNDLED.iter().position(|(file, _)| *file == name))
         .map_or(0, |i| i + 1);
     let palette_view = flag("--palettes");
+    let outline = match value("--outline").as_deref() {
+        None | Some("fine") => Outline::Fine,
+        Some("regular") => Outline::Regular,
+        Some("bold") => Outline::Bold,
+        _ => panic!("--outline fine, regular or bold"),
+    };
     eframe::run_native(
         "dwarf lab",
         eframe::NativeOptions {
@@ -74,7 +80,7 @@ fn main() -> eframe::Result {
                     height: pixel_height.unwrap_or(48),
                     palette,
                     fps: 12,
-                    thick_outline: true,
+                    outline,
                     blend: false,
                     mappers: palettes.iter().map(Mapper::new).collect(),
                     palettes,
@@ -115,7 +121,7 @@ struct Pixels {
     /// Animation frames per second: pixel art reads better choppy.
     fps: u32,
     /// Outline at least a pixel wide, so it survives the small size.
-    thick_outline: bool,
+    outline: Outline,
     /// Average 4×4 samples per pixel (soft edges between colours) instead of one (hard).
     blend: bool,
     palettes: Vec<Palette>,
@@ -154,11 +160,10 @@ impl Pixels {
         let pose = dwarf::pose(sprite.action, t);
         let (size, foot) = self.canvas(sprite.facing_right);
         let finish = Finish {
-            outline: if self.thick_outline {
-                finish.outline.max(100.0 / self.height as f32)
-            } else {
-                finish.outline
-            },
+            outline: self
+                .outline
+                .finish(100.0 / (self.height as f32 * sprite.look.role.scale()))
+                .outline,
             ..*finish
         };
         let key = format!(
@@ -447,7 +452,7 @@ impl Lab {
                     }
                 });
             ui.add(egui::Slider::new(&mut self.pixel.fps, 4..=60).text("Frames/s"));
-            ui.checkbox(&mut self.pixel.thick_outline, "Outline at least 1 px");
+            pick(ui, "Outline", &mut self.pixel.outline, &Outline::ALL);
             ui.checkbox(&mut self.pixel.blend, "Blend edges (4×4 samples per pixel)");
         });
         ui.checkbox(&mut self.palette_view, "Every palette at once");

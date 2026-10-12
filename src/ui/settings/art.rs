@@ -3,7 +3,7 @@
 use eframe::egui;
 
 use crate::ui::ant_farm::art::{ArtSettings, Pixels};
-use crate::ui::dwarf::pixel;
+use crate::ui::dwarf::{cutout::Outline, pixel};
 
 pub const PIXELS_LABEL: &str = "Pixels";
 pub const PALETTE_LABEL: &str = "Palette";
@@ -23,6 +23,14 @@ pub(super) fn section(ui: &mut egui::Ui, applied: &ArtSettings) -> Option<ArtSet
                             Pixels::Farm => "One pixel per farm pixel, like the rest of the farm.",
                             Pixels::Height(_) => "Dwarves render this many pixels tall. The world keeps the farm grid.",
                         });
+                }
+            });
+            ui.end_row();
+            ui.label("Outline");
+            ui.horizontal_wrapped(|ui| {
+                for outline in Outline::ALL {
+                    ui.selectable_value(&mut art.outline, outline, outline.label())
+                        .on_hover_text("Ink width on dwarves and mine cutouts, measured on their pixel grid.");
                 }
             });
             ui.end_row();

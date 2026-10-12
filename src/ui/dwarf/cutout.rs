@@ -6,6 +6,44 @@
 //! as meshes. Shape helpers build smooth outlines from a few control points.
 
 use eframe::egui::{Color32, Mesh, Pos2, Shape, Stroke, Vec2, pos2, vec2};
+use serde::{Deserialize, Serialize};
+
+/// Ink width in rendered pixels, shared by dwarf and world cutouts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Outline {
+    #[default]
+    Fine,
+    Regular,
+    Bold,
+}
+
+impl Outline {
+    pub const ALL: [Self; 3] = [Self::Fine, Self::Regular, Self::Bold];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fine => "Fine · 1 px",
+            Self::Regular => "Regular · 1.5 px",
+            Self::Bold => "Bold · 2 px",
+        }
+    }
+
+    pub fn pixels(self) -> f32 {
+        match self {
+            Self::Fine => 1.0,
+            Self::Regular => 1.5,
+            Self::Bold => 2.0,
+        }
+    }
+
+    pub fn finish(self, units_per_pixel: f32) -> Finish {
+        Finish {
+            outline: self.pixels() * units_per_pixel,
+            ..Finish::INK
+        }
+    }
+}
 
 /// An affine placement: scale, then rotate, then translate.
 #[derive(Debug, Clone, Copy, PartialEq)]
