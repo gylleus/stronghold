@@ -6,7 +6,7 @@
 //! egui fills only convex paths, so polygons are triangulated here (ear clipping) and drawn
 //! as meshes. Shape helpers build smooth outlines from a few control points.
 
-use eframe::egui::{Color32, Mesh, Painter, Pos2, Shape, Stroke, Vec2, pos2, vec2};
+use eframe::egui::{Color32, Mesh, Pos2, Shape, Stroke, Vec2, pos2, vec2};
 
 /// An affine placement: scale, then rotate, then translate.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -157,7 +157,7 @@ impl Default for Finish {
 }
 
 /// Draws `piece` placed by `xf` (after its own placement): shadow, outline, then fills.
-pub fn draw(painter: &Painter, piece: &Piece, xf: Xf, finish: &Finish) {
+pub fn draw(out: &mut Vec<Shape>, piece: &Piece, xf: Xf, finish: &Finish) {
     let xf = piece.xf.map_or(xf, |own| xf.then(own));
     let outlined = || piece.polys.iter().filter(|p| p.outline);
     let width = 2.0 * finish.outline * xf.length_scale();
@@ -165,9 +165,9 @@ pub fn draw(painter: &Painter, piece: &Piece, xf: Xf, finish: &Finish) {
         let shadow = xf.vec(finish.shadow);
         for poly in outlined() {
             let points: Vec<Pos2> = poly.points.iter().map(|p| xf.apply(*p) + shadow).collect();
-            fill(painter, &points, finish.shadow_color);
+            fill(out, &points, finish.shadow_color);
             if width > 0.0 {
-                painter.add(Shape::closed_line(
+                out.push(Shape::closed_line(
                     points,
                     Stroke::new(width, finish.shadow_color),
                 ));
@@ -177,7 +177,7 @@ pub fn draw(painter: &Painter, piece: &Piece, xf: Xf, finish: &Finish) {
     if width > 0.0 {
         for poly in outlined() {
             let points: Vec<Pos2> = poly.points.iter().map(|p| xf.apply(*p)).collect();
-            painter.add(Shape::closed_line(
+            out.push(Shape::closed_line(
                 points,
                 Stroke::new(width, finish.outline_color),
             ));
@@ -185,28 +185,36 @@ pub fn draw(painter: &Painter, piece: &Piece, xf: Xf, finish: &Finish) {
     }
     for poly in &piece.polys {
         let points: Vec<Pos2> = poly.points.iter().map(|p| xf.apply(*p)).collect();
-        fill(painter, &points, poly.fill);
+        fill(out, &points, poly.fill);
     }
 }
 
 /// A brass split pin at `at` (piece units), placed by `xf`, if the finish has pins.
-pub fn pin(painter: &Painter, at: Pos2, radius: f32, xf: Xf, finish: &Finish) {
+pub fn pin(out: &mut Vec<Shape>, at: Pos2, radius: f32, xf: Xf, finish: &Finish) {
     if !finish.pins {
         return;
     }
     let c = xf.apply(at);
     let r = radius * xf.length_scale();
-    painter.circle_filled(c, r, Color32::from_rgb(0x6b, 0x4a, 0x1c));
-    painter.circle_filled(c, r * 0.72, Color32::from_rgb(0xd9, 0xa8, 0x3e));
-    painter.circle_filled(
+    out.push(Shape::circle_filled(
+        c,
+        r,
+        Color32::from_rgb(0x6b, 0x4a, 0x1c),
+    ));
+    out.push(Shape::circle_filled(
+        c,
+        r * 0.72,
+        Color32::from_rgb(0xd9, 0xa8, 0x3e),
+    ));
+    out.push(Shape::circle_filled(
         c - vec2(r, r) * 0.25,
         r * 0.28,
         Color32::from_rgb(0xff, 0xe6, 0x9a),
-    );
+    ));
 }
 
 /// Fills a simple polygon (convex or not) of any winding.
-pub fn fill(painter: &Painter, points: &[Pos2], color: Color32) {
+pub fn fill(out: &mut Vec<Shape>, points: &[Pos2], color: Color32) {
     let triangles = triangulate(points);
     if triangles.is_empty() {
         return;
@@ -218,7 +226,7 @@ pub fn fill(painter: &Painter, points: &[Pos2], color: Color32) {
     for [a, b, c] in triangles {
         mesh.add_triangle(a, b, c);
     }
-    painter.add(Shape::mesh(mesh));
+    out.push(Shape::mesh(mesh));
 }
 
 /// Ear-clipping triangulation of a simple polygon; indices into `points`.

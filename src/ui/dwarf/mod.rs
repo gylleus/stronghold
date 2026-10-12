@@ -7,9 +7,10 @@
 //! y down. [`paint`] scales and mirrors him into place.
 
 pub mod cutout;
+pub mod pixel;
 
 use cutout::{Finish, Piece, Xf, blob, capsule, ellipse};
-use eframe::egui::{Align2, Color32, FontId, Painter, Pos2, pos2, vec2};
+use eframe::egui::{Align2, Color32, FontId, Painter, Pos2, Shape, pos2, vec2};
 
 /// What a dwarf is doing. There is no idle loop: an idle dwarf stands still.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -329,6 +330,14 @@ const NECK: Pos2 = pos2(3.0, -50.0);
 const SHOULDER: Pos2 = pos2(5.0, -43.0);
 const BACK_SHOULDER: Pos2 = pos2(-9.0, -44.0);
 
+/// A dwarf as shapes, ready to paint or to rasterize.
+#[derive(Debug, Clone, Default)]
+pub struct Drawing {
+    pub shapes: Vec<Shape>,
+    /// A "?" over his head: where, and its height in points.
+    pub question: Option<(Pos2, f32)>,
+}
+
 /// Draws a dwarf standing on `foot`, `height` points tall, in `pose`, with `finish`.
 pub fn paint(
     painter: &Painter,
@@ -339,6 +348,35 @@ pub fn paint(
     facing_right: bool,
     finish: &Finish,
 ) {
+    let drawing = draw(foot, height, look, pose, facing_right, finish);
+    painter.extend(drawing.shapes);
+    if let Some((at, size)) = drawing.question {
+        question(painter, at, size);
+    }
+}
+
+/// A "?" `size` points tall centred on `at`, with a soft shadow.
+pub fn question(painter: &Painter, at: Pos2, size: f32) {
+    let font = FontId::proportional(size);
+    painter.text(
+        at + vec2(1.2, 1.6) * size / 22.0,
+        Align2::CENTER_CENTER,
+        "?",
+        font.clone(),
+        Color32::from_black_alpha(140),
+    );
+    painter.text(at, Align2::CENTER_CENTER, "?", font, QUESTION);
+}
+
+/// The shapes of a dwarf standing on `foot`, `height` points tall, in `pose`, with `finish`.
+pub fn draw(
+    foot: Pos2,
+    height: f32,
+    look: &Look,
+    pose: &Pose,
+    facing_right: bool,
+    finish: &Finish,
+) -> Drawing {
     let k = height / 100.0;
     let place = Xf::translate(foot.to_vec2() - vec2(0.0, pose.hop * k))
         .then(Xf::scale(if facing_right { k } else { -k }, k));
@@ -358,40 +396,23 @@ pub fn paint(
     let arm = body.then(Xf::rotate_about(SHOULDER, -pose.arm));
     let back_arm = body.then(Xf::rotate_about(BACK_SHOULDER, -pose.back_arm));
 
-    cutout::draw(painter, &back_arm_piece(look), back_arm, &finish);
-    cutout::draw(
-        painter,
-        &boot(-6.0 - pose.stride, look, true),
-        place,
-        &finish,
-    );
-    cutout::draw(painter, &body_piece(look), body, &finish);
-    cutout::draw(
-        painter,
-        &boot(6.0 + pose.stride, look, false),
-        place,
-        &finish,
-    );
-    cutout::draw(painter, &head_piece(look, pose), head, &finish);
-    cutout::pin(painter, NECK + vec2(-6.0, 3.0), 1.6, head, &finish);
-    cutout::draw(painter, &arm_piece(look), arm, &finish);
-    cutout::pin(painter, SHOULDER, 1.8, arm, &finish);
-
+    let mut out = Vec::new();
+    let o = &mut out;
+    cutout::draw(o, &back_arm_piece(look), back_arm, &finish);
+    cutout::draw(o, &boot(-6.0 - pose.stride, look, true), place, &finish);
+    cutout::draw(o, &body_piece(look), body, &finish);
+    cutout::draw(o, &boot(6.0 + pose.stride, look, false), place, &finish);
+    cutout::draw(o, &head_piece(look, pose), head, &finish);
+    cutout::pin(o, NECK + vec2(-6.0, 3.0), 1.6, head, &finish);
+    cutout::draw(o, &arm_piece(look), arm, &finish);
+    cutout::pin(o, SHOULDER, 1.8, arm, &finish);
     if let Some(s) = pose.since_strike.filter(|s| *s < 0.16) {
-        sparks(painter, arm.apply(tool_tip(look.tool)), s, k);
+        sparks(o, arm.apply(tool_tip(look.tool)), s, k);
     }
-    if pose.question > 0.0 {
-        let at = head.apply(pos2(8.0, -108.0));
-        let size = 22.0 * k * pose.question;
-        let font = FontId::proportional(size);
-        painter.text(
-            at + vec2(1.2, 1.6) * k,
-            Align2::CENTER_CENTER,
-            "?",
-            font.clone(),
-            Color32::from_black_alpha(140),
-        );
-        painter.text(at, Align2::CENTER_CENTER, "?", font, QUESTION);
+    Drawing {
+        shapes: out,
+        question: (pose.question > 0.0)
+            .then(|| (head.apply(pos2(8.0, -108.0)), 22.0 * k * pose.question)),
     }
 }
 
@@ -826,7 +847,7 @@ fn hat(p: &mut Piece, look: &Look) {
 }
 
 /// Little four-pointed sparks flying off the tool tip `s` seconds after a strike.
-fn sparks(painter: &Painter, tip: Pos2, s: f32, k: f32) {
+fn sparks(out: &mut Vec<Shape>, tip: Pos2, s: f32, k: f32) {
     let spread = 6.0 + s * 160.0;
     let fade = 1.0 - s / 0.16;
     for (i, dir) in [
@@ -850,7 +871,7 @@ fn sparks(painter: &Painter, tip: Pos2, s: f32, k: f32) {
             at + vec2(-r * 1.8, 0.0),
             at + vec2(-r * 0.5, -r * 0.5),
         ];
-        cutout::fill(painter, &star, Color32::from_rgb(0xff, 0xd8, 0x60));
+        cutout::fill(out, &star, Color32::from_rgb(0xff, 0xd8, 0x60));
     }
 }
 

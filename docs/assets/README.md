@@ -48,9 +48,36 @@ Built (commit 8f7716c, bead `myr-bov.1`):
 ![The first try, paper finish](tests/paper-dwarf-lab.png)
 ![Wind-up, strike, study](tests/paper-dwarf-poses.png)
 
+**Pixel experiment** (Karl: "make them low res via a pixelization model and color filter"):
+
+- **`src/ui/dwarf/pixel.rs`:** the dwarf's shapes go through epaint's own tessellator, then
+  a small CPU rasteriser at the target size: one sample per pixel by default (hard edges),
+  or 4×4 averaged ("blend edges"). Alpha is cut to opaque or transparent. Colours are then
+  optionally mapped to a palette, by nearest colour in CIELAB with lightness weighted
+  double.
+- **`assets/palettes/`:** the 16 Lospec palettes (credited in `assets/LICENSES.md`).
+- **The lab's Pixels section:**
+  - a pixel-mode switch;
+  - dwarf height 16, 24, 32, 40, 48, 64 or 96 px;
+  - a palette picker (none or any of the 16);
+  - animation frames per second (choppy reads more like pixel art; default 12);
+  - a minimum 1 px outline;
+  - blended edges;
+  - "every palette at once", showing the dressed dwarf, animated, in all 16 palettes plus
+    none.
+
+  Run `cargo run --release --example dwarf_lab -- --pixel 48 --palette endesga-32` (or
+  `--palettes`). It's an algorithmic filter, not an ML model. It runs live, re-rendering
+  only when the animation frame or a setting changes.
+
+![Pixel mode, 48 px, Endesga 32](tests/dwarf-pixel-stage-48.png)
+![Every palette at once, 48 px, mid wind-up](tests/dwarf-pixel-palettes-48.png)
+
+Notes: the outline colour has to stay clear of the background. On the dark mine floor, a
+palette's darkest colour can swallow the outline (Oil 6, Fantasy 24). The farm would want a
+lighter backdrop, or an outline colour picked per palette.
+
 Next, if Karl likes the direction:
-- the pixelisation experiment Karl asked for: render the code-drawn dwarf small, then
-  map it to a palette;
 - the King (front-facing, crown and scepter) and the foreman, apprentice and ravenmaster as
   styles on the same rig;
 - more parts (hair styles, eyebrows, eyepatch, apron, hood);
