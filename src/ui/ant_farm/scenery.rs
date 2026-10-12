@@ -30,8 +30,8 @@ fn hash(i: usize, salt: u32) -> u32 {
 pub fn surface(scene: &Scene) -> Vec<Placement> {
     let px = scene.px;
     let a = scene.cell();
-    // With the rune stone at the left, Karl's tube stands past the waiting dwarves.
-    let start = scene.karl_pipe().x + 1.5 * a;
+    // With the rune stone at the left, Karl's portal stands past the waiting dwarves.
+    let start = scene.karl_portal().x + 1.5 * a;
     let end = scene.rect.right() - 0.5 * a;
     let mut out = Vec::new();
     let mut x = start;

@@ -1,9 +1,9 @@
 //! Shared cutout renderer for the mine. All coordinates are farm texels; textures have
-//! hard alpha, a one-texel ink outline and NEAREST sampling, just like the dwarves.
+//! hard alpha, a configurable ink outline and NEAREST sampling, just like the dwarves.
 
 use super::nature::Deco;
 use crate::ui::dwarf::{
-    cutout::{self, Finish, Piece, Xf, blob, capsule, ellipse},
+    cutout::{self, Finish, Outline, Piece, Xf, blob, capsule, ellipse},
     pixel::{self, Mapper},
 };
 use eframe::egui::{
@@ -41,7 +41,7 @@ pub enum Prop {
     PitheadWinch,
     Spoil,
     Soot,
-    Tube,
+    Portal,
     Scroll,
     Support,
     Shoring,
@@ -78,7 +78,7 @@ impl Prop {
             Self::PitheadWinch => [24, 18],
             Self::Spoil => [26, 10],
             Self::Soot => [14, 20],
-            Self::Tube => [24, 26],
+            Self::Portal => [32, 40],
             Self::Scroll => [18, 12],
             Self::Support => [36, 22],
             Self::Shoring => [20, 10],
@@ -121,6 +121,7 @@ struct Key {
     prop: Prop,
     size: [usize; 2],
     palette: String,
+    outline: Outline,
     frame: u8,
 }
 struct Cached {
@@ -131,13 +132,15 @@ struct Cached {
 pub struct WorldArt {
     textures: HashMap<Key, Cached>,
     palette: String,
+    outline: Outline,
     mapper: Option<Mapper>,
     generation: u64,
 }
 
 impl WorldArt {
-    pub fn begin_frame(&mut self, palette: &str) {
+    pub fn begin_frame(&mut self, palette: &str, outline: Outline) {
         self.generation += 1;
+        self.outline = outline;
         if self.palette != palette {
             self.palette = palette.to_owned();
             self.mapper = pixel::BUNDLED
@@ -148,8 +151,9 @@ impl WorldArt {
                 });
         }
         // Retain all four animation frames, but release old sizes/palettes after resizing.
-        self.textures
-            .retain(|k, c| k.palette == palette && c.used + 120 >= self.generation);
+        self.textures.retain(|k, c| {
+            k.palette == palette && k.outline == outline && c.used + 120 >= self.generation
+        });
     }
 
     pub fn map(&mut self, image: &mut ColorImage) {
@@ -227,10 +231,11 @@ impl WorldArt {
             prop,
             size,
             palette: self.palette.clone(),
+            outline: self.outline,
             frame,
         };
         if !self.textures.contains_key(&key) {
-            let mut image = render(prop, size, frame);
+            let mut image = render(prop, size, frame, self.outline);
             if matches!(prop, Prop::Cave(_) | Prop::Masonry) {
                 self.map_stone(&mut image, true);
             } else {
@@ -253,6 +258,7 @@ impl WorldArt {
             prop,
             size,
             palette: self.palette.clone(),
+            outline: self.outline,
             frame,
         };
         let cached = self.textures.get_mut(&key).expect("prop just cached");
@@ -273,15 +279,12 @@ impl WorldArt {
     }
 }
 
-pub fn render(prop: Prop, size: [usize; 2], frame: u8) -> ColorImage {
+pub fn render(prop: Prop, size: [usize; 2], frame: u8, outline: Outline) -> ColorImage {
     let room = matches!(prop, Prop::Cave(_) | Prop::Masonry);
     let [w, h] = if room { size } else { prop.size() }.map(|n| n as f32);
     let mut c = Canvas {
         shapes: Vec::new(),
-        finish: Finish {
-            outline: (w / size[0] as f32).max(h / size[1] as f32).max(1.0),
-            ..Finish::INK
-        },
+        finish: outline.finish((w / size[0] as f32).max(h / size[1] as f32)),
     };
     match prop {
         Prop::Cave(seed) => super::excavation::cave(&mut c, w, h, seed),
@@ -631,27 +634,89 @@ fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
             );
             c.detail(16.0, 26.0, 11.0, 1.0, STONE_LIGHT);
         }
-        Prop::Tube => {
-            c.rect(6.0, 6.0, 12.0, 19.0, GOLD);
-            c.detail(7.0, 7.0, 2.0, 17.0, LIGHT);
-            c.detail(15.0, 7.0, 3.0, 18.0, GOLD_DARK);
+        Prop::Portal => {
+            let flare = frame.min(3) as f32 / 3.0;
+            let veil = rgb(0x254657).lerp_to_gamma(BLUE, flare * 0.7);
+            // A deep doorway, a luminous inner threshold and wedge-cut arch stones.
             c.cut(
                 pts(&[
-                    (2.0, 2.0),
-                    (22.0, 2.0),
-                    (19.0, 7.0),
-                    (17.0, 9.0),
-                    (7.0, 9.0),
-                    (5.0, 7.0),
+                    (4.0, 35.0),
+                    (4.0, 14.0),
+                    (7.0, 7.0),
+                    (12.0, 3.0),
+                    (20.0, 3.0),
+                    (25.0, 7.0),
+                    (28.0, 14.0),
+                    (28.0, 35.0),
                 ]),
-                GOLD,
+                STONE_DARK,
             );
-            c.oval(12.0, 2.5, 10.0, 1.5, GOLD_DARK);
-            c.rect(4.0, 23.0, 16.0, 2.0, GOLD_DARK);
-            c.rect(5.0, 12.0, 14.0, 8.0, GOLD);
-            for x in [6.0, 17.0] {
-                for y in [12.0, 19.0] {
-                    c.detail(x, y, 1.0, 1.0, LIGHT);
+            c.cut(
+                pts(&[
+                    (9.0, 33.0),
+                    (9.0, 15.0),
+                    (11.0, 11.0),
+                    (16.0, 8.0),
+                    (21.0, 11.0),
+                    (23.0, 15.0),
+                    (23.0, 33.0),
+                ]),
+                BLUE.lerp_to_gamma(LIGHT, flare),
+            );
+            c.paint(
+                pts(&[
+                    (11.0, 32.0),
+                    (11.0, 16.0),
+                    (13.0, 13.0),
+                    (16.0, 11.0),
+                    (20.0, 14.0),
+                    (21.0, 17.0),
+                    (21.0, 32.0),
+                ]),
+                veil,
+            );
+            c.paint(
+                pts(&[
+                    (13.0, 29.0),
+                    (13.0, 20.0),
+                    (17.0, 15.0),
+                    (19.0, 18.0),
+                    (16.0, 22.0),
+                    (17.0, 29.0),
+                ]),
+                rgb(0x142b3c).lerp_to_gamma(BLUE, flare),
+            );
+            for x in [4.0, 24.0] {
+                for y in [15.0, 24.0] {
+                    c.rect(x, y, 4.0, 8.0, STONE);
+                    c.detail(x, y, 1.0, 7.0, STONE_LIGHT);
+                    let ink = GOLD_DARK.lerp_to_gamma(LIGHT, flare);
+                    c.line((x + 2.0, y + 2.0), (x + 2.0, y + 6.0), 0.5, ink);
+                    c.line((x + 2.0, y + 2.0), (x + 3.0, y + 3.5), 0.5, ink);
+                }
+            }
+            for points in [
+                vec![(4.0, 13.0), (7.0, 6.0), (11.0, 9.0), (8.0, 14.0)],
+                vec![(8.0, 5.0), (13.0, 2.0), (14.0, 7.0), (11.0, 9.0)],
+                vec![(19.0, 2.0), (24.0, 5.0), (21.0, 9.0), (18.0, 7.0)],
+                vec![(25.0, 6.0), (28.0, 13.0), (24.0, 14.0), (21.0, 9.0)],
+            ] {
+                c.cut(pts(&points), STONE);
+            }
+            c.cut(
+                pts(&[(13.0, 2.0), (19.0, 2.0), (18.0, 8.0), (14.0, 8.0)]),
+                STONE_LIGHT,
+            );
+            c.paint(
+                pts(&[(16.0, 3.0), (17.5, 5.0), (16.0, 7.0), (14.5, 5.0)]),
+                GOLD.lerp_to_gamma(LIGHT, flare),
+            );
+            c.rect(2.0, 33.0, 28.0, 5.0, STONE_DARK);
+            c.detail(5.0, 33.0, 22.0, 5.0, GOLD);
+            c.detail(5.0, 33.0, 22.0, 1.0, LIGHT);
+            if frame > 0 {
+                for (x, y) in [(14.0, 18.0), (18.0, 26.0), (15.0, 30.0)] {
+                    c.detail(x, y - flare * 2.0, 1.0, 2.0, LIGHT);
                 }
             }
         }
@@ -1113,7 +1178,7 @@ mod tests {
             Prop::PitheadWinch,
             Prop::Spoil,
             Prop::Soot,
-            Prop::Tube,
+            Prop::Portal,
             Prop::Scroll,
             Prop::Support,
             Prop::Shoring,
@@ -1150,26 +1215,32 @@ mod tests {
         for prop in props() {
             for scale in [0.75, 1.0, 2.0] {
                 let size = prop.size().map(|n| (n as f32 * scale).round() as usize);
-                for frame in 0..=prop.frame(0.5) {
-                    let image = render(prop, size, frame);
-                    assert_eq!(image.size, size);
-                    assert!(
-                        image.pixels.iter().any(|p| p.a() == 255),
-                        "{prop:?} {size:?}"
-                    );
-                    assert!(image.pixels.iter().all(|p| p.a() == 0 || p.a() == 255));
-                    for palette in pixel::bundled() {
-                        let mut mapped = image.clone();
-                        Mapper::new(&palette).apply(&mut mapped);
+                for outline in Outline::ALL {
+                    for frame in 0..=if prop == Prop::Portal {
+                        3
+                    } else {
+                        prop.frame(0.5)
+                    } {
+                        let image = render(prop, size, frame, outline);
+                        assert_eq!(image.size, size);
                         assert!(
-                            mapped
-                                .pixels
-                                .iter()
-                                .filter(|p| p.a() > 0)
-                                .all(|p| palette.colors.contains(p)),
-                            "{prop:?} {}",
-                            palette.name
+                            image.pixels.iter().any(|p| p.a() == 255),
+                            "{prop:?} {size:?}"
                         );
+                        assert!(image.pixels.iter().all(|p| p.a() == 0 || p.a() == 255));
+                        for palette in pixel::bundled() {
+                            let mut mapped = image.clone();
+                            Mapper::new(&palette).apply(&mut mapped);
+                            assert!(
+                                mapped
+                                    .pixels
+                                    .iter()
+                                    .filter(|p| p.a() > 0)
+                                    .all(|p| palette.colors.contains(p)),
+                                "{prop:?} {}",
+                                palette.name
+                            );
+                        }
                     }
                 }
             }
@@ -1190,8 +1261,9 @@ mod tests {
             );
             assert_eq!(prop.frame(0.0) != prop.frame(0.5), active, "{prop:?}");
             assert_eq!(
-                render(prop, prop.size(), 0) != render(prop, prop.size(), 3),
-                active,
+                render(prop, prop.size(), 0, Outline::Fine)
+                    != render(prop, prop.size(), 3, Outline::Fine),
+                active || prop == Prop::Portal,
                 "{prop:?}"
             );
         }
@@ -1201,7 +1273,7 @@ mod tests {
     fn small_palettes_keep_ink_walls_and_rock_separate() {
         for (name, _) in pixel::BUNDLED {
             let mut world = WorldArt::default();
-            world.begin_frame(name);
+            world.begin_frame(name, Outline::Fine);
             let mut ink = ColorImage::filled([1, 1], INK);
             let mut wall = ColorImage::filled([1, 1], super::super::excavation::WALL);
             let mut rock = ColorImage::filled([1, 1], rgb(0x6b6a61));
@@ -1217,9 +1289,9 @@ mod tests {
     fn cave_corners_stay_open_and_ink_survives_palette_mapping() {
         for (name, _) in pixel::BUNDLED {
             let mut world = WorldArt::default();
-            world.begin_frame(name);
+            world.begin_frame(name, Outline::Fine);
             for size in [[48, 36], [96, 64], [150, 42]] {
-                let mut image = render(Prop::Cave(2), size, 0);
+                let mut image = render(Prop::Cave(2), size, 0, Outline::Fine);
                 let before = image.clone();
                 world.map_stone(&mut image, true);
                 assert_eq!(image[(0, 0)].a(), 0, "{name}");
@@ -1240,14 +1312,57 @@ mod tests {
     }
 
     #[test]
+    fn outline_switch_rebuilds_stationary_props() {
+        let ctx = egui::Context::default();
+        let mut world = WorldArt::default();
+        let mut previous = None;
+        for outline in Outline::ALL {
+            world.begin_frame("oil-6", outline);
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                world.paint(
+                    ui.painter(),
+                    Prop::Portal,
+                    Rect::from_min_size(pos2(10.0, 10.0), vec2(32.0, 40.0)),
+                    1.0,
+                    0,
+                    1.0,
+                );
+            });
+            let texture = world.textures.values().next().unwrap().texture.id();
+            assert_ne!(Some(texture), previous);
+            assert_eq!(world.textures.len(), 1);
+            assert!(
+                output
+                    .textures_delta
+                    .set
+                    .iter()
+                    .any(|(id, _)| *id == texture)
+            );
+            output.textures_delta.clear();
+            previous = Some(texture);
+        }
+        assert_ne!(
+            render(Prop::Portal, [32, 40], 0, Outline::Fine),
+            render(Prop::Portal, [32, 40], 0, Outline::Bold)
+        );
+    }
+
+    #[test]
     fn palette_switch_rebuilds_cached_props_and_tiles() {
         let ctx = egui::Context::default();
         let mut sprites = super::super::sprites::Sprites::load(&ctx);
         for name in ["endesga-32", "oil-6", ""] {
-            sprites.begin_frame(name, 2.0, 0.0);
+            sprites.begin_frame(
+                &super::super::art::ArtSettings {
+                    palette: name.into(),
+                    ..Default::default()
+                },
+                2.0,
+                0.0,
+            );
             let mut output = ctx.run_ui(Default::default(), |ui| {
                 let painter = ui.ctx().layer_painter(egui::LayerId::background());
-                sprites.standing(&painter, Prop::Tube, pos2(50.0, 70.0), 2.0, 1.0);
+                sprites.standing(&painter, Prop::Portal, pos2(50.0, 70.0), 2.0, 1.0);
             });
             output.textures_delta.clear();
             let world = sprites.world.borrow();

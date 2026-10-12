@@ -9,14 +9,17 @@ no farm PNGs and no alternate ant-farm art path. The earlier experiments below a
 Bead: `myr-uhz`. Settings → Art → **Palette** recolours the entire scene, including granite,
 worked passages, sky, labels, bubbles and effects. **Pixels** chooses the dwarf resolution;
 fixed heights affect only dwarves. World art always uses one image pixel per farm texel
-(`scene.px` points), with nearest sampling and an ink outline at least one texel wide.
+(`scene.px` points), with nearest sampling. **Outline** selects Fine (1 px), Regular
+(1.5 px) or Bold (2 px) for dwarves and cutout scenery; widths are measured on each
+rendered pixel grid, independent of camera zoom. The setting is persisted as `art.outline`.
+`dwarf/cutout.rs::Outline` supplies both renderers and the dwarf lab.
 
 - `src/ui/ant_farm/world.rs` contains the shared prop renderer and texture cache. `Prop`
   picks the drawing, `size()` its native texel bounds. The cache key includes prop, rendered
-  size, palette and animation frame. `Canvas` calls the dwarf's `Piece::cut`/`paint`,
+  size, palette, outline width and animation frame. `Canvas` calls the dwarf's `Piece::cut`/`paint`,
   `blob`, `capsule`, `ellipse`, `Xf` and `Finish::INK`. Adjust the material constants here
   for worn timber, grey stone, iron, brass, parchment, gold and blue rune light. Leave a
-  texel around silhouettes for the outline.
+  margin around silhouettes for the outline (up to two texels).
 - `excavation.rs` draws working rooms as jagged caves: overhangs, exposed planes, fractures,
   ore seams and loose chips. It draws at the requested texel size, so resizing a chamber
   adds rock detail instead of stretching it. `Prop::Cave` shares the prop texture cache;
@@ -36,17 +39,20 @@ fixed heights affect only dwarves. World art always uses one image pixel per far
   horizon, with matching edge heights and snow caps.
 - `comms.rs` draws the standing rune stone, pedestal basin and tablet stack. The stone's
   runes are dim at rest, cracked/dark when stopped, and gold on receipt. Only a working
-  priest lights the basin. `Role::RunePriest` replaces the Ravenmaster: a long hooded robe,
-  rune hem, braided beard, carved staff and blue crystal. `Action::Scry` raises both hands
+  priest lights the basin; the room is labelled **ENVOY**. `Role::RunePriest` wears a
+  broad, bent rune hat, long robe, embroidered stole and hem, a beard down to his boots,
+  and thick brows that completely hide his eyes. His carved staff carries a blue crystal. `Action::Scry` raises both hands
   and pulses crystal/runes; otherwise the priest holds `Still`. The lab includes him.
 - Travelling dwarves use `Action::Ride`: braced arms, tools stowed, no walking stride.
   `Prop::MineCart` covers the lower body; its wheels turn only on horizontal travel.
   Vertical legs use `CartYoke` and an overhead chain. `motion::route` connects actual
   shaft centres to the gallery, with sidings through rooms; cargo rides in the tub.
   Arrival removes the cart and restores the worker's state pose. There is no idle ride.
-- `mail.rs` keeps message routes/timing and draws sealed scrolls. Karl's riveted brass tube
-  stretches only as a message leaves. Fire has four frames at six frames per second;
-  the tube, receiving stone and pool animate on events/work. Scenery and waiting figures
+- `mail.rs` keeps message routes/timing and draws sealed scrolls. Karl's stone rune portal
+  replaces the tube: scrolls materialise in its centre and the threshold flares on departure
+  or arrival. `Prop::Portal` is still at frame zero; message events select frames 1–3.
+  Reduced motion suppresses the flare. Fire has four frames at six frames per second;
+  the portal, receiving stone and pool animate on events/work. Scenery and waiting figures
   stay still. Snore z's and the pebble bonk use the same material colours as the bubbles.
 - Agent guilds use both colour and shape: Claude has amber cloth and a round sun crest;
   Codex has blue cloth and a tall diamond crest. Helmets, caps and bandanas carry the guild
@@ -54,9 +60,15 @@ fixed heights affect only dwarves. World art always uses one image pixel per far
   Identity remains visible when sleeping or failed (failure is shown by the red bubble).
   The farm demo includes both agents, and the dwarf lab has a crest picker. The King
   uses the regular dwarf body size; his taller, broader crown supplies the royal silhouette.
+  Heavy brows hide his eyes, and his hands are empty. A fur collar, ruby clasp and gold
+  embroidery dress his mantle. All workers have cuff/boot trim, stitched seams, pockets,
+  patches or belt pouches; these are flat painted details in `dwarf/parts.rs`, so heavier
+  outlines do not swallow the fabric detail.
 - `pixel::Mapper::apply` maps texture colours before upload. `Mapper::shape` maps the
   scene's code-drawn colours (preserving alpha) before camera zoom; it skips image tints,
   since those textures are already mapped. This also covers labels and all transient effects.
+
+Both examples accept `--outline fine|regular|bold` for comparing ink weights.
 
 Visual checks (each farm command also writes a `-walk` screenshot):
 

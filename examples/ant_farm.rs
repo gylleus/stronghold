@@ -3,6 +3,7 @@
 //!
 //! `cargo run --example ant_farm [--light] [--saw] [--trees N] [--shot out.png]`.
 //! `--receipt-at-ms 31` freezes a receipt mid-shake; `--reduced-motion` shows its flash.
+//! `--outline fine|regular|bold` chooses ink width.
 //! `--scrying` shows the working rune priest; `--stopped` darkens the rune stone.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
 //! terminals in the resting area; `--ants N` keeps only the first N agents.
@@ -79,6 +80,12 @@ fn main() -> eframe::Result {
             Some(h) => Pixels::Height(h.parse().expect("--pixels farm or a height")),
         },
         palette: value("--palette").unwrap_or_default(),
+        outline: match value("--outline").as_deref() {
+            None | Some("fine") => myrstack::ui::dwarf::cutout::Outline::Fine,
+            Some("regular") => myrstack::ui::dwarf::cutout::Outline::Regular,
+            Some("bold") => myrstack::ui::dwarf::cutout::Outline::Bold,
+            _ => panic!("--outline fine, regular or bold"),
+        },
     };
     let ants = args
         .iter()

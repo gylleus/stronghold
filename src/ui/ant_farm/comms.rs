@@ -74,7 +74,7 @@ pub fn paint(
     painter.text(
         room.chamber.min + vec2(5.0, 3.0) * px,
         Align2::LEFT_TOP,
-        "SCRYING",
+        "ENVOY",
         FontId::monospace(5.0 * px + 2.0),
         GOLD,
     );

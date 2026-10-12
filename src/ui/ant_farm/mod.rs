@@ -556,7 +556,7 @@ impl AntFarmView {
             pops: &pops,
         };
         let sprites = self.sprites.get_or_insert_with(|| Sprites::load(ui.ctx()));
-        sprites.begin_frame(&self.art.palette, scene.px, now_s);
+        sprites.begin_frame(&self.art, scene.px, now_s);
         let painter = ui.painter_at(rect);
         let first_shape = ui
             .ctx()
@@ -575,7 +575,7 @@ impl AntFarmView {
             .filter(|_| !tray_hovered && hovered.is_none())
             .and_then(|p| forest::hit(&trees, p))
             .cloned();
-        let pipe_stretch = mail::pipe_stretch(self.mail.tick(now_s), now_s);
+        let portal_flare = mail::portal_flare(self.mail.tick(now_s), now_s);
         paint_ground(
             &painter,
             sprites,
@@ -583,7 +583,7 @@ impl AntFarmView {
             palette,
             now_s,
             daylight,
-            pipe_stretch,
+            portal_flare,
             &self.forest,
             &trees,
         );
@@ -1089,7 +1089,7 @@ fn paint_ground(
     palette: Palette,
     now_s: f64,
     daylight: f32,
-    pipe_stretch: f32,
+    portal_flare: u8,
     forest_view: &forest::ForestView,
     trees: &forest::Forest,
 ) {
@@ -1246,11 +1246,11 @@ fn paint_ground(
             );
         }
     }
-    sprites.pipe(
+    sprites.portal(
         painter,
-        scene.karl_pipe(),
+        scene.karl_portal(),
         px,
-        pipe_stretch,
+        portal_flare,
         "Karl",
         FontId::monospace(10.0 + 2.0 * px),
     );

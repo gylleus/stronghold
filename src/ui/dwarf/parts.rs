@@ -11,6 +11,7 @@ use super::{
     RUBY, Role, SHOULDER, Tool, WOOD, shade, tint,
 };
 
+const HAIRS_FUR: Color32 = Color32::from_rgb(0xd2, 0xca, 0xb6);
 const BRASS: Color32 = Color32::from_rgb(0xc8, 0x96, 0x3c);
 const FLAME: Color32 = Color32::from_rgb(0xff, 0xb0, 0x30);
 const FLAME_CORE: Color32 = Color32::from_rgb(0xff, 0xf0, 0xb0);
@@ -41,12 +42,34 @@ pub(super) fn boot(x: f32, look: &Look, back: bool) -> Piece {
         ),
         leather,
     );
+    p.paint(rect(x - 5.0, -9.0, x + 3.0, -6.5), tint(leather, 0.35));
+    p.paint(rect(x - 6.0, -2.5, x + 9.0, -0.5), shade(leather, 0.35));
+    p.paint(rect(x - 2.0, -8.5, x + 1.0, -6.0), BRASS);
     p
 }
 
 pub(super) fn body(look: &Look) -> Piece {
     let g = look.girth;
     let mut p = Piece::default();
+    if look.role == Role::King {
+        // A heavy mantle, kept behind the arms and belly rather than enlarging the King.
+        p.cut(
+            blob(
+                &[
+                    pos2(-15.0, -48.0),
+                    pos2(-23.0, -39.0),
+                    pos2(-27.0, -8.0),
+                    pos2(-9.0, -6.0),
+                    pos2(9.0, -12.0),
+                    pos2(7.0, -45.0),
+                ],
+                4,
+            ),
+            shade(look.tunic, 0.3),
+        );
+        p.paint(capsule(pos2(-22.0, -36.0), pos2(-25.0, -9.0), 1.7), GOLD);
+        p.paint(capsule(pos2(-24.0, -8.0), pos2(-10.0, -8.0), 1.7), GOLD);
+    }
     p.cut(
         blob(
             &[
@@ -98,9 +121,40 @@ pub(super) fn body(look: &Look) -> Piece {
             for x in [-13.0, -2.0, 9.0] {
                 rune(&mut p, pos2(x, -16.0), BRASS);
             }
+            // Woven shoulder stole and belt scroll-case sit either side of the long beard.
+            p.paint(
+                vec![
+                    pos2(-15.0, -45.0),
+                    pos2(-8.0, -47.0),
+                    pos2(-10.0, -20.0),
+                    pos2(-17.0, -18.0),
+                ],
+                shade(look.tunic, 0.4),
+            );
+            p.paint(capsule(pos2(-15.0, -43.0), pos2(-17.0, -20.0), 1.0), BRASS);
+            for y in [-40.0, -29.0] {
+                rune(&mut p, pos2(-13.0, y), CRYSTAL);
+            }
+            p.cut(rect(-22.0, -26.0, -16.0, -15.0), LEATHER);
+            p.paint(rect(-22.0, -25.0, -16.0, -22.0), BRASS);
             return p;
         }
-        Garment::Tunic => {}
+        Garment::Tunic => {
+            // Woven side seam and a darned patch, visible beside the belt and beard.
+            p.paint(
+                capsule(pos2(-15.0, -41.0), pos2(-16.0, -18.0), 1.0),
+                tint(look.tunic, 0.3),
+            );
+            if look.role != Role::King {
+                p.paint(rect(-12.0, -22.0, -3.0, -15.0), shade(look.tunic, 0.3));
+                for x in [-10.0, -6.0] {
+                    p.paint(
+                        capsule(pos2(x, -23.0), pos2(x + 1.0, -20.0), 0.7),
+                        tint(look.tunic, 0.45),
+                    );
+                }
+            }
+        }
         Garment::Apron => {
             let apron = Color32::from_rgb(0x7a, 0x52, 0x34);
             p.paint(
@@ -122,6 +176,14 @@ pub(super) fn body(look: &Look) -> Piece {
                 capsule(pos2(3.0, -44.0), pos2(-7.0, -50.0), 1.2),
                 shade(apron, 0.25),
             );
+            p.paint(rect(5.0, -21.0, 16.0, -15.0), shade(apron, 0.3));
+            p.paint(
+                capsule(pos2(5.0, -21.0), pos2(16.0, -21.0), 1.0),
+                tint(apron, 0.3),
+            );
+            for x in [6.0, 14.0] {
+                p.paint(rect(x, -19.0, x + 1.5, -17.0), BRASS);
+            }
         }
         Garment::Vest => {
             let vest = shade(LEATHER, -0.25);
@@ -142,6 +204,11 @@ pub(super) fn body(look: &Look) -> Piece {
             for y in [-40.0, -33.0] {
                 p.paint(ellipse(pos2(5.5, y), 1.2, 1.2, 8), BRASS);
             }
+            p.paint(
+                capsule(pos2(-12.0, -44.0), pos2(-7.0, -31.0), 1.5),
+                tint(vest, 0.25),
+            );
+            p.paint(capsule(pos2(-15.0, -30.0), pos2(-6.0, -30.0), 1.0), BRASS);
         }
     }
     // Belt and buckle across the belly.
@@ -156,6 +223,25 @@ pub(super) fn body(look: &Look) -> Piece {
     );
     p.paint(ellipse(pos2(15.0 * g, -24.2), 3.0, 3.4, 10), GOLD);
     p.paint(ellipse(pos2(15.0 * g, -24.2), 1.4, 1.8, 8), LEATHER);
+    for x in [-14.0, -8.0, -2.0] {
+        p.paint(rect(x, -25.0, x + 1.5, -23.5), BRASS);
+    }
+    if look.role != Role::King {
+        p.cut(
+            blob(
+                &[
+                    pos2(-22.0, -25.0),
+                    pos2(-14.0, -25.0),
+                    pos2(-13.0, -16.0),
+                    pos2(-22.0, -15.0),
+                ],
+                3,
+            ),
+            LEATHER,
+        );
+        p.paint(rect(-22.0, -24.0, -14.0, -21.0), tint(LEATHER, 0.25));
+        p.paint(rect(-19.0, -22.0, -17.0, -19.0), BRASS);
+    }
     if look.role == Role::Foreman {
         // The foreman's brass badge.
         p.paint(ellipse(pos2(10.0, -39.0), 3.2, 3.2, 12), BRASS);
@@ -176,13 +262,64 @@ pub(super) fn body(look: &Look) -> Piece {
         ),
         shade(look.tunic, 0.25),
     );
+    if look.role == Role::King {
+        // Fur collar, gold embroidery and a ruby clasp, away from the face silhouette.
+        p.cut(
+            blob(
+                &[
+                    pos2(-18.0, -43.0),
+                    pos2(-13.0, -50.0),
+                    pos2(-4.0, -49.0),
+                    pos2(4.0, -45.0),
+                    pos2(15.0, -46.0),
+                    pos2(19.0, -41.0),
+                    pos2(8.0, -38.0),
+                    pos2(-8.0, -40.0),
+                ],
+                3,
+            ),
+            HAIRS_FUR,
+        );
+        for x in [-13.0, -6.0, 1.0] {
+            p.paint(
+                capsule(pos2(x, -45.0), pos2(x + 1.0, -42.0), 0.8),
+                shade(HAIRS_FUR, 0.35),
+            );
+        }
+        p.paint(capsule(pos2(-18.0, -16.0), pos2(18.0, -16.0), 1.8), GOLD);
+        for x in [-12.0, -2.0, 8.0] {
+            p.paint(
+                vec![
+                    pos2(x, -21.0),
+                    pos2(x + 3.0, -18.0),
+                    pos2(x, -15.0),
+                    pos2(x - 3.0, -18.0),
+                ],
+                GOLD,
+            );
+        }
+        p.cut(ellipse(pos2(-12.0, -40.0), 3.0, 3.5, 10), GOLD);
+        p.paint(ellipse(pos2(-12.0, -40.0), 1.5, 2.0, 8), RUBY);
+    }
     p
+}
+
+fn cuff(look: &Look) -> Color32 {
+    if matches!(look.role, Role::King | Role::RunePriest) {
+        GOLD
+    } else {
+        LEATHER
+    }
 }
 
 pub(super) fn back_arm(look: &Look) -> Piece {
     let mut p = Piece::default();
     let sleeve = shade(look.tunic, 0.3);
     p.cut(capsule(BACK_SHOULDER, pos2(-10.0, -27.0), 5.2), sleeve);
+    p.paint(
+        capsule(pos2(-14.0, -31.0), pos2(-6.0, -31.0), 1.5),
+        cuff(look),
+    );
     p.cut(
         ellipse(pos2(-10.0, -25.5), 5.0, 5.0, 14),
         shade(look.skin, 0.2),
@@ -206,8 +343,22 @@ pub(super) fn arm(look: &Look, pose: &Pose) -> Piece {
     p.cut(capsule(SHOULDER, pos2(SHOULDER.x, -28.0), 5.6), look.tunic);
     p.paint(
         capsule(pos2(SHOULDER.x, -31.5), pos2(SHOULDER.x, -29.0), 5.0),
-        shade(look.tunic, 0.25),
+        cuff(look),
     );
+    p.paint(
+        capsule(
+            pos2(SHOULDER.x - 3.0, -42.0),
+            pos2(SHOULDER.x - 3.0, -35.0),
+            1.1,
+        ),
+        tint(look.tunic, 0.3),
+    );
+    if matches!(look.role, Role::King | Role::RunePriest) {
+        p.paint(
+            rect(SHOULDER.x - 2.0, -33.0, SHOULDER.x, -28.0),
+            shade(GOLD, 0.35),
+        );
+    }
     p.cut(ellipse(HAND, 5.6, 5.4, 16), look.skin);
     p.paint(
         ellipse(HAND + vec2(2.0, 1.0), 2.4, 2.0, 10),
@@ -255,7 +406,7 @@ pub(super) fn tool_tip(tool: Tool) -> Pos2 {
         Tool::Shovel => 4.0,
         Tool::Lantern => -4.0,
         Tool::Staff => -10.0,
-        Tool::Scepter => -2.0,
+        Tool::None => -25.5,
     };
     pos2(SHOULDER.x, y)
 }
@@ -337,15 +488,7 @@ fn tool(p: &mut Piece, tool: Tool, small: bool) {
             }
             crystal(p, pos2(x, -85.0), 0.0);
         }
-        Tool::Scepter => {
-            p.cut(capsule(butt, pos2(x, end.y), 1.8), GOLD);
-            p.cut(ellipse(pos2(x, end.y + 2.0), 5.2, 5.2, 16), GOLD);
-            p.paint(ellipse(pos2(x, end.y + 2.0), 3.6, 3.6, 14), RUBY);
-            p.paint(
-                ellipse(pos2(x - 1.2, end.y + 0.8), 1.2, 1.2, 8),
-                tint(RUBY, 0.6),
-            );
-        }
+        Tool::None => {}
     }
 }
 
@@ -406,14 +549,13 @@ pub(super) fn priest_staff(pose: &Pose) -> Piece {
 pub(super) fn head(look: &Look, pose: &Pose) -> Piece {
     let mut p = Piece::default();
     let skin = look.skin;
-    let hooded = look.hat == Hat::Hood && !pose.nightcap;
     if look.hat != Hat::Bald || pose.nightcap {
         hair(&mut p, look);
     }
     p.cut(ellipse(pos2(5.0, -68.0), 16.5, 15.5, 28), skin);
     // Ear, and an earring.
     p.paint(ellipse(pos2(-2.5, -66.0), 3.6, 4.6, 12), shade(skin, 0.18));
-    if look.extras.earring && !hooded {
+    if look.extras.earring {
         p.cut(ellipse(pos2(-2.5, -60.0), 1.6, 1.6, 8), GOLD);
     }
     if look.hat == Hat::Bald && !pose.nightcap {
@@ -433,7 +575,18 @@ pub(super) fn head(look: &Look, pose: &Pose) -> Piece {
         p.paint(ellipse(pos2(6.0, -80.0), 5.0, 2.0, 10), tint(skin, 0.35));
     }
     face(&mut p, look, pose);
+    let beard_start = p.polys.len();
     beard(&mut p, look);
+    if look.role == Role::RunePriest {
+        // Stretch only below the cheeks: an elder's braid reaches his robe hem.
+        for poly in &mut p.polys[beard_start..] {
+            for point in &mut poly.points {
+                if point.y > -60.0 {
+                    point.y = -60.0 + (point.y + 60.0) * 1.28;
+                }
+            }
+        }
+    }
     nose(&mut p, look);
     if look.extras.pipe {
         let pipe = shade(WOOD, 0.35);
@@ -512,7 +665,42 @@ fn hair(p: &mut Piece, look: &Look) {
     }
 }
 
+fn elder_brows(p: &mut Piece, look: &Look) {
+    // Solid locks, not an expression above an eye: no pupils or eyelids are drawn.
+    for (x, width) in [(-5.0, 13.0), (7.0, 18.0)] {
+        p.cut(
+            vec![
+                pos2(x - 2.0, -77.0),
+                pos2(x + 4.0, -78.0),
+                pos2(x + width, -76.0),
+                pos2(x + width + 3.0, -69.0),
+                pos2(x + width - 1.0, -70.0),
+                pos2(x + width - 3.0, -65.0),
+                pos2(x + width - 7.0, -68.0),
+                pos2(x + 3.0, -66.0),
+                pos2(x, -70.0),
+                pos2(x - 4.0, -70.0),
+            ],
+            look.hair,
+        );
+        p.paint(
+            vec![
+                pos2(x - 2.0, -75.0),
+                pos2(x + 3.0, -76.0),
+                pos2(x + 4.0, -71.0),
+                pos2(x + 1.0, -68.0),
+                pos2(x - 1.0, -72.0),
+            ],
+            shade(look.hair, 0.22),
+        );
+    }
+}
+
 fn face(p: &mut Piece, look: &Look, pose: &Pose) {
+    if look.brows == Brows::Shaggy {
+        elder_brows(p, look);
+        return;
+    }
     let brow_color = shade(look.hair, 0.2);
     let eye = pos2(14.5, -70.0);
     match pose.eyes {
@@ -556,6 +744,7 @@ fn face(p: &mut Piece, look: &Look, pose: &Pose) {
         Brows::Bushy => (3.3, false),
         Brows::Thin => (1.6, false),
         Brows::Wild => (3.0, true),
+        Brows::Shaggy => unreachable!("elder brows have no eyes"),
     };
     let top = |x: f32, t: f32| pos2(x, -72.0 - thick - lift + t);
     p.paint(
@@ -753,6 +942,16 @@ fn beard(p: &mut Piece, look: &Look) {
         }
     }
     if look.beard == Beard::Braided {
+        for y in [-44.0, -37.0, -30.0] {
+            p.paint(
+                capsule(pos2(10.0, y - 2.0), pos2(17.0, y + 2.0), 1.0),
+                shade(c, 0.22),
+            );
+            p.paint(
+                capsule(pos2(15.0, y - 2.0), pos2(11.0, y + 1.0), 0.8),
+                tint(c, 0.22),
+            );
+        }
         for y in [-30.0, -24.0] {
             p.paint(rect(10.5, y - 1.6, 16.5, y + 1.6), GOLD);
         }
@@ -898,38 +1097,65 @@ fn hat(p: &mut Piece, look: &Look) {
             );
             p.paint(capsule(pos2(-12.0, -75.0), pos2(18.0, -75.0), 1.4), LEATHER);
         }
-        Hat::Hood => {
-            let cloth = if look.role == Role::RunePriest {
-                shade(look.tunic, 0.2)
-            } else {
-                shade(look.tunic, 0.3)
-            };
+        Hat::RuneHat => {
+            // A broad, low brim and a bent ceremonial crown, stitched with runes.
+            let cloth = shade(look.tunic, 0.15);
             p.cut(
                 blob(
                     &[
-                        pos2(22.0, -73.0),
-                        pos2(15.0, -84.0),
-                        pos2(2.0, -89.0),
-                        pos2(-12.0, -88.0),
-                        pos2(-24.0, -95.0),
-                        pos2(-19.0, -82.0),
-                        pos2(-19.0, -66.0),
-                        pos2(-14.0, -54.0),
-                        pos2(-5.0, -55.0),
-                        pos2(-3.0, -66.0),
-                        pos2(6.0, -74.0),
+                        pos2(-22.0, -80.0),
+                        pos2(-16.0, -98.0),
+                        pos2(-8.0, -116.0),
+                        pos2(4.0, -124.0),
+                        pos2(18.0, -119.0),
+                        pos2(8.0, -113.0),
+                        pos2(12.0, -99.0),
+                        pos2(23.0, -80.0),
                     ],
-                    5,
+                    4,
                 ),
                 cloth,
             );
             p.paint(
-                capsule(pos2(4.0, -75.0), pos2(21.0, -74.0), 1.3),
-                shade(cloth, 0.35),
+                vec![
+                    pos2(-16.0, -86.0),
+                    pos2(-7.0, -112.0),
+                    pos2(5.0, -120.0),
+                    pos2(0.0, -110.0),
+                    pos2(-6.0, -86.0),
+                ],
+                tint(cloth, 0.22),
             );
-            if look.role == Role::RunePriest {
-                rune(p, pos2(-15.0, -78.0), BRASS);
+            p.paint(
+                vec![
+                    pos2(7.0, -108.0),
+                    pos2(17.0, -88.0),
+                    pos2(12.0, -82.0),
+                    pos2(1.0, -94.0),
+                ],
+                shade(cloth, 0.3),
+            );
+            p.paint(rect(-16.0, -91.0, 17.0, -85.0), LEATHER);
+            for x in [-12.0, -2.0, 8.0] {
+                rune(p, pos2(x, -91.0), BRASS);
             }
+            p.cut(
+                blob(
+                    &[
+                        pos2(-31.0, -81.0),
+                        pos2(-16.0, -84.0),
+                        pos2(9.0, -84.0),
+                        pos2(33.0, -78.0),
+                        pos2(29.0, -74.0),
+                        pos2(6.0, -76.0),
+                        pos2(-18.0, -75.0),
+                        pos2(-33.0, -77.0),
+                    ],
+                    4,
+                ),
+                cloth,
+            );
+            p.paint(capsule(pos2(-28.0, -79.0), pos2(25.0, -78.0), 1.0), BRASS);
         }
         Hat::Bandana => {
             p.cut(
@@ -1019,4 +1245,49 @@ fn nightcap(p: &mut Piece, look: &Look) {
         ellipse(pos2(-25.0, -78.0), 3.6, 3.6, 12),
         Color32::from_rgb(0xf0, 0xec, 0xe0),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::dwarf::{
+        Action,
+        cutout::{self, Finish},
+        pixel, pose,
+    };
+    use eframe::egui::Rect;
+
+    #[test]
+    fn elder_faces_never_reveal_eyes_in_any_pose() {
+        for role in [Role::RunePriest, Role::King] {
+            let look = Look::for_role(role, 7);
+            let render = |pose: &Pose| {
+                let mut face_piece = Piece::default();
+                face(&mut face_piece, &look, pose);
+                let mut shapes = Vec::new();
+                cutout::draw(&mut shapes, &face_piece, Xf::IDENTITY, &Finish::INK);
+                pixel::rasterize(
+                    &shapes,
+                    Rect::from_min_size(pos2(-15.0, -85.0), vec2(50.0, 30.0)),
+                    [50, 30],
+                    1,
+                )
+            };
+            let still = render(&pose(Action::Still, 0.0));
+            assert!(still.pixels.iter().any(|c| c.a() > 0));
+            for action in Action::ALL {
+                for time in [0.0, 0.3, 0.7] {
+                    assert_eq!(render(&pose(action, time)), still, "{role:?} {action:?}");
+                }
+            }
+        }
+        // Ordinary eyebrows still reveal the different eye expressions.
+        let mut look = Look::from_seed(7);
+        look.brows = Brows::Thin;
+        let mut open = Piece::default();
+        let mut shut = Piece::default();
+        face(&mut open, &look, &pose(Action::Still, 0.0));
+        face(&mut shut, &look, &pose(Action::Sleep, 0.0));
+        assert_ne!(format!("{open:?}"), format!("{shut:?}"));
+    }
 }

@@ -1,5 +1,5 @@
-//! Sealed scrolls carried along the mine's passages. Karl's messages pop from his brass
-//! tube; outside messages reach the priest through the receiver stone's rune conduit.
+//! Sealed scrolls carried along the mine's passages. Karl's messages appear in his rune
+//! portal; outside messages reach the priest through the receiver stone's rune conduit.
 
 use eframe::egui::{Align2, FontId, Painter, Pos2, Rect, Stroke, pos2, vec2};
 
@@ -14,14 +14,12 @@ use crate::model::NodeId;
 use crate::traffic::{Endpoint, Flight, MessageKind};
 use crate::ui::envelope::{InFlight, Phase};
 
-/// How long the pipe stretches as a message pops out of it.
-const POP_S: f64 = 0.35;
-/// How many texels taller it gets at the height of the pop.
-const POP_TEXELS: f32 = 3.0;
+/// How long the portal flares as a scroll materialises.
+const PORTAL_S: f64 = 0.35;
 
-/// Whether `flight` leaves from Karl's pipe: Karl's own, or the Queen instructing an ant (her
+/// Whether `flight` leaves from Karl's portal: Karl's own, or the Queen instructing an ant (her
 /// whip's nudges stay with her).
-pub fn from_pipe(flight: &Flight) -> bool {
+pub fn from_portal(flight: &Flight) -> bool {
     match &flight.from {
         Endpoint::Karl => true,
         Endpoint::Node(id) => *id == NodeId::queen() && flight.kind == MessageKind::Instruction,
@@ -29,18 +27,30 @@ pub fn from_pipe(flight: &Flight) -> bool {
     }
 }
 
-/// Texels the pipe stretches at `now_s`, while messages pop out of it; still flights (Reduce
-/// motion) leave it be.
-pub fn pipe_stretch(air: &[InFlight], now_s: f64) -> f32 {
+/// Event-driven light, in three intensity steps. Reduced motion leaves the portal still.
+pub fn portal_flare(air: &[InFlight], now_s: f64) -> u8 {
     air.iter()
-        .filter(|f| !f.still && from_pipe(&f.flight))
+        .filter(|f| !f.still)
         .filter_map(|f| {
-            let t = (now_s - f.start_s?) / POP_S;
-            (0.0..1.0)
-                .contains(&t)
-                .then(|| (POP_TEXELS * (std::f64::consts::PI * t).sin() as f32).round())
+            let elapsed = now_s - f.start_s?;
+            let departure = if from_portal(&f.flight) {
+                elapsed / PORTAL_S
+            } else {
+                -1.0
+            };
+            let arrival = if f.flight.to == Endpoint::Karl {
+                (elapsed - crate::ui::envelope::TRAVEL_S + PORTAL_S / 2.0) / PORTAL_S
+            } else {
+                -1.0
+            };
+            [departure, arrival]
+                .into_iter()
+                .filter(|t| (0.0..1.0).contains(t))
+                .map(|t| (3.0 * (std::f64::consts::PI * t).sin()).round() as u8)
+                .max()
         })
-        .fold(0.0, f32::max)
+        .max()
+        .unwrap_or(0)
 }
 
 /// Where `end` is this frame and whether it is on the surface; `None` when its ant is not
@@ -54,14 +64,14 @@ pub(super) fn locate(scene: &Scene, placed: &[Placed], end: &Endpoint) -> Option
             .zip(placed)
             .find(|(ant, _)| &ant.id == id)
             .map(|(_, at)| (at.pos, false)),
-        Endpoint::Karl => Some((above_pipe(scene), true)),
+        Endpoint::Karl => Some((above_portal(scene), true)),
         Endpoint::Outside => Some((pos2(scene.entrance_x(), scene.surface_y - 0.5 * a), true)),
     }
 }
 
-/// Where a message clears the pipe's mouth, popping out (or about to drop in).
-fn above_pipe(scene: &Scene) -> Pos2 {
-    scene.karl_pipe_mouth(0.0) - vec2(0.0, 0.8 * scene.cell())
+/// Where a scroll clears the arch before joining the surface route.
+fn above_portal(scene: &Scene) -> Pos2 {
+    scene.karl_portal() - vec2(0.0, super::layout::PORTAL_H * scene.px + 0.3 * scene.cell())
 }
 
 /// The way from `from` to `to` through the passages; each is a point and whether it is on the
@@ -86,15 +96,15 @@ pub fn path(scene: &Scene, from: (Pos2, bool), to: (Pos2, bool)) -> Vec<Pos2> {
 }
 
 /// Outside mail for the Envoy follows the rune conduit instead of the public entrance. Mail
-/// from Karl's pipe rises out of its mouth first; mail for Karl drops into it last.
+/// from Karl's portal emerges from its centre first; mail for Karl disappears into it last.
 fn flight_path(scene: &Scene, placed: &[Placed], flight: &Flight) -> Option<Vec<Pos2>> {
     let (from, to) = (&flight.from, &flight.to);
     let to_at = locate(scene, placed, to)?;
-    if from_pipe(flight) {
-        let mut route = vec![scene.karl_pipe_mouth(0.0)];
-        route.extend(path(scene, (above_pipe(scene), true), to_at));
+    if from_portal(flight) {
+        let mut route = vec![scene.karl_portal_focus()];
+        route.extend(path(scene, (above_portal(scene), true), to_at));
         if *to == Endpoint::Karl {
-            route.push(scene.karl_pipe_mouth(0.0));
+            route.push(scene.karl_portal_focus());
         }
         route.dedup();
         return Some(route);
@@ -125,7 +135,7 @@ fn flight_path(scene: &Scene, placed: &[Placed], flight: &Flight) -> Option<Vec<
     }
     let mut route = path(scene, from_at, to_at);
     if *to == Endpoint::Karl {
-        route.push(scene.karl_pipe_mouth(0.0));
+        route.push(scene.karl_portal_focus());
     }
     Some(route)
 }
@@ -266,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn karl_and_queen_instructions_pop_out_of_the_pipe() {
+    fn karl_and_queen_instructions_emerge_from_the_portal() {
         let scene = scene(&snapshot());
         let placed: Vec<_> = scene
             .ants
@@ -278,7 +288,7 @@ mod tests {
             .collect();
         let worker = Endpoint::Node(id("working"));
         let at_worker = scene.ant(&id("working")).unwrap().pos;
-        let mouth = scene.karl_pipe_mouth(0.0);
+        let focus = scene.karl_portal_focus();
         let queen = Endpoint::Node(NodeId::queen());
         let flight = |from: &Endpoint, to: &Endpoint, kind| Flight {
             from: from.clone(),
@@ -287,29 +297,29 @@ mod tests {
         };
         for from in [&Endpoint::Karl, &queen] {
             let f = flight(from, &worker, MessageKind::Instruction);
-            assert!(from_pipe(&f));
+            assert!(from_portal(&f));
             let route = flight_path(&scene, &placed, &f).unwrap();
-            assert_eq!(route[0], mouth);
-            assert!(route[1].y < mouth.y, "rises out of the mouth first");
+            assert_eq!(route[0], focus);
+            assert!(route[1].y < focus.y, "clears the arch first");
             assert_eq!(route.last(), Some(&at_worker));
         }
         // The whip's nudges come from the Queen herself.
         let nudge = flight(&queen, &worker, MessageKind::Nudge);
-        assert!(!from_pipe(&nudge));
-        assert_ne!(flight_path(&scene, &placed, &nudge).unwrap()[0], mouth);
-        // Karl's chat message reaches the Queen; an ask for Karl drops into the pipe.
+        assert!(!from_portal(&nudge));
+        assert_ne!(flight_path(&scene, &placed, &nudge).unwrap()[0], focus);
+        // Karl's chat message reaches the Queen; an ask for Karl disappears into the portal.
         let chat = flight(&Endpoint::Karl, &queen, MessageKind::Instruction);
         let to_queen = flight_path(&scene, &placed, &chat).unwrap();
-        assert_eq!(to_queen[0], mouth);
+        assert_eq!(to_queen[0], focus);
         let ask = flight(&worker, &Endpoint::Karl, MessageKind::Ask);
         assert_eq!(
             flight_path(&scene, &placed, &ask).unwrap().last(),
-            Some(&mouth)
+            Some(&focus)
         );
     }
 
     #[test]
-    fn the_pipe_stretches_only_while_popping_and_not_when_still() {
+    fn the_portal_flares_only_during_messages_and_not_when_still() {
         let air = |still| {
             vec![InFlight {
                 flight: Flight {
@@ -323,8 +333,20 @@ mod tests {
                 still,
             }]
         };
-        assert_eq!(pipe_stretch(&air(false), POP_S / 2.0), POP_TEXELS);
-        assert_eq!(pipe_stretch(&air(false), POP_S + 0.1), 0.0);
-        assert_eq!(pipe_stretch(&air(true), POP_S / 2.0), 0.0);
+        assert_eq!(portal_flare(&air(false), PORTAL_S / 2.0), 3);
+        assert_eq!(portal_flare(&air(false), PORTAL_S + 0.1), 0);
+        assert_eq!(portal_flare(&air(true), PORTAL_S / 2.0), 0);
+        let mut incoming = air(false);
+        incoming[0].flight.from = Endpoint::Node(id("working"));
+        incoming[0].flight.to = Endpoint::Karl;
+        let arrival = crate::ui::envelope::TRAVEL_S;
+        assert_eq!(portal_flare(&incoming, PORTAL_S / 2.0), 0);
+        assert_eq!(portal_flare(&incoming, arrival), 3);
+        assert_eq!(portal_flare(&incoming, arrival + PORTAL_S), 0);
+        incoming[0].still = true;
+        assert_eq!(portal_flare(&incoming, arrival), 0);
+        incoming[0].start_s = None;
+        assert_eq!(portal_flare(&incoming, 0.0), 0);
+        assert_eq!(portal_flare(&[], 123.0), 0);
     }
 }
