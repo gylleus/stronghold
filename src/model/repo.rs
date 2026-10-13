@@ -138,10 +138,10 @@ mod tests {
                 Some("commerce-platform"),
             ),
             ("/Users/gylleus/repo/depict/realtime", Some("realtime")),
-            ("/Users/x/code/saker/myrstack", Some("myrstack")),
+            ("/Users/x/code/saker/stronghold", Some("stronghold")),
             (
-                "/Users/x/repo/myrstack-worktrees/myr-k7y.6",
-                Some("myrstack"),
+                "/Users/x/repo/stronghold-worktrees/myr-k7y.6",
+                Some("stronghold"),
             ),
             ("/Users/x/repo/-worktrees/a", Some("a")),
             ("/", None),

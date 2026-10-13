@@ -702,9 +702,17 @@ const REVOKED_CODE: &str = "dispatch_capability_invalid";
 
 /// `--from` of whip nudges. Orca's runtime takes any string as the sender; without `--from` or
 /// `ORCA_TERMINAL_HANDLE` the CLI would attribute the message to the focused terminal. See
-/// `docs/heartbeat-convention.md` "Myrstack senders".
-pub const WHIP_SENDER: &str = "myrstack-whip";
-/// `--from` of messages Karl broadcasts from Myrstack.
+/// `docs/heartbeat-convention.md` "Stronghold senders".
+pub const WHIP_SENDER: &str = "stronghold-whip";
+/// [`WHIP_SENDER`] while the app was Myrstack. Orca keeps run history, so older nudges still
+/// carry it.
+const OLD_WHIP_SENDER: &str = "myrstack-whip";
+
+/// Whether `from` is the whip's sender, now or before the rename.
+pub fn is_whip_sender(from: &str) -> bool {
+    from == WHIP_SENDER || from == OLD_WHIP_SENDER
+}
+/// `--from` of messages Karl broadcasts from Stronghold.
 pub const BROADCAST_SENDER: &str = "king";
 /// [`BROADCAST_SENDER`] before the dwarf theme. Orca keeps run history, so older broadcasts
 /// still carry it.
@@ -715,9 +723,9 @@ pub fn is_broadcast_sender(from: &str) -> bool {
     from == BROADCAST_SENDER || from == OLD_BROADCAST_SENDER
 }
 
-/// Whether `from` is one of Myrstack's own senders ([`WHIP_SENDER`], [`BROADCAST_SENDER`]).
-pub fn is_myrstack_sender(from: &str) -> bool {
-    from == WHIP_SENDER || is_broadcast_sender(from)
+/// Whether `from` is one of Stronghold's own senders ([`WHIP_SENDER`], [`BROADCAST_SENDER`]).
+pub fn is_stronghold_sender(from: &str) -> bool {
+    is_whip_sender(from) || is_broadcast_sender(from)
 }
 
 /// A message for `orca orchestration send`. Only `subject` is required.
@@ -727,7 +735,7 @@ pub struct OutgoingMessage {
     /// `run:<id>`, `dispatch:<id>`, a group such as `@all`, or a terminal handle.
     pub to: Option<String>,
     pub run: Option<String>,
-    /// Sender (`--from`). Myrstack always sets [`WHIP_SENDER`] or [`BROADCAST_SENDER`].
+    /// Sender (`--from`). Stronghold always sets [`WHIP_SENDER`] or [`BROADCAST_SENDER`].
     pub from: Option<String>,
     pub body: Option<String>,
     pub message_type: Option<String>,

@@ -14,7 +14,7 @@ use crate::review::mark::{self, MarkSource, Origin, ReadyMark};
 use crate::review::queue::ReviewQueue;
 use crate::review::view::{queue_json, rows};
 
-/// What the review tools need from the `myrstack mcp` process.
+/// What the review tools need from the `stronghold mcp` process.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ReviewEnv {
     /// The Orca identity of the agent this MCP server runs under.
@@ -48,16 +48,16 @@ pub fn definitions() -> Vec<Value> {
         json!({
             "name": "mark_pr_ready",
             "title": "Mark PR ready for review",
-            "description": "Tells Myrstack (Karl's clan dashboard) that a pull request is ready \
+            "description": "Tells Stronghold (Karl's clan dashboard) that a pull request is ready \
                 for Karl's review, so it shows in his review queue attributed to your terminal. \
                 Call it right after sending merge_ready for a gate-ready PR, or when setting the \
                 ✅ ready marker. It only records locally: nothing is posted to GitHub or sent to \
-                other agents. Works even when Myrstack isn't running (it shows on start).",
+                other agents. Works even when Stronghold isn't running (it shows on start).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "pr_url": { "type": "string", "description": "The PR URL, https://github.com/<org>/<repo>/pull/<n>." },
-                    "title": { "type": "string", "description": "Short title (GitHub's title is used once Myrstack reads the PR)." },
+                    "title": { "type": "string", "description": "Short title (GitHub's title is used once Stronghold reads the PR)." },
                     "summary": { "type": "string", "description": "One line: what is ready and what was verified." },
                 },
                 "required": ["pr_url"],
@@ -168,7 +168,7 @@ fn review_queue(control: &mut dyn Control, env: &ReviewEnv) -> ToolOutput {
             }
             None => return error(crate::mcp::backend::NOT_RUNNING.into()),
         },
-        Err(e) => return error(format!("Myrstack error: {e}")),
+        Err(e) => return error(format!("Stronghold error: {e}")),
     };
     let list: Vec<Value> = result
         .get("entries")
@@ -178,7 +178,7 @@ fn review_queue(control: &mut dyn Control, env: &ReviewEnv) -> ToolOutput {
     let mut out = Vec::new();
     if saved {
         out.push(
-            "Note: Myrstack isn't running, so this is its saved queue with GitHub state as last \
+            "Note: Stronghold isn't running, so this is its saved queue with GitHub state as last \
              read."
                 .to_owned(),
         );
@@ -214,7 +214,7 @@ fn entry_line(entry: &Value, now: i64) -> String {
     let mut parts = Vec::new();
     let agent = match (&r.agent, &r.agent_handle) {
         (Some(a), _) => format!("{} `{}`", a.label, a.id),
-        (None, Some(h)) => format!("terminal {h} (not in the farm)"),
+        (None, Some(h)) => format!("terminal {h} (not in the hold)"),
         (None, None) => "unknown agent".into(),
     };
     parts.push(agent);
@@ -414,7 +414,7 @@ mod tests {
         assert_eq!(
             text(&r),
             "Marked depict-org/realtime#255 ready for review from term_442fcb9f, shown under \
-             realtime-255. Myrstack's review queue now lists 1 PR."
+             realtime-255. Stronghold's review queue now lists 1 PR."
         );
         let (method, params) = &server.control().calls[0];
         assert_eq!(method, "pr_ready");
@@ -454,7 +454,11 @@ mod tests {
         let mut server = McpServer::new(Fake::new(false, Value::Null)).with_review_env(env);
         let r = call_tool(&mut server, "mark_pr_ready", json!({"pr_url": URL}));
         assert_eq!(r["isError"], false, "{}", text(&r));
-        assert!(text(&r).contains("Myrstack isn't running"), "{}", text(&r));
+        assert!(
+            text(&r).contains("Stronghold isn't running"),
+            "{}",
+            text(&r)
+        );
         assert_eq!(r["structuredContent"]["queued"], true);
 
         let taken = mark::take_pending(&pending);
@@ -572,8 +576,8 @@ mod tests {
         let mut server = McpServer::new(Fake::new(false, Value::Null)).with_review_env(env);
         let r = call_tool(&mut server, "review_queue", json!({}));
         let t = text(&r);
-        assert!(t.starts_with("Note: Myrstack isn't running"), "{t}");
-        assert!(t.contains("#255 recs: gate legacy config retirement — terminal term_442fcb9f (not in the farm) · CI failing (1 of 4 checks) · no Ankra review · no ready marker"), "{t}");
+        assert!(t.starts_with("Note: Stronghold isn't running"), "{t}");
+        assert!(t.contains("#255 recs: gate legacy config retirement — terminal term_442fcb9f (not in the hold) · CI failing (1 of 4 checks) · no Ankra review · no ready marker"), "{t}");
         assert_eq!(r["structuredContent"]["saved"], true);
     }
 

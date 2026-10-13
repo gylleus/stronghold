@@ -11,11 +11,11 @@ use serde::{Deserialize, Serialize};
 pub const AUTO_MODE_FILE: &str = "auto_mode.json";
 
 /// Told to the King (with Karl's next message) when auto mode turns on.
-pub const NOTE_ON: &str = "[Myrstack] Auto mode is now ON: your actions run without Karl's \
+pub const NOTE_ON: &str = "[Stronghold] Auto mode is now ON: your actions run without Karl's \
 confirmation, so don't ask him to confirm them (tool texts saying \"confirm with Karl\" don't \
 apply while it is on). Be precise; prefer dry runs for closes first.";
 /// Told to the King when auto mode turns off.
-pub const NOTE_OFF: &str = "[Myrstack] Auto mode is now OFF: your destructive Myrstack actions \
+pub const NOTE_OFF: &str = "[Stronghold] Auto mode is now OFF: your destructive Stronghold actions \
 and other tool calls that need permission are shown to Karl for approval again before they run.";
 
 /// Notice shown in the transcript when the mode changes.
@@ -74,10 +74,10 @@ mod tests {
     }
 
     #[test]
-    fn notes_read_as_myrstack_system_notes() {
-        assert!(note(true).starts_with("[Myrstack] Auto mode is now ON"));
+    fn notes_read_as_stronghold_system_notes() {
+        assert!(note(true).starts_with("[Stronghold] Auto mode is now ON"));
         assert!(note(true).contains("dry runs"));
-        assert!(note(false).starts_with("[Myrstack] Auto mode is now OFF"));
+        assert!(note(false).starts_with("[Stronghold] Auto mode is now OFF"));
         assert_ne!(notice(true), notice(false));
     }
 }

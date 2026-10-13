@@ -78,7 +78,7 @@ pub struct RunProgress {
     pub holding: Option<String>,
     /// Newest sign of life anywhere in the Run: its `updated_at`, coordinator bus messages and
     /// task changes (not its terminal output, which may be about other work), bus messages for
-    /// the Run (except Myrstack's own), task creation, completion and status changes, and task
+    /// the Run (except Stronghold's own), task creation, completion and status changes, and task
     /// progress (worker heartbeats and output). A Run silent for longer than the abandon window
     /// is abandoned and never nudged.
     pub last_activity_ms: Option<i64>,
@@ -331,7 +331,7 @@ fn run_activity_ms(
         .filter(|m| {
             !m.from_handle
                 .as_deref()
-                .is_some_and(crate::orca::is_myrstack_sender)
+                .is_some_and(crate::orca::is_stronghold_sender)
         })
         .filter(|m| {
             m.run_id.as_deref() == Some(run_id)
@@ -1275,7 +1275,7 @@ mod tests {
         data.inbox = vec![msg("m1", "term_other", "status", T0 + 20 * MIN, json!({}))];
         assert_eq!(at(&data), Some(T0 + 20 * MIN));
 
-        // Myrstack's own nudges and broadcasts do not keep a Run alive.
+        // Stronghold's own nudges and broadcasts do not keep a Run alive.
         for sender in [crate::orca::WHIP_SENDER, crate::orca::BROADCAST_SENDER] {
             data.inbox
                 .push(msg("m2", sender, "status", T0 + 30 * MIN, json!({})));

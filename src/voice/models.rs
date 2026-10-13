@@ -1,7 +1,7 @@
 //! Locating and downloading speech models.
 //!
-//! Models live in `<data dir>/speech-models/<name>/` (data dir: `$MYRSTACK_DATA_DIR`, else
-//! `~/Library/Application Support/Myrstack`). Downloads run only when the user asks for one.
+//! Models live in `<data dir>/speech-models/<name>/` (data dir: `$STRONGHOLD_DATA_DIR`, else
+//! `~/Library/Application Support/Stronghold`). Downloads run only when the user asks for one.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -235,7 +235,7 @@ fn single_subdir(dir: &Path) -> Result<PathBuf, String> {
 // Speech-to-text: NVIDIA Parakeet TDT 0.6B v3 (int8), as used by Orca
 // ---------------------------------------------------------------------------------------------
 
-/// Folder name of the Parakeet model, both in Orca's and in Myrstack's model folder.
+/// Folder name of the Parakeet model, both in Orca's and in Stronghold's model folder.
 pub const PARAKEET_DIR: &str = "parakeet-tdt-0.6b-v3-int8";
 /// Release asset of the same model on sherpa-onnx's GitHub.
 pub const PARAKEET_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2";
@@ -279,12 +279,12 @@ pub fn orca_parakeet_dir() -> Option<PathBuf> {
     })
 }
 
-/// Where Myrstack downloads the model.
+/// Where Stronghold downloads the model.
 pub fn parakeet_dir() -> PathBuf {
     speech_models_dir().join(PARAKEET_DIR)
 }
 
-/// Myrstack's copy, else Orca's.
+/// Stronghold's copy, else Orca's.
 pub fn find_parakeet() -> Option<ParakeetFiles> {
     find_parakeet_in(&[Some(parakeet_dir()), orca_parakeet_dir()])
 }

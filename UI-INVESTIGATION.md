@@ -1,9 +1,9 @@
 # UI polish investigation: egui vs migration
 
 Historical investigation. The graph, its vendored dependency and the comparison
-screenshots were removed on 2026-10-12; Myrstack now uses the dwarf farm alone.
+screenshots were removed on 2026-10-12; Stronghold now uses the dwarf hold alone.
 
-*September 2026, for myr-a7v. Question: the Myrstack UI feels rough next to Orca — how far
+*September 2026, for myr-a7v. Question: the Stronghold UI feels rough next to Orca — how far
 can egui take us, and what would a migration to another Rust UI stack cost?*
 
 ## TL;DR
@@ -14,7 +14,7 @@ can egui take us, and what would a migration to another Rust UI stack cost?*
    confirmed from `/Applications/Orca.app`). Its polish is Chromium's text stack and CSS.
    No Rust-native toolkit fully reaches that; the only stack that does is a webview
    (Tauri), which is a full UI rewrite in TypeScript.
-2. **We have never actually styled the app.** Myrstack runs on egui's stock theme, stock
+2. **We have never actually styled the app.** Stronghold runs on egui's stock theme, stock
    fonts, stock spacing — there is no `set_fonts`, no custom `Visuals`, no theme code
    anywhere. Most of the perceived gap is "default egui" rather than "egui's ceiling".
    egui's ceiling is roughly Rerun's commercial viewer, which is far above where we are.
@@ -118,7 +118,7 @@ overhauled *after* its "rough text" reputation formed:
   word-wrap, clipboard and selection are already solid.
 - Ceiling reference: **Rerun** ships a commercial-grade viewer on egui with its own theme
   layer (`re_ui`). That's the realistic "fully polished egui" endpoint, and it's well
-  beyond what Myrstack needs.
+  beyond what Stronghold needs.
 
 ### Hard limits (what stays rough no matter what)
 

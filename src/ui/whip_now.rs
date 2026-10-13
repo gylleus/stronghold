@@ -129,7 +129,7 @@ impl WhipNowUi {
 fn confirm_view(ui: &mut egui::Ui, plans: &[ManualPlan]) -> Option<bool> {
     let send = nudges(plans);
     ui.label(format!(
-        "Send a Myrstack nudge to {} agent{} now? Manual whips are sent even when the \
+        "Send a Stronghold nudge to {} agent{} now? Manual whips are sent even when the \
          automatic whip is in dry-run.",
         send.len(),
         if send.len() == 1 { "" } else { "s" }
@@ -256,7 +256,7 @@ mod tests {
             via: NudgeVia::Terminal {
                 handle: handle.into(),
             },
-            text: "Myrstack: hi".into(),
+            text: "Stronghold: hi".into(),
             warn: warn.then(|| NEEDS_INPUT_WARNING.to_string()),
         })
     }
@@ -265,7 +265,7 @@ mod tests {
         ManualSkip {
             node: NodeId::king(),
             label: label.into(),
-            reason: "the King is Myrstack itself".into(),
+            reason: "the King is Stronghold itself".into(),
         }
     }
 
@@ -318,7 +318,7 @@ mod tests {
         assert!(toast.error);
         assert_eq!(
             toast.text,
-            "Nothing to whip: King (the King is Myrstack itself)"
+            "Nothing to whip: King (the King is Stronghold itself)"
         );
     }
 
@@ -333,7 +333,7 @@ mod tests {
         assert!(failed);
         assert_eq!(
             text,
-            "Whipped 1 agent; 1 failed: b failed: boom; skipped King (the King is Myrstack \
+            "Whipped 1 agent; 1 failed: b failed: boom; skipped King (the King is Stronghold \
              itself)."
         );
         assert_eq!(

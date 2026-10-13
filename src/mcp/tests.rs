@@ -199,7 +199,7 @@ fn initialize_echoes_a_supported_version() {
     assert_eq!(r["jsonrpc"], "2.0");
     assert_eq!(r["id"], 1);
     assert_eq!(result["protocolVersion"], "2025-06-18");
-    assert_eq!(result["serverInfo"]["name"], "myrstack");
+    assert_eq!(result["serverInfo"]["name"], "stronghold");
     assert!(result["capabilities"]["tools"].is_object());
     let instructions = result["instructions"].as_str().unwrap();
     for word in [
@@ -428,7 +428,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
     let tools = r["result"]["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     let expected = [
-        "fleet_status",
+        "clan_status",
         "list_agents",
         "get_agent",
         "send_to_agent",
@@ -474,7 +474,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
     ];
     assert_eq!(names, expected);
     let reads = [
-        "fleet_status",
+        "clan_status",
         "list_agents",
         "get_agent",
         "whip_status",
@@ -817,7 +817,7 @@ fn app_not_running_is_a_clear_tool_error() {
         assert!(is_error(&r));
         assert_eq!(
             text(&r),
-            "Myrstack isn't running — start it with `myrstack`."
+            "Stronghold isn't running — start it with `stronghold`."
         );
         // Only the read tools that have a fallback try it.
         assert!(!server.control().fallback_used, "{tool}");
@@ -832,8 +832,8 @@ fn control_errors_map_to_readable_tool_errors() {
             "Not found: no agent \"x\". Use list_agents",
         ),
         (ErrorCode::Refused, "Refused: no agent \"x\""),
-        (ErrorCode::Unavailable, "Myrstack isn't ready"),
-        (ErrorCode::Failed, "Myrstack error: failed: no agent"),
+        (ErrorCode::Unavailable, "Stronghold isn't ready"),
+        (ErrorCode::Failed, "Stronghold error: failed: no agent"),
     ];
     for (code, want) in cases {
         let control = FakeControl::default().reply(
@@ -852,7 +852,7 @@ fn control_errors_map_to_readable_tool_errors() {
         FakeControl::default().reply("focus", Err(CallError::Transport("broken pipe".into())));
     let mut server = McpServer::new(control);
     let r = call(&mut server, "focus_agent", json!({"id": "x"}));
-    assert_eq!(text(&r), "Couldn't talk to Myrstack: broken pipe");
+    assert_eq!(text(&r), "Couldn't talk to Stronghold: broken pipe");
 }
 
 // ---------------------------------------------------------------------------
@@ -884,9 +884,17 @@ fn health_lists_checks_with_fixes() {
 }
 
 #[test]
-fn fleet_status_summarises_the_clan() {
+fn the_old_fleet_status_name_still_answers() {
     let mut server = McpServer::new(app());
     let r = call(&mut server, "fleet_status", json!({}));
+    assert!(!is_error(&r), "{}", text(&r));
+    assert!(text(&r).starts_with("Clan: needs input · "));
+}
+
+#[test]
+fn clan_status_summarises_the_clan() {
+    let mut server = McpServer::new(app());
+    let r = call(&mut server, "clan_status", json!({}));
     assert!(!is_error(&r), "{}", text(&r));
     let t = text(&r);
     assert!(t.starts_with("Clan: needs input · "), "{t}");
@@ -897,7 +905,7 @@ fn fleet_status_summarises_the_clan() {
     assert!(t.contains(RUN), "{t}");
     assert!(t.contains("NEEDS INPUT"), "{t}");
     assert!(t.contains("Whip: on, dry-run · 1 stall findings"), "{t}");
-    assert!(!t.contains("Note: Myrstack isn't running"));
+    assert!(!t.contains("Note: Stronghold isn't running"));
     let s = &r["structuredContent"];
     assert_eq!(s["fallback"], false);
     assert_eq!(s["needs_input"][0]["id"], format!("term:{CODEX}"));
@@ -905,8 +913,8 @@ fn fleet_status_summarises_the_clan() {
 }
 
 #[test]
-fn fleet_status_and_list_agents_fall_back_when_the_app_is_down() {
-    for tool in ["fleet_status", "list_agents"] {
+fn clan_status_and_list_agents_fall_back_when_the_app_is_down() {
+    for tool in ["clan_status", "list_agents"] {
         let mut control = FakeControl::default()
             .reply("status", Err(CallError::NotRunning))
             .reply("agents", Err(CallError::NotRunning));
@@ -915,7 +923,7 @@ fn fleet_status_and_list_agents_fall_back_when_the_app_is_down() {
         let r = call(&mut server, tool, json!({}));
         assert!(!is_error(&r), "{}", text(&r));
         assert!(
-            text(&r).starts_with("Note: Myrstack isn't running"),
+            text(&r).starts_with("Note: Stronghold isn't running"),
             "{}",
             text(&r)
         );
@@ -925,9 +933,9 @@ fn fleet_status_and_list_agents_fall_back_when_the_app_is_down() {
     // No fallback available: the plain error.
     let control = FakeControl::default().reply("status", Err(CallError::NotRunning));
     let mut server = McpServer::new(control);
-    let r = call(&mut server, "fleet_status", json!({}));
+    let r = call(&mut server, "clan_status", json!({}));
     assert!(is_error(&r));
-    assert!(text(&r).starts_with("Myrstack isn't running"));
+    assert!(text(&r).starts_with("Stronghold isn't running"));
 }
 
 #[test]
@@ -1000,7 +1008,7 @@ fn socket_control_talks_to_the_control_server() {
     )
     .unwrap();
     let mut mcp = McpServer::new(SocketControl::new(path.clone()));
-    let r = call(&mut mcp, "fleet_status", json!({}));
+    let r = call(&mut mcp, "clan_status", json!({}));
     assert!(!is_error(&r), "{}", text(&r));
     assert!(text(&r).starts_with("Clan: "));
     let r = call(&mut mcp, "open_whip_settings", json!({}));
@@ -1068,7 +1076,7 @@ fn initialize_advertises_prompts_and_resources() {
     assert!(caps["prompts"].is_object());
     assert!(caps["resources"].is_object());
     let instructions = r["result"]["instructions"].as_str().unwrap();
-    assert!(instructions.contains("/mcp__myrstack__coordinator"));
+    assert!(instructions.contains("/mcp__stronghold__coordinator"));
     assert!(instructions.contains("get_playbook"));
 }
 
@@ -1112,7 +1120,7 @@ fn prompts_get_returns_the_roles_rules_as_a_user_message() {
     assert!(text.contains("Playbook version: hash "), "{text}");
     assert!(text.contains("# Playbook") && text.contains("# Protocol"));
     assert_eq!(
-        r["result"]["_meta"]["myrstack/playbook"]["files"],
+        r["result"]["_meta"]["stronghold/playbook"]["files"],
         json!([crate::playbook::PLAYBOOK, crate::playbook::PROTOCOL])
     );
 
@@ -1169,10 +1177,10 @@ fn resources_list_and_read() {
     assert_eq!(
         uris,
         [
-            "myrstack://playbook/AGENT-FLEET-PLAYBOOK.md",
-            "myrstack://playbook/_AGENT_PROTOCOL.md",
-            "myrstack://playbook/ATTENDANT-BRIEF-TEMPLATE.md",
-            "myrstack://playbook/ENVOY-PLAYBOOK.md",
+            "stronghold://playbook/AGENT-FLEET-PLAYBOOK.md",
+            "stronghold://playbook/_AGENT_PROTOCOL.md",
+            "stronghold://playbook/ATTENDANT-BRIEF-TEMPLATE.md",
+            "stronghold://playbook/ENVOY-PLAYBOOK.md",
         ]
     );
     assert!(resources.iter().all(|r| r["mimeType"] == "text/markdown"));
@@ -1186,19 +1194,28 @@ fn resources_list_and_read() {
     let r = rpc(
         &mut server,
         "resources/read",
-        json!({"uri": "myrstack://playbook/_AGENT_PROTOCOL.md"}),
+        json!({"uri": "stronghold://playbook/_AGENT_PROTOCOL.md"}),
     );
     let content = &r["result"]["contents"][0];
-    assert_eq!(content["uri"], "myrstack://playbook/_AGENT_PROTOCOL.md");
+    assert_eq!(content["uri"], "stronghold://playbook/_AGENT_PROTOCOL.md");
     assert_eq!(content["mimeType"], "text/markdown");
     let text = content["text"].as_str().unwrap();
     assert!(text.starts_with("Playbook version: "));
     assert!(text.ends_with("# Protocol\n\n## Lifecycle\n\nReport."));
 
+    // The scheme from before the rename still reads.
+    let r = rpc(
+        &mut server,
+        "resources/read",
+        json!({"uri": "myrstack://playbook/_AGENT_PROTOCOL.md"}),
+    );
+    let old_text = r["result"]["contents"][0]["text"].as_str().unwrap();
+    assert!(old_text.ends_with("# Protocol\n\n## Lifecycle\n\nReport."));
+
     for uri in [
-        "myrstack://playbook/NOPE.md",
+        "stronghold://playbook/NOPE.md",
         "file:///etc/passwd",
-        "myrstack://playbook/../x",
+        "stronghold://playbook/../x",
     ] {
         let r = rpc(&mut server, "resources/read", json!({"uri": uri}));
         assert_eq!(r["error"]["code"], playbook::RESOURCE_NOT_FOUND, "{uri}");
@@ -1272,7 +1289,7 @@ fn whip_agents_reports_nudges_skips_and_the_pass() {
         "nudges": [{"id": "term:w", "label": "Worker W", "handle": "w",
                     "via": {"bus": "dispatch:ctx_1", "run": "run_1"}, "ok": true,
                     "outcome": "sent", "warning": "waiting on your input; a nudge won't answer it"}],
-        "skipped": [{"id": "king", "label": "King", "reason": "the King is Myrstack itself"}],
+        "skipped": [{"id": "king", "label": "King", "reason": "the King is Stronghold itself"}],
     });
     let mut server = McpServer::new(FakeControl::default().reply("whip", Ok(manual)));
     let r = call(
@@ -1281,10 +1298,10 @@ fn whip_agents_reports_nudges_skips_and_the_pass() {
         json!({"ids": ["term:w", "king"]}),
     );
     let t = text(&r);
-    assert!(t.starts_with("Sent 1 Myrstack nudge (0 failed)."), "{t}");
+    assert!(t.starts_with("Sent 1 Stronghold nudge (0 failed)."), "{t}");
     assert!(t.contains("- Worker W `term:w` via bus to dispatch:ctx_1: sent"));
     assert!(t.contains("Warning: waiting on your input"));
-    assert!(t.contains("- King `king`: the King is Myrstack itself"));
+    assert!(t.contains("- King `king`: the King is Stronghold itself"));
     assert!(t.contains("live even though the automatic whip is in dry-run"));
 
     let pass = json!({"mode": "stalled", "ran": true, "dry_run": true, "actions": [
@@ -1336,8 +1353,8 @@ fn attendant_brief_tool_fills_from_the_app() {
     let r = call(&mut server, "attendant_brief", json!({"run_id": "run_1"}));
     assert!(!is_error(&r), "{}", text(&r));
     let t = text(&r);
-    assert!(t.starts_with("Myrstack pre-filled ATTENDANT-BRIEF-TEMPLATE.md for run run_1"));
-    assert!(t.contains("Data: the running Myrstack app"));
+    assert!(t.starts_with("Stronghold pre-filled ATTENDANT-BRIEF-TEMPLATE.md for run run_1"));
+    assert!(t.contains("Data: the running Stronghold app"));
     assert!(t.contains("COORD `term_coord`"), "{t}");
     assert!(t.contains("RUN_ID=run_1 · msg <id>"), "{t}");
     assert_eq!(
@@ -1383,7 +1400,7 @@ fn kickoff_prompt_fills_the_task_and_argument_errors_are_invalid_params() {
     assert!(t.contains("# KICKOFF — track B\n- Blocked by: t_a"), "{t}");
     assert!(t.contains("- <fact: FILL IN>"));
     assert_eq!(
-        r["result"]["_meta"]["myrstack/template"]["missing"],
+        r["result"]["_meta"]["stronghold/template"]["missing"],
         json!(["fact"])
     );
     assert_eq!(logged(&dir)[0].via, "prompt:kickoff");
@@ -1437,7 +1454,7 @@ fn playbook_prompts_tools_and_resources_log_their_fetches() {
     rpc(
         &mut server,
         "resources/read",
-        json!({"uri": "myrstack://playbook/_AGENT_PROTOCOL.md"}),
+        json!({"uri": "stronghold://playbook/_AGENT_PROTOCOL.md"}),
     );
     let log = logged(&dir);
     let got: Vec<(&str, &str, Option<&str>)> = log
@@ -1456,16 +1473,16 @@ fn playbook_prompts_tools_and_resources_log_their_fetches() {
 }
 
 #[test]
-fn fleet_status_reports_king_auto_and_no_tool_sets_it() {
+fn clan_status_reports_king_auto_and_no_tool_sets_it() {
     let mut server = McpServer::new(app());
-    let r = call(&mut server, "fleet_status", json!({}));
+    let r = call(&mut server, "clan_status", json!({}));
     assert_eq!(r["structuredContent"]["king_auto"], false);
     assert!(text(&r).contains("King auto mode: off"), "{}", text(&r));
 
     let mut view = status_view();
     view.king_auto = true;
     let mut server = McpServer::new(HeadlessControl::from_view(view, Arc::new(Screens)));
-    let r = call(&mut server, "fleet_status", json!({}));
+    let r = call(&mut server, "clan_status", json!({}));
     assert_eq!(r["structuredContent"]["king_auto"], true);
     assert!(text(&r).contains("King auto mode: on"), "{}", text(&r));
 
@@ -1597,7 +1614,7 @@ fn notify_is_listed_with_when_to_call_it() {
         "Handover",
         "one notification per event",
         "standalone session with no coordinator",
-        "Karl sees it in his inbox when Myrstack starts",
+        "Karl sees it in his inbox when Stronghold starts",
         "quiet mode",
     ] {
         assert!(
@@ -1634,7 +1651,7 @@ fn notify_sends_the_notice_with_the_callers_identity() {
     assert!(!is_error(&r), "{}", text(&r));
     assert_eq!(
         text(&r),
-        "Sent to Karl (macOS pop-up, Myrstack pop-up, sound). Shown under realtime-255 \
+        "Sent to Karl (macOS pop-up, Stronghold pop-up, sound). Shown under realtime-255 \
          (`term:term_442fcb9f`)."
     );
     assert_eq!(
@@ -1720,7 +1737,7 @@ fn notify_refuses_bad_arguments_before_calling_the_app() {
 }
 
 #[test]
-fn notify_queues_when_myrstack_is_down() {
+fn notify_queues_when_stronghold_is_down() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(crate::notify::pending::PENDING_FILE);
     let control = FakeControl::default().reply("notify", Err(CallError::NotRunning));
@@ -1738,7 +1755,7 @@ fn notify_queues_when_myrstack_is_down() {
     let r = call(&mut server, "notify", args);
     assert!(!is_error(&r), "{}", text(&r));
     assert!(text(&r).contains("queued"), "{}", text(&r));
-    assert!(text(&r).contains("when Myrstack starts"), "{}", text(&r));
+    assert!(text(&r).contains("when Stronghold starts"), "{}", text(&r));
     assert_eq!(r["structuredContent"]["outcome"], "queued");
 
     let taken = crate::notify::pending::take(&path);
@@ -1753,7 +1770,7 @@ fn notify_queues_when_myrstack_is_down() {
         agent_server(FakeControl::default().reply("notify", Err(CallError::NotRunning)));
     let r = call(&mut server, "notify", json!({"title": "t"}));
     assert!(is_error(&r));
-    assert!(text(&r).starts_with("Myrstack isn't running and there is no data dir"));
+    assert!(text(&r).starts_with("Stronghold isn't running and there is no data dir"));
 }
 
 /// Answers `notify` like the app: through a real dispatcher.
@@ -1813,7 +1830,7 @@ fn notify_reaches_the_dispatcher_over_the_socket() {
     let r = notify(&mut mcp, "Need a decision", "warn");
     assert_eq!(
         text(&r),
-        "Sent to Karl (macOS pop-up, Myrstack pop-up, sound)."
+        "Sent to Karl (macOS pop-up, Stronghold pop-up, sound)."
     );
     let r = notify(&mut mcp, "Need a decision", "warn");
     assert!(text(&r).contains("collapsed into it (×2)"), "{}", text(&r));
@@ -1898,11 +1915,11 @@ fn alerts_lists_the_inbox_with_read_state() {
 }
 
 #[test]
-fn fleet_status_reports_unread_notifications() {
+fn clan_status_reports_unread_notifications() {
     let mut view = status_view();
     view.alerts = vec![alert(3, false), alert(2, true)];
     let mut server = McpServer::new(HeadlessControl::from_view(view, Arc::new(Screens)));
-    let r = call(&mut server, "fleet_status", json!({}));
+    let r = call(&mut server, "clan_status", json!({}));
     let t = text(&r);
     assert!(
         t.contains("Notifications: 1 unread (alerts lists them):\n- [unread] warn · "),
@@ -1911,7 +1928,7 @@ fn fleet_status_reports_unread_notifications() {
     assert_eq!(r["structuredContent"]["notifications"]["unread"], 1);
 
     let mut server = McpServer::new(app());
-    let t = text(&call(&mut server, "fleet_status", json!({}))).to_owned();
+    let t = text(&call(&mut server, "clan_status", json!({}))).to_owned();
     assert!(t.contains("Notifications: none unread"), "{t}");
 }
 
@@ -1941,7 +1958,7 @@ fn spawn_request(id: u64) -> String {
     json!({
         "jsonrpc": "2.0", "id": id, "method": "tools/call",
         "params": {"name": "spawn_session", "arguments": {
-            "mode": "new_worktree", "repo": "myrstack", "name": "agent-notify-tool",
+            "mode": "new_worktree", "repo": "stronghold", "name": "agent-notify-tool",
             "prompt": "Add a notify tool",
         }},
     })
@@ -2007,12 +2024,12 @@ fn a_spawn_whose_client_went_away_is_recorded() {
 }
 
 #[test]
-fn fleet_status_and_list_agents_show_interrupted_spawns() {
+fn clan_status_and_list_agents_show_interrupted_spawns() {
     use crate::spawn::interrupted::{InterruptedSpawn, record};
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("interrupted.json");
     let mut server = McpServer::new(app()).with_interrupted_log(&log);
-    let r = call(&mut server, "fleet_status", json!({}));
+    let r = call(&mut server, "clan_status", json!({}));
     assert!(!text(&r).contains("Interrupted spawns"));
     assert!(r["structuredContent"].get("interrupted_spawns").is_none());
 
@@ -2028,7 +2045,7 @@ fn fleet_status_and_list_agents_show_interrupted_spawns() {
         },
     )
     .unwrap();
-    for tool in ["fleet_status", "list_agents"] {
+    for tool in ["clan_status", "list_agents"] {
         let r = call(&mut server, tool, json!({}));
         let t = text(&r);
         assert!(t.starts_with("Interrupted spawns (1)"), "{tool}: {t}");
@@ -2136,7 +2153,7 @@ fn ask_karl_sends_the_question_with_the_callers_identity() {
     assert!(!is_error(&r), "{r}");
     let t = text(&r);
     assert!(
-        t.starts_with("Sent to Karl (macOS pop-up, Myrstack pop-up)."),
+        t.starts_with("Sent to Karl (macOS pop-up, Stronghold pop-up)."),
         "{t}"
     );
     assert!(t.contains("needs input until Karl answers"), "{t}");
@@ -2150,7 +2167,7 @@ fn ask_karl_sends_the_question_with_the_callers_identity() {
 }
 
 #[test]
-fn ask_karl_refuses_bad_arguments_and_says_when_myrstack_is_down() {
+fn ask_karl_refuses_bad_arguments_and_says_when_stronghold_is_down() {
     let mut server = agent_server(FakeControl::default());
     let r = call(&mut server, "ask_karl", json!({"question": "  "}));
     assert!(is_error(&r));
@@ -2224,7 +2241,7 @@ fn finish_session_checks_then_finishes() {
     assert!(!is_error(&r), "{r}");
     let t = text(&r);
     assert!(
-        t.starts_with("Finished: Myrstack recorded it (done)"),
+        t.starts_with("Finished: Stronghold recorded it (done)"),
         "{t}"
     );
     assert!(t.contains("closes this terminal in about 2 s"), "{t}");
@@ -2296,7 +2313,7 @@ fn finish_session_refuses_with_problems_unless_forced() {
 }
 
 #[test]
-fn finish_session_passes_on_a_refusal_and_myrstack_being_down() {
+fn finish_session_passes_on_a_refusal_and_stronghold_being_down() {
     let mut check = finish_check(std::path::Path::new("/nonexistent"), json!([]));
     check["refused"] = json!("you're a worker in run r1 (task t1): report to your coordinator");
     let mut server = agent_server(FinishControl {

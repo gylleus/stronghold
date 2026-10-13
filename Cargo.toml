@@ -1,16 +1,16 @@
 [package]
-name = "myrstack"
+name = "stronghold"
 version = "0.1.0"
 edition = "2024"
 description = "Native desktop view of the agent clan running in Orca"
 publish = false
 
 [lib]
-name = "myrstack"
+name = "stronghold"
 path = "src/lib.rs"
 
 [[bin]]
-name = "myrstack"
+name = "stronghold"
 path = "src/main.rs"
 
 [dependencies]
@@ -35,7 +35,7 @@ ron = "0.12"
 # Decodes the generated hammer PNG; already in the tree through eframe.
 image = { version = "0.25", default-features = false, features = ["png"] }
 
-# Native notifications when running from Myrstack.app (see src/notify/native.rs).
+# Native notifications when running from Stronghold.app (see src/notify/native.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"

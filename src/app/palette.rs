@@ -3,12 +3,12 @@
 
 use eframe::egui;
 
-use super::MyrstackApp;
+use super::StrongholdApp;
 use crate::ui::commands::{self, ActionContext, ActionId, Dispatch};
 use crate::ui::selection::{close_targets, whip_targets};
 use crate::ui::sidebar::ClanFilter;
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// What the palette's actions need to know about the app now.
     pub(super) fn palette_context(&self) -> ActionContext {
         let current = self.selected.as_ref();

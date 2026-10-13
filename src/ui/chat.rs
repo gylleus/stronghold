@@ -11,7 +11,7 @@ use crate::chat::SessionState;
 use crate::chat::context::{ContextGauge, Level};
 use crate::chat::history::HistoryChunk;
 use crate::chat::permissions::{
-    DESTRUCTIVE_TOOLS, MYRSTACK_PREFIX, short_tool_name, summarize_input, truncate,
+    DESTRUCTIVE_TOOLS, own_tool, short_tool_name, summarize_input, truncate,
 };
 use crate::chat::say::split_say;
 use crate::chat::transcript::{ChatItem, Decision, PermissionCard, ToolCall, Transcript};
@@ -400,7 +400,7 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
             if ui
                 .toggle_value(&mut auto, "Auto")
                 .on_hover_text(
-                    "Auto mode: every tool call of the King's (Myrstack sends, keys, closes, \
+                    "Auto mode: every tool call of the King's (Stronghold sends, keys, closes, \
                      spawns and whip changes, file reads, web fetches, other MCP servers) \
                      runs without asking. close_agents still dry-runs unless told otherwise.",
                 )
@@ -862,10 +862,8 @@ fn tool_row(ui: &mut Ui, call: &ToolCall) {
 fn permission_card(ui: &mut Ui, card: &PermissionCard, actions: &mut Vec<ChatAction>) {
     let request = &card.request;
     let name = short_tool_name(&request.tool_name);
-    let reaches_agents = request
-        .tool_name
-        .strip_prefix(MYRSTACK_PREFIX)
-        .is_some_and(|t| DESTRUCTIVE_TOOLS.contains(&t));
+    let reaches_agents =
+        own_tool(&request.tool_name).is_some_and(|t| DESTRUCTIVE_TOOLS.contains(&t));
     if let Some(decision) = card.decision {
         let text = match decision {
             Decision::Allow => format!("✓ Approved {name}"),
@@ -1622,8 +1620,8 @@ mod tests {
         let lines = [
             r#"{"type":"system","subtype":"init","session_id":"s","model":"claude-test","tools":[]}"#,
             r#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"m1"}},"parent_tool_use_id":null}"#,
-            r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"mcp__myrstack__fleet_status"}},"parent_tool_use_id":null}"#,
-            r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"mcp__myrstack__fleet_status","input":{}}]},"parent_tool_use_id":null}"#,
+            r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"mcp__stronghold__clan_status"}},"parent_tool_use_id":null}"#,
+            r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"mcp__stronghold__clan_status","input":{}}]},"parent_tool_use_id":null}"#,
             r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"{\"needs_input\":[]}"}]},"parent_tool_use_id":null}"#,
             r#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"m2"}},"parent_tool_use_id":null}"#,
             r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"parent_tool_use_id":null}"#,
@@ -1634,7 +1632,7 @@ mod tests {
         }
         t.push_permission(PermissionRequest {
             request_id: "p1".into(),
-            tool_name: "mcp__myrstack__send_to_agent".into(),
+            tool_name: "mcp__stronghold__send_to_agent".into(),
             display_name: None,
             input: json!({"agent": "term:term_1", "text": "King: carry on"}),
             tool_use_id: None,
@@ -1818,10 +1816,10 @@ mod tests {
     fn auto_mode_shows_badge_hint_notice_and_markers() {
         let mut t = Transcript::default();
         t.push_system(crate::chat::auto_mode::notice(true));
-        t.apply(&parse_line(r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t9","name":"mcp__myrstack__send_to_agent","input":{}}]},"parent_tool_use_id":null}"#).unwrap());
+        t.apply(&parse_line(r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t9","name":"mcp__stronghold__send_to_agent","input":{}}]},"parent_tool_use_id":null}"#).unwrap());
         t.mark_auto(&PermissionRequest {
             request_id: "p9".into(),
-            tool_name: "mcp__myrstack__send_to_agent".into(),
+            tool_name: "mcp__stronghold__send_to_agent".into(),
             display_name: None,
             input: json!({}),
             tool_use_id: Some("t9".into()),

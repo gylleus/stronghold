@@ -412,10 +412,9 @@ pub struct GhCli {
 pub const GH_FALLBACK_PATHS: &[&str] = &["/opt/homebrew/bin/gh", "/usr/local/bin/gh"];
 
 impl Default for GhCli {
-    /// `$MYRSTACK_GH_BIN` when set, else `gh` resolved on `PATH`, then [`GH_FALLBACK_PATHS`].
+    /// `$STRONGHOLD_GH_BIN` when set, else `gh` resolved on `PATH`, then [`GH_FALLBACK_PATHS`].
     fn default() -> Self {
-        let binary = std::env::var("MYRSTACK_GH_BIN")
-            .ok()
+        let binary = crate::legacy::env("STRONGHOLD_GH_BIN")
             .filter(|b| !b.is_empty())
             .unwrap_or_else(|| "gh".into());
         let path = std::env::var_os("PATH");
@@ -740,7 +739,7 @@ mod tests {
             )
         );
         let missing = GhCli {
-            binary: "/nonexistent/gh-for-myrstack-tests".into(),
+            binary: "/nonexistent/gh-for-stronghold-tests".into(),
         };
         assert!(matches!(
             missing.view("https://github.com/o/r/pull/1", 0),

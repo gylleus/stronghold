@@ -1,9 +1,9 @@
 //! Envoy lifecycle controls alongside the King's quick actions.
 
-use super::{MyrstackApp, repaint_once};
+use super::{StrongholdApp, repaint_once};
 use crate::envoy::{EnvoyIdentity, EnvoyStatus, SessionState};
 
-impl MyrstackApp {
+impl StrongholdApp {
     pub(super) fn apply_envoy_settings(
         &mut self,
         settings: &crate::envoy::settings::EnvoySettings,

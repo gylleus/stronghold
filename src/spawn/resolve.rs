@@ -66,7 +66,7 @@ pub struct SpawnArgs {
     pub terminal: Option<String>,
     /// Worker task title.
     pub title: Option<String>,
-    /// Short name Myrstack shows for the agent; see [`SpawnRequest::label`].
+    /// Short name Stronghold shows for the agent; see [`SpawnRequest::label`].
     pub label: Option<String>,
     pub prompt: String,
     pub agent: Agent,

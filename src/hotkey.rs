@@ -1,4 +1,4 @@
-//! System-wide hotkeys: one brings the Myrstack window to the front, the other (optional,
+//! System-wide hotkeys: one brings the Stronghold window to the front, the other (optional,
 //! configurable) is held to talk to the King ([`TalkKey`] press and release).
 //!
 //! The hotkey fires while another app has focus. Its event handler forwards the event

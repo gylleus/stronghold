@@ -1,4 +1,4 @@
-//! Typed wrappers for the `orca` commands Myrstack uses.
+//! Typed wrappers for the `orca` commands Stronghold uses.
 //!
 //! Each command has a pure argument builder (`*_args`) and a pure parser
 //! (`parse_*`) over the raw stdout bytes; the [`OrcaClient`] methods glue the two
@@ -630,7 +630,7 @@ mod tests {
     #[test]
     fn orchestration_send_args_cover_flags() {
         let msg = OutgoingMessage {
-            subject: "Myrstack nudge".into(),
+            subject: "Stronghold nudge".into(),
             to: Some("run:run_1".into()),
             body: Some("Please send a heartbeat".into()),
             message_type: Some("status".into()),
@@ -643,7 +643,7 @@ mod tests {
             vec![
                 "orchestration",
                 "send",
-                "--subject=Myrstack nudge",
+                "--subject=Stronghold nudge",
                 "--to=run:run_1",
                 "--body=Please send a heartbeat",
                 "--type=status",
@@ -662,7 +662,7 @@ mod tests {
                 "orchestration",
                 "send",
                 "--subject=s",
-                "--from=myrstack-whip"
+                "--from=stronghold-whip"
             ]
         );
         let result = parse_orchestration_send(

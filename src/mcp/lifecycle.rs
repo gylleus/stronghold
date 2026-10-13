@@ -22,8 +22,8 @@ macro_rules! rules_text {
     () => {
         "Waiting on Karl: whenever you end a turn waiting for Karl's answer to a question you \
 asked in plain text (which way to go, may I merge, which account), call ask_karl with the \
-question first, then end your turn. Myrstack only sees prompts and menus on your screen, so a \
-question in the chat reaches Karl only through ask_karl (Myrstack also flags a turn that ends \
+question first, then end your turn. Stronghold only sees prompts and menus on your screen, so a \
+question in the chat reaches Karl only through ask_karl (Stronghold also flags a turn that ends \
 on a question, as a backstop). Don't use it for permission prompts or AskUserQuestion menus \
 (already detected) or for status; workers under a coordinator ask their coordinator instead. \
 Done: when you think you're done, don't close yourself: Karl often has follow-ups or feedback. \
@@ -49,18 +49,18 @@ pub fn definitions() -> Vec<Value> {
             "title": "Ask Karl",
             "description": format!(
                 "Asks Karl, the human who runs this clan, a question you are waiting on, \
-                 through Myrstack (his clan dashboard): he gets a notification with the \
+                 through Stronghold (his clan dashboard): he gets a notification with the \
                  question, and your node shows needs input until he answers in your terminal. \
                  Call it whenever you are about to end your turn waiting for his answer to a \
                  plain-text question (a decision, a go-ahead, a missing fact), then end your \
                  turn; don't keep working on anything that depends on the answer. Without it \
-                 a question in the chat can sit unseen: Myrstack only detects permission \
+                 a question in the chat can sit unseen: Stronghold only detects permission \
                  prompts and menus by itself. When you think you're done, ask it here too \
                  (severity info): \"Done: <one line>. Anything else, or can I close?\", with \
                  the PR in url; that is your handover, and Karl may have follow-ups, so stay \
                  until he answers. Not for permission prompts or AskUserQuestion menus \
                  (already detected) or progress. Workers under a \
-                 coordinator ask the coordinator instead. If Myrstack isn't running it \
+                 coordinator ask the coordinator instead. If Stronghold isn't running it \
                  errors: ask in the chat and end your turn."
             ),
             "inputSchema": {
@@ -103,7 +103,7 @@ pub fn definitions() -> Vec<Value> {
                 or feedback, so first ask him with ask_karl (\"Done: <one line>. Anything else, \
                 or can I close?\") and stay; call this when he says go (approval: karl). The \
                 only exception is a tiny one-shot task with nothing to follow up, such as a \
-                lookup or a one-line fix (approval: trivial). Myrstack records the outcome (shown to \
+                lookup or a one-line fix (approval: trivial). Stronghold records the outcome (shown to \
                 Karl in his inbox), shows your node as done and closes your terminal a couple of \
                 seconds after replying, so make it your last call and end your turn right \
                 after. Your git worktree and branch are kept (cleanup is the coordinator's or \
@@ -156,7 +156,7 @@ pub fn definitions() -> Vec<Value> {
     ]
 }
 
-/// Runs a tool; `None` for other tools. `cwd` is where the git checks run when Myrstack
+/// Runs a tool; `None` for other tools. `cwd` is where the git checks run when Stronghold
 /// doesn't know the caller's worktree.
 pub fn call(
     control: &mut dyn Control,
@@ -194,7 +194,7 @@ fn ask_karl(control: &mut dyn Control, origin: &Origin, args: &Value) -> ToolOut
         Ok(reply) => reply,
         Err(CallError::NotRunning) => {
             return error(
-                "Myrstack isn't running, so Karl can't be told through it. Ask in the chat and \
+                "Stronghold isn't running, so Karl can't be told through it. Ask in the chat and \
                  end your turn; if it can't wait, summon him another way (the osascript dialog)."
                     .into(),
             );
@@ -209,7 +209,7 @@ fn ask_karl(control: &mut dyn Control, origin: &Origin, args: &Value) -> ToolOut
         );
     } else {
         text.push_str(
-            " Myrstack couldn't match you to a terminal, so your node won't show waiting; \
+            " Stronghold couldn't match you to a terminal, so your node won't show waiting; \
              also ask in the chat.",
         );
     }
@@ -285,7 +285,7 @@ fn finish_session(
         Ok(reply) => reply,
         Err(CallError::NotRunning) => {
             return error(
-                "Myrstack isn't running, so it can't close your terminal. Tell Karl in the chat \
+                "Stronghold isn't running, so it can't close your terminal. Tell Karl in the chat \
                  that you're done (your summary) and stop working; he'll close you."
                     .into(),
             );
@@ -349,7 +349,7 @@ fn finish_session(
     };
     ToolOutput {
         text: format!(
-            "Finished: Myrstack recorded it ({}) and shows {label} as done; it closes this \
+            "Finished: Stronghold recorded it ({}) and shows {label} as done; it closes this \
              terminal in about {secs} s.{kept}{forced} End your turn now; don't start anything \
              else.",
             outcome.name()

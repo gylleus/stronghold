@@ -2,7 +2,7 @@
 
 use eframe::egui;
 
-use super::{MyrstackApp, now_ms, repaint_once};
+use super::{StrongholdApp, now_ms, repaint_once};
 use crate::health::{AppFacts, HealthReport, HealthWorker, KingFact, Probes, evaluate};
 use crate::ui::health::HealthAction;
 
@@ -28,7 +28,7 @@ impl AppHealth {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     fn health_facts(&self) -> AppFacts {
         let whip = self.whip_window.whip();
         AppFacts {

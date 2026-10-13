@@ -98,7 +98,7 @@ pub fn handoff_preamble(dry_run: bool) -> String {
     let mode = if dry_run { "ON" } else { "OFF" };
     format!(
         "Fresh context: your earlier conversation was cleared. Your standing rules are the \
-         Envoy playbook in your system prompt; Myrstack keeps the inbox, drafts, requests and \
+         Envoy playbook in your system prompt; Stronghold keeps the inbox, drafts, requests and \
          thread notes, and each event below carries its thread's note. Dry-run is {mode}. \
          The batch follows."
     )

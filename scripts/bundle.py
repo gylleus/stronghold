@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Assembles Myrstack.app from a built binary.
+"""Assembles Stronghold.app from a built binary.
 
-    scripts/bundle.py [--binary target/release/myrstack] [--out target/release/Myrstack.app]
+    scripts/bundle.py [--binary target/release/stronghold] [--out target/release/Stronghold.app]
                       [--sign-identity -] [--no-sign]
     scripts/bundle.py --info-plist PATH     # only write Info.plist (for checks)
 
-Contents/MacOS/myrstack is the binary, Contents/Resources/Myrstack.icns the icon, and
+Contents/MacOS/stronghold is the binary, Contents/Resources/Stronghold.icns the icon, and
 Contents/Frameworks every non-system dylib the binary loads (found with `otool -L`,
 recursively), rewritten to load through `@rpath` from there so the app runs standalone. The
 bundle is then signed ad hoc (`codesign --sign -`) unless `--sign-identity` or
-`$MYRSTACK_SIGN_IDENTITY` names a real identity.
+`$STRONGHOLD_SIGN_IDENTITY` names a real identity.
 """
 
 import argparse
@@ -22,12 +22,12 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-BUNDLE_ID = "ai.depict.myrstack"
-APP_NAME = "Myrstack"
-EXECUTABLE = "myrstack"
-ICON = "Myrstack.icns"
+BUNDLE_ID = "ai.depict.stronghold"
+APP_NAME = "Stronghold"
+EXECUTABLE = "stronghold"
+ICON = "Stronghold.icns"
 MIN_MACOS = "11.0"
-MIC_USAGE = "Myrstack listens while you hold the dictation or talk-to-the-King shortcut."
+MIC_USAGE = "Stronghold listens while you hold the dictation or talk-to-the-King shortcut."
 FRAMEWORKS_RPATH = "@executable_path/../Frameworks"
 
 
@@ -288,7 +288,10 @@ def main():
     parser.add_argument("--out", default=os.path.join(ROOT, "target", "release", f"{APP_NAME}.app"))
     parser.add_argument(
         "--sign-identity",
-        default=os.environ.get("MYRSTACK_SIGN_IDENTITY") or "-",
+        # MYRSTACK_SIGN_IDENTITY: the variable's name before the app was renamed.
+        default=os.environ.get("STRONGHOLD_SIGN_IDENTITY")
+        or os.environ.get("MYRSTACK_SIGN_IDENTITY")
+        or "-",
         help="codesign identity; '-' (default) signs ad hoc",
     )
     parser.add_argument("--no-sign", action="store_true")

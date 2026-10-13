@@ -1,7 +1,7 @@
 //! The app's settings file, and the whip's section of it: stall threshold, cooldown, max
 //! nudges, dry-run.
 //!
-//! Stored as JSON in the user's config dir (`~/Library/Application Support/Myrstack/settings.json`
+//! Stored as JSON in the user's config dir (`~/Library/Application Support/Stronghold/settings.json`
 //! on macOS) with one top-level key per section (`whip`, `king`, `voice`, `notifications`, `envoy`,
 //! `spawn`, `dwarves`, `art`). Missing sections and fields take their defaults, so older files load. A missing file gives the defaults; an
 //! unreadable or invalid one gives the defaults plus a warning.
@@ -24,7 +24,7 @@ const MIN: i64 = 60_000;
 /// File name inside the config dir.
 pub const SETTINGS_FILE: &str = "settings.json";
 /// Environment variable overriding the settings file path, e.g. for test runs.
-pub const SETTINGS_ENV: &str = "MYRSTACK_SETTINGS";
+pub const SETTINGS_ENV: &str = "STRONGHOLD_SETTINGS";
 
 /// Everything persisted in `settings.json`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,16 +121,16 @@ pub struct Loaded {
 }
 
 impl Settings {
-    /// `<config dir>/Myrstack/settings.json`, when a home directory is known.
+    /// `<config dir>/Stronghold/settings.json`, when a home directory is known.
     pub fn default_path() -> Option<PathBuf> {
         directories::ProjectDirs::from("", "", crate::APP_NAME)
             .map(|dirs| dirs.config_dir().join(SETTINGS_FILE))
     }
 
-    /// The settings file in use: `$MYRSTACK_SETTINGS` when set and non-empty, else
+    /// The settings file in use: `$STRONGHOLD_SETTINGS` when set and non-empty, else
     /// [`Settings::default_path`].
     pub fn path() -> Option<PathBuf> {
-        Self::path_with_override(std::env::var_os(SETTINGS_ENV))
+        Self::path_with_override(crate::legacy::env_os(SETTINGS_ENV))
     }
 
     fn path_with_override(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
@@ -253,7 +253,7 @@ mod tests {
     #[test]
     fn default_path_is_settings_json() {
         if let Some(p) = Settings::default_path() {
-            assert!(p.ends_with(Path::new("Myrstack").join(SETTINGS_FILE)));
+            assert!(p.ends_with(Path::new("Stronghold").join(SETTINGS_FILE)));
         }
     }
 

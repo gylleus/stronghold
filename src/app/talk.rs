@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use super::{MyrstackApp, repaint_once};
+use super::{StrongholdApp, repaint_once};
 use crate::hotkey::{Hotkey, TalkKey};
 use crate::ui::settings::voice::TEST_SENTENCE;
 use crate::ui::settings::{ModelStatus, VoiceModel, VoiceStatus};
@@ -66,7 +66,7 @@ fn voice_installed() -> bool {
     kokoro::installed(&config.models_root, &config.release).is_some()
 }
 
-/// Whether Parakeet is on disk: `Some(true)` for Orca's copy, `Some(false)` for Myrstack's.
+/// Whether Parakeet is on disk: `Some(true)` for Orca's copy, `Some(false)` for Stronghold's.
 pub(super) fn speech_model_found() -> Option<bool> {
     models::find_parakeet().map(|files| {
         models::orca_parakeet_dir().is_some_and(|orca| files.encoder.starts_with(orca))
@@ -269,7 +269,7 @@ impl AppTalk {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// Registers the talk hotkey and loads the speech-to-text model in the background when it
     /// is on disk (Kokoro was started in [`AppTalk::new`]). Call once after construction.
     pub(super) fn talk_startup(&mut self) {
