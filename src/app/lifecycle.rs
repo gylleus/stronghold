@@ -10,7 +10,7 @@ use crate::close::{CloseOptions, ClosePlan, plan_close};
 use crate::control::view::kind_name;
 use crate::control::{ControlError, ErrorCode};
 use crate::finish::{CLOSE_DELAY_MS, FinishRequest, FinishedSession, clan_problems, clip};
-use crate::model::Node;
+use crate::model::{Node, NodeKind};
 use crate::notify::agent::outcome_reply;
 use crate::notify::{Incoming, Severity, Source, target_key};
 use crate::review::mark::Origin;
@@ -33,55 +33,25 @@ impl StrongholdApp {
     }
 
     /// The control API's `ask`: notifies Karl of the question and shows the caller waiting on
-    /// him until he answers.
+    /// him until he answers, except the Envoy which keeps taking batches.
     pub(super) fn control_ask(&mut self, ask: AskRequest) -> Result<Value, ControlError> {
         let now = now_ms();
-        let node = self
-            .caller(&ask.origin)
-            .map(|n| (n.id.clone(), n.label.clone(), n.terminal_handle.clone()));
-        let mut message = ask.question.clone();
-        if !ask.context.is_empty() {
-            message = format!("{message}\n\n{}", ask.context);
-        }
-        let handle = node.as_ref().and_then(|(_, _, h)| h.clone());
-        let incoming = Incoming {
-            source: Source::Agent,
-            severity: ask.severity,
-            title: format!("Question: {}", clip(&ask.question, TITLE_CHARS)),
-            message,
-            url: ask.url.clone(),
-            target: node
-                .as_ref()
-                .map(|(id, ..)| id.to_string())
-                .or_else(|| ask.origin.terminal_handle.clone()),
-            sender: ask
-                .origin
-                .terminal_handle
-                .clone()
-                .or_else(|| ask.origin.pane_key.clone()),
-            agent_label: node.as_ref().map(|(_, label, _)| label.clone()),
-        };
+        let node = self.caller(&ask.origin).cloned();
+        let (incoming, waiting) = prepare_ask(&mut self.asks, node.as_ref(), &ask, now);
         let outcome = self.raise(incoming);
-        if let Some((id, _, Some(handle))) = &node {
-            self.asks.insert(
-                handle,
-                PendingAsk {
-                    question: ask.question.clone(),
-                    at_ms: now,
-                },
-            );
+        if waiting {
             self.overlays_changed = true;
-            // The node turns needs-input next; this notification already covers it.
-            self.notifications
-                .hold_cooldown(&target_key(id, Some(handle)), now);
+            if let Some(node) = &node {
+                self.notifications
+                    .hold_cooldown(&target_key(&node.id, node.terminal_handle.as_deref()), now);
+            }
         }
         self.publish_control_status();
         let quiet = self.whip_window.notifications().quiets(ask.severity);
-        let shown = node
-            .as_ref()
-            .map(|(id, label, _)| (id.as_str(), label.as_str()));
+        let shown = node.as_ref().map(|n| (n.id.as_str(), n.label.as_str()));
         let mut reply = outcome_reply(&outcome, ask.severity, shown, quiet);
-        reply["waiting"] = json!(handle.is_some());
+        reply["waiting"] = json!(waiting);
+        reply["nonblocking"] = json!(node.as_ref().is_some_and(|n| n.kind == NodeKind::Envoy));
         Ok(reply)
     }
 
@@ -230,5 +200,109 @@ impl StrongholdApp {
                 .collect();
             self.close.started(close.plan, close.labels, &ids, now);
         }
+    }
+}
+
+/// Records the question separately from notification delivery so the inbox and node state
+/// share the same caller identity.
+pub(super) fn prepare_ask(
+    asks: &mut crate::ask::Asks,
+    node: Option<&Node>,
+    ask: &AskRequest,
+    now: i64,
+) -> (Incoming, bool) {
+    let mut message = ask.question.clone();
+    if !ask.context.is_empty() {
+        message = format!("{message}\n\n{}", ask.context);
+    }
+    let incoming = Incoming {
+        source: Source::Agent,
+        severity: ask.severity,
+        title: format!("Question: {}", clip(&ask.question, TITLE_CHARS)),
+        message,
+        url: ask.url.clone(),
+        target: node
+            .map(|n| n.id.to_string())
+            .or_else(|| ask.origin.terminal_handle.clone()),
+        sender: ask
+            .origin
+            .terminal_handle
+            .clone()
+            .or_else(|| ask.origin.pane_key.clone()),
+        agent_label: node.map(|n| n.label.clone()),
+    };
+    let handle = node
+        .filter(|n| n.kind != NodeKind::Envoy)
+        .and_then(|n| n.terminal_handle.as_deref());
+    if let Some(handle) = handle {
+        asks.insert(
+            handle,
+            PendingAsk {
+                question: ask.question.clone(),
+                at_ms: now,
+            },
+        );
+    }
+    (incoming, handle.is_some())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ask::Asks;
+    use crate::clan::ClanData;
+    use crate::model::{ClanSnapshot, NodeId, NodeState};
+    use crate::orca::Terminal;
+
+    #[test]
+    fn only_envoy_questions_are_nonblocking() {
+        let data = ClanData {
+            terminals: vec![Terminal {
+                handle: "t1".into(),
+                connected: true,
+                ..Terminal::default()
+            }],
+            ..ClanData::default()
+        };
+        let request = AskRequest {
+            question: "May I proceed?".into(),
+            context: String::new(),
+            severity: Severity::Warn,
+            url: None,
+            origin: Origin {
+                terminal_handle: Some("t1".into()),
+                ..Origin::default()
+            },
+        };
+        for kind in [
+            NodeKind::Terminal,
+            NodeKind::Worker,
+            NodeKind::Coordinator,
+            NodeKind::Attendant,
+            NodeKind::Envoy,
+        ] {
+            let mut snapshot = ClanSnapshot::build(&data, 100);
+            let node = snapshot
+                .nodes
+                .iter_mut()
+                .find(|n| n.id == NodeId::terminal("t1"))
+                .unwrap();
+            node.kind = kind;
+            let mut asks = Asks::new();
+            let (_, waiting) = prepare_ask(&mut asks, Some(node), &request, 100);
+            assert_eq!(waiting, kind != NodeKind::Envoy, "{kind:?}");
+            snapshot.mark_waiting(&asks.waiting(&data, None));
+            assert_eq!(
+                snapshot.node(&NodeId::terminal("t1")).unwrap().state,
+                if waiting {
+                    NodeState::NeedsInput
+                } else {
+                    NodeState::Idle
+                },
+                "{kind:?}"
+            );
+        }
+        let (_, waiting) = prepare_ask(&mut Asks::new(), None, &request, 100);
+        assert!(!waiting);
     }
 }

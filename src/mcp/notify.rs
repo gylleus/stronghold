@@ -23,6 +23,7 @@ macro_rules! rules_text {
 (1) Blocked on Karl for something he must do: a permission, credential, passkey or 2FA, prod \
 approval. Severity warn, or urgent if work is stalled and can't wait; say what you need and \
 what it unblocks. A question you wait on him to answer goes through ask_karl instead. \
+Envoy questions also use ask_karl: they reach Karl's inbox while the Envoy keeps taking batches. \
 (2) Handover, you're done and the next move is Karl's: a PR ready for his review (right after \
 merge_ready and mark_pr_ready; a coordinator after the ready marker), a merge waiting on him, a \
 run or campaign finished. Severity info, with the url and one line on what he needs to do next; \

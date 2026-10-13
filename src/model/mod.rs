@@ -414,7 +414,9 @@ impl ClanSnapshot {
 
     /// Marks the live agent terminals in `waiting` (by handle: the question they wait on Karl
     /// to answer) as NeedsInput, with the question as their preview. Done, failed and
-    /// non-live nodes keep their state. Updates the king.
+    /// non-live nodes keep their state. Envoy questions never block intake; call
+    /// `mark_envoy` first so explicit asks and inferred transcript questions both stay
+    /// nonblocking. Updates the king.
     pub fn mark_waiting(&mut self, waiting: &BTreeMap<String, String>) {
         if waiting.is_empty() {
             return;
@@ -423,7 +425,7 @@ impl ClanSnapshot {
             let Some(question) = node
                 .terminal_handle
                 .as_deref()
-                .filter(|_| node.live && node.kind != NodeKind::Subagent)
+                .filter(|_| node.live && !matches!(node.kind, NodeKind::Subagent | NodeKind::Envoy))
                 .and_then(|h| waiting.get(h))
             else {
                 continue;
