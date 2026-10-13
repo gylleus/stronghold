@@ -401,8 +401,8 @@ mod tests {
     #[test]
     fn unreadable_or_incomplete_layouts_are_rejected() {
         assert!(PaneLayout::decode("not json").is_none());
-        let no_graph = DockState::new(vec![Pane::Sidebar, Pane::Details]);
-        let saved = ron::to_string(&no_graph).unwrap();
+        let no_farm = DockState::new(vec![Pane::Sidebar, Pane::Details]);
+        let saved = ron::to_string(&no_farm).unwrap();
         assert!(PaneLayout::decode(&saved).is_none());
         let twice = DockState::new(vec![Pane::Sidebar, Pane::Farm, Pane::Details, Pane::Farm]);
         let saved = ron::to_string(&twice).unwrap();
