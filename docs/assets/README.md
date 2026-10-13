@@ -291,48 +291,31 @@ Next, if Karl likes the direction:
 
 | File | Size / format | Used for | Source | Licence |
 | --- | --- | --- | --- | --- |
-| `art/queen.svg` | 64×64 vector, rasterized up to 256 px | The Queen's avatar: graph hub node, top bar, Queen button, details header, chat header and chat empty state (`src/ui/art.rs`) | Ant and crown from Microsoft Fluent Emoji (Flat), on a honey hexagon drawn for Stronghold | MIT (Fluent parts); hexagon is Stronghold's own |
-| `art/ant_cell.svg` | vector, shown 28–96 pt | "Connecting to Orca" empty state (`src/app/panes.rs`) and the empty review queue (`src/ui/review.rs`) | Fluent Emoji ant on a comb cell drawn for Stronghold | MIT (Fluent parts); cell is Stronghold's own |
-| `art/anthill.svg` | vector | Sidebar empty state, "The colony is quiet" (`src/ui/sidebar.rs`) | Fluent Emoji ants on a mound drawn for Stronghold | MIT (Fluent parts); mound is Stronghold's own |
-| `art/farm/ant_grey.png` | 16×32 PNG, two stacked 16×16 walk frames | Every ant in the ant farm. Recolored in code to Claude (amber), Codex (slate/teal) and plain (grey) coats (`src/ui/farm/sprites.rs`) | "16x16 Ant Enemies" by ARoachIFoundOnMyPillow, OpenGameArt | CC0 |
-| `art/farm/ant_red.png` | 16×32 PNG, two frames | Failed ants (drawn belly up) | same sheet set | CC0 |
-| `art/farm/crown.png` | 16×16 PNG | The Queen's crown, carried item | "Gold treasure icons 16x16" by Bonsaiheldin, icon 9 | CC0 |
-| `art/farm/coin.png` | 16×16 PNG | A crumb (one PR) carried to storage | same set, icon 2 | CC0 |
-| `art/farm/coin_pile.png` | 16×16 PNG | One PR's crumbs on the storage pile | same set, icon 3 | CC0 |
-| `art/farm/emote_exclamation.png` | 16×16 PNG | Speech bubble: needs input | Kenney "Emotes Pack", pixel style 1 | CC0 |
-| `art/farm/emote_sleeps.png` | 16×16 PNG | Speech bubble: idle / asleep | Kenney | CC0 |
-| `art/farm/emote_anger.png` | 16×16 PNG | Speech bubble: whipped / stalled | Kenney | CC0 |
-| `art/farm/emote_cross.png` | 16×16 PNG | Speech bubble: failed | Kenney | CC0 |
-| `art/farm/emote_star.png` | 16×16 PNG | Speech bubble: PR ready | Kenney | CC0 |
-| `art/farm/emote_dots3.png` | 16×16 PNG | **Unused.** Bundled in the repo but no code loads it | Kenney | CC0 |
-| `fonts/Phosphor-Bold.ttf` | icon font, 495 KB | Every UI icon: kind icons (crown, tree-structure, headset, hard-hat, terminal-window, robot), state glyphs (play, moon, !, hourglass, check, x) and toolbar icons (`src/ui/icons.rs`) | Phosphor Icons 2.1, bold | MIT |
+| `art/tools/cleanup_hammer.png` | PNG, downsampled at texture creation | The hammer that strikes a rubble heap on cleanup (`src/ui/farm/hammer.rs`) | Generated for Stronghold on 2026-10-13, prompt in `docs/assets/prompts/cleanup-hammer.txt` | Stronghold's own |
+| `palettes/*.json` | Lospec palette JSON | The palettes in Settings → Art and the dwarf lab | Lospec, authors credited in `assets/LICENSES.md` | Colour lists, not artwork |
+| `fonts/Phosphor-Bold.ttf` | icon font, 495 KB | Every UI icon: kind icons, state glyphs and toolbar icons (`src/ui/icons.rs`) | Phosphor Icons 2.1, bold | MIT |
 
 Credits and licence texts are in [`assets/LICENSES.md`](../../assets/LICENSES.md).
 
 ### Other image files
 
 - `packaging/Stronghold.icns`: the app icon, rendered by `scripts/make_icon.py`. It is Stronghold's own work.
-- `docs/*.png`, `docs/visual-identity/*.png`: screenshots for docs and PRs. They are not shipped.
+- `docs/assets/**/*.png`: screenshots and experiments for these notes. They are not shipped.
 - `tests/fixtures/voice/*.wav`: a test fixture. It is not art.
 
 ### Art drawn in code (Stronghold's own, no licence question)
 
-These are drawn in code, not loaded from files, but they belong to the look and would change
-with a new theme:
+Everything else is drawn in code, not loaded from files:
 
-- **Ground tiles** (`sprites.rs`): soil and tunnel tiles (32×32 generated noise, four shades
-  each), a grass tile, the sky gradient (day and night palettes, `Palette`), stars.
-- **Surface scenery** (`nature.rs`, character-map pixel art): tree, pine, bush, flowers
-  (red, yellow, purple), grass tuft, rock, mushroom, cloud, moon, sun. Roots under plants.
-- **Farm furniture** (`sprites.rs`, `comms.rs`): anthill mound, passages, the resting area's
-  wooden bed with pillow and blanket, Karl's green warp pipe, the Envoy's dish/receiver and
-  listening post with headphones, the incoming-mail tray.
-- **Ant props and effects** (`sprites.rs`, `pops.rs`, `death.rs`, `envelope.rs`): the builder's hard
-  hat and hammer, the whip's lash, flying dirt, snore "z", glow, sparkles, the Queen's call
-  rings, state-change pops, envelopes and pings in flight.
-- **Graph** (`src/ui/graph/shape.rs`): node shapes per kind (the Queen's hexagon and others),
-  state fills and the indigo accent (`src/ui/theme.rs`, `ACCENT = #5a51e0`). The graph uses
-  the Queen avatar texture and Phosphor glyphs.
+- **Dwarves** (`src/ui/dwarf/`): cutout puppets built from parts and posed per frame, rendered
+  as pixels in the selected palette. The portraits in `src/ui/art.rs` use the same parts.
+- **The mine** (`src/ui/farm/`): granite, worked stone and turf (`sprites.rs`, `world.rs`),
+  rooms and excavations (`excavation.rs`), rubble heaps (`rubble.rs`), alpine plants and sky
+  (`nature.rs`, `scenery.rs`), the rune priest's chamber and receiver stone (`comms.rs`), the
+  library (`library.rs`).
+- **Effects**: minecarts (`motion.rs`), sealed scrolls in flight (`mail.rs`), tool-call beams
+  (`beams.rs`), state-change pops (`pops.rs`), a dwarf leaving the clan (`death.rs`).
+- **UI accent**: indigo, `ACCENT = #5a51e0` in `src/ui/theme.rs`.
 
 ## 2. The Paleccino pipeline
 
