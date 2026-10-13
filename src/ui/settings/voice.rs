@@ -78,13 +78,13 @@ pub fn voice_section(
 
             ui.label("Dictation");
             ui.label(format!(
-                "Hold {DICTATION_SHORTCUT} in Myrstack to dictate into the focused field"
+                "Hold {DICTATION_SHORTCUT} in Stronghold to dictate into the focused field"
             ));
             ui.end_row();
         });
     ui.weak(format!(
-        "Hold {} anywhere, even with Myrstack in the background, and release to send. His \
-         reply to a voice message is spoken; press the hotkey, Esc or any key in Myrstack to \
+        "Hold {} anywhere, even with Stronghold in the background, and release to send. His \
+         reply to a voice message is spoken; press the hotkey, Esc or any key in Stronghold to \
          stop him.",
         draft.talk_hotkey_label()
     ));

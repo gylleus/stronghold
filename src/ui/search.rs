@@ -786,7 +786,7 @@ fn result_row(
     )
 }
 
-/// An agent row's second line: "worker · needs input · myrstack @ feat/x · Objective".
+/// An agent row's second line: "worker · needs input · stronghold @ feat/x · Objective".
 pub fn result_meta(entry: &SearchEntry, hit: &SearchHit) -> String {
     let mut meta = vec![
         kind_label(entry.kind).to_string(),
@@ -1154,7 +1154,7 @@ mod tests {
             true,
             &[
                 (Field::Label, "worker"),
-                (Field::Repo, "myrstack"),
+                (Field::Repo, "stronghold"),
                 (Field::Branch, "feat/a"),
                 (Field::Objective, "Ship search"),
                 (Field::RunId, "run1"),
@@ -1168,15 +1168,15 @@ mod tests {
         };
         assert_eq!(
             result_meta(&a, &hit(Field::Label)),
-            "worker · needs input · myrstack @ feat/a · Ship search"
+            "worker · needs input · stronghold @ feat/a · Ship search"
         );
         assert_eq!(
             result_meta(&a, &hit(Field::Branch)),
-            "worker · needs input · myrstack @ feat/a · Ship search"
+            "worker · needs input · stronghold @ feat/a · Ship search"
         );
         assert_eq!(
             result_meta(&a, &hit(Field::Handle)),
-            "worker · needs input · myrstack @ feat/a · Ship search · handle: term_1"
+            "worker · needs input · stronghold @ feat/a · Ship search · handle: term_1"
         );
         let b = entry_in(
             "b",

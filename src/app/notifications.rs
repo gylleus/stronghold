@@ -1,6 +1,6 @@
 //! The app side of notifications: every source (agents through the control API's `notify`,
 //! nodes entering NeedsInput, the whip, the review queue, the Settings window's tests) goes
-//! through [`MyrstackApp::raise`], which runs the dispatcher and carries out its delivery:
+//! through [`StrongholdApp::raise`], which runs the dispatcher and carries out its delivery:
 //! a toast, and a post to the notifier thread for the macOS pop-up and the sound. It also keeps
 //! the inbox saved, draws the bell, the notifications panel and the node badges, and routes clicks on notifications,
 //! toasts and inbox entries (select the node, open the link, mark read).
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use eframe::egui;
 use serde_json::Value;
 
-use super::{MyrstackApp, now_ms};
+use super::{StrongholdApp, now_ms};
 use crate::control::ControlError;
 use crate::model::NodeId;
 use crate::notify::agent::{self, AgentNotice, is_web_url};
@@ -87,7 +87,7 @@ impl AppNotifications {
     }
 
     /// Changes whenever the inbox does.
-    /// Holds back Myrstack's own needs-input notification for `target` (see
+    /// Holds back Stronghold's own needs-input notification for `target` (see
     /// [`NotificationCenter::hold_cooldown`]).
     pub(super) fn hold_cooldown(&mut self, target: &str, now_ms: i64) {
         self.center.hold_cooldown(target, now_ms);
@@ -119,7 +119,7 @@ impl AppNotifications {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// Runs `n` through the dispatcher under the saved settings and delivers it.
     pub(super) fn raise(&mut self, n: Incoming) -> Outcome {
         let settings = self.whip_window.notifications().clone();
@@ -208,7 +208,7 @@ impl MyrstackApp {
             return;
         }
         log::info!(
-            "notifications: {} queued while Myrstack was down",
+            "notifications: {} queued while Stronghold was down",
             queued.len()
         );
         let settings = self.whip_window.notifications().clone();

@@ -11,7 +11,7 @@ use crate::notify::{NotifySettings, Severity, Sound};
 /// What the section shows besides the settings.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NotifyStatus<'a> {
-    /// Notifications go through `UNUserNotificationCenter` (running from `Myrstack.app`).
+    /// Notifications go through `UNUserNotificationCenter` (running from `Stronghold.app`).
     pub native: bool,
     /// The last error posting a notification or playing a sound.
     pub last_failure: Option<&'a str>,
@@ -38,11 +38,11 @@ pub(super) fn section(
     ui.checkbox(&mut d.native_popups, "macOS notifications");
     if !status.native {
         ui.weak(
-            "Myrstack isn't running from Myrstack.app: macOS shows these under Script Editor and \
-             clicking them can't reach Myrstack.",
+            "Stronghold isn't running from Stronghold.app: macOS shows these under Script Editor and \
+             clicking them can't reach Stronghold.",
         );
     }
-    ui.checkbox(&mut d.in_app_popups, "Pop-ups in the Myrstack window");
+    ui.checkbox(&mut d.in_app_popups, "Pop-ups in the Stronghold window");
     severity_row(ui, "Pop up from", "notify_popup_min", &mut d.popup_min);
     ui.add_space(6.0);
 
@@ -73,7 +73,7 @@ pub(super) fn section(
         &mut d.pop_sounds,
         "Soft sound when an agent is done or needs input",
     )
-    .on_hover_text("Plays with its pop in the farm; not in quiet mode");
+    .on_hover_text("Plays with its pop in the hold; not in quiet mode");
     ui.add_space(6.0);
 
     ui.horizontal(|ui| {
@@ -93,7 +93,7 @@ pub(super) fn section(
         );
     }
     ui.weak(
-        "Agents raise notifications with the myrstack MCP tool notify; clicking one selects \
+        "Agents raise notifications with the stronghold MCP tool notify; clicking one selects \
          its agent and opens its link. The inbox is the bell in the top bar.",
     );
     ui.separator();

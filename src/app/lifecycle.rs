@@ -4,7 +4,7 @@
 use serde_json::{Value, json};
 
 use super::control::plan_json;
-use super::{MyrstackApp, now_ms};
+use super::{StrongholdApp, now_ms};
 use crate::ask::{AskRequest, PendingAsk};
 use crate::close::{CloseOptions, ClosePlan, plan_close};
 use crate::control::view::kind_name;
@@ -25,7 +25,7 @@ pub(super) struct PendingClose {
     labels: Vec<String>,
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// The caller's node, from its Orca identity.
     pub(super) fn caller(&self, origin: &Origin) -> Option<&Node> {
         let agent = self.review_agent(origin)?;
@@ -62,7 +62,7 @@ impl MyrstackApp {
         let now = now_ms();
         let node = self.caller(&req.origin).cloned().ok_or_else(|| {
             ControlError::not_found(
-                "Myrstack can't tell which terminal you are (no Orca terminal identity that \
+                "Stronghold can't tell which terminal you are (no Orca terminal identity that \
                  matches a node), so it can't close you",
             )
         })?;

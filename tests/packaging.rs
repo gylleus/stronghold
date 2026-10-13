@@ -44,11 +44,11 @@ fn info_plist_lints_and_has_the_app_keys() {
 
     assert_eq!(
         plist_value(&plist, "CFBundleIdentifier"),
-        "ai.depict.myrstack"
+        "ai.depict.stronghold"
     );
-    assert_eq!(plist_value(&plist, "CFBundleName"), "Myrstack");
-    assert_eq!(plist_value(&plist, "CFBundleDisplayName"), "Myrstack");
-    assert_eq!(plist_value(&plist, "CFBundleExecutable"), "myrstack");
+    assert_eq!(plist_value(&plist, "CFBundleName"), "Stronghold");
+    assert_eq!(plist_value(&plist, "CFBundleDisplayName"), "Stronghold");
+    assert_eq!(plist_value(&plist, "CFBundleExecutable"), "stronghold");
     assert_eq!(
         plist_value(&plist, "CFBundleShortVersionString"),
         env!("CARGO_PKG_VERSION")
@@ -70,13 +70,13 @@ fn info_plist_lints_and_has_the_app_keys() {
 #[test]
 fn bundle_id_matches_the_notifier() {
     let script = std::fs::read_to_string(root().join("scripts/bundle.py")).unwrap();
-    let expected = format!("BUNDLE_ID = \"{}\"", myrstack::notify::native::BUNDLE_ID);
+    let expected = format!("BUNDLE_ID = \"{}\"", stronghold::notify::native::BUNDLE_ID);
     assert!(script.contains(&expected), "bundle.py lacks {expected}");
 }
 
 #[test]
 fn app_icon_is_an_icns() {
-    let icns = std::fs::read(root().join("packaging/Myrstack.icns")).unwrap();
+    let icns = std::fs::read(root().join("packaging/Stronghold.icns")).unwrap();
     assert_eq!(&icns[..4], b"icns");
 }
 

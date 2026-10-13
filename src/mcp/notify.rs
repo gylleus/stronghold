@@ -1,4 +1,4 @@
-//! The `notify` MCP tool: any agent reaches Karl through Myrstack (a pop-up, a sound, his
+//! The `notify` MCP tool: any agent reaches Karl through Stronghold (a pop-up, a sound, his
 //! inbox), attributed to the agent's Orca terminal like `mark_pr_ready`.
 
 use std::path::Path;
@@ -27,18 +27,18 @@ Envoy questions also use ask_karl: they reach Karl's inbox while the Envoy keeps
 (2) Handover, you're done and the next move is Karl's: a PR ready for his review (right after \
 merge_ready and mark_pr_ready; a coordinator after the ready marker), a merge waiting on him, a \
 run or campaign finished. Severity info, with the url and one line on what he needs to do next; \
-a status, never a question about merging. Myrstack folds a PR handover into its own \
+a status, never a question about merging. Stronghold folds a PR handover into its own \
 \"PR ready for review\" notification, so Karl gets one. When you'd stay for his follow-ups \
 (you usually would), make the handover an ask_karl (info, \"Done: ... Anything else, or can I \
 close?\") instead, not both. \
 (3) Not for progress or routine status; one notification per event. A terminal waiting at a \
-prompt already shows as needs input and is notified by Myrstack; leaving, once Karl says so, is \
+prompt already shows as needs input and is notified by Stronghold; leaving, once Karl says so, is \
 finish_session, which records and tells Karl itself. \
 (4) Workers under a coordinator go through it (ask, escalation, merge_ready) and don't call \
 notify, except to summon Karl for a credential step; a standalone session with no coordinator \
 notifies Karl directly. \
-(5) If Myrstack isn't running, notify queues the notification and Karl sees it in his inbox when \
-Myrstack starts. A handover can wait for that; a blocking ask that can't also gets the osascript \
+(5) If Stronghold isn't running, notify queues the notification and Karl sees it in his inbox when \
+Stronghold starts. A handover can wait for that; a blocking ask that can't also gets the osascript \
 summon dialog."
     };
 }
@@ -53,10 +53,10 @@ pub fn definitions() -> Vec<Value> {
         "name": "notify",
         "title": "Notify Karl",
         "description": format!(
-            "Sends Karl, the human who runs this clan, a notification through Myrstack (his \
+            "Sends Karl, the human who runs this clan, a notification through Stronghold (his \
              clan dashboard): a macOS and/or in-app pop-up with a sound, as his settings say, \
              kept in his inbox and attributed to your terminal. Clicking it selects your node \
-             and opens `url`. Works even when Myrstack isn't running: the notification is \
+             and opens `url`. Works even when Stronghold isn't running: the notification is \
              queued and reaches his inbox when it starts. {RULES} Urgent gets through Karl's quiet mode. Put what and \
              which task in the title and the ask in the message. Identical repeats collapse \
              into one; each agent gets at most {AGENT_MAX} per {} minutes.",
@@ -163,20 +163,20 @@ fn notify(
 fn queue(pending: Option<&Path>, notice: &AgentNotice) -> ToolOutput {
     let Some(path) = pending else {
         return error(
-            "Myrstack isn't running and there is no data dir to queue the notification in. \
+            "Stronghold isn't running and there is no data dir to queue the notification in. \
              Reach Karl another way if it can't wait."
                 .into(),
         );
     };
     if let Err(e) = pending::append(path, notice, now_ms()) {
         return error(format!(
-            "Myrstack isn't running and queuing the notification failed: {e}. Reach Karl \
+            "Stronghold isn't running and queuing the notification failed: {e}. Reach Karl \
              another way if it can't wait."
         ));
     }
     ToolOutput {
-        text: "Myrstack isn't running, so the notification is queued; Karl will see it in his \
-               inbox when Myrstack starts. If it is a blocking ask that can't wait, also summon \
+        text: "Stronghold isn't running, so the notification is queued; Karl will see it in his \
+               inbox when Stronghold starts. If it is a blocking ask that can't wait, also summon \
                him with the osascript dialog."
             .into(),
         structured: Some(json!({
@@ -194,7 +194,7 @@ pub(crate) fn reply_text(reply: &Value) -> String {
         Some("delivered") => {
             let ways: Vec<&str> = [
                 ("native", "macOS pop-up"),
-                ("in_app", "Myrstack pop-up"),
+                ("in_app", "Stronghold pop-up"),
                 ("sound", "sound"),
             ]
             .iter()
@@ -220,7 +220,7 @@ pub(crate) fn reply_text(reply: &Value) -> String {
              it once. No need to repeat it.",
             reply["count"].as_u64().unwrap_or(2)
         ),
-        Some("folded") => "Folded into Myrstack's own \"PR ready for review\" notification for \
+        Some("folded") => "Folded into Stronghold's own \"PR ready for review\" notification for \
              this PR, so Karl gets one; your title and message replaced its text."
             .to_owned(),
         Some("rate_limited") => {
@@ -233,7 +233,7 @@ pub(crate) fn reply_text(reply: &Value) -> String {
                 AGENT_WINDOW_MS / 60_000
             )
         }
-        other => format!("Myrstack answered {}.", other.unwrap_or("?")),
+        other => format!("Stronghold answered {}.", other.unwrap_or("?")),
     };
     if let Some(label) = reply.pointer("/agent/label").and_then(Value::as_str) {
         let id = reply

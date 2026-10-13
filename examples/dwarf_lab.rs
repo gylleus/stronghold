@@ -1,4 +1,4 @@
-//! A workbench for the code-drawn dwarves (`myrstack::ui::dwarf`): one dwarf to dress and pose
+//! A workbench for the code-drawn dwarves (`stronghold::ui::dwarf`): one dwarf to dress and pose
 //! on the left, a crowd of seeded dwarves at work on the right. Pixel mode renders them small
 //! and maps them to a palette (the bundled Lospec palettes, `pixel::BUNDLED`); the palette view shows
 //! the dressed dwarf in every palette at once.
@@ -13,9 +13,9 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use eframe::egui::{self, Color32, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
-use myrstack::ui::dwarf::cutout::{Finish, Outline};
-use myrstack::ui::dwarf::pixel::{self, Mapper, Palette};
-use myrstack::ui::dwarf::{
+use stronghold::ui::dwarf::cutout::{Finish, Outline};
+use stronghold::ui::dwarf::pixel::{self, Mapper, Palette};
+use stronghold::ui::dwarf::{
     self, Action, Beard, Brows, Crest, Garment, HAIRS, Hair, Hat, Look, Nose, Role, SKINS, TUNICS,
     Tool,
 };
@@ -67,7 +67,7 @@ fn main() -> eframe::Result {
             ..Default::default()
         },
         Box::new(move |cc| {
-            myrstack::ui::theme::install(&cc.egui_ctx);
+            stronghold::ui::theme::install(&cc.egui_ctx);
             cc.egui_ctx.set_theme(egui::Theme::Dark);
             let palettes: Vec<Palette> = pixel::bundled();
             Ok(Box::new(Lab {

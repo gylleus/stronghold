@@ -1,6 +1,6 @@
 # Clan playbook
 
-The rules Karl's agent clan runs by. Myrstack owns and serves these files; edit them here and
+The rules Karl's agent clan runs by. Stronghold owns and serves these files; edit them here and
 commit, so every rule change has a diff and a history.
 
 - `AGENT-FLEET-PLAYBOOK.md`: coordinators (and the fallback attendant).

@@ -529,7 +529,7 @@ fn agent_actions(
         );
     if ui
         .add_enabled(whippable, egui::Button::new("Whip"))
-        .on_hover_text("Send this agent a Myrstack nudge now — w")
+        .on_hover_text("Send this agent a Stronghold nudge now — w")
         .on_disabled_hover_text("No live terminal to nudge.")
         .clicked()
     {

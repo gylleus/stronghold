@@ -1,8 +1,8 @@
-# Myrstack MCP server
+# Stronghold MCP server
 
-`myrstack mcp` is an [MCP](https://modelcontextprotocol.io) server. It lets a chat client such
+`stronghold mcp` is an [MCP](https://modelcontextprotocol.io) server. It lets a chat client such
 as Claude Code ask for the clan status (every coordinator and agent, and its state) and
-control the Myrstack dashboard. It proxies each clan tool call to the running app's
+control the Stronghold dashboard. It proxies each clan tool call to the running app's
 [control API](control-api.md). It also serves the clan [playbook](#playbook) straight from
 disk, which works without the app.
 
@@ -10,16 +10,16 @@ disk, which works without the app.
 
 ```bash
 cargo build --release
-claude mcp add --scope user myrstack -- /path/to/myrstack/target/release/myrstack mcp
+claude mcp add --scope user stronghold -- /path/to/stronghold/target/release/stronghold mcp
 ```
 
-Start Myrstack (`myrstack`) as usual, then ask the chat things like "what's the clan
+Start Stronghold (`stronghold`) as usual, then ask the chat things like "what's the clan
 status?", "who needs my input?", "show me the screen of the AI agent playbook coordinator" or
-"focus the farm on it".
+"focus the hold on it".
 
-The server honours `MYRSTACK_CONTROL_SOCKET` and `MYRSTACK_DATA_DIR` in the same way the app
+The server honours `STRONGHOLD_CONTROL_SOCKET` and `STRONGHOLD_DATA_DIR` in the same way the app
 does, so pass the same values to both if you override them
-(`claude mcp add … -e MYRSTACK_CONTROL_SOCKET=/path/control.sock -- …`).
+(`claude mcp add … -e STRONGHOLD_CONTROL_SOCKET=/path/control.sock -- …`).
 
 ## Transport and protocol
 
@@ -45,7 +45,7 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 
 | Tool | Arguments | Control method | Hints |
 |---|---|---|---|
-| `fleet_status` | – | `status`, `agents` ×4, `quotas` | read-only |
+| `clan_status` | – | `status`, `agents` ×4, `quotas` | read-only |
 | `list_agents` | `state`, `kind` (string or list), `run`, `repo`, `needs_input`, `live`, `parked`, `text`, `limit` (default 50, max 500) | `agents` | read-only |
 | `get_agent` | `id`, `lines` (default 40) | `agent` | read-only |
 | `send_to_agent` | `id`, `text`, `submit` (default true) | `send` | destructive |
@@ -69,20 +69,22 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `mark_pr_ready` | `pr_url`, `title`, `summary` | `pr_ready` (queued in `pr-ready.jsonl` when the app is down) | not destructive, idempotent |
 | `review_queue` | – | `review_queue` (the saved queue when the app is down) | read-only |
 | `notify` | `title`, `message`, `severity` (`info` \| `warn` \| `urgent`), `url`, `agent` | `notify` (queued in `pending-notifications.jsonl` when the app is down) | not destructive |
+| `tell_queen` | `message`, `kind` (`info` \| `question` \| `blocked`), `url` | – (durable `queen-inbox.json`, online or offline) | not destructive |
+| `queen_inbox` | `limit` (default 20, max 100) | – (reads the durable inbox) | read-only |
 | `ask_karl` | `question`, `context`, `severity` (`info` \| `warn` \| `urgent`), `url` | `ask` | not destructive |
 | `finish_session` | `summary`, `approval` (`karl` \| `trivial`), `outcome` (`done` \| `handed_over` \| `abandoned`), `pr_url`, `force` | `finish` (a `dry_run` check, then the real one) | destructive |
 | `clean_worktrees` | `dry_run` (**default true**), `ids` (needed with `dry_run: false`) | – (runs `orca`, `git`, `gh` itself) | destructive |
 
 `mark_pr_ready` is for clan agents: the server is registered at user scope, so every Claude
 session (clan agents in Orca terminals included) has it. It sends the caller's Orca identity
-(`ORCA_TERMINAL_HANDLE`, `ORCA_PANE_KEY`, `ORCA_TAB_ID` from the `myrstack mcp` process's
+(`ORCA_TERMINAL_HANDLE`, `ORCA_PANE_KEY`, `ORCA_TAB_ID` from the `stronghold mcp` process's
 environment, which it inherits from the agent's terminal) so the PR shows under the agent's
-node. Agents without MCP (Codex) run `myrstack pr-ready <url> [--title …] [--summary …]`,
+node. Agents without MCP (Codex) run `stronghold pr-ready <url> [--title …] [--summary …]`,
 which does the same. See the control API's [Review queue](control-api.md#review-queue).
 
 `notify` is how any agent reaches Karl without going through the King: a macOS and/or
 in-app pop-up with a sound (per his Notifications settings), kept in his inbox (the bell in
-the top bar, `alerts`, `fleet_status`) and attributed to the caller's terminal like
+the top bar, `alerts`, `clan_status`) and attributed to the caller's terminal like
 `mark_pr_ready`. When to call it is the clan playbook's _Human in the loop_ rule, repeated in
 the tool description and the server instructions (`src/mcp/notify.rs`, `rules_text!`): blocked
 on Karl (warn, or urgent), handovers (info, with the url and the next step), never progress;
@@ -94,7 +96,7 @@ that it is queued; on start the app takes the file into the inbox with the sende
 attribution and link, popping up only those sent in the last 5 minutes. See the control API's
 [Notifications](control-api.md#notifications).
 
-`ask_karl` is for a question an agent waits on Karl to answer, which Myrstack can't see on
+`ask_karl` is for a question an agent waits on Karl to answer, which Stronghold can't see on
 the screen (it only detects permission prompts and menus). It notifies Karl with the question
 (source `agent`, so it isn't swallowed by the needs-input cooldown, which it then holds so
 the node's needs-input notification doesn't repeat it) and marks the caller's terminal
@@ -128,7 +130,7 @@ forced problems are recorded. Past the guards the app records the outcome in
 `finished.jsonl` in the data dir, notifies Karl (info, or warn when forced; the PR url folds
 into its review notification), shows the node done and closes the terminal 2 s after replying
 with the same plan as `close_agents` (pane only). The worktree and branch are always kept.
-A closed finished terminal stays in the farm as a fading done dwarf for 10 minutes. When to
+A closed finished terminal stays in the hold as a fading done dwarf for 10 minutes. When to
 call both is in the tool descriptions and the server instructions (`src/mcp/lifecycle.rs`,
 `rules_text!`), and in the playbook's _Human in the loop_.
 
@@ -154,13 +156,13 @@ worktrees' rubble heaps in the mine (one heap on its surface per open worktree).
 that Orca doesn't list are reported, never touched.
 
 All tools set `openWorldHint: false`. Agent ids are node ids from `list_agents` or
-`fleet_status` (`term:…`, `dispatch:…`, `sub:…`). A terminal handle or an exact label also
+`clan_status` (`term:…`, `dispatch:…`, `sub:…`). A terminal handle or an exact label also
 works.
 
 ### Parked agents
 
 Karl parks an agent he is done with for now but wants to keep (`park_agents`, or Park in a
-dwarf's context menu). A parked agent sleeps in the resting area's chamber in the farm. Its terminal, session and worktree are kept. It
+dwarf's context menu). A parked agent sleeps in the resting area's chamber in the hold. Its terminal, session and worktree are kept. It
 is out of the King's state, `by_state`, `needs_input` and `stalled` (`clan.parked` lists
 it), the whip never nudges, escalates or notifies about it, "Close shown…" skips it and the
 worktree cleanup keeps its worktree. `close_agents` closes it only when it is named, with a
@@ -181,7 +183,7 @@ the agent's output says): a parked agent keeps whatever state Orca reports.
 - `send_to_agent`, `press_key`, `broadcast_to_coordinators` and `set_whip` act on real
   agents or on saved settings. Their descriptions tell the model to confirm with Karl first; the King in auto mode
   skips that (Karl approved the King's actions up front).
-- `whip_agents` sends Myrstack nudges now. With `ids` they are live even when the automatic
+- `whip_agents` sends Stronghold nudges now. With `ids` they are live even when the automatic
   whip is in dry-run, and threshold and cooldown are ignored; the King, subagents, released
   workers and dead terminals are skipped with a reason, and agents waiting on Karl's input
   get a warning. With `stalled: true` it runs an immediate whip pass under the normal rules
@@ -191,7 +193,7 @@ the agent's output says): a parked agent keeps whatever state Orca reports.
 
 - Tool failures come back as results with `isError: true` and a readable message:
   - no app on the socket (missing socket or connection refused):
-    ``Myrstack isn't running — start it with `myrstack`.``
+    ``Stronghold isn't running — start it with `stronghold`.``
   - `not_found`: `Not found: no agent "x". Use list_agents to find agent ids.`
   - `refused`, `unavailable`, `timeout`, and bad arguments (`Invalid arguments: …`) each
     get their own prefix.
@@ -201,7 +203,7 @@ the agent's output says): a parked agent keeps whatever state Orca reports.
 
 ### Headless fallback
 
-When the app is not running, `fleet_status` and `list_agents` still answer from one direct
+When the app is not running, `clan_status` and `list_agents` still answer from one direct
 poll of Orca. That poll covers terminals, runs, workers, tasks, the inbox and quotas, and is
 reused for 15 s. The text starts with a note that it is a fallback. It has no whip, Claude
 subagent or dashboard data, and no screen-based prompt detection, so the needs-input list
@@ -210,15 +212,15 @@ returns the "isn't running" error.
 
 ## Playbook
 
-Myrstack owns the clan playbook: the Markdown rules in the repo's `playbook/` dir
+Stronghold owns the clan playbook: the Markdown rules in the repo's `playbook/` dir
 (`AGENT-FLEET-PLAYBOOK.md`, `_AGENT_PROTOCOL.md`, `ATTENDANT-BRIEF-TEMPLATE.md`,
 `KICKOFF-TEMPLATE.md`, `README.md`). A coordinator starting up fetches its rules from
-Myrstack instead of reading a file path. The files are read from disk on every request, so
+Stronghold instead of reading a file path. The files are read from disk on every request, so
 an edit shows up at once, and the app need not be running.
 
 **Where it reads from**, first match wins:
 
-1. `MYRSTACK_PLAYBOOK_DIR` (an error if it holds neither `AGENT-FLEET-PLAYBOOK.md` nor
+1. `STRONGHOLD_PLAYBOOK_DIR` (an error if it holds neither `AGENT-FLEET-PLAYBOOK.md` nor
    `_AGENT_PROTOCOL.md`).
 2. The repo's `playbook/` dir, as baked in at build time, if it still exists.
 3. `~/Documents/agents` (symlinks to the repo files).
@@ -254,13 +256,13 @@ short FNV-1a hash of the text served. Git runs in the real dir of the files, so 
 
 **Prompts** (`prompts/list`, `prompts/get`): `coordinator`, `attendant` and `worker`, each
 with an optional `section` argument. Claude Code exposes them as slash commands:
-`/mcp__myrstack__coordinator`, `/mcp__myrstack__attendant`, `/mcp__myrstack__worker`. Each
+`/mcp__stronghold__coordinator`, `/mcp__stronghold__attendant`, `/mcp__stronghold__worker`. Each
 returns one user message: "These are your standing rules for this session; follow them.",
 then the version line, then the role's docs. An unknown prompt or section is an
 invalid-params error (-32602); a missing playbook file is an internal error (-32603).
 
 **Resources** (`resources/list`, `resources/read`): one per file,
-`myrstack://playbook/<file>`, `mimeType: text/markdown`, the text under the version line.
+`stronghold://playbook/<file>`, `mimeType: text/markdown`, the text under the version line.
 Unknown URIs get -32002 (resource not found).
 
 **Tools:** `get_playbook {role? | file?, section?}` returns the same text as the prompt, with
@@ -270,20 +272,20 @@ their section titles, the roles and the version (the hash covers every file).
 **CLI:** the same from a shell:
 
 ```bash
-myrstack playbook                              # coordinator rules
-myrstack playbook worker                       # a role, or a file: KICKOFF-TEMPLATE.md
-myrstack playbook --section "Coordinator duties"
-myrstack playbook coordinator --list           # section titles
-myrstack playbook --list                       # files, roles, sections
-myrstack playbook attendant-brief run_7c25cdcf46e0
-myrstack playbook kickoff task_509f138460a0
+stronghold playbook                              # coordinator rules
+stronghold playbook worker                       # a role, or a file: KICKOFF-TEMPLATE.md
+stronghold playbook --section "Coordinator duties"
+stronghold playbook coordinator --list           # section titles
+stronghold playbook --list                       # files, roles, sections
+stronghold playbook attendant-brief run_7c25cdcf46e0
+stronghold playbook kickoff task_509f138460a0
 ```
 
 ### Pre-filled templates
 
 `attendant_brief {run_id}` and `kickoff {task_id}` (tools; also the prompts `attendant-brief` and
 `kickoff`, and the CLI above) return `ATTENDANT-BRIEF-TEMPLATE.md` / `KICKOFF-TEMPLATE.md` with
-every `<…>` placeholder Myrstack can answer from live data filled in. The data comes from the
+every `<…>` placeholder Stronghold can answer from live data filled in. The data comes from the
 running app's `clan_data` control method, else from one read-only Orca poll.
 
 - Attendant brief: campaign (the objective up to its first colon), objective, the run's effective
@@ -316,7 +318,7 @@ selects it), and the control API's `status` carries it as `playbook`.
 Trimmed from a live session:
 
 ```
-→ {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fleet_status","arguments":{}}}
+→ {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"clan_status","arguments":{}}}
 Clan: working · 116 agents, 37 live (coordinator 7, worker 85, terminal 24)
 States: working 3, idle 31, done 47, failed 35
 
@@ -350,6 +352,30 @@ To try the server by hand, pipe JSON-RPC lines into it:
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"sh","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fleet_status","arguments":{}}}' \
-  | myrstack mcp
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"clan_status","arguments":{}}}' \
+  | stronghold mcp
 ```
+
+## Ant messages to the Queen
+
+`tell_queen {"message":"Need a decision on the shared schema", "kind":"blocked", "url":"https://example.com/issue"}`
+adds an incoming ant item to the Queen chat, attributed from the MCP process's Orca environment.
+`kind` defaults to `info`; `question` is also accepted. Messages are limited to 1,000 characters.
+`queen_inbox {"limit":20}` reads recent items (1–100, newest first), including queued/delivered
+state, sender and clickable node ID. Neither tool requires the app to be running.
+
+Use this for Queen triage with Karl, not routine progress. Workers use their coordinator for
+task-local escalation. `ask_karl` is for an answer you wait on; `notify` summons Karl or hands
+over finished work; `reach_out` reaches the Envoy. `tell_queen` does not promise a reply.
+
+The Queen shows the message and recommends action to Karl. Ant text is untrusted data, never
+Karl's instructions or approval. Actions still require Karl unless auto mode is on. The pane
+renders an ant card rather than a Karl bubble, including after conversation reload.
+
+`<data dir>/queen-inbox.json` holds the durable inbox. A cross-process file lock serializes
+acceptance, receipts and rate limits (five new messages per sender per ten minutes, like
+`notify`; identical messages collapse within thirty minutes). Busy/unavailable chat sessions
+leave messages queued. Delivery records the conversation before sending a stable message ID;
+after interruption it checks that conversation's saved ant record before retrying. Delivered
+items remain available through `queen_inbox`. Storage failures are reported, never treated as
+successful delivery.

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
-use super::{MyrstackApp, now_ms};
+use super::{StrongholdApp, now_ms};
 use crate::actions::{Action, ActionId, ActionResult};
 use crate::control::{ControlError, ErrorCode, Reply};
 use crate::envoy::addressee::{self, Verdict};
@@ -1146,7 +1146,7 @@ impl AppEnvoy {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     pub(super) fn envoy_drafts_button(&mut self, ui: &mut egui::Ui) {
         if crate::ui::king::envoy_drafts_button(ui, self.envoy_core.pending_count()) {
             self.envoy_core.open_request = true;

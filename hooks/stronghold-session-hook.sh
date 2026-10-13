@@ -1,6 +1,6 @@
 #!/bin/sh
-# Myrstack SessionStart hook: records which Claude session runs in which Orca
-# pane by appending one JSON line to session-map.jsonl in the Myrstack data dir.
+# Stronghold SessionStart hook: records which Claude session runs in which Orca
+# pane by appending one JSON line to session-map.jsonl in the Stronghold data dir.
 # Always exits 0 and never writes to stdout (SessionStart stdout is fed to Claude).
 
 exec >/dev/null 2>&1
@@ -17,7 +17,8 @@ esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/[[:cntrl:]]/ /g'; }
 session_id=$(field session_id)
 [ -n "$session_id" ] || exit 0
 
-dir=${MYRSTACK_DATA_DIR:-$HOME/Library/Application Support/Myrstack}
+# MYRSTACK_DATA_DIR is the variable's name from before the app was renamed.
+dir=${STRONGHOLD_DATA_DIR:-${MYRSTACK_DATA_DIR:-$HOME/Library/Application Support/Stronghold}}
 file="$dir/session-map.jsonl"
 mkdir -p "$dir" || exit 0
 

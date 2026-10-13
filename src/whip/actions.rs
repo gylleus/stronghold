@@ -1,7 +1,7 @@
 //! Nudge and notify actions, plus the action log.
 //!
 //! [`WhipAction`] is what the engine decides; a [`WhipExecutor`] carries it out. Nudge texts are
-//! pure functions so they can be tested and previewed. Every nudge starts with `Myrstack:` so
+//! pure functions so they can be tested and previewed. Every nudge starts with `Stronghold:` so
 //! agents can recognise it (see `docs/heartbeat-convention.md`).
 
 use std::sync::{Arc, Mutex};
@@ -11,7 +11,7 @@ use crate::orca::{OrcaClient, OutgoingMessage, TerminalInput, WHIP_SENDER};
 use crate::whip::rules::{StallReason, StallTarget};
 
 /// Prefix of every nudge.
-pub const NUDGE_PREFIX: &str = "Myrstack:";
+pub const NUDGE_PREFIX: &str = "Stronghold:";
 
 /// How a nudge reaches its target.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,7 +202,7 @@ pub fn missing_report_nudge_text(tasks: &[TaskRef], idle_ms: i64) -> String {
     format!(
         "{NUDGE_PREFIX} you have been idle on {list} for {} and your report to the coordinator \
          never arrived on the bus. Resend worker_done/merge_ready (orca orchestration send ...); \
-         if the send errors, retry, then call Myrstack's notify with the error and your report. Not finished? Send a \
+         if the send errors, retry, then call Stronghold's notify with the error and your report. Not finished? Send a \
          heartbeat with your phase and continue.",
         fmt_duration(idle_ms)
     )
@@ -453,7 +453,7 @@ mod tests {
     fn worker_text_single_task() {
         assert_eq!(
             worker_nudge_text(&[t("t1", Some("Fix login"))], 17 * MIN),
-            "Myrstack: no progress on task t1 (Fix login) for 17m. Send a heartbeat with your \
+            "Stronghold: no progress on task t1 (Fix login) for 17m. Send a heartbeat with your \
              current phase and a one-line status, then continue — or worker_done / ask / \
              escalation if that's the truth."
         );
@@ -462,7 +462,7 @@ mod tests {
     #[test]
     fn worker_text_folds_tasks() {
         let text = worker_nudge_text(&[t("t1", None), t("t2", Some("Docs"))], 65 * MIN);
-        assert!(text.starts_with("Myrstack: no progress on tasks t1, t2 (Docs) for 1h05m."));
+        assert!(text.starts_with("Stronghold: no progress on tasks t1, t2 (Docs) for 1h05m."));
         assert!(text.contains("heartbeat for each"));
     }
 
@@ -471,15 +471,15 @@ mod tests {
         let idle = coordinator_idle_text("run_1", &["t2".into()], &["t1".into()], 20 * MIN);
         assert_eq!(
             idle,
-            "Myrstack: run run_1 has had no coordinator activity for 20m (ready task(s) not \
+            "Stronghold: run run_1 has had no coordinator activity for 20m (ready task(s) not \
              started: t2; finished task(s) with no follow-up: t1). Dispatch or task-update them, \
              or send a `holding: <reason>` status if you're waiting on purpose."
         );
         let ask = unanswered_ask_text("run_1", "msg_9", 30 * MIN);
-        assert!(ask.starts_with("Myrstack: question msg_9 in run run_1"));
+        assert!(ask.starts_with("Stronghold: question msg_9 in run run_1"));
         assert!(ask.contains("worker is blocked on it"));
         let quiet = quiet_run_text("run_1", 16 * MIN);
-        assert!(quiet.starts_with("Myrstack: run run_1 has been quiet for 16m."));
+        assert!(quiet.starts_with("Stronghold: run run_1 has been quiet for 16m."));
     }
 
     #[test]
@@ -501,15 +501,15 @@ mod tests {
             "dispatch:ctx_1",
             None,
             std::slice::from_ref(&worker),
-            "Myrstack: hi",
+            "Stronghold: hi",
         );
         assert_eq!(msg.to.as_deref(), Some("dispatch:ctx_1"));
         assert_eq!(msg.task_id.as_deref(), Some("t1"));
-        assert_eq!(msg.subject, "Myrstack: hi");
-        assert_eq!(msg.from.as_deref(), Some("myrstack-whip"));
+        assert_eq!(msg.subject, "Stronghold: hi");
+        assert_eq!(msg.from.as_deref(), Some("stronghold-whip"));
         assert!(
             crate::orca::commands::orchestration_send_args(&msg)
-                .contains(&"--from=myrstack-whip".to_string())
+                .contains(&"--from=stronghold-whip".to_string())
         );
         let two = nudge_message("term_w", Some("run_1"), &[worker.clone(), worker], "x");
         assert_eq!(two.task_id, None);

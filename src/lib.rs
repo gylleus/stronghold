@@ -1,4 +1,4 @@
-//! Myrstack: a live farm view of the Orca agent clan.
+//! Stronghold: a live farm view of the Orca agent clan.
 
 // Stub modules are filled in by later milestones.
 #![allow(dead_code)]
@@ -18,6 +18,7 @@ pub mod envoy;
 pub mod finish;
 pub mod health;
 pub mod hotkey;
+pub mod legacy;
 pub mod logfile;
 pub mod mcp;
 pub mod model;
@@ -27,6 +28,7 @@ pub mod park;
 pub mod persist;
 pub mod playbook;
 pub mod poller;
+pub mod queen_inbox;
 pub mod quota;
 pub mod review;
 pub mod spawn;
@@ -37,7 +39,7 @@ pub mod voice;
 pub mod whip;
 pub mod worktrees;
 
-pub use app::MyrstackApp;
+pub use app::StrongholdApp;
 
 /// Window and application title.
-pub const APP_NAME: &str = "Myrstack";
+pub const APP_NAME: &str = "Stronghold";

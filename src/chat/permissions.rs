@@ -4,19 +4,29 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-/// Prefix of the tools of the `myrstack` MCP server as Claude Code names them.
-pub const MYRSTACK_PREFIX: &str = "mcp__myrstack__";
+/// Prefix of the tools of the `stronghold` MCP server as Claude Code names them.
+pub const STRONGHOLD_PREFIX: &str = "mcp__stronghold__";
+/// The same tools under a registration made while the app was Myrstack; Claude Code names them
+/// after the registration, so they keep this prefix until the server is added as `stronghold`.
+pub const OLD_PREFIX: &str = "mcp__myrstack__";
 
-/// Myrstack MCP tools that only read state or move the dashboard's view; they run without a
+/// The bare name of one of the app's own MCP tools, under either registration name.
+pub fn own_tool(tool: &str) -> Option<&str> {
+    tool.strip_prefix(STRONGHOLD_PREFIX)
+        .or_else(|| tool.strip_prefix(OLD_PREFIX))
+}
+
+/// Stronghold MCP tools that only read state or move the dashboard's view; they run without a
 /// prompt. Everything else, including every tool that sends to agents, asks.
 pub const READ_ONLY_TOOLS: &[&str] = &[
-    "fleet_status",
+    "clan_status",
     "list_agents",
     "get_agent",
     "whip_status",
     "alerts",
     "quotas",
     "review_queue",
+    "queen_inbox",
     "get_playbook",
     "list_playbook",
     "attendant_brief",
@@ -26,7 +36,7 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "open_whip_settings",
 ];
 
-/// Myrstack tools whose effect reaches agents or the whip; the chat's settings mark them
+/// Stronghold tools whose effect reaches agents or the whip; the chat's settings mark them
 /// `ask` so no allow rule elsewhere can skip the card.
 pub const DESTRUCTIVE_TOOLS: &[&str] = &[
     "send_to_agent",
@@ -39,8 +49,7 @@ pub const DESTRUCTIVE_TOOLS: &[&str] = &[
 
 /// Whether `tool` (as named in a `can_use_tool` request) runs without asking.
 pub fn is_auto_approved(tool: &str) -> bool {
-    tool.strip_prefix(MYRSTACK_PREFIX)
-        .is_some_and(|name| READ_ONLY_TOOLS.contains(&name))
+    own_tool(tool).is_some_and(|name| READ_ONLY_TOOLS.contains(&name))
 }
 
 /// How a `can_use_tool` request is answered.
@@ -48,24 +57,25 @@ pub fn is_auto_approved(tool: &str) -> bool {
 pub enum Verdict {
     /// Show a card and wait for Karl.
     Ask,
-    /// Allowed without a card: a read-only Myrstack tool, or one Karl always-allowed.
+    /// Allowed without a card: a read-only Stronghold tool, or one Karl always-allowed.
     Allow,
     /// Allowed without a card only because auto mode is on.
     Auto,
 }
 
 /// Per-chat permission memory: the auto-approve list, tools the user allowed for the rest of
-/// the chat, and auto mode (every tool call runs without asking: Myrstack actions, built-ins
+/// the chat, and auto mode (every tool call runs without asking: Stronghold actions, built-ins
 /// like Read or WebFetch outside the chat directory, and other MCP servers' tools).
 #[derive(Debug, Default, Clone)]
 pub struct PermissionPolicy {
     always: HashSet<String>,
     auto: bool,
+    ant_turn: bool,
 }
 
 impl PermissionPolicy {
     pub fn verdict(&self, tool: &str) -> Verdict {
-        if is_auto_approved(tool) || self.always.contains(tool) {
+        if is_auto_approved(tool) || (!self.ant_turn && self.always.contains(tool)) {
             Verdict::Allow
         } else if self.auto {
             Verdict::Auto
@@ -86,6 +96,10 @@ impl PermissionPolicy {
         self.auto = on;
     }
 
+    pub fn set_ant_turn(&mut self, on: bool) {
+        self.ant_turn = on;
+    }
+
     pub fn auto(&self) -> bool {
         self.auto
     }
@@ -93,24 +107,29 @@ impl PermissionPolicy {
     /// Forgets the "always allow" choices (a new chat); auto mode is a setting and stays.
     pub fn reset(&mut self) {
         self.always.clear();
+        self.ant_turn = false;
     }
 }
 
-/// `--settings` JSON for the chat session: the destructive Myrstack tools always ask, so no
+/// `--settings` JSON for the chat session: the destructive Stronghold tools always ask, so no
 /// allow rule elsewhere skips the host. Every prompt reaches the host as a `can_use_tool`
 /// request, which is where auto mode answers all of them; the settings never change with it.
 pub fn session_settings() -> String {
-    let ask: Vec<String> = DESTRUCTIVE_TOOLS
+    let ask: Vec<String> = [STRONGHOLD_PREFIX, OLD_PREFIX]
         .iter()
-        .map(|t| format!("{MYRSTACK_PREFIX}{t}"))
+        .flat_map(|prefix| {
+            DESTRUCTIVE_TOOLS
+                .iter()
+                .map(move |t| format!("{prefix}{t}"))
+        })
         .collect();
     serde_json::json!({"permissions": {"ask": ask}}).to_string()
 }
 
-/// A tool name for display: `mcp__myrstack__fleet_status` → `fleet_status`,
+/// A tool name for display: `mcp__stronghold__clan_status` → `clan_status`,
 /// `mcp__other__x` → `other: x`.
 pub fn short_tool_name(tool: &str) -> String {
-    if let Some(name) = tool.strip_prefix(MYRSTACK_PREFIX) {
+    if let Some(name) = own_tool(tool) {
         return name.to_owned();
     }
     if let Some(rest) = tool.strip_prefix("mcp__")
@@ -164,21 +183,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn read_only_myrstack_tools_are_auto_approved() {
+    fn read_only_stronghold_tools_are_auto_approved() {
         for tool in READ_ONLY_TOOLS {
             assert!(
-                is_auto_approved(&format!("mcp__myrstack__{tool}")),
+                is_auto_approved(&format!("mcp__stronghold__{tool}")),
                 "{tool}"
             );
         }
         for tool in DESTRUCTIVE_TOOLS {
             assert!(
-                !is_auto_approved(&format!("mcp__myrstack__{tool}")),
+                !is_auto_approved(&format!("mcp__stronghold__{tool}")),
                 "{tool}"
             );
         }
-        assert!(!is_auto_approved("fleet_status"));
-        assert!(!is_auto_approved("mcp__other__fleet_status"));
+        // A registration from before the rename names the same tools `mcp__myrstack__*`.
+        assert!(is_auto_approved("mcp__myrstack__clan_status"));
+        assert!(!is_auto_approved("mcp__myrstack__send_to_agent"));
+        assert!(!is_auto_approved("clan_status"));
+        assert!(!is_auto_approved("mcp__other__clan_status"));
         assert!(!is_auto_approved("Bash"));
         assert!(!is_auto_approved("Write"));
     }
@@ -186,22 +208,22 @@ mod tests {
     #[test]
     fn always_allow_is_per_policy_and_resets() {
         let mut policy = PermissionPolicy::default();
-        assert!(!policy.allows("mcp__myrstack__send_to_agent"));
-        policy.always_allow("mcp__myrstack__send_to_agent");
-        assert!(policy.allows("mcp__myrstack__send_to_agent"));
+        assert!(!policy.allows("mcp__stronghold__send_to_agent"));
+        policy.always_allow("mcp__stronghold__send_to_agent");
+        assert!(policy.allows("mcp__stronghold__send_to_agent"));
         assert!(!policy.allows("Bash"));
         policy.reset();
-        assert!(!policy.allows("mcp__myrstack__send_to_agent"));
-        assert!(policy.allows("mcp__myrstack__fleet_status"));
+        assert!(!policy.allows("mcp__stronghold__send_to_agent"));
+        assert!(policy.allows("mcp__stronghold__clan_status"));
     }
 
-    /// Auto mode on/off × read-only Myrstack tool / destructive Myrstack tool / built-in tool /
+    /// Auto mode on/off × read-only Stronghold tool / destructive Stronghold tool / built-in tool /
     /// another MCP server's tool: off asks for everything but the read-only list, on asks for
     /// nothing.
     #[test]
     fn decision_table() {
         use Verdict::{Allow, Ask, Auto};
-        let read = "mcp__myrstack__fleet_status";
+        let read = "mcp__stronghold__clan_status";
         let built_ins = [
             "Read",
             "Grep",
@@ -216,19 +238,19 @@ mod tests {
         ];
         let other_mcp = [
             "mcp__linear__save_issue",
-            "mcp__myrstack_evil__send_to_agent",
+            "mcp__stronghold_evil__send_to_agent",
         ];
         let destructive: Vec<String> = DESTRUCTIVE_TOOLS
             .iter()
             .chain(&["whip_agents", "some_future_tool"])
-            .map(|t| format!("{MYRSTACK_PREFIX}{t}"))
+            .map(|t| format!("{STRONGHOLD_PREFIX}{t}"))
             .collect();
         let asked: Vec<&str> = destructive
             .iter()
             .map(String::as_str)
             .chain(built_ins)
             .chain(other_mcp)
-            .chain([MYRSTACK_PREFIX])
+            .chain([STRONGHOLD_PREFIX])
             .collect();
 
         let mut policy = PermissionPolicy::default();
@@ -250,11 +272,11 @@ mod tests {
         }
 
         // Always-allowed stays a plain allow; a new chat keeps auto mode.
-        policy.always_allow("mcp__myrstack__send_to_agent");
-        assert_eq!(policy.verdict("mcp__myrstack__send_to_agent"), Allow);
+        policy.always_allow("mcp__stronghold__send_to_agent");
+        assert_eq!(policy.verdict("mcp__stronghold__send_to_agent"), Allow);
         policy.reset();
         assert!(policy.auto());
-        assert_eq!(policy.verdict("mcp__myrstack__send_to_agent"), Auto);
+        assert_eq!(policy.verdict("mcp__stronghold__send_to_agent"), Auto);
         assert_eq!(policy.verdict("WebFetch"), Auto);
 
         policy.set_auto(false);
@@ -267,13 +289,15 @@ mod tests {
     fn settings_mark_destructive_tools_ask() {
         let settings: Value = serde_json::from_str(&session_settings()).unwrap();
         let ask = settings["permissions"]["ask"].as_array().unwrap();
+        assert!(ask.contains(&json!("mcp__stronghold__send_to_agent")));
+        assert!(ask.contains(&json!("mcp__stronghold__broadcast_to_coordinators")));
         assert!(ask.contains(&json!("mcp__myrstack__send_to_agent")));
-        assert!(ask.contains(&json!("mcp__myrstack__broadcast_to_coordinators")));
-        assert_eq!(ask.len(), DESTRUCTIVE_TOOLS.len());
+        assert_eq!(ask.len(), 2 * DESTRUCTIVE_TOOLS.len());
     }
 
     #[test]
     fn names_and_summaries_read_well() {
+        assert_eq!(short_tool_name("mcp__stronghold__get_agent"), "get_agent");
         assert_eq!(short_tool_name("mcp__myrstack__get_agent"), "get_agent");
         assert_eq!(
             short_tool_name("mcp__linear__get_issue"),

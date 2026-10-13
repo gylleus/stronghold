@@ -1,11 +1,11 @@
-# Myrstack — plan
+# Stronghold — plan
 
-A native desktop view of the agent clan running in Orca: a dwarf farm of
+A native desktop view of the agent clan running in Orca: a dwarf hold of
 coordinators, their worker agents and their subagents, where clicking a dwarf
 shows that agent's terminal and lets you type into it.
 
 Orca stays the place agents are launched and the message bus they talk over.
-Myrstack only observes and talks to them through Orca.
+Stronghold only observes and talks to them through Orca.
 
 ## Goals
 
@@ -20,7 +20,7 @@ subagents (they are short-lived and read-only here).
 
 ## Why a native egui app
 
-Myrstack gets no special access to agent terminals by being native. Orca owns
+Stronghold gets no special access to agent terminals by being native. Orca owns
 the PTYs, so every read and write goes through Orca either way. Native is still
 the better fit:
 
@@ -29,7 +29,7 @@ the better fit:
   isn't needed.
 - It's one binary with no localhost server, it can call `orca` as a child
   process directly, and it can raise macOS notifications and bind a global hotkey.
-- The farm uses egui's painter, a room layout and a camera for pan and zoom.
+- The hold uses egui's painter, a room layout and a camera for pan and zoom.
 
 
 ## Data sources (verified against Orca 1.4.192)
@@ -53,7 +53,7 @@ Mapping a Claude terminal to its session: encode `worktreePath` the way Claude
 does (`/` becomes `-`), then take the most recently written `<session-id>.jsonl`
 in that directory. This is ambiguous when two Claude terminals share a
 worktree. The fix is a tiny `SessionStart` hook in `~/.claude/settings.json`
-that appends `{ORCA_PANE_KEY, session_id}` to a Myrstack file. Orca's own
+that appends `{ORCA_PANE_KEY, session_id}` to a Stronghold file. Orca's own
 hook shows `ORCA_PANE_KEY` and `ORCA_TAB_ID` are in the agent's environment.
 
 Subagent state: running while its jsonl was written recently and the parent
@@ -71,7 +71,7 @@ Loose:         terminals that aren't in any run (plain Claude or Codex tabs)
   permission or choice prompt), Idle, Stalled (see Whip), Done/Released,
   Failed.
 - Released workers and finished subagents fade out after a set time so
-  the farm stays readable.
+  the hold stays readable.
 
 ## Architecture
 
@@ -103,7 +103,7 @@ Crates: `eframe`/`egui`, `serde`/`serde_json`,
 `run-list` and `worker-list`; a clan snapshot refreshing every 2 s.
 *Done when:* the snapshot matches `orca terminal list`.
 
-**M1 — Farm.** Build the snapshot, render runs in rooms with their coordinators,
+**M1 — Hold.** Build the snapshot, render runs in rooms with their coordinators,
 show agent state through dwarf poses and locations, group loose terminals by repo,
 and fade released workers. *Done when:* the commerce-platform wave run shows its
 coordinator and workers correctly.
@@ -149,7 +149,7 @@ Every loop tick (default 60 s):
    the coordinator terminal's `lastOutputAt`.
 
 A nudge is `orca orchestration send` to the owner, saying it comes from
-Myrstack and asking for a heartbeat with its current phase, or to carry on
+Stronghold and asking for a heartbeat with its current phase, or to carry on
 with its task. If the terminal is idle at a prompt and the bus message
 doesn't wake it, fall back to `orca terminal send --enter`.
 
