@@ -53,11 +53,27 @@ pub fn carry_over_data_dir() {
 
 /// Renames `old` to `new` and leaves a link at `old`, so the session hook installed under the
 /// old path and processes started before the rename keep finding their files. Returns whether
-/// it moved anything: not when `new` exists or `old` is not a real folder.
+/// it moved anything: not when `old` is not a real folder, or when `new` is already in use.
+///
+/// A `new` folder without settings, while `old` has them, was not made by the app (a test or a
+/// tool created it before the first start): it is set aside as `<new>.stray-<time>` so the real
+/// data still carries over.
 fn move_data_dir(old: &Path, new: &Path) -> io::Result<bool> {
     let is_real_dir = |path: &Path| path.symlink_metadata().is_ok_and(|m| m.is_dir());
-    if new.symlink_metadata().is_ok() || !is_real_dir(old) {
+    let has_settings = |dir: &Path| dir.join(crate::whip::settings::SETTINGS_FILE).exists();
+    if !is_real_dir(old) {
         return Ok(false);
+    }
+    if new.symlink_metadata().is_ok() {
+        if has_settings(new) || !has_settings(old) {
+            return Ok(false);
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let mut stray = new.as_os_str().to_owned();
+        stray.push(format!(".stray-{now}"));
+        std::fs::rename(new, stray)?;
     }
     if let Err(e) = std::fs::rename(old, new) {
         // Another process starting at the same moment may have moved it first.
@@ -116,14 +132,54 @@ mod tests {
         assert!(!move_data_dir(&old, &new).unwrap());
     }
 
+    #[cfg(unix)]
     #[test]
-    fn leaves_an_existing_new_folder_alone() {
+    fn sets_a_stray_new_folder_aside() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (old, new) = (tmp.path().join("Myrstack"), tmp.path().join("Stronghold"));
+        std::fs::create_dir(&old).unwrap();
+        std::fs::write(old.join("settings.json"), "real").unwrap();
+        std::fs::create_dir(&new).unwrap();
+        std::fs::write(new.join("envoy-system-prompt.md"), "from a test").unwrap();
+
+        assert!(move_data_dir(&old, &new).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(new.join("settings.json")).unwrap(),
+            "real"
+        );
+        assert!(!new.join("envoy-system-prompt.md").exists());
+        let stray = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("Stronghold.stray-")
+            })
+            .expect("the stray folder is kept");
+        assert!(stray.path().join("envoy-system-prompt.md").exists());
+    }
+
+    #[test]
+    fn leaves_a_new_folder_in_use_alone() {
         let tmp = tempfile::tempdir().unwrap();
         let (old, new) = (tmp.path().join("Myrstack"), tmp.path().join("Stronghold"));
         std::fs::create_dir(&old).unwrap();
         std::fs::create_dir(&new).unwrap();
+        std::fs::write(old.join("settings.json"), "old").unwrap();
+        std::fs::write(new.join("settings.json"), "new").unwrap();
         assert!(!move_data_dir(&old, &new).unwrap());
         assert!(old.symlink_metadata().unwrap().is_dir());
+        assert_eq!(
+            std::fs::read_to_string(new.join("settings.json")).unwrap(),
+            "new"
+        );
+
+        // Neither has settings: nothing says which one is real, so nothing moves.
+        let (old, new) = (tmp.path().join("A"), tmp.path().join("B"));
+        std::fs::create_dir(&old).unwrap();
+        std::fs::create_dir(&new).unwrap();
+        assert!(!move_data_dir(&old, &new).unwrap());
 
         let missing = tmp.path().join("Nothing");
         assert!(!move_data_dir(&missing, &tmp.path().join("Fresh")).unwrap());

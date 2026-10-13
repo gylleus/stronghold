@@ -181,13 +181,23 @@ pub(crate) fn write_system_prompt(
     Ok(path)
 }
 
+/// Where the rendered playbook goes: the data dir, or a temp folder under `cargo test`, so unit
+/// tests never write into the real one.
+fn system_prompt_dir() -> PathBuf {
+    if cfg!(test) {
+        std::env::temp_dir().join("stronghold-test-envoy")
+    } else {
+        crate::claude::hook::data_dir()
+    }
+}
+
 /// Refuse a second session even when its identity file was lost.
 pub(crate) fn prepare(
     backend: &mut dyn crate::spawn::exec::SpawnBackend,
     settings: &EnvoySettings,
 ) -> Result<SpawnPlan, String> {
     let playbook = crate::playbook::Playbook::locate().map_err(|e| format!("{e:#}"))?;
-    let system_prompt = write_system_prompt(&crate::claude::hook::data_dir(), &playbook)?;
+    let system_prompt = write_system_prompt(&system_prompt_dir(), &playbook)?;
     let plan = plan(&backend.catalog()?, settings, &system_prompt)?;
     let value = backend
         .orca(
