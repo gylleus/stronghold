@@ -128,7 +128,7 @@ fn user_records(record: &Value) -> Vec<HistoryRecord> {
 }
 
 /// What a user text shows as: harness-injected text is dropped, command and task wrappers
-/// become short system lines, Myrstack's notes to the King are taken off.
+/// become short system lines, Stronghold's notes to the King are taken off.
 fn prompt_record(text: &str) -> Option<HistoryRecord> {
     let text = text.trim();
     if text.is_empty()
@@ -170,7 +170,7 @@ fn prompt_record(text: &str) -> Option<HistoryRecord> {
     })
 }
 
-/// `text` without the notes Myrstack puts before the King's messages; true when one said
+/// `text` without the notes Stronghold puts before the King's messages; true when one said
 /// the message was spoken.
 fn strip_notes(mut text: &str) -> (bool, &str) {
     let mut voice = false;

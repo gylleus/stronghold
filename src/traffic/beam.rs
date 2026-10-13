@@ -17,7 +17,7 @@ use crate::review::mark::Origin;
 pub enum BeamKind {
     /// Reads one agent (`get_agent`).
     Read,
-    /// Reads many at once (`list_agents`, `fleet_status`).
+    /// Reads many at once (`list_agents`, `clan_status`).
     Sweep,
     /// Types into an agent without a message (`press_key`); drawn as a message.
     Write,
@@ -88,7 +88,7 @@ impl ToolCall {
                     .collect(),
             ),
             "list_agents" => (BeamKind::Sweep, ids(result.get("agents"))),
-            "fleet_status" => (BeamKind::Sweep, Vec::new()),
+            "clan_status" => (BeamKind::Sweep, Vec::new()),
             "press_key" => (BeamKind::Write, s(args, "id").into_iter().collect()),
             "close_agents" => {
                 let dry = result.get("dry_run").and_then(Value::as_bool) != Some(false);
@@ -110,7 +110,7 @@ impl ToolCall {
             _ => return None,
         };
         // A filtered listing that found nobody covers nobody.
-        let empty = targets.is_empty() && name != "fleet_status";
+        let empty = targets.is_empty() && name != "clan_status";
         (!empty).then(|| Self {
             tool: name.to_owned(),
             origin: origin.clone(),
@@ -175,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn listings_sweep_what_they_listed_and_fleet_status_everyone() {
+    fn listings_sweep_what_they_listed_and_clan_status_everyone() {
         let c = call(
             "list_agents",
             json!({}),
@@ -187,7 +187,7 @@ mod tests {
             (BeamKind::Sweep, vec!["a".into(), "b".into()])
         );
         assert!(call("list_agents", json!({}), json!({"agents": []})).is_none());
-        let c = call("fleet_status", json!({}), json!({})).unwrap();
+        let c = call("clan_status", json!({}), json!({})).unwrap();
         assert_eq!((c.kind, c.targets.len()), (BeamKind::Sweep, 0));
     }
 

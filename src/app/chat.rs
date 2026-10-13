@@ -2,7 +2,7 @@
 
 use eframe::egui;
 
-use super::{MyrstackApp, repaint_once};
+use super::{StrongholdApp, repaint_once};
 use crate::chat::settings::{KingSettings, resolve_model_from_env};
 use crate::chat::{ChatConfig, ChatSession, STATUS_REPORT_PROMPT};
 use crate::model::{ClanSnapshot, NodeId};
@@ -102,7 +102,7 @@ impl AppChat {
     }
 
     /// Applies saved King settings: restarts his process (same conversation) when the
-    /// effective model (`MYRSTACK_CHAT_MODEL` still wins) or the effort changed.
+    /// effective model (`STRONGHOLD_CHAT_MODEL` still wins) or the effort changed.
     pub(super) fn apply_king_settings(&mut self, king: &KingSettings) {
         let model = resolve_model_from_env(king).model().map(str::to_owned);
         let effort = king.normalized().effort;
@@ -116,7 +116,7 @@ impl AppChat {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     pub(super) fn poll_chat(&mut self) {
         self.chat.session.poll();
         if self
@@ -200,7 +200,7 @@ impl MyrstackApp {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// The top bar's King and Status report buttons, run through the command palette's
     /// actions so they behave as picking "Open King chat" or "Status report" there.
     pub(super) fn king_quick_actions(&mut self, ui: &mut egui::Ui) {

@@ -2,7 +2,7 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
-## Finishing work in the Myrstack repo
+## Finishing work in the Stronghold repo
 
 Karl's rule for every agent working in this repo. It is the repository's explicit opt-in, so
 it overrides the "Conservative" default below for commits and the local merge (not for pushes):
@@ -16,7 +16,7 @@ it overrides the "Conservative" default below for commits and the local merge (n
    merge conflicts, merge `main` into your branch in your worktree, fix, rerun the gates, then
    retry.
 4. Report a short summary (what changed; Karl gets it with `just install` and reopening
-   Myrstack), then exit your session.
+   Stronghold), then exit your session.
 
 There is no GitHub remote: no push, no PR, no `mark_pr_ready`.
 
@@ -26,7 +26,7 @@ There is no GitHub remote: no push, no PR, no `mark_pr_ready`.
 cargo fmt --check
 cargo clippy --all-targets
 cargo test
-just install   # release build into ~/Applications/Myrstack.app; quit and reopen to run it
+just install   # release build into ~/Applications/Stronghold.app; quit and reopen to run it
 ```
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:1105d646 -->

@@ -36,7 +36,7 @@ const MAX_MODAL_ANSWERS: u32 = 2;
 /// Note on a worker that took its brief although Orca failed its start.
 pub const MISREPORTED_LAUNCH: &str = "the worker is running although Orca failed its start and \
      revoked the dispatch: its worker_done/merge_ready arrive as \"Rejected …\" messages, which \
-     Myrstack forwards to the coordinator as the worker's report";
+     Stronghold forwards to the coordinator as the worker's report";
 const MAX_ENTERS: u32 = 3;
 /// The note when a Codex session came up asking for approval.
 pub const CODEX_APPROVALS_ON: &str = "Codex started with approvals on (its header lacks \
@@ -44,7 +44,7 @@ pub const CODEX_APPROVALS_ON: &str = "Codex started with approvals on (its heade
      --dangerously-bypass-approvals-and-sandbox";
 
 /// Caller identity variables `orca` reads besides [`crate::orca::client::SENDER_IDENTITY_ENV`];
-/// Myrstack acts as itself (or explicitly `--from` a coordinator), never as the terminal that
+/// Stronghold acts as itself (or explicitly `--from` a coordinator), never as the terminal that
 /// launched it.
 pub const EXTRA_IDENTITY_ENV: &[&str] = &[
     "ORCA_AGENT_LAUNCH_TOKEN",

@@ -428,7 +428,7 @@ mod tests {
                 at_ms: 0,
                 action: "nudge #1 via bus to dispatch:d1".into(),
                 target: "worker term_w task t1".into(),
-                reason: "Myrstack: no progress\nsecond line".into(),
+                reason: "Stronghold: no progress\nsecond line".into(),
                 dry_run: true,
                 outcome: "dry-run".into(),
                 manual: false,
@@ -508,7 +508,7 @@ mod tests {
         assert_eq!(rows.len(), SHOWN_LEN);
         assert_eq!(rows[0].target, "term_w");
         assert_eq!(rows[0].link, None);
-        assert_eq!(rows[0].reason, "Myrstack: no progress");
+        assert_eq!(rows[0].reason, "Stronghold: no progress");
 
         // A new snapshot is only seen after `snapshot_changed`.
         let mut term = node(NodeId::terminal("term_w"), "claude on feat");

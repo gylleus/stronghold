@@ -31,7 +31,7 @@ pub enum ChatItem {
     Tool(ToolCall),
     Permission(PermissionCard),
     Notice(String),
-    /// A note from Myrstack itself (e.g. auto mode changed), not typed by Karl.
+    /// A note from Stronghold itself (e.g. auto mode changed), not typed by Karl.
     System(String),
     Error(String),
 }
@@ -119,7 +119,7 @@ impl Transcript {
         }
     }
 
-    /// Myrstack-authored messages are timed at creation, never during rendering.
+    /// Stronghold-authored messages are timed at creation, never during rendering.
     fn push_local(&mut self, item: ChatItem) {
         self.timestamps
             .insert(self.items.len(), jiff::Timestamp::now());

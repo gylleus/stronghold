@@ -3,7 +3,7 @@
 //! saved between launches.
 //!
 //! The conversation pane comes and goes with what it has to show (see
-//! `MyrstackApp::has_conversation`); taking it out remembers the arrangement, so it returns
+//! `StrongholdApp::has_conversation`); taking it out remembers the arrangement, so it returns
 //! where it was unless the other panes moved meanwhile.
 //!
 //! The notifications pane is in while its panel is open; collapsing it (its tab's close

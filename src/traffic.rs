@@ -8,9 +8,9 @@
 //!   broadcasts;
 //! - control API commands: `send` (`send_to_agent`, from its caller or the King), `notify` and
 //!   `ask` (an agent to Karl), and the generic `agent_message {from, to, kind}`;
-//! - Karl typing into a terminal from Myrstack, and the whip's nudges ([`from_whip`]).
+//! - Karl typing into a terminal from Stronghold, and the whip's nudges ([`from_whip`]).
 //! - `orca terminal send`s Claude terminals run, read from their transcripts
-//!   ([`crate::claude::forwards::SendWatch`]). Myrstack's own sends (the whip's, Karl's) run in
+//!   ([`crate::claude::forwards::SendWatch`]). Stronghold's own sends (the whip's, Karl's) run in
 //!   its process, never in a transcript, so they are not drawn twice.
 //!
 //! In-process emitters (the Envoy's relays, say) push through a [`TrafficSender`]; other
@@ -25,7 +25,7 @@ use serde_json::Value;
 
 use crate::control::protocol::{ControlError, Params};
 use crate::model::{ClanSnapshot, NodeId, NodeKind};
-use crate::orca::{InboxMessage, MessageType, WHIP_SENDER, is_broadcast_sender};
+use crate::orca::{InboxMessage, MessageType, is_broadcast_sender, is_whip_sender};
 use crate::whip::runner::WhipLogItem;
 
 /// Bus messages older than this when first seen are not drawn: they are history the inbox's
@@ -156,7 +156,8 @@ pub fn resolve(snapshot: &ClanSnapshot, key: &str) -> Option<Endpoint> {
     match key.to_ascii_lowercase().as_str() {
         "karl" | "human" => return Some(Endpoint::Karl),
         "slack" | "outside" => return Some(Endpoint::Outside),
-        "king" | "queen" | WHIP_SENDER => return node(NodeId::king()),
+        "king" | "queen" => return node(NodeId::king()),
+        whip if is_whip_sender(whip) => return node(NodeId::king()),
         "envoy" => {
             return snapshot
                 .nodes
@@ -197,7 +198,7 @@ pub fn resolve(snapshot: &ClanSnapshot, key: &str) -> Option<Endpoint> {
 pub fn from_inbox(m: &InboxMessage) -> Option<AgentMessage> {
     let from = m.from_handle.as_deref()?;
     let to = m.to_handle.as_deref()?;
-    if from == WHIP_SENDER || to.starts_with('@') {
+    if is_whip_sender(from) || to.starts_with('@') {
         return None;
     }
     let kind = match &m.message_type {

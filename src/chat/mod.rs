@@ -1,5 +1,5 @@
-//! The King's chat: a Claude Code session Myrstack spawns and owns (`claude -p` in
-//! stream-json mode), with the myrstack MCP tools, shown in the app's conversation column. It is not an
+//! The King's chat: a Claude Code session Stronghold spawns and owns (`claude -p` in
+//! stream-json mode), with the stronghold MCP tools, shown in the app's conversation column. It is not an
 //! Orca terminal, so it never appears in the farm.
 
 pub mod auto_mode;
@@ -30,7 +30,7 @@ pub struct ChatSession {
     handle: ChatHandle,
     pub transcript: Transcript,
     pub state: SessionState,
-    /// Messages to send once the session is ready (`MYRSTACK_CHAT_SEND`, for smoke tests).
+    /// Messages to send once the session is ready (`STRONGHOLD_CHAT_SEND`, for smoke tests).
     queued: Vec<String>,
     ant_inflight: Option<String>,
     /// Where auto mode is saved (the chat directory).
@@ -51,12 +51,11 @@ pub struct ChatSession {
 
 /// Environment variable with a message the chat sends as soon as it is ready; with it the
 /// transcript is also logged at info level. For scripted smoke tests.
-pub const AUTOSEND_ENV: &str = "MYRSTACK_CHAT_SEND";
+pub const AUTOSEND_ENV: &str = "STRONGHOLD_CHAT_SEND";
 
 impl ChatSession {
     pub fn spawn(config: ChatConfig, repaint: Option<Box<dyn Fn() + Send + Sync>>) -> Self {
-        let queued = std::env::var(AUTOSEND_ENV)
-            .ok()
+        let queued = crate::legacy::env(AUTOSEND_ENV)
             .filter(|s| !s.trim().is_empty())
             .into_iter()
             .collect();
@@ -150,7 +149,7 @@ impl ChatSession {
         self.transcript.push_system(auto_mode::notice(on));
     }
 
-    /// The text the CLI gets for Karl's `text`: prefixed with a Myrstack note when the King
+    /// The text the CLI gets for Karl's `text`: prefixed with a Stronghold note when the King
     /// has not been told the current auto mode (nothing to tell while it is off and he was
     /// never told it was on).
     fn outgoing(&mut self, text: &str) -> String {
@@ -249,7 +248,7 @@ impl ChatSession {
 
     /// Logs the newest turn's tool calls and replies when a smoke test is driving the chat.
     fn log_turn(&self) {
-        if std::env::var_os(AUTOSEND_ENV).is_none() {
+        if crate::legacy::env_os(AUTOSEND_ENV).is_none() {
             return;
         }
         for call in self.transcript.tool_calls() {

@@ -99,7 +99,7 @@ const STDERR_TAIL: usize = 20;
 
 /// Setup hint shown when `claude` is missing.
 pub const MISSING_BINARY_HINT: &str = "Claude Code CLI not found. Install it (npm i -g \
-@anthropic-ai/claude-code) or set MYRSTACK_CLAUDE_BIN to its path, then press Retry.";
+@anthropic-ai/claude-code) or set STRONGHOLD_CLAUDE_BIN to its path, then press Retry.";
 
 /// The UI's end of the chat process.
 pub struct ChatHandle {
@@ -386,7 +386,7 @@ impl Supervisor {
         let mut next_request = 0u64;
         let mut request_id = |kind: &str| {
             next_request += 1;
-            format!("myrstack-{kind}-{next_request}")
+            format!("stronghold-{kind}-{next_request}")
         };
         let init_id = request_id("init");
         if let Err(e) = write_line(&mut stdin, &protocol::initialize_request(&init_id)) {
@@ -443,7 +443,7 @@ impl Supervisor {
                                     let answer = if allow {
                                         PermissionAnswer::Allow
                                     } else {
-                                        PermissionAnswer::Deny { message: "Karl denied this in the Myrstack chat.".into() }
+                                        PermissionAnswer::Deny { message: "Karl denied this in the Stronghold chat.".into() }
                                     };
                                     write_line(&mut stdin, &protocol::permission_response(&request, &answer))
                                 }

@@ -7,7 +7,7 @@ use crossbeam_channel::Receiver;
 use eframe::egui;
 use serde_json::{Value, json};
 
-use super::{MyrstackApp, now_ms, repaint_once};
+use super::{StrongholdApp, now_ms, repaint_once};
 use crate::actions::{Action, ActionId, ActionResult, Key};
 use crate::broadcast::{BroadcastSelection, plan_broadcast};
 use crate::close::{CloseOptions, ClosePlan, plan_bulk_close, plan_close};
@@ -26,7 +26,7 @@ use crate::whip::WhipSettings;
 
 /// The control server, the published view and commands in flight.
 pub(super) struct AppControl {
-    /// `None` when the socket could not be bound (e.g. another Myrstack is running).
+    /// `None` when the socket could not be bound (e.g. another Stronghold is running).
     _server: Option<ControlServer>,
     status: SharedStatus,
     commands: Receiver<PendingCommand>,
@@ -111,7 +111,7 @@ impl AppControl {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     fn control_fingerprint(&self) -> Fingerprint {
         Fingerprint {
             built_at_ms: self.snapshot.as_ref().map(|s| s.built_at_ms),
@@ -550,7 +550,7 @@ impl ActionGroup {
 }
 
 /// Closing sessions for the API: the same plans the "Close session" dialog confirms.
-impl MyrstackApp {
+impl StrongholdApp {
     fn control_close(
         &mut self,
         agents: &[String],

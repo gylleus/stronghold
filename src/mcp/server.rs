@@ -30,8 +30,8 @@ pub const INVALID_PARAMS: i64 = -32602;
 
 pub const INSTRUCTIONS: &str = concat!(
     "\
-Myrstack is Karl's desktop dashboard for the agent clan running in the Orca agent IDE. It draws \
-every agent as a dwarf in a live farm and runs the \"whip\", which nudges stalled workers. This \
+Stronghold is Karl's desktop dashboard for the agent clan running in the Orca agent IDE. It draws \
+every agent as a dwarf in a live hold and runs the \"whip\", which nudges stalled workers. This \
 server talks to the running app.
 
 Node kinds: the King is the hub that stands for the whole clan (not an agent; its state is the \
@@ -46,8 +46,8 @@ prompt), stalled (the whip escalated it), done, failed. Karl can park an agent h
 for later (park_agents): it sleeps in the resting area, out of the live clan, the whip and the \
 counts, its session and worktree kept; send_to_agent or park_agents wake=true wakes it.
 
-Start with fleet_status. Agent ids (term:…, dispatch:…, sub:…) come from list_agents or \
-fleet_status; a terminal handle or an exact label also works. send_to_agent, press_key, \
+Start with clan_status. Agent ids (term:…, dispatch:…, sub:…) come from list_agents or \
+clan_status; a terminal handle or an exact label also works. send_to_agent, press_key, \
 close_agents, park_agents, broadcast_to_coordinators, set_whip and spawn_session act on real agents, so confirm \
 with Karl first (the King in auto mode needn't: Karl approved the King's actions up front; nor does a \
 coordinator starting workers on its own run with spawn_session). close_agents \
@@ -56,14 +56,14 @@ starts a new session (existing worktree, new worktree, or a run's worker) with a
 
 This server also serves the clan playbook, the standing rules the clan runs by, read from disk \
 (no app needed): the prompts coordinator, attendant, worker and envoy (slash commands such as \
-/mcp__myrstack__coordinator) load a role's rules; get_playbook and list_playbook fetch a role, a \
-file or one section; resources myrstack://playbook/<file> hold each file. attendant_brief \
+/mcp__stronghold__coordinator) load a role's rules; get_playbook and list_playbook fetch a role, a \
+file or one section; resources stronghold://playbook/<file> hold each file. attendant_brief \
 {run_id} and kickoff {task_id} (also prompts attendant-brief and kickoff) return those templates \
 pre-filled from live clan data. Every answer starts with the playbook version (git commit, dirty \
 flag, content hash).
 
 Review queue: an agent whose PR is ready for Karl's review calls mark_pr_ready {pr_url} (right \
-after merge_ready); it only records in Myrstack, attributed to the agent's Orca terminal. \
+after merge_ready); it only records in Stronghold, attributed to the agent's Orca terminal. \
 review_queue lists what is waiting, with CI, Ankra and ready-marker state.
 
 Reaching the Queen: tell_queen {message, kind: info|question|blocked, url?} queues an ant \
@@ -74,8 +74,8 @@ recommends actions to Karl. Actions need Karl's approval unless auto mode is on,
 existing rules apply.
 
 Reaching Karl: notify {title, message, severity: info|warn|urgent, url} sends Karl a pop-up \
-and sound through Myrstack, kept in his inbox and attributed to your terminal (clicking it \
-selects your node and opens url). alerts lists his inbox; fleet_status reports unread ones.
+and sound through Stronghold, kept in his inbox and attributed to your terminal (clicking it \
+selects your node and opens url). alerts lists his inbox; clan_status reports unread ones.
 
 Worktrees: clean_worktrees plans removing Orca worktrees nothing needs any more (dry run by \
 default; a real run takes the approved ids). ",
@@ -297,8 +297,8 @@ impl<C: Control> McpServer<C> {
                 "resources": { "subscribe": false, "listChanged": false },
             },
             "serverInfo": {
-                "name": "myrstack",
-                "title": "Myrstack",
+                "name": "stronghold",
+                "title": "Stronghold",
                 "version": env!("CARGO_PKG_VERSION"),
             },
             "instructions": INSTRUCTIONS,
@@ -310,6 +310,12 @@ impl<C: Control> McpServer<C> {
             .get("name")
             .and_then(Value::as_str)
             .ok_or((INVALID_PARAMS, "missing tool name".to_owned()))?;
+        // `clan_status` was `fleet_status` until 2026-10-13; agents still call it from habit.
+        let name = if name == "fleet_status" {
+            "clan_status"
+        } else {
+            name
+        };
         let args = params.get("arguments").cloned().unwrap_or(Value::Null);
         if !(args.is_null() || args.is_object()) {
             return Err((INVALID_PARAMS, "arguments must be an object".into()));
@@ -349,7 +355,7 @@ impl<C: Control> McpServer<C> {
                 let result = output.structured.clone().unwrap_or_default();
                 self.last_spawn = Some((args.clone(), result));
             }
-            "fleet_status" | "list_agents" if !output.is_error => {
+            "clan_status" | "list_agents" if !output.is_error => {
                 if let Some(path) = self.interrupted.clone() {
                     self.add_interrupted(&path, &mut output);
                 }

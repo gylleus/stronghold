@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Renders Myrstack's app icon and builds packaging/Myrstack.icns with iconutil.
+"""Renders Stronghold's app icon and builds packaging/Stronghold.icns with iconutil.
 
 A golden hexagon (the Queen) with a crown, linked to three ants (the fleet) on a dark rounded
 square. Pure Python, no dependencies: the 1024 px master is rendered with 3x3 supersampling
 and box-filtered down for the smaller iconset sizes.
 
-    scripts/make_icon.py [--out packaging/Myrstack.icns] [--png-dir DIR]
+    scripts/make_icon.py [--out packaging/Stronghold.icns] [--png-dir DIR]
 """
 
 import argparse
@@ -273,7 +273,7 @@ ICONSET = [
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--out", default=os.path.join(root, "packaging", "Myrstack.icns"))
+    parser.add_argument("--out", default=os.path.join(root, "packaging", "Stronghold.icns"))
     parser.add_argument("--png-dir", help="also keep the rendered PNGs here")
     args = parser.parse_args()
 
@@ -285,7 +285,7 @@ def main():
             images[size] = downsample(master, size)
 
     with tempfile.TemporaryDirectory() as tmp:
-        iconset = os.path.join(tmp, "Myrstack.iconset")
+        iconset = os.path.join(tmp, "Stronghold.iconset")
         os.mkdir(iconset)
         for name, size in ICONSET:
             with open(os.path.join(iconset, name), "wb") as f:

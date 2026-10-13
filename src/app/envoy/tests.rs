@@ -418,7 +418,7 @@ fn seed_envoy_panel_fixture() {
     queue
         .create(Draft::proposal(
             "Review the fixture build".into(),
-            Some("myrstack".into()),
+            Some("stronghold".into()),
             "Casey offered to check it.".into(),
             "https://example.slack.com/archives/C123/p1790000000000002".into(),
             now_ms(),

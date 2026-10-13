@@ -10,7 +10,7 @@ The Phosphor font uses the MIT license; its notice and license text are included
 The mine, its scenery and dwarves are drawn in Rust with the cutout and pixel renderers
 in `src/ui/dwarf/` and `src/ui/farm/`, with one generated asset:
 
-- `art/tools/cleanup_hammer.png`: generated for Myrstack with OpenAI's built-in image
+- `art/tools/cleanup_hammer.png`: generated for Stronghold with OpenAI's built-in image
   generation tool on 2026-10-13, using no reference image. The exact prompt is in
   `docs/assets/prompts/cleanup-hammer.txt`. The app downsamples it and maps its colours
   at texture creation. No third-party source artwork is bundled.
