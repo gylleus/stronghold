@@ -1427,27 +1427,14 @@ impl MyrstackApp {
 
     /// Why `handle` can't take typed input now, or `None` when it can.
     fn target_blocked(&self, handle: &str) -> Option<&'static str> {
-        let Some(terminal) = self.data.as_ref().and_then(|d| d.terminal(handle)) else {
-            return Some("terminal not listed");
-        };
-        let idle = self.snapshot.as_ref().is_some_and(|s| {
-            s.nodes.iter().any(|n| {
-                n.terminal_handle.as_deref() == Some(handle)
-                    && n.live
-                    && n.state == crate::model::NodeState::Idle
-            })
-        });
-        if !idle {
-            return Some("not idle");
-        }
-        if self.input.text_pending(handle)
-            || self.control.typing_pending(handle)
-            || !self.input.draft(handle).is_empty()
-        {
-            return Some("input pending");
-        }
-        let composer = self.data.as_ref().and_then(|d| d.screen_composer(handle));
-        (!can_forward(terminal, true, false, composer)).then_some("no empty agent prompt")
+        target_blocked(
+            self.data.as_ref(),
+            self.snapshot.as_ref(),
+            handle,
+            self.input.text_pending(handle)
+                || self.control.typing_pending(handle)
+                || !self.input.draft(handle).is_empty(),
+        )
     }
 
     fn forward_envoy(&mut self) {
@@ -1611,6 +1598,33 @@ fn apply_approval(
             Err(error)
         }
     }
+}
+
+/// Why a terminal cannot accept a queued event batch.
+fn target_blocked(
+    data: Option<&crate::clan::ClanData>,
+    snapshot: Option<&crate::model::ClanSnapshot>,
+    handle: &str,
+    input_pending: bool,
+) -> Option<&'static str> {
+    let Some(terminal) = data.and_then(|d| d.terminal(handle)) else {
+        return Some("terminal not listed");
+    };
+    let idle = snapshot.is_some_and(|s| {
+        s.nodes.iter().any(|n| {
+            n.terminal_handle.as_deref() == Some(handle)
+                && n.live
+                && n.state == crate::model::NodeState::Idle
+        })
+    });
+    if !idle {
+        return Some("not idle");
+    }
+    if input_pending {
+        return Some("input pending");
+    }
+    let composer = data.and_then(|d| d.screen_composer(handle));
+    (!can_forward(terminal, true, false, composer)).then_some("no empty agent prompt")
 }
 
 /// Whether typed text would land in the agent's empty composer. `composer` is the sampled

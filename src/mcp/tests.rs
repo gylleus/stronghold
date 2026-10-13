@@ -2524,3 +2524,29 @@ fn tool_calls_on_agents_emit_one_beam_each() {
     // Emitting is not a call: the app's replies are untouched.
     assert!(!server.control().calls.iter().any(|(m, _)| m == "tool_call"));
 }
+
+#[test]
+fn ask_karl_tells_envoy_to_keep_taking_batches_and_preserves_unmatched_guidance() {
+    for nonblocking in [true, false] {
+        let reply = json!({
+            "outcome": "delivered", "id": 9, "severity": "warn", "quiet": false,
+            "delivery": {"native": true, "in_app": true, "sound": false},
+            "waiting": false, "nonblocking": nonblocking,
+        });
+        let mut server = agent_server(FakeControl::default().reply("ask", Ok(reply)));
+        let r = call(
+            &mut server,
+            "ask_karl",
+            json!({"question": "Should tartine go live?"}),
+        );
+        assert!(!is_error(&r), "{r}");
+        let t = text(&r);
+        assert_eq!(t.contains("Keep taking batches"), nonblocking, "{t}");
+        assert_eq!(
+            t.contains("couldn't match you to a terminal"),
+            !nonblocking,
+            "{t}"
+        );
+        assert!(!t.contains("End your turn now"), "{t}");
+    }
+}

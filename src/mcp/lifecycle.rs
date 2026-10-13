@@ -26,6 +26,8 @@ question first, then end your turn. Myrstack only sees prompts and menus on your
 question in the chat reaches Karl only through ask_karl (Myrstack also flags a turn that ends \
 on a question, as a backstop). Don't use it for permission prompts or AskUserQuestion menus \
 (already detected) or for status; workers under a coordinator ask their coordinator instead. \
+Envoy exception: ask_karl puts the question in Karl's inbox and notifies him, but never marks \
+the Envoy needs input. Keep taking batches while he decides; he can answer in your terminal. \
 Done: when you think you're done, don't close yourself: Karl often has follow-ups or feedback. \
 Call ask_karl (severity info) with \"Done: <one line>. Anything else, or can I close?\" (that is \
 your handover; put the PR in url) and stay. Call finish_session only once Karl says you can go \
@@ -51,6 +53,8 @@ pub fn definitions() -> Vec<Value> {
                 "Asks Karl, the human who runs this clan, a question you are waiting on, \
                  through Myrstack (his clan dashboard): he gets a notification with the \
                  question, and your node shows needs input until he answers in your terminal. \
+                 Envoy exception: the question goes to Karl's inbox without marking needs input; \
+                 keep taking batches while he decides. He can still answer in your terminal. \
                  Call it whenever you are about to end your turn waiting for his answer to a \
                  plain-text question (a decision, a go-ahead, a missing fact), then end your \
                  turn; don't keep working on anything that depends on the answer. Without it \
@@ -206,6 +210,12 @@ fn ask_karl(control: &mut dyn Control, origin: &Origin, args: &Value) -> ToolOut
         text.push_str(
             " Your node shows needs input until Karl answers. End your turn now and wait for \
              his reply; don't act on what the answer decides.",
+        );
+    } else if reply["nonblocking"] == true {
+        text.push_str(
+            " This Envoy question does not mark your node needs input. Keep taking batches \
+             while Karl decides; he can answer in your terminal. Don't act on what the answer \
+             decides until he replies.",
         );
     } else {
         text.push_str(

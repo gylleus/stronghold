@@ -1144,6 +1144,7 @@ impl eframe::App for MyrstackApp {
                 &self.whip_status.escalated,
                 now,
             );
+            snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_status());
             self.asks.prune(data, self.claude_data.as_ref());
             snapshot.mark_waiting(&self.asks.waiting(data, self.claude_data.as_ref()));
             self.finished.prune(now, crate::model::RELEASED_FADE_MS);
@@ -1156,7 +1157,6 @@ impl eframe::App for MyrstackApp {
                 );
             }
             snapshot.mark_parked(self.parking.entries());
-            snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_status());
             self.clan.set_hidden(&self.filter.hidden(&snapshot));
             self.clan.sync(&snapshot);
             if let Some(claude) = &self.claude_data {

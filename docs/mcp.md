@@ -105,6 +105,14 @@ session whose last turn ended (`stop_reason: end_turn`) on a line ending in `?` 
 last four lines also shows needs input, until the next prompt (`src/claude/turns.rs`,
 `src/ask.rs`). Waiting nodes are not nudged by the whip.
 
+The Envoy is the exception: its questions still enter Karl's inbox and notify him, with the
+same terminal target and thread link, but never mark its node needs input. Its `ask` reply
+reports `waiting: false, nonblocking: true`; unmatched callers also have `waiting: false`
+but `nonblocking: false`. Neither explicit asks nor inferred transcript questions block the
+Envoy's next event batch. Karl can select the question's terminal from his inbox and type
+his answer as a new input whenever he is ready. Real permission prompts, a busy terminal,
+and unsubmitted composer text still block automated delivery.
+
 `finish_session` lets an agent close its own terminal once Karl said it can go. Karl often
 has follow-ups, so an agent that thinks it's done asks him first (`ask_karl`, info: "Done:
 … Anything else, or can I close?") and stays; `approval` (required) is `karl` once he said go,
