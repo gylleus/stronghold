@@ -76,7 +76,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_propose_task",
-            "Queue a proposed task for Karl; approval hands it to the Queen.",
+            "Queue a proposed task for Karl; approval hands it to the King.",
             json!({"summary":string,"repo":string,"why":string,"slack_link":string}),
             vec!["summary", "why", "slack_link"],
         ),

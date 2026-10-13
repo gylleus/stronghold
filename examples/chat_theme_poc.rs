@@ -1,4 +1,4 @@
-//! Theme demo for the Queen chat pane (see UI-INVESTIGATION.md): the real `ui::chat` pane on
+//! Theme demo for the King chat pane (see UI-INVESTIGATION.md): the real `ui::chat` pane on
 //! a scripted transcript, with a "Polished" toggle between stock egui and the app theme
 //! (`ui::theme`). Typing in the input echoes a canned reply.
 //!
@@ -139,7 +139,7 @@ fn reply(t: &mut Transcript, text: &str) {
 /// permission card, system notice.
 fn scripted_transcript() -> Transcript {
     let mut t = Transcript::default();
-    t.push_user("How is the fleet doing? Anything stuck?");
+    t.push_user("How is the clan doing? Anything stuck?");
     for line in [
         r#"{"type":"system","subtype":"init","session_id":"s","model":"claude-test","tools":[]}"#,
         r#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"m1"}},"parent_tool_use_id":null}"#,
@@ -152,7 +152,7 @@ fn scripted_transcript() -> Transcript {
     reply(
         &mut t,
         "<say>Nine working, one stalled. Want me to whip it?</say>\n\n\
-         # Fleet status\n\
+         # Clan status\n\
          **9 working**, 1 stalled: `term:term_1` sits at a permission prompt.\n\n\
          - run alpha: 5/6 tasks done\n\
          - run beta: 4 workers active\n\n\
@@ -165,7 +165,7 @@ fn scripted_transcript() -> Transcript {
         display_name: None,
         input: serde_json::json!({
             "agent": "term:term_1",
-            "text": "Queen: you have been idle 12 minutes; carry on."
+            "text": "King: you have been idle 12 minutes; carry on."
         }),
         tool_use_id: None,
         description: None,

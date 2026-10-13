@@ -16,16 +16,16 @@ pub fn kind_label(kind: NodeKind) -> &'static str {
         NodeKind::Terminal => "terminal",
         NodeKind::Envoy => "envoy",
         NodeKind::Subagent => "subagent",
-        NodeKind::Queen => "queen",
+        NodeKind::King => "king",
     }
 }
 
-/// The kind as the tooltip names it: agent sessions of a task are ants.
-fn ant_kind_label(kind: NodeKind) -> &'static str {
+/// The kind as the tooltip names it: agent sessions of a task are dwarves.
+fn dwarf_kind_label(kind: NodeKind) -> &'static str {
     match kind {
-        NodeKind::Coordinator => "coordinator ant",
-        NodeKind::Worker => "worker ant",
-        NodeKind::Terminal => "ant (loose terminal)",
+        NodeKind::Coordinator => "coordinator dwarf",
+        NodeKind::Worker => "worker dwarf",
+        NodeKind::Terminal => "dwarf (loose terminal)",
         other => kind_label(other),
     }
 }
@@ -74,12 +74,12 @@ pub fn node_tooltip(
 ) {
     ui.set_max_width(420.0);
     ui.label(RichText::new(&node.label).strong());
-    if node.kind == NodeKind::Queen {
-        ui.label(format!("fleet · {}", state_label(node.state)));
+    if node.kind == NodeKind::King {
+        ui.label(format!("clan · {}", state_label(node.state)));
         if let Some(counts) = &node.preview {
             ui.label(counts);
         }
-        ui.label(RichText::new("Click for the fleet summary and broadcast").weak());
+        ui.label(RichText::new("Click for the clan summary and broadcast").weak());
         return;
     }
     ui.label(crate::ui::icons::with_icon(
@@ -87,7 +87,7 @@ pub fn node_tooltip(
         crate::ui::icons::kind_icon(node.kind),
         &format!(
             "{} · {}",
-            ant_kind_label(node.kind),
+            dwarf_kind_label(node.kind),
             state_label(node.state)
         ),
         TextStyle::Body,

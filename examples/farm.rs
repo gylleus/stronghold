@@ -1,19 +1,19 @@
-//! The ant farm on a synthetic fleet of 6 runs, loose terminals and subagents (about 30
+//! The farm on a synthetic clan of 6 runs, loose terminals and subagents (about 30
 //! agents), one of each state, to check how it looks.
 //!
-//! `cargo run --example ant_farm [--light] [--saw] [--trees N] [--shot out.png]`.
+//! `cargo run --example farm [--light] [--saw] [--trees N] [--shot out.png]`.
 //! `--receipt-at-ms 31` freezes a receipt mid-shake; `--reduced-motion` shows its flash.
 //! `--outline fine|regular|bold` chooses ink width.
 //! `--scrying` shows the working rune priest; `--stopped` darkens the rune stone.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
-//! terminals in the resting area; `--ants N` keeps only the first N agents.
+//! terminals in the resting area; `--dwarves N` keeps only the first N agents.
 //! `--taskmasters` shows coordinators in every state, plus a parked coordinator and attendant.
 //! The surface grows a tree per worktree: the
 //! agents' own and a few with nobody in them, or `--trees N` of them; `--saw` runs the worktree
 //! cleanup's chainsaw on one. Every few seconds one worker
-//! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
-//! report, N hatches a new worker, M sends a burst of messages between ants, T toggles the
-//! Queen thinking and X closes a worktree (its tree falls). With `--shot`, it saves a
+//! flips between working and waiting on Karl, so dwarves walk; B broadcasts, S asks for a status
+//! report, N hatches a new worker, M sends a burst of messages between dwarves, T toggles the
+//! King thinking and X closes a worktree (its tree falls). With `--shot`, it saves a
 //! screenshot once settled and another while a worker walks, a new one emerges, a broadcast
 //! ripples, messages fly and a tree falls (`-walk`), then exits.
 //! `--pixels farm|HEIGHT` and `--palette NAME` select dwarf rendering.
@@ -23,16 +23,16 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use myrstack::model::{
-    Edge, EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
+    ClanSnapshot, Edge, EdgeKind, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
 };
 use myrstack::orca::AgentIdentity;
 use myrstack::orca::spawn::Worktree;
 use myrstack::traffic::{AgentMessage, MessageKind};
-use myrstack::ui::ant_farm::art::{ArtSettings, Pixels};
-use myrstack::ui::ant_farm::forest;
-use myrstack::ui::ant_farm::{AntFarmView, Pulse};
+use myrstack::ui::clan_view::ClanView;
 use myrstack::ui::envoy_receipt::ReceiptCue;
-use myrstack::ui::fleet_view::FleetView;
+use myrstack::ui::farm::art::{ArtSettings, Pixels};
+use myrstack::ui::farm::forest;
+use myrstack::ui::farm::{FarmView, Pulse};
 use myrstack::ui::worktrees::WorktreePanel;
 use myrstack::worktrees::SweepMarker;
 
@@ -87,12 +87,12 @@ fn main() -> eframe::Result {
             _ => panic!("--outline fine, regular or bold"),
         },
     };
-    let ants = args
+    let dwarves = args
         .iter()
-        .position(|a| a == "--ants")
-        .map(|i| args[i + 1].parse::<usize>().expect("a number of ants"));
+        .position(|a| a == "--dwarves")
+        .map(|i| args[i + 1].parse::<usize>().expect("a number of dwarves"));
     eframe::run_native(
-        "ant farm",
+        "farm",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default().with_inner_size(WINDOW),
             ..Default::default()
@@ -104,12 +104,12 @@ fn main() -> eframe::Result {
             } else {
                 egui::Theme::Dark
             });
-            let mut snapshot = fleet();
+            let mut snapshot = clan();
             if args.iter().any(|a| a == "--taskmasters") {
                 taskmasters(&mut snapshot);
             }
-            if let Some(n) = ants {
-                keep_ants(&mut snapshot, n);
+            if let Some(n) = dwarves {
+                keep_dwarves(&mut snapshot, n);
             }
             if parked {
                 for name in ["sleepy", "dozy", "napper"] {
@@ -132,26 +132,26 @@ fn main() -> eframe::Result {
                     .unwrap()
                     .state = NodeState::Working;
             }
-            let mut fleet = FleetView::new();
-            fleet.sync(&snapshot);
-            fleet.set_pr_ready(HashSet::from([
+            let mut clan = ClanView::new();
+            clan.sync(&snapshot);
+            clan.set_pr_ready(HashSet::from([
                 id("run0-w1"),
                 id("run2-w2"),
                 id("run4-w0"),
                 id("run5-w5"),
             ]));
-            fleet.set_selected(Some(&id("run2-coord")));
+            clan.set_selected(Some(&id("run2-coord")));
             let saw = saw.map(|data| (WorktreePanel::new(&cc.egui_ctx), data));
             let worktrees = worktrees(&snapshot, trees);
             Ok(Box::new(Demo {
                 snapshot,
-                fleet,
+                clan,
                 farm: {
-                    // As in the app with the Queen's chat showing.
-                    let mut farm = AntFarmView::new();
+                    // As in the app with the King's chat showing.
+                    let mut farm = FarmView::new();
                     farm.set_art(&art);
                     farm.set_reduce_motion(reduced_motion);
-                    farm.set_queen_focused(true);
+                    farm.set_king_focused(true);
                     farm.set_envoy_health(health);
                     if health == myrstack::envoy::EnvoyHealth::AwaitingApproval {
                         farm.set_envoy_pending(2);
@@ -173,9 +173,9 @@ fn main() -> eframe::Result {
 }
 
 struct Demo {
-    snapshot: FleetSnapshot,
-    fleet: FleetView,
-    farm: AntFarmView,
+    snapshot: ClanSnapshot,
+    clan: ClanView,
+    farm: FarmView,
     shot: Option<String>,
     receipt_at_ms: Option<i64>,
     reduced_motion: bool,
@@ -192,7 +192,7 @@ struct Demo {
 
 /// Worktrees for the coordinators' and loose terminals' own, then empty ones up to `count`
 /// (four empty ones by default).
-fn worktrees(snapshot: &FleetSnapshot, count: Option<usize>) -> Vec<Worktree> {
+fn worktrees(snapshot: &ClanSnapshot, count: Option<usize>) -> Vec<Worktree> {
     let mut out: Vec<Worktree> = snapshot
         .nodes
         .iter()
@@ -220,7 +220,7 @@ fn worktrees(snapshot: &FleetSnapshot, count: Option<usize>) -> Vec<Worktree> {
 /// Names for worktrees nobody works in any more.
 const STALE: [&str; 6] = [
     "graph-trackpad-pan",
-    "ant-farm-view",
+    "farm-view",
     "recs-pool-dedupe",
     "docs-recs-custom-css",
     "serving-field",
@@ -237,7 +237,7 @@ fn worktree(path: &str) -> Worktree {
     }
 }
 
-/// A running sweep's marker in a temporary data dir, as when the Queen runs `clean_worktrees`.
+/// A running sweep's marker in a temporary data dir, as when the King runs `clean_worktrees`.
 fn sweep_marker() -> tempfile::TempDir {
     let data = tempfile::tempdir().expect("temp dir");
     // SAFETY: set before any thread starts.
@@ -262,7 +262,7 @@ fn sweep_marker() -> tempfile::TempDir {
 }
 
 impl Demo {
-    /// A new worker in run 2, emerging from the Queen.
+    /// A new worker in run 2, emerging from the King.
     fn hatch(&mut self) {
         let n = self.snapshot.nodes.len();
         let mut worker = node(
@@ -274,7 +274,7 @@ impl Demo {
         );
         worker.label = "Fresh hatchling".into();
         self.snapshot.nodes.push(worker);
-        self.fleet.sync(&self.snapshot);
+        self.clan.sync(&self.snapshot);
     }
 
     /// One message of each kind, plus a repeat that joins its envelope.
@@ -283,19 +283,19 @@ impl Demo {
             ("run0-w1", "run0-coord", MessageKind::MergeReady),
             ("run2-w2", "run2-coord", MessageKind::Ask),
             ("run2-w2", "run2-coord", MessageKind::Ask),
-            ("queen", "run1-coord", MessageKind::Instruction),
-            ("karl", "queen", MessageKind::Instruction),
+            ("king", "run1-coord", MessageKind::Instruction),
+            ("karl", "king", MessageKind::Instruction),
             ("slack", "shop-1", MessageKind::Relay),
             ("slack", "envoy", MessageKind::Relay),
             ("envoy", "slack", MessageKind::Message),
-            ("queen", "run3-w1", MessageKind::Nudge),
+            ("king", "run3-w1", MessageKind::Nudge),
             ("shop-2", "karl", MessageKind::Status),
             ("run4-coord", "run5-coord", MessageKind::Message),
         ] {
             let message = AgentMessage::new(from, to, kind);
             let flight = message
                 .resolve(&self.snapshot)
-                .expect("both ends in the fleet");
+                .expect("both ends in the clan");
             self.farm.message(flight, now_s, self.reduced_motion);
         }
     }
@@ -316,7 +316,7 @@ impl Demo {
             NodeState::Working => NodeState::NeedsInput,
             _ => NodeState::Working,
         };
-        self.fleet.sync(&self.snapshot);
+        self.clan.sync(&self.snapshot);
         self.flipped_at = Instant::now();
     }
 
@@ -355,9 +355,9 @@ impl eframe::App for Demo {
                 });
                 self.farm
                     .set_forest(forest::groves(&self.worktrees, &self.snapshot.nodes), saw);
-                let response = self.farm.show(ui, &self.snapshot, &mut self.fleet);
+                let response = self.farm.show(ui, &self.snapshot, &mut self.clan);
                 if let Some(id) = &response.clicked {
-                    self.fleet.click_node(id, false);
+                    self.clan.click_node(id, false);
                 }
             });
         if self.shot.is_none() {
@@ -382,7 +382,7 @@ impl eframe::App for Demo {
             }
             if t {
                 self.thinking = !self.thinking;
-                self.farm.set_queen_busy(self.thinking);
+                self.farm.set_king_busy(self.thinking);
             }
             if b {
                 self.farm.pulse(Pulse::Broadcast);
@@ -467,7 +467,7 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState, repo: &
         run_id: run.map(str::to_string),
         task_id: None,
         dispatch_id: None,
-        agent: if matches!(kind, NodeKind::Queen | NodeKind::Envoy) {
+        agent: if matches!(kind, NodeKind::King | NodeKind::Envoy) {
             None
         } else if myrstack::ui::dwarf::seed_of(name).is_multiple_of(2) {
             Some(AgentIdentity::Claude)
@@ -487,11 +487,11 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState, repo: &
     }
 }
 
-/// Keeps the Envoy, the Queen and the first `n` other agents of `s`.
-fn keep_ants(s: &mut FleetSnapshot, n: usize) {
+/// Keeps the Envoy, the King and the first `n` other agents of `s`.
+fn keep_dwarves(s: &mut ClanSnapshot, n: usize) {
     let mut kept = 0;
     s.nodes.retain(|node| {
-        if matches!(node.kind, NodeKind::Queen | NodeKind::Envoy) {
+        if matches!(node.kind, NodeKind::King | NodeKind::Envoy) {
             return true;
         }
         kept += 1;
@@ -502,7 +502,7 @@ fn keep_ants(s: &mut FleetSnapshot, n: usize) {
         .retain(|e| ids.contains(&e.from) && ids.contains(&e.to));
 }
 
-fn taskmasters(s: &mut FleetSnapshot) {
+fn taskmasters(s: &mut ClanSnapshot) {
     let states = [
         NodeState::Working,
         NodeState::Idle,
@@ -537,17 +537,17 @@ fn taskmasters(s: &mut FleetSnapshot) {
     ));
 }
 
-/// The Queen, 6 runs of a coordinator and 3–5 workers, loose terminals in two repos, and
+/// The King, 6 runs of a coordinator and 3–5 workers, loose terminals in two repos, and
 /// subagents under a worker and a terminal.
-fn fleet() -> FleetSnapshot {
-    let mut s = FleetSnapshot::default();
+fn clan() -> ClanSnapshot {
+    let mut s = ClanSnapshot::default();
     let mut envoy = node("envoy", NodeKind::Envoy, None, NodeState::Idle, "myrstack");
     envoy.label = "Envoy · listening".into();
     s.nodes.push(envoy);
     s.nodes
-        .push(node("queen", NodeKind::Queen, None, NodeState::Working, ""));
+        .push(node("king", NodeKind::King, None, NodeState::Working, ""));
     let objectives = [
-        "Ant farm view",
+        "Farm view",
         "Checkout latency",
         "Search reranker eval",
         "Billing migration",

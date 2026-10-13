@@ -1,17 +1,17 @@
-//! The Queen's details column (fleet summary: state counts, runs, nodes needing input or
-//! stalled, whip status, plan quotas; and the broadcast composer) and the top bar's Queen
-//! quick actions. Her chat has the conversation column to itself.
+//! The King's details column (clan summary: state counts, runs, nodes needing input or
+//! stalled, whip status, plan quotas; and the broadcast composer) and the top bar's King
+//! quick actions. His chat has the conversation column to itself.
 
 use std::collections::BTreeMap;
 
 use eframe::egui::{self, RichText, Ui};
 
 use crate::broadcast::BroadcastSender;
-use crate::model::{FleetSnapshot, NodeId, NodeKind, NodeState};
+use crate::model::{ClanSnapshot, NodeId, NodeKind, NodeState};
 use crate::playbook::fetches::PlaybookStatus;
 use crate::quota::Quotas;
 use crate::ui::broadcast::BroadcastComposer;
-use crate::ui::fleet_view::{ALL_STATES, kind_label, queen_color, state_color, state_label};
+use crate::ui::clan_view::{ALL_STATES, kind_label, king_color, state_color, state_label};
 use crate::ui::icons;
 use crate::ui::sidebar::run_rows;
 use crate::whip::WhipStatus;
@@ -34,9 +34,9 @@ pub struct RunLine {
     pub coordinator_state: Option<NodeState>,
 }
 
-/// What the Queen's details show of a snapshot. The queen itself is not counted.
+/// What the King's details show of a snapshot. The king itself is not counted.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct FleetSummary {
+pub struct ClanSummary {
     pub states: BTreeMap<NodeState, usize>,
     pub coordinators: usize,
     pub agents: usize,
@@ -46,8 +46,8 @@ pub struct FleetSummary {
     pub stalled: Vec<SummaryRow>,
 }
 
-impl FleetSummary {
-    pub fn new(snapshot: &FleetSnapshot) -> Self {
+impl ClanSummary {
+    pub fn new(snapshot: &ClanSnapshot) -> Self {
         let mut summary = Self::default();
         for node in snapshot.agent_nodes() {
             *summary.states.entry(node.state).or_insert(0) += 1;
@@ -77,18 +77,18 @@ impl FleetSummary {
     }
 }
 
-/// The queen panel's state: the broadcast draft lives here across selections.
+/// The king panel's state: the broadcast draft lives here across selections.
 #[derive(Default)]
-pub struct QueenPanel {
+pub struct KingPanel {
     pub broadcast: BroadcastComposer,
     /// Expand the broadcast section on the next frame (the palette's "Broadcast…").
     pub open_broadcast: bool,
 }
 
 /// What the panel reads each frame.
-pub struct QueenInputs<'a> {
+pub struct KingInputs<'a> {
     /// `None` until the first poll.
-    pub snapshot: Option<&'a FleetSnapshot>,
+    pub snapshot: Option<&'a ClanSnapshot>,
     pub whip: &'a WhipStatus,
     pub quotas: &'a Quotas,
     pub now_ms: i64,
@@ -98,7 +98,7 @@ pub struct QueenInputs<'a> {
 
 /// What the user did in the panel this frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct QueenResponse {
+pub struct KingResponse {
     /// A node to select (a run's coordinator, or a row of the needs-input/stalled lists).
     pub select: Option<NodeId>,
     /// The close button was clicked.
@@ -112,21 +112,21 @@ pub fn envoy_drafts_button(ui: &mut Ui, pending: usize) -> bool {
     ui.button(format!("Envoy inbox ({pending})")).clicked()
 }
 
-/// Draws the Queen's details: her header with the fleet counts, then the fleet summary and the
+/// Draws the King's details: his header with the clan counts, then the clan summary and the
 /// broadcast composer as collapsible sections. `make_sender` is called once, when the user
 /// confirms a broadcast.
-pub fn queen_details(
+pub fn king_details(
     ui: &mut Ui,
-    panel: &mut QueenPanel,
-    inputs: QueenInputs<'_>,
+    panel: &mut KingPanel,
+    inputs: KingInputs<'_>,
     make_sender: impl FnOnce() -> Box<dyn BroadcastSender>,
-) -> QueenResponse {
-    let mut response = QueenResponse::default();
-    let summary = inputs.snapshot.map(FleetSummary::new).unwrap_or_default();
+) -> KingResponse {
+    let mut response = KingResponse::default();
+    let summary = inputs.snapshot.map(ClanSummary::new).unwrap_or_default();
     let dark = ui.visuals().dark_mode;
-    let fleet = inputs
+    let clan = inputs
         .snapshot
-        .and_then(FleetSnapshot::queen)
+        .and_then(ClanSnapshot::king)
         .map_or(NodeState::Idle, |q| q.state);
 
     ui.horizontal(|ui| {
@@ -139,20 +139,24 @@ pub fn queen_details(
                 response.close = true;
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                queen_badge(ui, fleet, dark);
-                ui.label(RichText::new("Queen").strong());
-                ui.label(RichText::new(state_label(fleet)).color(state_color(fleet, dark)))
-                    .on_hover_text("The most urgent state in the fleet");
+                king_badge(ui, clan, dark);
+                ui.label(RichText::new("King").strong());
+                ui.label(RichText::new(state_label(clan)).color(state_color(clan, dark)))
+                    .on_hover_text("The most urgent state in the clan");
             });
         });
     });
     ui.horizontal_wrapped(|ui| {
         ui.weak(format!(
-            "{} coordinator{} · {} ant{}",
+            "{} coordinator{} · {} {}",
             summary.coordinators,
             plural(summary.coordinators),
             summary.agents,
-            plural(summary.agents)
+            if summary.agents == 1 {
+                "dwarf"
+            } else {
+                "dwarves"
+            }
         ));
         for state in ALL_STATES {
             let count = summary.states.get(&state).copied().unwrap_or(0);
@@ -169,8 +173,8 @@ pub fn queen_details(
     }
     response.whip_stalled |= crate::ui::whip_now::whip_stalled_button(ui);
 
-    egui::CollapsingHeader::new(RichText::new("Fleet summary").strong())
-        .id_salt("queen_summary")
+    egui::CollapsingHeader::new(RichText::new("Clan summary").strong())
+        .id_salt("king_summary")
         .default_open(true)
         .show(ui, |ui| {
             node_list(ui, "Needs input", &summary.needs_input, &mut response);
@@ -192,7 +196,7 @@ pub fn queen_details(
         });
 
     egui::CollapsingHeader::new(RichText::new("Broadcast to coordinators").strong())
-        .id_salt("queen_broadcast")
+        .id_salt("king_broadcast")
         .default_open(false)
         .open(std::mem::take(&mut panel.open_broadcast).then_some(true))
         .show(ui, |ui| {
@@ -201,37 +205,37 @@ pub fn queen_details(
     response
 }
 
-/// A top-bar quick action on the Queen.
+/// A top-bar quick action on the King.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QueenQuickAction {
-    /// Select the Queen and put the cursor in her chat.
+pub enum KingQuickAction {
+    /// Select the King and put the cursor in his chat.
     OpenChat,
-    /// Ask her for a status report.
+    /// Ask him for a status report.
     StatusReport,
 }
 
-/// The top bar's Queen and Status report buttons. `status_disabled` is why a status report
+/// The top bar's King and Status report buttons. `status_disabled` is why a status report
 /// cannot be asked for now (the chat is busy or not ready), if so.
-pub fn quick_actions(ui: &mut Ui, status_disabled: Option<&str>) -> Option<QueenQuickAction> {
+pub fn quick_actions(ui: &mut Ui, status_disabled: Option<&str>) -> Option<KingQuickAction> {
     let mut action = None;
     let dark = ui.visuals().dark_mode;
-    let avatar = crate::ui::art::queen_avatar(
+    let avatar = crate::ui::art::king_avatar(
         ui.ctx(),
         ui.text_style_height(&egui::TextStyle::Button) + 2.0,
     );
-    let queen = egui::Button::image_and_text(
+    let king = egui::Button::image_and_text(
         avatar,
-        RichText::new("Queen")
+        RichText::new("King")
             .strong()
             .color(ui.visuals().extreme_bg_color),
     )
-    .fill(queen_color(dark));
+    .fill(king_color(dark));
     if ui
-        .add(queen)
-        .on_hover_text("Open the Queen's chat and put the cursor in it (⌘J toggles it)")
+        .add(king)
+        .on_hover_text("Open the King's chat and put the cursor in it (⌘J toggles it)")
         .clicked()
     {
-        action = Some(QueenQuickAction::OpenChat);
+        action = Some(KingQuickAction::OpenChat);
     }
     let status = ui
         .add_enabled(
@@ -239,27 +243,27 @@ pub fn quick_actions(ui: &mut Ui, status_disabled: Option<&str>) -> Option<Queen
             egui::Button::new("Status report"),
         )
         .on_hover_text(format!(
-            "Ask the Queen \"{}\"",
+            "Ask the King \"{}\"",
             crate::chat::STATUS_REPORT_PROMPT
         ))
         .on_disabled_hover_text(status_disabled.unwrap_or_default());
     if status.clicked() {
-        action = Some(QueenQuickAction::StatusReport);
+        action = Some(KingQuickAction::StatusReport);
     }
     action
 }
 
-/// The Queen's avatar with a dot in the fleet state's colour.
-fn queen_badge(ui: &mut Ui, fleet: NodeState, dark: bool) {
-    let rect = ui.add(crate::ui::art::queen_avatar(ui.ctx(), 28.0)).rect;
+/// The King's avatar with a dot in the clan state's colour.
+fn king_badge(ui: &mut Ui, clan: NodeState, dark: bool) {
+    let rect = ui.add(crate::ui::art::king_avatar(ui.ctx(), 28.0)).rect;
     let center = rect.center() + egui::vec2(10.0, -10.0);
     let painter = ui.painter();
     painter.circle_filled(center, 5.0, ui.visuals().panel_fill);
-    painter.circle_filled(center, 3.5, state_color(fleet, dark));
+    painter.circle_filled(center, 3.5, state_color(clan, dark));
 }
 
 /// A titled list of nodes whose rows select their node; nothing when empty.
-fn node_list(ui: &mut Ui, title: &str, rows: &[SummaryRow], response: &mut QueenResponse) {
+fn node_list(ui: &mut Ui, title: &str, rows: &[SummaryRow], response: &mut KingResponse) {
     if rows.is_empty() {
         return;
     }
@@ -284,7 +288,7 @@ fn node_list(ui: &mut Ui, title: &str, rows: &[SummaryRow], response: &mut Queen
     ui.add_space(4.0);
 }
 
-fn runs_section(ui: &mut Ui, runs: &[RunLine], dark: bool, response: &mut QueenResponse) {
+fn runs_section(ui: &mut Ui, runs: &[RunLine], dark: bool, response: &mut KingResponse) {
     ui.label(RichText::new(format!("Runs ({})", runs.len())).strong());
     if runs.is_empty() {
         ui.weak("No active runs");
@@ -323,19 +327,19 @@ fn plural(n: usize) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fleet::FleetData;
+    use crate::clan::ClanData;
     use crate::orca::{OutgoingMessage, Run, Terminal};
 
     struct NeverSender;
 
     impl BroadcastSender for NeverSender {
         fn send(&mut self, _: &OutgoingMessage) -> Result<Option<String>, String> {
-            panic!("the queen panel test never confirms a send");
+            panic!("the king panel test never confirms a send");
         }
     }
 
-    fn data() -> FleetData {
-        FleetData {
+    fn data() -> ClanData {
+        ClanData {
             terminals: vec![
                 Terminal {
                     handle: "c1".into(),
@@ -349,20 +353,20 @@ mod tests {
             ],
             runs: vec![Run {
                 id: "r1".into(),
-                objective: Some("ship the queen".into()),
+                objective: Some("ship the king".into()),
                 coordinator_handle: Some("c1".into()),
                 ..Run::default()
             }],
-            ..FleetData::default()
+            ..ClanData::default()
         }
     }
 
     #[test]
-    fn summary_counts_agents_not_the_queen() {
-        let mut snapshot = FleetSnapshot::build(&data(), 0);
+    fn summary_counts_agents_not_the_king() {
+        let mut snapshot = ClanSnapshot::build(&data(), 0);
         snapshot.nodes[1].state = NodeState::NeedsInput;
         snapshot.nodes[0].state = NodeState::Stalled;
-        let summary = FleetSummary::new(&snapshot);
+        let summary = ClanSummary::new(&snapshot);
         assert_eq!(summary.agents, 2);
         assert_eq!(summary.coordinators, 1);
         assert_eq!(summary.states.values().sum::<usize>(), 2);
@@ -370,24 +374,24 @@ mod tests {
         assert_eq!(summary.needs_input[0].id, NodeId::terminal("loose"));
         assert_eq!(summary.stalled[0].id, NodeId::terminal("c1"));
         assert_eq!(summary.runs.len(), 1);
-        assert_eq!(summary.runs[0].title, "ship the queen");
+        assert_eq!(summary.runs[0].title, "ship the king");
         assert_eq!(summary.runs[0].coordinator, Some(NodeId::terminal("c1")));
     }
 
     #[test]
     fn whip_all_stalled_button_is_reported() {
-        let snapshot = FleetSnapshot::build(&data(), 0);
-        let mut panel = QueenPanel::default();
+        let snapshot = ClanSnapshot::build(&data(), 0);
+        let mut panel = KingPanel::default();
         let (whip, quotas) = (WhipStatus::default(), Quotas::default());
         let response = crate::ui::test_util::click_label("Whip all stalled now", |ui| {
-            let inputs = QueenInputs {
+            let inputs = KingInputs {
                 snapshot: Some(&snapshot),
                 whip: &whip,
                 quotas: &quotas,
                 now_ms: 0,
                 playbook: None,
             };
-            queen_details(ui, &mut panel, inputs, || Box::new(NeverSender))
+            king_details(ui, &mut panel, inputs, || Box::new(NeverSender))
         });
         assert!(response.whip_stalled);
     }
@@ -395,18 +399,18 @@ mod tests {
     /// Draws the panel headlessly for a few frames with a sender that must never be used.
     #[test]
     fn panel_draws_headless_without_sending() {
-        let mut snapshot = FleetSnapshot::build(&data(), 0);
+        let mut snapshot = ClanSnapshot::build(&data(), 0);
         snapshot.nodes[1].state = NodeState::NeedsInput;
-        let mut panel = QueenPanel::default();
+        let mut panel = KingPanel::default();
         let whip = WhipStatus::default();
         let quotas = Quotas::default();
         let ctx = egui::Context::default();
         for _ in 0..3 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                let response = queen_details(
+                let response = king_details(
                     ui,
                     &mut panel,
-                    QueenInputs {
+                    KingInputs {
                         snapshot: Some(&snapshot),
                         whip: &whip,
                         quotas: &quotas,
@@ -415,7 +419,7 @@ mod tests {
                     },
                     || Box::new(NeverSender),
                 );
-                assert_eq!(response, QueenResponse::default());
+                assert_eq!(response, KingResponse::default());
             });
             output.textures_delta.clear();
         }
@@ -425,17 +429,17 @@ mod tests {
     fn quick_actions_open_the_chat_and_ask_for_a_report() {
         let clicked =
             |label| crate::ui::test_util::click_label(label, |ui| quick_actions(ui, None));
-        assert_eq!(clicked("Queen"), Some(QueenQuickAction::OpenChat));
+        assert_eq!(clicked("King"), Some(KingQuickAction::OpenChat));
         assert_eq!(
             clicked("Status report"),
-            Some(QueenQuickAction::StatusReport)
+            Some(KingQuickAction::StatusReport)
         );
     }
 
     #[test]
     fn status_report_is_disabled_while_the_chat_is_busy() {
         let action = crate::ui::test_util::click_label("Status report", |ui| {
-            quick_actions(ui, Some("The Queen's chat is busy or not ready"))
+            quick_actions(ui, Some("The King's chat is busy or not ready"))
         });
         assert_eq!(action, None);
     }

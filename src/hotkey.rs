@@ -1,5 +1,5 @@
 //! System-wide hotkeys: one brings the Myrstack window to the front, the other (optional,
-//! configurable) is held to talk to the Queen ([`TalkKey`] press and release).
+//! configurable) is held to talk to the King ([`TalkKey`] press and release).
 //!
 //! The hotkey fires while another app has focus. Its event handler forwards the event
 //! to a channel and wakes egui, so [`Hotkey::poll`] runs even when the app is idle,
@@ -36,7 +36,7 @@ pub enum HotkeyAction {
     Ignore,
 }
 
-/// The talk-to-the-Queen hotkey went down or up.
+/// The talk-to-the-King hotkey went down or up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TalkKey {
     Press,

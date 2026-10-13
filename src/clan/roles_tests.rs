@@ -43,13 +43,13 @@ fn forward(target: &str, at: i64) -> Forward {
 }
 
 /// A run declared by DECLARED, with WORKER dispatched, COORD and OTHER live and no evidence.
-fn base() -> FleetData {
+fn base() -> ClanData {
     let worker: Worker = serde_json::from_value(json!({
         "dispatchId": "ctx_1", "runId": RUN, "agentTerminalHandle": WORKER,
         "dispatchStatus": "dispatched",
     }))
     .unwrap();
-    FleetData {
+    ClanData {
         terminals: vec![
             terminal(DECLARED, "✳ run brief"),
             terminal(COORD, "✳ wave coordinator"),
@@ -67,7 +67,7 @@ fn base() -> FleetData {
     }
 }
 
-fn roles(data: &FleetData) -> RunRoles {
+fn roles(data: &ClanData) -> RunRoles {
     data.run_roles(RUN)
 }
 
@@ -339,19 +339,19 @@ fn dead_declared_keeps_the_rebound_fallback() {
 #[ignore]
 fn live_run_roles() {
     use crate::orca::OrcaClient;
-    use crate::poller::{ACTIVE_RUN_WINDOW, FleetSource, active_run_ids};
+    use crate::poller::{ACTIVE_RUN_WINDOW, ClanSource, active_run_ids};
 
     let client = OrcaClient::new();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64;
-    let mut data = FleetData {
+    let mut data = ClanData {
         polled_at_ms: now,
-        terminals: FleetSource::terminals(&client).unwrap(),
-        runs: FleetSource::runs(&client).unwrap(),
-        workers: FleetSource::workers(&client).unwrap(),
-        inbox: FleetSource::inbox(&client, 300).unwrap(),
+        terminals: ClanSource::terminals(&client).unwrap(),
+        runs: ClanSource::runs(&client).unwrap(),
+        workers: ClanSource::workers(&client).unwrap(),
+        inbox: ClanSource::inbox(&client, 300).unwrap(),
         ..Default::default()
     };
     let active = active_run_ids(
@@ -363,7 +363,7 @@ fn live_run_roles() {
     );
     for run_id in &active {
         data.tasks
-            .insert(run_id.clone(), FleetSource::tasks(&client, run_id).unwrap());
+            .insert(run_id.clone(), ClanSource::tasks(&client, run_id).unwrap());
     }
     data.forwards = crate::claude::forwards::read_forwards(&data);
 

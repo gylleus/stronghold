@@ -21,7 +21,7 @@ use crate::model::{Node, NodeId};
 use crate::orca::{OrcaClient, TerminalInput};
 use crate::poller::PollerCommand;
 use crate::traffic::{AgentMessage, MessageKind};
-use crate::ui::sidebar::FleetFilter;
+use crate::ui::sidebar::ClanFilter;
 use crate::whip::WhipSettings;
 
 /// The control server, the published view and commands in flight.
@@ -65,10 +65,10 @@ struct Fingerprint {
     alerts: u64,
     selected: Option<NodeId>,
     selection: BTreeSet<NodeId>,
-    filter: FleetFilter,
+    filter: ClanFilter,
     whip_window_open: bool,
     playbook: u64,
-    queen_auto: bool,
+    king_auto: bool,
     health: u64,
 }
 
@@ -122,11 +122,11 @@ impl MyrstackApp {
             quotas_at_ms: self.quotas.fetched_at_ms,
             alerts: self.notifications.generation(),
             selected: self.selected.clone(),
-            selection: self.fleet.selection(),
+            selection: self.clan.selection(),
             filter: self.filter.clone(),
             whip_window_open: self.whip_window.open,
             playbook: self.playbook_watch.generation,
-            queen_auto: self.chat.auto_mode(),
+            king_auto: self.chat.auto_mode(),
             health: self.health.generation,
         }
     }
@@ -155,7 +155,7 @@ impl MyrstackApp {
         if let Some(status) = self.playbook_status() {
             view.playbook = status.view();
         }
-        view.queen_auto = self.chat.auto_mode();
+        view.king_auto = self.chat.auto_mode();
         view.health = self.health.report.clone();
         self.control.status.publish(view);
         self.control.published = Some(fingerprint);
@@ -241,9 +241,9 @@ impl MyrstackApp {
             } => {
                 let woke = self.wake_for_message(&agent);
                 if !text.is_empty() {
-                    let from = from.unwrap_or_else(|| "queen".into());
+                    let from = from.unwrap_or_else(|| "king".into());
                     let kind = match from.as_str() {
-                        "queen" => MessageKind::Instruction,
+                        "king" => MessageKind::Instruction,
                         _ => MessageKind::Message,
                     };
                     self.traffic
@@ -274,7 +274,7 @@ impl MyrstackApp {
             } => self.control_whip_settings(enabled, dry_run, notify),
             ControlCommand::Select { agent: None } => {
                 self.selected = None;
-                self.fleet.set_selected(None);
+                self.clan.set_selected(None);
                 Ok(json!({ "selected": null }))
             }
             ControlCommand::SelectMany { agents } => self.control_select_many(&agents),
@@ -282,7 +282,7 @@ impl MyrstackApp {
                 .control_node(&agent)
                 .map(|node| node.id.clone())
                 .map(|id| {
-                    self.fleet.set_selected(Some(&id));
+                    self.clan.set_selected(Some(&id));
                     self.selected = Some(id.clone());
                     json!({ "selected": id })
                 }),
@@ -290,7 +290,7 @@ impl MyrstackApp {
                 .control_node(&agent)
                 .map(|node| node.id.clone())
                 .map(|id| {
-                    let hidden = self.fleet.hidden().contains(&id);
+                    let hidden = self.clan.hidden().contains(&id);
                     self.select_and_focus(id.clone());
                     if raise {
                         for cmd in [
@@ -306,9 +306,9 @@ impl MyrstackApp {
             ControlCommand::Filter(change) => {
                 change.apply(&mut self.filter);
                 if let Some(snapshot) = &self.snapshot {
-                    self.fleet.set_hidden(&self.filter.hidden(snapshot));
+                    self.clan.set_hidden(&self.filter.hidden(snapshot));
                 }
-                let empty = crate::model::FleetSnapshot::default();
+                let empty = crate::model::ClanSnapshot::default();
                 let snapshot = self.snapshot.as_ref().unwrap_or(&empty);
                 Ok(json!({ "filter": filter_view(&self.filter, snapshot) }))
             }
@@ -367,21 +367,21 @@ impl MyrstackApp {
                 ids.push(id);
             }
         }
-        let hidden: Vec<&NodeId> = ids.iter().filter(|id| !self.fleet.is_visible(id)).collect();
+        let hidden: Vec<&NodeId> = ids.iter().filter(|id| !self.clan.is_visible(id)).collect();
         let hidden = json!(hidden);
         let set: BTreeSet<NodeId> = ids.iter().cloned().collect();
-        self.fleet.set_selection(&set, ids.first());
-        self.selected = self.fleet.selected().or_else(|| ids.first().cloned());
+        self.clan.set_selection(&set, ids.first());
+        self.selected = self.clan.selected().or_else(|| ids.first().cloned());
         Ok(json!({
             "selected": self.selected,
-            "selection": self.fleet.selection(),
+            "selection": self.clan.selection(),
             "hidden_by_filter": hidden,
         }))
     }
 
     pub(super) fn control_node(&self, key: &str) -> Result<&Node, ControlError> {
         let snapshot = self.snapshot.as_ref().ok_or_else(|| {
-            ControlError::new(ErrorCode::Unavailable, "the app has no fleet data yet")
+            ControlError::new(ErrorCode::Unavailable, "the app has no clan data yet")
         })?;
         let view = self.control.status.current();
         let id = view
@@ -436,7 +436,7 @@ impl MyrstackApp {
         reply: Reply,
     ) -> Result<(), ControlError> {
         let Some(snapshot) = &self.snapshot else {
-            let e = ControlError::new(ErrorCode::Unavailable, "the app has no fleet data yet");
+            let e = ControlError::new(ErrorCode::Unavailable, "the app has no clan data yet");
             reply.send(Err(e.clone()));
             return Err(e);
         };
@@ -459,7 +459,7 @@ impl MyrstackApp {
             reply.send(Err(e.clone()));
             return Err(e);
         }
-        self.ant_farm.pulse(crate::ui::ant_farm::Pulse::Broadcast);
+        self.farm.pulse(crate::ui::farm::Pulse::Broadcast);
         let spawned = std::thread::Builder::new()
             .name("control-broadcast".into())
             .spawn(move || {
@@ -603,7 +603,7 @@ impl MyrstackApp {
             .map(|a| self.control_node(a))
             .collect::<Result<Vec<&Node>, _>>()?;
         let snapshot = self.snapshot.as_ref().ok_or_else(|| {
-            ControlError::new(ErrorCode::Unavailable, "the app has no fleet data yet")
+            ControlError::new(ErrorCode::Unavailable, "the app has no clan data yet")
         })?;
         let terminals = self.data.as_ref().map_or(&[][..], |d| &d.terminals[..]);
         let opts = CloseOptions { whole_tab };

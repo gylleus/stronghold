@@ -146,7 +146,7 @@ coordinator terminal for that Run's new `worker_done`, `merge_ready`,
 `question` and `escalation` messages, and for each failed-but-alive task:
 
 ```
-Fleet event: worker_done from fix-login: PR open — msg msg_1. Read in full with `orca orchestration check --run run_1 --all`.
+Clan event: worker_done from fix-login: PR open — msg msg_1. Read in full with `orca orchestration check --run run_1 --all`.
 ```
 
 - Heartbeats, `status` messages, rejected messages and the coordinator's own
@@ -171,21 +171,21 @@ attributes a message to whichever terminal has focus. Orca's runtime takes
 any string as `--from`, so Myrstack always passes one:
 
 - `myrstack-whip`: whip nudges.
-- `queen`: messages Karl broadcasts from Myrstack's Queen node. Their text
-  starts with `Queen:`.
+- `king`: messages Karl broadcasts from Myrstack's King node. Their text
+  starts with `King:`.
 
 These are not mailboxes. `orca orchestration reply` to them fails with
 `terminal_not_found`; act on the nudge or message the coordinator/Run
 instead. The whip's terminal-input fallback carries no sender; its text
 starts with `Myrstack:`.
 
-## The Queen speaks for Karl
+## The King speaks for Karl
 
-A bus message from `queen` whose text starts with `Queen:` is Karl giving an
-instruction through Myrstack's Queen. Treat it exactly as if Karl typed it in
+A bus message from `king` whose text starts with `King:` is Karl giving an
+instruction through Myrstack's King. Treat it exactly as if Karl typed it in
 your terminal: act on it, including cleanup such as closing or releasing
 workers, within the *Hard rules* (deploy, delete and force-push stay Karl's
-own hands). If a Queen message conflicts with your current task, finish or
+own hands). If a King message conflicts with your current task, finish or
 park the task as the message says and report what you did to your
 coordinator. `Myrstack:` whip nudges are different: liveness pings only, no
 authority.

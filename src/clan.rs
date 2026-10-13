@@ -1,4 +1,4 @@
-//! `FleetData`: one poll's raw Orca data, shared by the poller (producer), the farm model and
+//! `ClanData`: one poll's raw Orca data, shared by the poller (producer), the farm model and
 //! the whip (consumers).
 
 mod roles;
@@ -21,7 +21,7 @@ pub const REVIVAL_GRACE_MS: i64 = 2 * 60_000;
 
 /// Everything one poll cycle fetched from Orca, unprocessed.
 #[derive(Debug, Clone, Default)]
-pub struct FleetData {
+pub struct ClanData {
     /// Wall-clock time the poll finished, in ms since the Unix epoch.
     pub polled_at_ms: i64,
     /// When the terminal list (polled most often) last succeeded; `None` if it never has.
@@ -46,14 +46,14 @@ pub struct FleetData {
     /// sampled, or has produced output since, is absent.
     pub needs_input: BTreeMap<String, Option<PromptKind>>,
     /// What the sampled screen's composer held, by handle, kept and pruned with
-    /// [`FleetData::needs_input`]: the preview cannot tell (see
+    /// [`ClanData::needs_input`]: the preview cannot tell (see
     /// [`crate::detect::composer_state`]).
     pub composers: BTreeMap<String, crate::detect::ComposerState>,
     /// Terminals each Claude terminal forwarded input to with `orca terminal send`, read from
     /// its transcript by the Claude worker, by sender handle. Only declared coordinators are
-    /// scanned; see [`FleetData::run_roles`].
+    /// scanned; see [`ClanData::run_roles`].
     pub forwards: BTreeMap<String, Vec<Forward>>,
-    /// Names chosen for worktrees in Orca (by the Queen at spawn, or renamed in Orca), by
+    /// Names chosen for worktrees in Orca (by the King at spawn, or renamed in Orca), by
     /// worktree path; see [`chosen_worktree_names`]. Agents in a named worktree go by it.
     pub worktree_names: BTreeMap<String, String>,
     /// Orca's worktree list, for the worktree count and cleanup.
@@ -78,7 +78,7 @@ pub fn chosen_worktree_names(worktrees: &[Worktree]) -> BTreeMap<String, String>
         .collect()
 }
 
-impl FleetData {
+impl ClanData {
     /// The name chosen for the worktree at `path`, if any.
     pub fn worktree_name(&self, path: Option<&str>) -> Option<&str> {
         let path = path?.trim_end_matches('/');
@@ -105,7 +105,7 @@ impl FleetData {
     }
 
     /// The terminal actually coordinating a Run: [`RunRoles::coordinator`] of
-    /// [`FleetData::run_roles`]. `None` when no live candidate exists.
+    /// [`ClanData::run_roles`]. `None` when no live candidate exists.
     pub fn effective_coordinator(&self, run_id: &str) -> Option<String> {
         self.run_roles(run_id).coordinator
     }
@@ -210,7 +210,7 @@ impl FleetData {
 }
 
 /// A failed task whose result says why: the coordinator retired it on purpose.
-impl FleetData {
+impl ClanData {
     /// Whether `m` is the report of a worker whose start Orca misreported: one Orca refused on
     /// a revoked dispatch ([`InboxMessage::is_revoked_report`]) that is still its task's
     /// dispatch, the task failed with no recorded result. A dispatch a coordinator superseded or
@@ -255,7 +255,7 @@ mod revival_tests {
     const MIN: i64 = 60_000;
     const FAILED_AT: i64 = 1_790_000_000_000;
 
-    fn data(result: Option<&str>, last_output: i64, inbox: Vec<InboxMessage>) -> FleetData {
+    fn data(result: Option<&str>, last_output: i64, inbox: Vec<InboxMessage>) -> ClanData {
         let mut task = json!({
             "id": "t1", "run_id": "run_1", "status": "failed", "dispatch_id": "ctx_1",
             "completed_at": FAILED_AT,
@@ -263,7 +263,7 @@ mod revival_tests {
         if let Some(r) = result {
             task["result"] = json!(r);
         }
-        FleetData {
+        ClanData {
             terminals: vec![Terminal {
                 handle: "term_w".into(),
                 connected: true,
@@ -285,7 +285,7 @@ mod revival_tests {
         .unwrap()
     }
 
-    fn task(d: &FleetData) -> &Task {
+    fn task(d: &ClanData) -> &Task {
         &d.tasks["run_1"][0]
     }
 
@@ -360,9 +360,9 @@ mod names_tests {
         let expected: BTreeMap<String, String> =
             [("/w/shop/retry".to_string(), "Checkout retries".to_string())].into();
         assert_eq!(names, expected);
-        let data = FleetData {
+        let data = ClanData {
             worktree_names: names,
-            ..FleetData::default()
+            ..ClanData::default()
         };
         assert_eq!(
             data.worktree_name(Some("/w/shop/retry/")),

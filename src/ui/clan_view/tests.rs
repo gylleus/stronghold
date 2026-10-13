@@ -28,8 +28,8 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>) -> Node {
         parked_at_ms: None,
     }
 }
-fn fleet() -> FleetSnapshot {
-    let mut s = FleetSnapshot::default();
+fn clan() -> ClanSnapshot {
+    let mut s = ClanSnapshot::default();
     s.runs = vec![RunSummary {
         id: RUN.into(),
         objective: None,
@@ -52,8 +52,8 @@ fn fleet() -> FleetSnapshot {
 
 #[test]
 fn clicks_keep_a_visible_primary_and_toggle_selection() {
-    let mut view = FleetView::new();
-    view.sync(&fleet());
+    let mut view = ClanView::new();
+    view.sync(&clan());
     view.click_node(&id("w1"), false);
     view.click_node(&id("w2"), true);
     assert_eq!(view.selection(), BTreeSet::from([id("w1"), id("w2")]));
@@ -68,8 +68,8 @@ fn clicks_keep_a_visible_primary_and_toggle_selection() {
 
 #[test]
 fn hidden_and_vanished_nodes_leave_selection_without_restoring_it() {
-    let mut snapshot = fleet();
-    let mut view = FleetView::new();
+    let mut snapshot = clan();
+    let mut view = ClanView::new();
     view.sync(&snapshot);
     view.set_selection(&BTreeSet::from([id("w1"), id("w2")]), Some(&id("w2")));
     view.set_hidden(&BTreeSet::from([id("w2")]));
@@ -87,7 +87,7 @@ fn hidden_and_vanished_nodes_leave_selection_without_restoring_it() {
 
 #[test]
 fn badges_and_usage_survive_snapshot_refreshes() {
-    let mut view = FleetView::new();
+    let mut view = ClanView::new();
     let badge = UnreadBadge {
         count: 3,
         severity: crate::notify::Severity::Info,
@@ -96,7 +96,7 @@ fn badges_and_usage_survive_snapshot_refreshes() {
     view.set_pr_ready(HashSet::from([id("w1")]));
     view.set_building(HashSet::from([id("w2")]));
     view.set_usage(HashMap::from([(id("w1"), Usage::default())]));
-    view.sync(&fleet());
+    view.sync(&clan());
     assert_eq!(view.unread(&id("w1")), Some(badge));
     assert!(view.pr_ready().contains(&id("w1")));
     assert!(view.building().contains(&id("w2")));

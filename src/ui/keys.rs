@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use eframe::egui::{self, Event, Key};
 
-use crate::model::{EdgeKind, FleetSnapshot, NodeId, NodeKind};
+use crate::model::{ClanSnapshot, EdgeKind, NodeId, NodeKind};
 use crate::model::{NO_REPO, RepoIndex};
 use crate::ui::sidebar::run_rows;
 
@@ -29,7 +29,7 @@ pub enum KeyCommand {
     ToggleHelp,
     /// Ask to close (kill) the selected nodes' sessions.
     CloseSession,
-    /// Open (or close) the Queen's chat.
+    /// Open (or close) the King's chat.
     ToggleChat,
     /// Nudge the selected agents now (manual whip).
     Whip,
@@ -71,15 +71,15 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
         "⌘K  /",
         "Command palette: nodes and actions (> for actions only)",
     ),
-    ("⌘J", "Open / close the Queen's chat"),
-    ("⌘,", "Settings: Queen model, whip, voice, paths"),
+    ("⌘J", "Open / close the King's chat"),
+    ("⌘,", "Settings: King model, whip, voice, paths"),
     (
         "hold ⌘E",
         "Dictate: speak, release to insert the text at the cursor (Esc cancels)",
     ),
     (
         "hold ⌘⇧E",
-        "Talk to the Queen from any app; she answers aloud (default key, see Settings › Voice)",
+        "Talk to the King from any app; he answers aloud (default key, see Settings › Voice)",
     ),
     (
         "⌘[  ⌘]",
@@ -227,12 +227,12 @@ pub struct NavGroup {
     pub nodes: Vec<NodeId>,
 }
 
-/// Visible nodes grouped for navigation: the queen first (in a group of its own), then runs
+/// Visible nodes grouped for navigation: the king first (in a group of its own), then runs
 /// in sidebar order, each with its coordinator
 /// first, then workers by label; then nodes outside the listed runs with loose terminals
 /// last. Every node is followed by its subagents (by label). Hidden nodes are skipped and
 /// empty groups dropped.
-pub fn nav_groups(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<NavGroup> {
+pub fn nav_groups(snapshot: &ClanSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<NavGroup> {
     let by_id: HashMap<&NodeId, &crate::model::Node> =
         snapshot.nodes.iter().map(|n| (&n.id, n)).collect();
     let mut children: HashMap<&NodeId, Vec<&NodeId>> = HashMap::new();
@@ -274,13 +274,13 @@ pub fn nav_groups(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<Na
     };
 
     let mut groups = Vec::new();
-    let mut queen = Vec::new();
-    for node in snapshot.nodes.iter().filter(|n| n.kind == NodeKind::Queen) {
-        visit(&node.id, &mut queen);
+    let mut king = Vec::new();
+    for node in snapshot.nodes.iter().filter(|n| n.kind == NodeKind::King) {
+        visit(&node.id, &mut king);
     }
     groups.push(NavGroup {
         run_id: None,
-        nodes: queen,
+        nodes: king,
     });
     for row in run_rows(snapshot) {
         let mut members: Vec<&crate::model::Node> = snapshot
@@ -331,7 +331,7 @@ pub fn nav_groups(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<Na
 }
 
 /// [`nav_groups`] flattened.
-pub fn nav_order(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<NodeId> {
+pub fn nav_order(snapshot: &ClanSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<NodeId> {
     nav_groups(snapshot, hidden)
         .into_iter()
         .flat_map(|g| g.nodes)
@@ -370,13 +370,13 @@ pub fn step_run(groups: &[NavGroup], current: Option<&NodeId>, delta: isize) -> 
     runs[target as usize].nodes.first().cloned()
 }
 
-/// Visible nodes per repo in navigation order, repos by name with [`NO_REPO`] last. The queen
+/// Visible nodes per repo in navigation order, repos by name with [`NO_REPO`] last. The king
 /// belongs to no repo.
-pub fn repo_nav(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<(String, Vec<NodeId>)> {
+pub fn repo_nav(snapshot: &ClanSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<(String, Vec<NodeId>)> {
     let repos = RepoIndex::new(snapshot);
     let mut groups: BTreeMap<(bool, String), Vec<NodeId>> = BTreeMap::new();
     for id in nav_order(snapshot, hidden) {
-        if id == NodeId::queen() {
+        if id == NodeId::king() {
             continue;
         }
         let repo = repos.node(&id).unwrap_or(NO_REPO).to_string();
@@ -637,8 +637,8 @@ mod tests {
 
     /// Run `old` (idle) and run `new` (recently active, listed first in the sidebar), a loose
     /// terminal listed before everything, and subagents under a worker and a loose terminal.
-    fn snapshot() -> FleetSnapshot {
-        let mut s = FleetSnapshot::default();
+    fn snapshot() -> ClanSnapshot {
+        let mut s = ClanSnapshot::default();
         s.runs = vec![run("old", "c_old"), run("new", "c_new")];
         let mut c_new = node("c_new", NodeKind::Coordinator, Some("new"), "coord");
         c_new.last_output_ms = Some(9_000);
@@ -685,16 +685,12 @@ mod tests {
             };
             n.worktree_path = repo.map(str::to_string);
         }
-        s.add_queen();
+        s.add_king();
         let groups = repo_nav(&s, &BTreeSet::new());
         let names: Vec<&str> = groups.iter().map(|(r, _)| r.as_str()).collect();
         assert_eq!(names, ["infra", "shop", NO_REPO]);
         assert_eq!(strs(&groups[1].1)[0], "c_new");
-        assert!(
-            groups
-                .iter()
-                .all(|(_, ids)| !ids.contains(&NodeId::queen()))
-        );
+        assert!(groups.iter().all(|(_, ids)| !ids.contains(&NodeId::king())));
 
         let step = |current: Option<&str>, delta| {
             step_repo(&groups, current.map(id).as_ref(), delta).map(|(r, n)| (r, n.0))
@@ -752,11 +748,11 @@ mod tests {
     }
 
     #[test]
-    fn queen_comes_first_and_runs_still_step() {
+    fn king_comes_first_and_runs_still_step() {
         let mut s = snapshot();
-        s.add_queen();
+        s.add_king();
         let order = nav_order(&s, &BTreeSet::new());
-        assert_eq!(order.first(), Some(&NodeId::queen()));
+        assert_eq!(order.first(), Some(&NodeId::king()));
         assert_eq!(order.len(), 11);
         let groups = nav_groups(&s, &BTreeSet::new());
         let runs: Vec<Option<&str>> = groups.iter().map(|g| g.run_id.as_deref()).collect();
@@ -764,13 +760,13 @@ mod tests {
         assert_eq!(step_run(&groups, None, 1), Some(id("c_new")));
         assert_eq!(
             step_node(&order, Some(&id("sub_loose")), 1),
-            Some(NodeId::queen())
+            Some(NodeId::king())
         );
     }
 
     #[test]
     fn nav_order_of_empty_snapshot() {
-        let s = FleetSnapshot::default();
+        let s = ClanSnapshot::default();
         assert!(nav_order(&s, &BTreeSet::new()).is_empty());
         assert_eq!(step_node(&[], None, 1), None);
         assert_eq!(step_run(&[], None, 1), None);

@@ -871,7 +871,7 @@ impl Plan {
 // ---------------------------------------------------------------------------
 // Gathering
 
-/// The fleet-wide inputs one evaluation shares across worktrees.
+/// The clan-wide inputs one evaluation shares across worktrees.
 struct Context {
     terminals: Vec<Terminal>,
     workers: Vec<Worker>,
@@ -1528,7 +1528,7 @@ pub struct SweepMarker {
     pub total: usize,
     pub done: usize,
     pub current: Option<String>,
-    /// The worktree id of `current`, for the saw in the ant farm.
+    /// The worktree id of `current`, for the saw in the farm.
     #[serde(default)]
     pub current_id: Option<String>,
 }

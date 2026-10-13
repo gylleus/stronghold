@@ -1,4 +1,4 @@
-//! The review queue: PRs agents finished and marked ready, shown in the Queen panel with their
+//! The review queue: PRs agents finished and marked ready, shown in the King panel with their
 //! GitHub state until Karl reviews them or they merge.
 //!
 //! Marks come from the `mark_pr_ready` MCP tool and `myrstack pr-ready` (both carry the

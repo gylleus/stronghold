@@ -8,8 +8,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::fleet::FleetData;
-use crate::model::{FleetSnapshot, Node, NodeId, NodeKind, NodeState};
+use crate::clan::ClanData;
+use crate::model::{ClanSnapshot, Node, NodeId, NodeKind, NodeState};
 use crate::orca::{DispatchStatus, WorkerTerminalState};
 use crate::whip::actions::{
     NudgeVia, TaskRef, coordinator_idle_text, quiet_run_text, terminal_nudge_text,
@@ -108,13 +108,13 @@ pub fn needs_confirmation(plans: &[ManualPlan]) -> bool {
 ///   nudge.
 /// - Coordinator of a run: bus to its terminal handle with `--run`.
 /// - Loose terminal, or a worker without a live dispatch: typed into its terminal.
-/// - Skipped: the Queen, subagents, released workers and terminals that are gone.
+/// - Skipped: the King, subagents, released workers and terminals that are gone.
 /// - NeedsInput targets are nudged but carry [`NEEDS_INPUT_WARNING`]; they are never typed
 ///   into (that could answer their prompt), so a loose one gets a bus message instead.
 pub fn plan_manual_whip(
     nodes: &[NodeId],
-    data: &FleetData,
-    snapshot: &FleetSnapshot,
+    data: &ClanData,
+    snapshot: &ClanSnapshot,
     now_ms: i64,
 ) -> Vec<ManualPlan> {
     let report = ProgressTracker::new().update(data, now_ms);
@@ -129,7 +129,7 @@ pub fn plan_manual_whip(
             plans.push(ManualPlan::Skip(ManualSkip {
                 node: id.clone(),
                 label: id.to_string(),
-                reason: "not in the fleet any more".into(),
+                reason: "not in the clan any more".into(),
             }));
             continue;
         };
@@ -154,7 +154,7 @@ pub fn plan_manual_whip(
 
 fn plan_node(
     node: &Node,
-    data: &FleetData,
+    data: &ClanData,
     report: &ProgressReport,
     now_ms: i64,
 ) -> Result<ManualNudge, String> {
@@ -162,7 +162,7 @@ fn plan_node(
         NodeKind::Envoy => {
             return Err("the Envoy listens while idle; it does not need nudging".into());
         }
-        NodeKind::Queen => return Err("the Queen is Myrstack itself".into()),
+        NodeKind::King => return Err("the King is Myrstack itself".into()),
         NodeKind::Subagent => return Err("subagents have no terminal to nudge".into()),
         NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {}
     }
@@ -228,7 +228,7 @@ fn worker_nudge(
     node: &Node,
     handle: &str,
     run_id: &str,
-    data: &FleetData,
+    data: &ClanData,
     report: &ProgressReport,
     now_ms: i64,
     output_idle: i64,
@@ -335,8 +335,8 @@ mod tests {
         .unwrap()
     }
 
-    fn fleet(dispatch_status: &str) -> FleetData {
-        FleetData {
+    fn clan(dispatch_status: &str) -> ClanData {
+        ClanData {
             polled_at_ms: NOW,
             terminals: vec![terminal(COORD), terminal(WORKER), terminal(LOOSE)],
             runs: vec![
@@ -352,25 +352,25 @@ mod tests {
         }
     }
 
-    fn plan(data: &FleetData, ids: &[NodeId]) -> Vec<ManualPlan> {
-        let snapshot = FleetSnapshot::build(data, NOW);
+    fn plan(data: &ClanData, ids: &[NodeId]) -> Vec<ManualPlan> {
+        let snapshot = ClanSnapshot::build(data, NOW);
         plan_manual_whip(ids, data, &snapshot, NOW)
     }
 
-    fn one_nudge(data: &FleetData, id: NodeId) -> ManualNudge {
+    fn one_nudge(data: &ClanData, id: NodeId) -> ManualNudge {
         let plans = plan(data, &[id]);
         assert_eq!(plans.len(), 1);
         plans[0].nudge().cloned().expect("a nudge")
     }
 
-    fn skip_reason(data: &FleetData, id: NodeId) -> String {
+    fn skip_reason(data: &ClanData, id: NodeId) -> String {
         let plans = plan(data, &[id]);
         plans[0].skip().expect("a skip").reason.clone()
     }
 
     #[test]
     fn worker_with_a_live_dispatch_gets_the_stall_nudge_on_its_dispatch() {
-        let data = fleet("dispatched");
+        let data = clan("dispatched");
         let nudge = one_nudge(&data, NodeId::terminal(WORKER));
         assert_eq!(
             nudge.via,
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn worker_without_a_live_dispatch_is_typed_into() {
-        let data = fleet("completed");
+        let data = clan("completed");
         let nudge = one_nudge(&data, NodeId::terminal(WORKER));
         assert_eq!(
             nudge.via,
@@ -419,7 +419,7 @@ mod tests {
 
     #[test]
     fn coordinator_gets_a_bus_nudge_with_its_run() {
-        let data = fleet("dispatched");
+        let data = clan("dispatched");
         let nudge = one_nudge(&data, NodeId::terminal(COORD));
         assert_eq!(
             nudge.via,
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn coordinator_with_ready_tasks_is_told_about_them() {
-        let mut data = fleet("dispatched");
+        let mut data = clan("dispatched");
         data.tasks.get_mut(RUN).unwrap().push(task("t2", "ready"));
         let nudge = one_nudge(&data, NodeId::terminal(COORD));
         assert!(
@@ -456,7 +456,7 @@ mod tests {
 
     #[test]
     fn loose_terminal_is_typed_into() {
-        let data = fleet("dispatched");
+        let data = clan("dispatched");
         let nudge = one_nudge(&data, NodeId::terminal(LOOSE));
         assert_eq!(
             nudge.via,
@@ -468,18 +468,18 @@ mod tests {
     }
 
     #[test]
-    fn skips_the_queen_subagents_gone_and_released() {
-        let data = fleet("dispatched");
+    fn skips_the_king_subagents_gone_and_released() {
+        let data = clan("dispatched");
         assert_eq!(
-            skip_reason(&data, NodeId::queen()),
-            "the Queen is Myrstack itself"
+            skip_reason(&data, NodeId::king()),
+            "the King is Myrstack itself"
         );
         assert_eq!(
             skip_reason(&data, NodeId("nope".into())),
-            "not in the fleet any more"
+            "not in the clan any more"
         );
 
-        let snapshot = FleetSnapshot::build(&data, NOW);
+        let snapshot = ClanSnapshot::build(&data, NOW);
         let mut sub = snapshot.node(&NodeId::terminal(LOOSE)).unwrap().clone();
         sub.kind = NodeKind::Subagent;
         let mut released = snapshot.node(&NodeId::terminal(WORKER)).unwrap().clone();
@@ -503,9 +503,9 @@ mod tests {
 
     #[test]
     fn a_worker_whose_terminal_is_gone_is_skipped() {
-        let mut data = fleet("dispatched");
+        let mut data = clan("dispatched");
         data.terminals.retain(|t| t.handle != WORKER);
-        let snapshot = FleetSnapshot::build(&data, NOW);
+        let snapshot = ClanSnapshot::build(&data, NOW);
         let worker = snapshot
             .nodes
             .iter()
@@ -517,8 +517,8 @@ mod tests {
 
     #[test]
     fn needs_input_targets_are_nudged_with_a_warning() {
-        let data = fleet("dispatched");
-        let snapshot = FleetSnapshot::build(&data, NOW);
+        let data = clan("dispatched");
+        let snapshot = ClanSnapshot::build(&data, NOW);
         let mut node = snapshot.node(&NodeId::terminal(LOOSE)).unwrap().clone();
         node.state = NodeState::NeedsInput;
         let nudge = plan_node(&node, &data, &ProgressReport::default(), NOW).unwrap();
@@ -536,9 +536,9 @@ mod tests {
 
     #[test]
     fn duplicates_are_nudged_once() {
-        let data = fleet("dispatched");
+        let data = clan("dispatched");
         let loose = NodeId::terminal(LOOSE);
-        let plans = plan(&data, &[loose.clone(), loose.clone(), NodeId::queen()]);
+        let plans = plan(&data, &[loose.clone(), loose.clone(), NodeId::king()]);
         assert_eq!(plans.len(), 2);
         assert_eq!(nudges(&plans).len(), 1);
         assert!(!needs_confirmation(&plans));
@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn many_targets_need_confirmation() {
-        let data = fleet("dispatched");
+        let data = clan("dispatched");
         let nudge = one_nudge(&data, NodeId::terminal(LOOSE));
         let plans: Vec<ManualPlan> = (0..CONFIRM_AT)
             .map(|_| ManualPlan::Nudge(nudge.clone()))

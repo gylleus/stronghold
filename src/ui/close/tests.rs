@@ -97,7 +97,7 @@ fn the_log_is_bounded() {
 
 #[test]
 fn plan_request_for_gone_node_is_refused() {
-    let snapshot = FleetSnapshot::default();
+    let snapshot = ClanSnapshot::default();
     let plan = plan_request(
         &CloseRequest::Nodes(vec![NodeId("term:gone".into())]),
         &snapshot,

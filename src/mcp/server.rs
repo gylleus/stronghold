@@ -30,36 +30,36 @@ pub const INVALID_PARAMS: i64 = -32602;
 
 pub const INSTRUCTIONS: &str = concat!(
     "\
-Myrstack is Karl's desktop dashboard for the agent fleet running in the Orca agent IDE. It draws \
+Myrstack is Karl's desktop dashboard for the agent clan running in the Orca agent IDE. It draws \
 every agent as a dwarf in a live farm and runs the \"whip\", which nudges stalled workers. This \
 server talks to the running app.
 
-Node kinds: the Queen is the hub that stands for the whole fleet (not an agent; its state is the \
-fleet state). A coordinator orchestrates a run (an objective split into tasks); a worker is an \
+Node kinds: the King is the hub that stands for the whole clan (not an agent; its state is the \
+clan state). A coordinator orchestrates a run (an objective split into tasks); a worker is an \
 agent a coordinator dispatched for one task; a terminal is a loose agent terminal outside any \
 run; a subagent is a Claude Code subagent inside a terminal (read-only: no input, no close). \
-An ant is one dedicated agent session working on one task (what spawn_session starts); the fleet \
-is Karl's colony of ants.
+A dwarf is one dedicated agent session working on one task (what spawn_session starts); the clan \
+is all of Karl's dwarves.
 
 States: working, idle, needs_input (waiting on Karl at a permission, choice or question \
 prompt), stalled (the whip escalated it), done, failed. Karl can park an agent he wants to keep \
-for later (park_agents): it sleeps in the resting area, out of the live fleet, the whip and the \
+for later (park_agents): it sleeps in the resting area, out of the live clan, the whip and the \
 counts, its session and worktree kept; send_to_agent or park_agents wake=true wakes it.
 
 Start with fleet_status. Agent ids (term:…, dispatch:…, sub:…) come from list_agents or \
 fleet_status; a terminal handle or an exact label also works. send_to_agent, press_key, \
 close_agents, park_agents, broadcast_to_coordinators, set_whip and spawn_session act on real agents, so confirm \
-with Karl first (the Queen in auto mode needn't: Karl approved her actions up front; nor does a \
+with Karl first (the King in auto mode needn't: Karl approved the King's actions up front; nor does a \
 coordinator starting workers on its own run with spawn_session). close_agents \
 only shows the plan unless dry_run=false is passed. spawn_session \
 starts a new session (existing worktree, new worktree, or a run's worker) with a prompt.
 
-This server also serves the fleet playbook, the standing rules the fleet runs by, read from disk \
+This server also serves the clan playbook, the standing rules the clan runs by, read from disk \
 (no app needed): the prompts coordinator, attendant, worker and envoy (slash commands such as \
 /mcp__myrstack__coordinator) load a role's rules; get_playbook and list_playbook fetch a role, a \
 file or one section; resources myrstack://playbook/<file> hold each file. attendant_brief \
 {run_id} and kickoff {task_id} (also prompts attendant-brief and kickoff) return those templates \
-pre-filled from live fleet data. Every answer starts with the playbook version (git commit, dirty \
+pre-filled from live clan data. Every answer starts with the playbook version (git commit, dirty \
 flag, content hash).
 
 Review queue: an agent whose PR is ready for Karl's review calls mark_pr_ready {pr_url} (right \
@@ -359,7 +359,7 @@ impl<C: Control> McpServer<C> {
         Ok(result)
     }
 
-    /// Appends the interrupted spawns whose agents are still around to a fleet listing.
+    /// Appends the interrupted spawns whose agents are still around to a clan listing.
     fn add_interrupted(&mut self, path: &Path, output: &mut tools::ToolOutput) {
         use crate::spawn::interrupted::{current, load, section};
         let now = now_ms();

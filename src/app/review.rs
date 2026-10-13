@@ -1,6 +1,6 @@
 //! The app side of the review queue: ingests marks (control API, the pending file, `merge_ready`
-//! bus messages), applies GitHub reads, notifies, saves, and draws the queue in the Queen panel,
-//! the top bar and the fleet's "PR" badges.
+//! bus messages), applies GitHub reads, notifies, saves, and draws the queue in the King panel,
+//! the top bar and the clan's "PR" badges.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -30,7 +30,7 @@ pub(super) struct AppReview {
     poller: GithubPoller,
     /// The queue changed since it was last saved.
     dirty: bool,
-    /// `polled_at_ms` of the fleet data whose inbox was read last.
+    /// `polled_at_ms` of the clan data whose inbox was read last.
     inbox_read_at: Option<i64>,
     /// URLs last handed to the poller.
     watched: Vec<String>,
@@ -78,7 +78,7 @@ impl AppReview {
         }
     }
 
-    /// Opens and scrolls to the section on the next draw of the Queen panel.
+    /// Opens and scrolls to the section on the next draw of the King panel.
     pub(super) fn request_open(&mut self) {
         self.open_request = true;
         self.scroll_request = true;
@@ -105,7 +105,7 @@ impl MyrstackApp {
     }
 
     /// Per frame: reads new bus messages, applies GitHub reads, prunes, keeps the poller's
-    /// watch list current, notifies about new entries, marks fleet nodes and saves.
+    /// watch list current, notifies about new entries, marks clan nodes and saves.
     pub(super) fn poll_review(&mut self) {
         let now = now_ms();
         self.ingest_bus(now);
@@ -141,7 +141,7 @@ impl MyrstackApp {
             .iter()
             .filter_map(|r| r.agent.as_ref().map(|a| a.id.clone()))
             .collect();
-        self.fleet.set_pr_ready(nodes);
+        self.clan.set_pr_ready(nodes);
         self.save_review();
     }
 
@@ -279,20 +279,20 @@ impl MyrstackApp {
         Ok(json!({ "url": url, "resolved": if reviewed { "reviewed" } else { "dismissed" } }))
     }
 
-    /// The top bar's badge; a click opens the queue in the Queen panel.
+    /// The top bar's badge; a click opens the queue in the King panel.
     pub(super) fn review_badge(&mut self, ui: &mut egui::Ui) {
         if crate::ui::review::review_badge(ui, self.review.last_count) {
             self.open_review_queue();
         }
     }
 
-    /// Selects the Queen and opens the review section (badge, palette).
+    /// Selects the King and opens the review section (badge, palette).
     pub(super) fn open_review_queue(&mut self) {
-        self.select_queen();
+        self.select_king();
         self.review.request_open();
     }
 
-    /// What the Queen panel's review section draws this frame: its rows, the GitHub outage
+    /// What the King panel's review section draws this frame: its rows, the GitHub outage
     /// note and whether to open and scroll to it (a pending request is taken).
     pub(super) fn review_view(
         &mut self,

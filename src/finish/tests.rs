@@ -114,7 +114,7 @@ fn finished(at_ms: i64) -> FinishedSession {
     FinishedSession {
         node_id: "term:t1".into(),
         handle: Some("t1".into()),
-        label: "ant".into(),
+        label: "dwarf".into(),
         outcome: FinishOutcome::Done,
         approval: Approval::Karl,
         summary: "did it".into(),
@@ -151,16 +151,16 @@ fn outcomes_round_trip() {
     assert_eq!(FinishOutcome::parse("merged"), None);
 }
 
-mod fleet {
+mod clan {
     use super::super::*;
-    use crate::model::{FleetSnapshot, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts};
+    use crate::model::{ClanSnapshot, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts};
     use crate::orca::{DispatchStatus, WorkerState};
 
     fn node(kind: NodeKind) -> Node {
         Node {
             id: NodeId("term:t1".into()),
             kind,
-            label: "ant".into(),
+            label: "dwarf".into(),
             terminal_handle: Some("t1".into()),
             live: true,
             run_id: None,
@@ -180,8 +180,8 @@ mod fleet {
         }
     }
 
-    fn snapshot(open: usize) -> FleetSnapshot {
-        let mut s = FleetSnapshot::default();
+    fn snapshot(open: usize) -> ClanSnapshot {
+        let mut s = ClanSnapshot::default();
         s.runs = vec![RunSummary {
             id: "run_1".into(),
             objective: Some("ship it".into()),
@@ -198,7 +198,7 @@ mod fleet {
     #[test]
     fn a_loose_terminal_with_nothing_open_may_leave() {
         assert_eq!(
-            fleet_problems(&node(NodeKind::Terminal), &snapshot(2), &[]),
+            clan_problems(&node(NodeKind::Terminal), &snapshot(2), &[]),
             (None, Vec::new())
         );
     }
@@ -211,33 +211,33 @@ mod fleet {
         w.dispatch_id = Some("ctx_1".into());
         w.worker_state = Some(WorkerState::Ready);
         w.dispatch_status = Some(DispatchStatus::Dispatched);
-        let (refusal, _) = fleet_problems(&w, &snapshot(0), &[]);
+        let (refusal, _) = clan_problems(&w, &snapshot(0), &[]);
         let refusal = refusal.expect("refused");
         assert!(refusal.contains("run run_1 (task task_9)"), "{refusal}");
         assert!(refusal.contains("coordinator"), "{refusal}");
         // Settled: the coordinator still reuses or releases it.
         w.worker_state = Some(WorkerState::Succeeded);
         w.dispatch_status = Some(DispatchStatus::Completed);
-        let refusal = fleet_problems(&w, &snapshot(0), &[]).0.expect("refused");
+        let refusal = clan_problems(&w, &snapshot(0), &[]).0.expect("refused");
         assert!(refusal.contains("after worker_done"), "{refusal}");
     }
 
     #[test]
     fn a_coordinator_with_open_tasks_and_an_agent_with_an_open_pr_are_held() {
-        let (refusal, problems) = fleet_problems(&node(NodeKind::Coordinator), &snapshot(2), &[]);
+        let (refusal, problems) = clan_problems(&node(NodeKind::Coordinator), &snapshot(2), &[]);
         assert_eq!(refusal, None);
         assert_eq!(
             problems,
             vec!["run ship it still has 2 open tasks: finish or cancel them first"]
         );
         assert!(
-            fleet_problems(&node(NodeKind::Coordinator), &snapshot(0), &[])
+            clan_problems(&node(NodeKind::Coordinator), &snapshot(0), &[])
                 .1
                 .is_empty()
         );
 
         let pr = "https://github.com/o/r/pull/3".to_string();
-        let (_, problems) = fleet_problems(&node(NodeKind::Terminal), &snapshot(0), &[pr]);
+        let (_, problems) = clan_problems(&node(NodeKind::Terminal), &snapshot(0), &[pr]);
         assert_eq!(problems.len(), 1);
         assert!(
             problems[0].starts_with("https://github.com/o/r/pull/3 is waiting for Karl's review")

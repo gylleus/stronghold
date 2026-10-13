@@ -36,7 +36,7 @@ enum PendingKind {
 }
 
 impl MyrstackApp {
-    /// The manual whip plan for `ids` against the current fleet; `None` before the first poll.
+    /// The manual whip plan for `ids` against the current clan; `None` before the first poll.
     fn plan_whip(&self, ids: &[NodeId]) -> Option<Vec<ManualPlan>> {
         let (Some(data), Some(snapshot)) = (&self.data, &self.snapshot) else {
             return None;
@@ -51,7 +51,7 @@ impl MyrstackApp {
         let Some(plans) = self.plan_whip(&ids) else {
             self.whip_now
                 .ui
-                .set_toast("No fleet data yet.".into(), true, now);
+                .set_toast("No clan data yet.".into(), true, now);
             return;
         };
         let skips = skips_of(&plans);
@@ -160,7 +160,7 @@ impl MyrstackApp {
             .collect();
         let plans = ids.and_then(|ids| {
             self.plan_whip(&ids).ok_or_else(|| {
-                ControlError::new(ErrorCode::Unavailable, "the app has no fleet data yet")
+                ControlError::new(ErrorCode::Unavailable, "the app has no clan data yet")
             })
         });
         let plans = match plans {
@@ -286,9 +286,9 @@ mod tests {
             warn: None,
         };
         let skip = ManualSkip {
-            node: NodeId::queen(),
-            label: "Queen".into(),
-            reason: "the Queen is Myrstack itself".into(),
+            node: NodeId::king(),
+            label: "King".into(),
+            reason: "the King is Myrstack itself".into(),
         };
         let report = WhipNowReport {
             ran: true,
@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(v["nudges"][0]["id"], "term:w");
         assert_eq!(v["nudges"][0]["via"]["bus"], "dispatch:ctx_1");
         assert_eq!(v["nudges"][0]["seq"], 4);
-        assert_eq!(v["skipped"][0]["reason"], "the Queen is Myrstack itself");
+        assert_eq!(v["skipped"][0]["reason"], "the King is Myrstack itself");
     }
 
     #[test]

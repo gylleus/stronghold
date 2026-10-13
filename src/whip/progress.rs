@@ -1,6 +1,6 @@
 //! Computes the last progress time per task from bus messages, status and output.
 //!
-//! [`ProgressTracker::update`] turns one poll's [`FleetData`] into facts for the whip's stall
+//! [`ProgressTracker::update`] turns one poll's [`ClanData`] into facts for the whip's stall
 //! rules: when each task last showed progress and why, whether its worker is blocked on an
 //! unanswered question, and when each Run's coordinator last did something. It decides nothing
 //! itself. See `docs/heartbeat-convention.md` for what counts as progress.
@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use crate::fleet::FleetData;
+use crate::clan::ClanData;
 use crate::orca::{
     DispatchStatus, InboxMessage, MessageType, REJECTION_KEY, Task, TaskStatus, Worker,
 };
@@ -54,7 +54,7 @@ pub struct TaskProgress {
     /// silent worker is the coordinator's problem, not the worker's.
     pub waiting_on_ask: bool,
     /// Orca marked the task failed but its worker kept working; see
-    /// [`FleetData::alive_after_failure`]. Its rejected messages and output count as progress.
+    /// [`ClanData::alive_after_failure`]. Its rejected messages and output count as progress.
     pub failed_but_alive: bool,
     /// The owner sent an accepted `worker_done` or `merge_ready` for this task on its current
     /// dispatch (or one naming no dispatch).
@@ -129,7 +129,7 @@ impl ProgressTracker {
         self.accepted_output.get(handle).copied()
     }
 
-    fn update_output(&mut self, data: &FleetData) {
+    fn update_output(&mut self, data: &ClanData) {
         let live: HashSet<&str> = data.terminals.iter().map(|t| t.handle.as_str()).collect();
         self.nudged_at.retain(|h, _| live.contains(h.as_str()));
         self.accepted_output
@@ -149,7 +149,7 @@ impl ProgressTracker {
     }
 
     /// Records status transitions in `data` (observed at `now_ms`) and computes the report.
-    pub fn update(&mut self, data: &FleetData, now_ms: i64) -> ProgressReport {
+    pub fn update(&mut self, data: &ClanData, now_ms: i64) -> ProgressReport {
         self.update_output(data);
         let mut present = HashSet::new();
         for task in data.tasks.values().flatten() {
@@ -200,7 +200,7 @@ impl ProgressTracker {
 
     fn run_progress(
         &self,
-        data: &FleetData,
+        data: &ClanData,
         bus: &Bus<'_>,
         run_id: &str,
         tasks: &[TaskProgress],
@@ -315,7 +315,7 @@ fn has_open_work(run_tasks: Option<&Vec<Task>>, unanswered_asks: &[String]) -> b
 
 /// See [`RunProgress::last_activity_ms`].
 fn run_activity_ms(
-    data: &FleetData,
+    data: &ClanData,
     run_id: &str,
     tasks: &[TaskProgress],
     coordinator_ms: Option<i64>,
@@ -357,7 +357,7 @@ fn run_activity_ms(
 
 /// Terminals whose activity counts as the Run's coordinator's: the declared coordinator (live
 /// or not, for its past messages) and the effective one, which may have re-bound elsewhere.
-fn coordinator_handles(run_id: &str, data: &FleetData) -> Vec<String> {
+fn coordinator_handles(run_id: &str, data: &ClanData) -> Vec<String> {
     let declared = data.run(run_id).and_then(|r| r.coordinator_handle.clone());
     let mut handles: Vec<String> = declared.into_iter().collect();
     if let Some(h) = effective_coordinator(run_id, data)
@@ -396,7 +396,7 @@ struct Payload {
 }
 
 impl<'a> Bus<'a> {
-    fn new(data: &'a FleetData) -> Self {
+    fn new(data: &'a ClanData) -> Self {
         let mut by_task: HashMap<String, Vec<_>> = HashMap::new();
         let mut done_at: HashMap<String, i64> = HashMap::new();
         // A report Orca refused on a revoked dispatch still is the worker's report.
@@ -452,7 +452,7 @@ impl<'a> Bus<'a> {
     }
 
     /// Time the dispatch was settled, after which Orca no longer accepts its heartbeats.
-    fn dispatch_done_at(&self, dispatch_id: &str, data: &FleetData, task: &Task) -> Option<i64> {
+    fn dispatch_done_at(&self, dispatch_id: &str, data: &ClanData, task: &Task) -> Option<i64> {
         if let Some(ms) = self.done_at.get(dispatch_id) {
             return Some(*ms);
         }
@@ -472,7 +472,7 @@ impl<'a> Bus<'a> {
     /// The owner's questions on the current dispatch of a dispatched task with no answer yet.
     fn open_asks(
         &self,
-        data: &FleetData,
+        data: &ClanData,
         task: &Task,
         progress: &TaskProgress,
     ) -> Vec<&'a InboxMessage> {
@@ -491,7 +491,7 @@ impl<'a> Bus<'a> {
 
     /// A later message from someone else in the question's thread, or sent straight to the
     /// asker by the coordinator or Run home.
-    fn answered(&self, data: &FleetData, q: &InboxMessage, progress: &TaskProgress) -> bool {
+    fn answered(&self, data: &ClanData, q: &InboxMessage, progress: &TaskProgress) -> bool {
         let thread = q.thread_id.as_deref().unwrap_or(&q.id);
         let run_home = q.run_id.as_ref().map(|r| format!("run:{r}"));
         let coordinators = q
@@ -522,7 +522,7 @@ impl<'a> Bus<'a> {
 }
 
 fn task_progress(
-    data: &FleetData,
+    data: &ClanData,
     bus: &Bus<'_>,
     run_id: &str,
     task: &Task,
@@ -612,7 +612,7 @@ fn task_progress(
 
 /// The task's worker: the live dispatch if any, else the task's recorded dispatch, else the
 /// last listed one.
-fn owning_worker<'a>(data: &'a FleetData, task: &Task) -> Option<&'a Worker> {
+fn owning_worker<'a>(data: &'a ClanData, task: &Task) -> Option<&'a Worker> {
     let workers: Vec<&Worker> = data
         .workers
         .iter()
@@ -776,10 +776,10 @@ mod tests {
         }
     }
 
-    fn fleet(tasks: Vec<Task>, inbox: Vec<InboxMessage>) -> FleetData {
+    fn clan(tasks: Vec<Task>, inbox: Vec<InboxMessage>) -> ClanData {
         let run: Run =
             serde_json::from_value(json!({"id": RUN, "coordinator_handle": COORD})).unwrap();
-        FleetData {
+        ClanData {
             runs: vec![run],
             workers: vec![worker("t1", "ctx_1", "dispatched")],
             tasks: [(RUN.to_string(), tasks)].into(),
@@ -795,7 +795,7 @@ mod tests {
 
     #[test]
     fn heartbeat_wins_over_older_output() {
-        let mut data = fleet(
+        let mut data = clan(
             vec![task("t1", "dispatched")],
             vec![heartbeat("m1", T0 + 10 * MIN, "implementing")],
         );
@@ -826,7 +826,7 @@ mod tests {
             msg(id, WORKER, kind, T0 + MIN, payload)
         };
         let reported = |inbox: Vec<InboxMessage>| {
-            let data = fleet(vec![task("t1", "dispatched")], inbox);
+            let data = clan(vec![task("t1", "dispatched")], inbox);
             only_task(&ProgressTracker::new().update(&data, T0 + 20 * MIN)).reported
         };
         assert!(reported(vec![report_msg(
@@ -858,7 +858,7 @@ mod tests {
             );
             let mut t = task("t1", status);
             t.result = result.map(Into::into);
-            let data = fleet(vec![t], vec![revoked]);
+            let data = clan(vec![t], vec![revoked]);
             only_task(&ProgressTracker::new().update(&data, T0 + 20 * MIN)).reported
         };
         assert!(reported("failed", None, "ctx_1"));
@@ -869,7 +869,7 @@ mod tests {
 
     #[test]
     fn newer_output_wins_and_is_the_fallback() {
-        let mut data = fleet(vec![task("t1", "dispatched")], vec![]);
+        let mut data = clan(vec![task("t1", "dispatched")], vec![]);
         data.terminals = vec![terminal(WORKER, T0 + 7 * MIN)];
         let report = ProgressTracker::new().update(&data, T0 + 20 * MIN);
         let t = only_task(&report);
@@ -886,7 +886,7 @@ mod tests {
 
     #[test]
     fn nudge_echo_is_not_worker_progress() {
-        let mut data = fleet(vec![task("t1", "dispatched")], vec![]);
+        let mut data = clan(vec![task("t1", "dispatched")], vec![]);
         data.terminals = vec![terminal(WORKER, T0)];
         let mut tracker = ProgressTracker::new();
         tracker.update(&data, T0 + 16 * MIN);
@@ -914,7 +914,7 @@ mod tests {
 
     #[test]
     fn bus_signals_inside_the_echo_window_still_count() {
-        let mut data = fleet(vec![task("t1", "dispatched")], vec![]);
+        let mut data = clan(vec![task("t1", "dispatched")], vec![]);
         data.terminals = vec![terminal(WORKER, T0)];
         let mut tracker = ProgressTracker::new();
         tracker.update(&data, T0 + 16 * MIN);
@@ -929,7 +929,7 @@ mod tests {
 
     #[test]
     fn nudge_echo_is_not_coordinator_activity() {
-        let mut data = fleet(vec![task("t1", "completed"), task("t2", "ready")], vec![]);
+        let mut data = clan(vec![task("t1", "completed"), task("t2", "ready")], vec![]);
         data.workers.clear();
         data.terminals = vec![terminal(COORD, T0 + 2 * MIN)];
         let mut tracker = ProgressTracker::new();
@@ -943,7 +943,7 @@ mod tests {
 
     #[test]
     fn echo_on_first_sight_leaves_no_output() {
-        let mut data = fleet(vec![task("t1", "dispatched")], vec![]);
+        let mut data = clan(vec![task("t1", "dispatched")], vec![]);
         data.terminals = vec![terminal(WORKER, T0 + 10_000)];
         let mut tracker = ProgressTracker::new();
         tracker.record_nudge(WORKER, T0);
@@ -978,7 +978,7 @@ mod tests {
             T0 + 9 * MIN,
             json!({"taskId": "t1"}),
         );
-        let data = fleet(
+        let data = clan(
             vec![task("t1", "dispatched")],
             vec![other_task, not_owner, status],
         );
@@ -996,7 +996,7 @@ mod tests {
     #[test]
     fn status_transition_detected_on_second_update() {
         let mut tracker = ProgressTracker::new();
-        let mut data = fleet(vec![task("t1", "ready")], vec![]);
+        let mut data = clan(vec![task("t1", "ready")], vec![]);
         let report = tracker.update(&data, T0 + 5 * MIN);
         let t = only_task(&report);
         assert_eq!(t.last_progress_ms, Some(T0));
@@ -1020,7 +1020,7 @@ mod tests {
     fn first_sight_of_finished_task_uses_completed_at() {
         let mut t = task("t1", "completed");
         t.completed_at = Some(Timestamp::Text("2026-09-23 13:00:56".into()));
-        let data = fleet(vec![t], vec![]);
+        let data = clan(vec![t], vec![]);
         let report = ProgressTracker::new().update(&data, T0 * 2);
         assert_eq!(only_task(&report).last_progress_ms, Some(1_790_168_456_000));
     }
@@ -1044,7 +1044,7 @@ mod tests {
             .to_string(),
         );
         let early = heartbeat("m1", T0 + 2 * MIN, "reviewing");
-        let mut data = fleet(
+        let mut data = clan(
             vec![task("t1", "dispatched")],
             vec![rejected, late, done, early],
         );
@@ -1065,7 +1065,7 @@ mod tests {
     fn post_completion_heartbeat_ignored_via_completed_at() {
         let mut t = task("t1", "completed");
         t.completed_at = Some(Timestamp::Millis(T0 + 10 * MIN));
-        let mut data = fleet(vec![t], vec![heartbeat("m1", T0 + 12 * MIN, "reviewing")]);
+        let mut data = clan(vec![t], vec![heartbeat("m1", T0 + 12 * MIN, "reviewing")]);
         data.workers = vec![worker("t1", "ctx_1", "completed")];
         let report = ProgressTracker::new().update(&data, T0 + 20 * MIN);
         let t = only_task(&report);
@@ -1087,7 +1087,7 @@ mod tests {
 
     #[test]
     fn waiting_on_unanswered_ask() {
-        let data = fleet(
+        let data = clan(
             vec![task("t1", "dispatched")],
             vec![question("q1", T0 + 3 * MIN)],
         );
@@ -1115,7 +1115,7 @@ mod tests {
         );
         reply.thread_id = Some("q1".into());
         reply.to_handle = Some("dispatch:ctx_1".into());
-        let data = fleet(
+        let data = clan(
             vec![task("t1", "dispatched")],
             vec![reply, question("q1", T0 + 3 * MIN)],
         );
@@ -1126,7 +1126,7 @@ mod tests {
         // A direct message from the coordinator to the asker also answers it.
         let mut direct = msg("r2", COORD, "status", T0 + 4 * MIN, json!({}));
         direct.to_handle = Some(WORKER.into());
-        let data = fleet(
+        let data = clan(
             vec![task("t1", "dispatched")],
             vec![direct, question("q1", T0 + 3 * MIN)],
         );
@@ -1136,7 +1136,7 @@ mod tests {
 
     #[test]
     fn ask_on_finished_task_is_not_waiting() {
-        let data = fleet(
+        let data = clan(
             vec![task("t1", "completed")],
             vec![question("q1", T0 + 3 * MIN)],
         );
@@ -1161,7 +1161,7 @@ mod tests {
             }))
             .unwrap()
         };
-        let data = FleetData {
+        let data = ClanData {
             workers: vec![
                 w("task_6bd9c2a18900", "ctx_be46072c6286", "term_a"),
                 w("task_40a5deb4db5d", "ctx_6784d2c7c310", "term_b"),
@@ -1214,7 +1214,7 @@ mod tests {
 
     #[test]
     fn coordinator_activity_sources() {
-        let mut data = fleet(vec![task("t1", "dispatched"), task("t2", "ready")], vec![]);
+        let mut data = clan(vec![task("t1", "dispatched"), task("t2", "ready")], vec![]);
         data.terminals = vec![terminal(COORD, T0 + 2 * MIN)];
         let mut tracker = ProgressTracker::new();
         let report = tracker.update(&data, T0 + 5 * MIN);
@@ -1256,9 +1256,9 @@ mod tests {
 
     #[test]
     fn run_activity_sources() {
-        let mut data = fleet(vec![task("t1", "completed")], vec![]);
+        let mut data = clan(vec![task("t1", "completed")], vec![]);
         data.workers.clear();
-        let at = |data: &FleetData| {
+        let at = |data: &ClanData| {
             ProgressTracker::new().update(data, T0 + 100 * MIN).runs[0].last_activity_ms
         };
         // Task creation is the only signal.
@@ -1289,7 +1289,7 @@ mod tests {
         assert_eq!(at(&data), Some(T0 + 20 * MIN));
 
         // So does a dispatched task's worker output.
-        let mut data = fleet(vec![task("t1", "dispatched")], vec![]);
+        let mut data = clan(vec![task("t1", "dispatched")], vec![]);
         data.terminals = vec![terminal(WORKER, T0 + 50 * MIN)];
         assert_eq!(at(&data), Some(T0 + 50 * MIN));
     }
@@ -1305,7 +1305,7 @@ mod tests {
             ("failed", false),
         ];
         for (status, counts) in cases {
-            let mut data = fleet(vec![task("t1", status)], vec![]);
+            let mut data = clan(vec![task("t1", status)], vec![]);
             data.terminals = vec![terminal(COORD, T0 + 40 * MIN)];
             let run = &ProgressTracker::new().update(&data, T0 + 60 * MIN).runs[0];
             let (activity, source) = if counts {
@@ -1320,7 +1320,7 @@ mod tests {
         }
 
         // A Run with no tasks yet is being planned: output counts.
-        let mut data = fleet(vec![], vec![]);
+        let mut data = clan(vec![], vec![]);
         data.workers.clear();
         data.terminals = vec![terminal(COORD, T0 + 40 * MIN)];
         let run = &ProgressTracker::new().update(&data, T0 + 60 * MIN).runs[0];
@@ -1333,7 +1333,7 @@ mod tests {
         assert_eq!(run.last_coordinator_activity_ms, None);
 
         // A coordinator message still counts without open work.
-        let data = fleet(
+        let data = clan(
             vec![task("t1", "completed")],
             vec![msg("m1", COORD, "status", T0 + 30 * MIN, json!({}))],
         );
@@ -1345,7 +1345,7 @@ mod tests {
     fn coordinator_holding() {
         let mut hold = msg("m1", COORD, "status", T0 + 3 * MIN, json!({}));
         hold.subject = Some("holding: waiting for Karl's merge window".into());
-        let data = fleet(vec![task("t1", "dispatched")], vec![hold.clone()]);
+        let data = clan(vec![task("t1", "dispatched")], vec![hold.clone()]);
         let report = ProgressTracker::new().update(&data, T0 + 5 * MIN);
         let run = &report.runs[0];
         assert_eq!(
@@ -1358,13 +1358,13 @@ mod tests {
         let mut body_hold = msg("m1", COORD, "status", T0 + 3 * MIN, json!({}));
         body_hold.subject = Some("status".into());
         body_hold.body = Some("Holding: CI".into());
-        let data = fleet(vec![], vec![body_hold]);
+        let data = clan(vec![], vec![body_hold]);
         let report = ProgressTracker::new().update(&data, T0 + 5 * MIN);
         assert_eq!(report.runs[0].holding.as_deref(), Some("CI"));
 
         // A newer coordinator message ends the hold.
         let later = msg("m2", COORD, "dispatch", T0 + 4 * MIN, json!({}));
-        let data = fleet(vec![], vec![later, hold]);
+        let data = clan(vec![], vec![later, hold]);
         let report = ProgressTracker::new().update(&data, T0 + 5 * MIN);
         assert_eq!(report.runs[0].holding, None);
     }
@@ -1377,7 +1377,7 @@ mod tests {
         t2.created_by_terminal_handle = Some(rebound.into());
         let mut reply = msg("r1", rebound, "status", T0 + 4 * MIN, json!({}));
         reply.to_handle = Some(WORKER.into());
-        let mut data = fleet(
+        let mut data = clan(
             vec![task("t1", "dispatched"), t2],
             vec![reply, question("q1", T0 + 3 * MIN)],
         );
@@ -1393,7 +1393,7 @@ mod tests {
 
     #[test]
     fn owner_prefers_live_dispatch() {
-        let mut data = fleet(vec![task("t1", "dispatched")], vec![]);
+        let mut data = clan(vec![task("t1", "dispatched")], vec![]);
         let mut old = worker("t1", "ctx_0", "completed");
         old.agent_terminal_handle = Some("term_old".into());
         let mut live = worker("t1", "ctx_2", "dispatched");
@@ -1408,7 +1408,7 @@ mod tests {
     #[test]
     fn fixtures_parse_into_a_report() {
         let tasks = parse_task_list(fixture!("task_list.json")).unwrap();
-        let data = FleetData {
+        let data = ClanData {
             runs: parse_run_list(fixture!("run_list.json")).unwrap(),
             workers: parse_worker_list(fixture!("worker_list.json"))
                 .unwrap()

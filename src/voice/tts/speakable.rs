@@ -1,4 +1,4 @@
-//! Turning the Queen's markdown into speakable sentences.
+//! Turning the King's markdown into speakable sentences.
 //!
 //! [`SentenceStream`] takes streaming text deltas and yields complete, cleaned sentences as
 //! soon as they are known to be complete; [`speakable_sentences`] does the same for a whole
@@ -851,7 +851,7 @@ mod tests {
 
     #[test]
     fn stream_matches_whole_text_for_any_chunking() {
-        let md = "# Fleet report\n\nThree runs are active. run_7c25cdcf46e0 is at 50%, e.g. halfway.\n\n- term:term_ab12cd34 idle → working\n- See https://example.com/page.\n\n```\nlet x = 1;\n```\n| a | b |\n|---|---|\n| 1 | 2 |\n\nDone!";
+        let md = "# Clan report\n\nThree runs are active. run_7c25cdcf46e0 is at 50%, e.g. halfway.\n\n- term:term_ab12cd34 idle → working\n- See https://example.com/page.\n\n```\nlet x = 1;\n```\n| a | b |\n|---|---|\n| 1 | 2 |\n\nDone!";
         let whole = speakable_sentences(md);
         for chunk in [1, 2, 3, 5, 7, 13] {
             let mut s = SentenceStream::new();
@@ -866,7 +866,7 @@ mod tests {
         assert_eq!(
             whole,
             [
-                "Fleet report.",
+                "Clan report.",
                 "Three runs are active.",
                 "run 7c25 is at 50 percent, for example halfway.",
                 "terminal ab12 idle to working.",

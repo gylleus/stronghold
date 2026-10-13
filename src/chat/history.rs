@@ -28,7 +28,7 @@ pub enum HistoryRecord {
     },
     /// A prompt: typed by the user or sent by another agent.
     Prompt(String),
-    /// A prompt Karl spoke to the Queen.
+    /// A prompt Karl spoke to the King.
     VoicePrompt(String),
     /// An assistant message or tool results, as the CLI streams them.
     Message(Incoming),
@@ -127,7 +127,7 @@ fn user_records(record: &Value) -> Vec<HistoryRecord> {
 }
 
 /// What a user text shows as: harness-injected text is dropped, command and task wrappers
-/// become short system lines, Myrstack's notes to the Queen are taken off.
+/// become short system lines, Myrstack's notes to the King are taken off.
 fn prompt_record(text: &str) -> Option<HistoryRecord> {
     let text = text.trim();
     if text.is_empty()
@@ -166,7 +166,7 @@ fn prompt_record(text: &str) -> Option<HistoryRecord> {
     })
 }
 
-/// `text` without the notes Myrstack puts before the Queen's messages; true when one said
+/// `text` without the notes Myrstack puts before the King's messages; true when one said
 /// the message was spoken.
 fn strip_notes(mut text: &str) -> (bool, &str) {
     let mut voice = false;
@@ -553,7 +553,7 @@ mod tests {
     }
 
     #[test]
-    fn notes_to_the_queen_are_taken_off() {
+    fn notes_to_the_king_are_taken_off() {
         let voiced = format!(
             "{}\n\n{}\n\nHow many agents?",
             voice::VOICE_NOTE,

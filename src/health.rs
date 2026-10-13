@@ -1,6 +1,6 @@
 //! The health doctor: checks for silent misconfigurations (whip left in dry run, `gh` or
 //! `orca` missing from the app's `PATH`, the session hook not installed, a dead Slack reply
-//! bridge, notifications denied, the Queen not running).
+//! bridge, notifications denied, the King not running).
 //!
 //! The slow checks ([`Probes`]) run on the [`HealthWorker`] thread at startup and every
 //! [`INTERVAL`]; [`evaluate`] combines them with what the app knows ([`AppFacts`]) into a
@@ -96,9 +96,9 @@ impl HealthReport {
     }
 }
 
-/// The Queen's chat process, as the health check sees it.
+/// The King's chat process, as the health check sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QueenFact {
+pub enum KingFact {
     Running,
     Starting,
     Crashed(String),
@@ -106,14 +106,14 @@ pub enum QueenFact {
     Stopped,
 }
 
-impl From<&SessionState> for QueenFact {
+impl From<&SessionState> for KingFact {
     fn from(state: &SessionState) -> Self {
         match state {
-            SessionState::Ready => QueenFact::Running,
-            SessionState::Starting => QueenFact::Starting,
-            SessionState::Crashed { reason, .. } => QueenFact::Crashed(reason.clone()),
-            SessionState::Unavailable(why) => QueenFact::Unavailable(why.clone()),
-            SessionState::Stopped => QueenFact::Stopped,
+            SessionState::Ready => KingFact::Running,
+            SessionState::Starting => KingFact::Starting,
+            SessionState::Crashed { reason, .. } => KingFact::Crashed(reason.clone()),
+            SessionState::Unavailable(why) => KingFact::Unavailable(why.clone()),
+            SessionState::Stopped => KingFact::Stopped,
         }
     }
 }
@@ -123,7 +123,7 @@ impl From<&SessionState> for QueenFact {
 pub struct AppFacts {
     pub whip_enabled: bool,
     pub whip_dry_run: bool,
-    pub queen: QueenFact,
+    pub king: KingFact,
 }
 
 /// A command-line tool the app runs.
@@ -182,7 +182,7 @@ pub fn evaluate(facts: &AppFacts, probes: Option<&Probes>, now_ms: i64) -> Healt
         checks.push(orca_check(&p.orca));
         checks.push(gh_check(&p.gh));
     }
-    checks.push(queen_check(&facts.queen));
+    checks.push(king_check(&facts.king));
     if let Some(p) = probes {
         checks.push(hook_check(&p.hook));
         checks.push(notify_check(&p.notifications));
@@ -260,19 +260,19 @@ fn gh_check(p: &ToolProbe) -> Check {
     Check::new("gh", NAME, Level::Ok, format!("{version} ({path})"))
 }
 
-fn queen_check(queen: &QueenFact) -> Check {
-    const NAME: &str = "Queen";
-    match queen {
-        QueenFact::Running => Check::new("queen", NAME, Level::Ok, "chat process running"),
-        QueenFact::Starting => Check::new("queen", NAME, Level::Ok, "chat process starting"),
-        QueenFact::Crashed(reason) => {
-            Check::new("queen", NAME, Level::Error, format!("crashed: {reason}"))
+fn king_check(king: &KingFact) -> Check {
+    const NAME: &str = "King";
+    match king {
+        KingFact::Running => Check::new("king", NAME, Level::Ok, "chat process running"),
+        KingFact::Starting => Check::new("king", NAME, Level::Ok, "chat process starting"),
+        KingFact::Crashed(reason) => {
+            Check::new("king", NAME, Level::Error, format!("crashed: {reason}"))
                 .fix("It restarts by itself; see the log (palette: Open log) if it keeps crashing")
         }
-        QueenFact::Unavailable(why) => Check::new("queen", NAME, Level::Error, why.clone())
+        KingFact::Unavailable(why) => Check::new("king", NAME, Level::Error, why.clone())
             .fix("Install the `claude` CLI or set MYRSTACK_CLAUDE_BIN"),
-        QueenFact::Stopped => Check::new("queen", NAME, Level::Warn, "chat process stopped")
-            .fix("Open the Queen's chat (⌘J) to start it"),
+        KingFact::Stopped => Check::new("king", NAME, Level::Warn, "chat process stopped")
+            .fix("Open the King's chat (⌘J) to start it"),
     }
 }
 
@@ -598,7 +598,7 @@ mod tests {
         AppFacts {
             whip_enabled: true,
             whip_dry_run: false,
-            queen: QueenFact::Running,
+            king: KingFact::Running,
         }
     }
 
@@ -641,7 +641,7 @@ mod tests {
                 "whip",
                 "orca",
                 "gh",
-                "queen",
+                "king",
                 "hook",
                 "notifications",
                 "slack_bridge"
@@ -709,16 +709,16 @@ mod tests {
     }
 
     #[test]
-    fn hook_notifications_and_queen_verdicts() {
+    fn hook_notifications_and_king_verdicts() {
         let mut p = healthy();
         p.hook.installed = false;
         p.notifications = NotifyProbe::Status("denied; allow Myrstack in System Settings".into());
         let mut f = facts();
-        f.queen = QueenFact::Unavailable("no claude binary".into());
+        f.king = KingFact::Unavailable("no claude binary".into());
         let report = evaluate(&f, Some(&p), NOW);
         assert_eq!(check(&report, "hook").level, Level::Warn);
         assert_eq!(check(&report, "notifications").level, Level::Warn);
-        assert_eq!(check(&report, "queen").level, Level::Error);
+        assert_eq!(check(&report, "king").level, Level::Error);
         assert_eq!(report.level, Level::Error);
 
         p.notifications = NotifyProbe::NotBundled;

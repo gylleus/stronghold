@@ -1,4 +1,4 @@
-//! The Queen panel's playbook line ("Playbook 1b0b685 · 3 coordinators current · 1 on an older
+//! The King panel's playbook line ("Playbook 1b0b685 · 3 coordinators current · 1 on an older
 //! version") and the list of agents on an older version (click selects).
 
 use eframe::egui::{RichText, Ui};
@@ -6,9 +6,9 @@ use eframe::egui::{RichText, Ui};
 use crate::model::NodeId;
 use crate::playbook::fetches::{NodeFetch, PlaybookStatus};
 use crate::quota::format_duration;
-use crate::ui::fleet_view::kind_label;
+use crate::ui::clan_view::kind_label;
 
-/// The compact line for the Queen's header; hover lists every agent's newest fetch. Drawn in
+/// The compact line for the King's header; hover lists every agent's newest fetch. Drawn in
 /// the warning colour when someone runs an older version.
 pub fn playbook_line(ui: &mut Ui, status: &PlaybookStatus, now_ms: i64) {
     let text = RichText::new(status.line()).small();

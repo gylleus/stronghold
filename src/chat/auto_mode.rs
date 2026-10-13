@@ -1,4 +1,4 @@
-//! The Queen's auto mode: while on, all her tool calls run without Karl's confirmation.
+//! The King's auto mode: while on, all his tool calls run without Karl's confirmation.
 //! Kept in `<data dir>/chat/auto_mode.json`, next to `session.json`; off unless saved on.
 //! Only Karl's toggle in the chat header changes it; the control API and the MCP server only
 //! report it.
@@ -10,24 +10,24 @@ use serde::{Deserialize, Serialize};
 /// File name inside the chat directory.
 pub const AUTO_MODE_FILE: &str = "auto_mode.json";
 
-/// Told to the Queen (with Karl's next message) when auto mode turns on.
+/// Told to the King (with Karl's next message) when auto mode turns on.
 pub const NOTE_ON: &str = "[Myrstack] Auto mode is now ON: your actions run without Karl's \
 confirmation, so don't ask him to confirm them (tool texts saying \"confirm with Karl\" don't \
 apply while it is on). Be precise; prefer dry runs for closes first.";
-/// Told to the Queen when auto mode turns off.
+/// Told to the King when auto mode turns off.
 pub const NOTE_OFF: &str = "[Myrstack] Auto mode is now OFF: your destructive Myrstack actions \
 and other tool calls that need permission are shown to Karl for approval again before they run.";
 
 /// Notice shown in the transcript when the mode changes.
 pub fn notice(on: bool) -> &'static str {
     if on {
-        "Auto mode on: the Queen's actions run without asking"
+        "Auto mode on: the King's actions run without asking"
     } else {
-        "Auto mode off: the Queen's actions ask again"
+        "Auto mode off: the King's actions ask again"
     }
 }
 
-/// The note that tells the Queen about the mode.
+/// The note that tells the King about the mode.
 pub fn note(on: bool) -> &'static str {
     if on { NOTE_ON } else { NOTE_OFF }
 }

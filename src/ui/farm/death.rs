@@ -1,4 +1,4 @@
-//! An ant leaving the fleet (closed, its terminal gone, or it exited itself): it hops, flips
+//! A dwarf leaving the clan (closed, its terminal gone, or it exited itself): it hops, flips
 //! legs up and falls to the bottom of the farm under gravity, bounces once and fades. With
 //! the system's Reduce motion on it only fades where it stood.
 
@@ -15,11 +15,11 @@ pub const REST_S: f64 = 0.25;
 pub const FADE_S: f64 = 0.4;
 /// The whole fade when motion is reduced.
 pub const STILL_FADE_S: f64 = 0.5;
-/// The hop before the fall, and the bounce on landing, in ant sizes.
+/// The hop before the fall, and the bounce on landing, in dwarf sizes.
 const HOP: f32 = 0.5;
 const BOUNCE: f32 = 0.15;
 
-/// How an ant looked when it was last drawn, for its fall.
+/// How a dwarf looked when it was last drawn, for its fall.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Body {
     pub kind: crate::model::NodeKind,
@@ -33,7 +33,7 @@ pub struct Body {
     pub seed: u64,
 }
 
-/// A dead ant falling, from `start_s`.
+/// A dead dwarf falling, from `start_s`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Fall {
     pub body: Body,
@@ -42,7 +42,7 @@ pub struct Fall {
     pub still: bool,
 }
 
-/// Where a falling ant is drawn this frame.
+/// Where a falling dwarf is drawn this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FallFrame {
     pub pos: Pos2,

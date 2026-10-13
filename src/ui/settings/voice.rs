@@ -1,4 +1,4 @@
-//! The Voice section: the talk-to-the-Queen hotkey, speaking replies, the Queen's voice
+//! The Voice section: the talk-to-the-King hotkey, speaking replies, the King's voice
 //! (voice, speed, volume, a test button) and the two speech models. Edits go to the draft;
 //! the pane shows Save / Revert once it differs from the saved settings.
 
@@ -30,7 +30,7 @@ pub enum ModelStatus {
 pub enum VoiceModel {
     /// Parakeet speech-to-text.
     Speech,
-    /// Kokoro, the Queen's voice.
+    /// Kokoro, the King's voice.
     Voice,
 }
 
@@ -47,7 +47,7 @@ pub struct VoiceStatus<'a> {
 
 /// Label of the Kokoro download button.
 pub fn voice_download_label() -> String {
-    format!("Download Queen voice ({})", kokoro::SIZE_LABEL)
+    format!("Download King voice ({})", kokoro::SIZE_LABEL)
 }
 
 /// Label of the Parakeet download button.
@@ -62,7 +62,7 @@ pub fn voice_section(
     status: &VoiceStatus<'_>,
     out: &mut PaneOutput,
 ) {
-    ui.label(RichText::new("Talk to the Queen").strong());
+    ui.label(RichText::new("Talk to the King").strong());
     egui::Grid::new("voice_talk")
         .num_columns(2)
         .spacing([12.0, 8.0])
@@ -72,7 +72,7 @@ pub fn voice_section(
             ui.end_row();
 
             ui.label("Speak replies");
-            ui.checkbox(&mut draft.speak_replies, "Speak all of the Queen's replies")
+            ui.checkbox(&mut draft.speak_replies, "Speak all of the King's replies")
                 .on_hover_text("Replies to voice messages are always spoken");
             ui.end_row();
 
@@ -83,9 +83,9 @@ pub fn voice_section(
             ui.end_row();
         });
     ui.weak(format!(
-        "Hold {} anywhere, even with Myrstack in the background, and release to send. Her \
+        "Hold {} anywhere, even with Myrstack in the background, and release to send. His \
          reply to a voice message is spoken; press the hotkey, Esc or any key in Myrstack to \
-         stop her.",
+         stop him.",
         draft.talk_hotkey_label()
     ));
     if let Some(err) = status.hotkey_error {
@@ -93,7 +93,7 @@ pub fn voice_section(
     }
 
     ui.separator();
-    ui.label(RichText::new("The Queen's voice").strong());
+    ui.label(RichText::new("The King's voice").strong());
     egui::Grid::new("voice_voice")
         .num_columns(2)
         .spacing([12.0, 8.0])
@@ -114,7 +114,7 @@ pub fn voice_section(
     if ui
         .add_enabled(installed, egui::Button::new("▶ Test voice"))
         .on_hover_text(format!("Says \"{TEST_SENTENCE}\" with the settings above"))
-        .on_disabled_hover_text("Download the Queen's voice first")
+        .on_disabled_hover_text("Download the King's voice first")
         .clicked()
     {
         out.test_voice = Some(draft.clone());
@@ -137,7 +137,7 @@ pub fn voice_section(
             );
             ui.end_row();
 
-            ui.label("Queen's voice (Kokoro)");
+            ui.label("King's voice (Kokoro)");
             model_row(
                 ui,
                 &status.voice_model,

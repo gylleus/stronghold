@@ -63,7 +63,7 @@ fn info_plist_lints_and_has_the_app_keys() {
         "public.app-category.developer-tools"
     );
     assert!(!plist_value(&plist, "LSMinimumSystemVersion").is_empty());
-    assert!(plist_value(&plist, "NSMicrophoneUsageDescription").contains("talk-to-the-Queen"));
+    assert!(plist_value(&plist, "NSMicrophoneUsageDescription").contains("talk-to-the-King"));
 }
 
 /// The bundle id the notifier checks for is the one the bundle gets.

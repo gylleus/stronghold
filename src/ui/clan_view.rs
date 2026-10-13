@@ -1,9 +1,9 @@
-//! Shared fleet selection, filters, badges and tooltip data, independent of rendering.
+//! Shared clan selection, filters, badges and tooltip data, independent of rendering.
 mod colors;
 mod menu;
 mod tooltip;
 use crate::claude::Usage;
-use crate::model::{FleetSnapshot, Node, NodeId, NodeKind, RepoIndex};
+use crate::model::{ClanSnapshot, Node, NodeId, NodeKind, RepoIndex};
 pub use colors::*;
 use eframe::egui::{self, Ui};
 pub use menu::MenuPick;
@@ -27,7 +27,7 @@ pub enum Focus {
 }
 
 #[derive(Default)]
-pub struct FleetView {
+pub struct ClanView {
     nodes: HashMap<NodeId, Node>,
     objectives: HashMap<String, String>,
     repos: HashMap<NodeId, String>,
@@ -42,12 +42,12 @@ pub struct FleetView {
     focus: Option<Focus>,
 }
 
-impl FleetView {
+impl ClanView {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn sync(&mut self, snapshot: &FleetSnapshot) {
+    pub fn sync(&mut self, snapshot: &ClanSnapshot) {
         self.nodes = snapshot
             .nodes
             .iter()

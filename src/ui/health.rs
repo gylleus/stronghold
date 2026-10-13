@@ -69,7 +69,7 @@ pub fn health_badge(ui: &mut Ui, report: &HealthReport, now_ms: i64) -> Option<H
                     |at| {
                         format!(
                             "checked {} ago",
-                            crate::ui::fleet_view::format_age(now_ms - at)
+                            crate::ui::clan_view::format_age(now_ms - at)
                         )
                     },
                 );

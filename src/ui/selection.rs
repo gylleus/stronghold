@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use eframe::egui::{self, Color32, RichText, Ui};
 
 use crate::model::{Node, NodeId};
-use crate::ui::fleet_view::{kind_label, state_color, state_label};
+use crate::ui::clan_view::{kind_label, state_color, state_label};
 
 /// What was clicked in the selection panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,20 +21,20 @@ pub enum SelectionAction {
 }
 
 /// The nodes a close request covers: the whole selection when several nodes are selected
-/// (the planner skips the Queen and subagents), else the primary unless it is the Queen.
+/// (the planner skips the King and subagents), else the primary unless it is the King.
 pub fn close_targets(primary: Option<&NodeId>, selection: &BTreeSet<NodeId>) -> Vec<NodeId> {
     if selection.len() > 1 {
         return selection.iter().cloned().collect();
     }
     primary
-        .filter(|id| **id != NodeId::queen())
+        .filter(|id| **id != NodeId::king())
         .cloned()
         .into_iter()
         .collect()
 }
 
 /// The nodes a manual whip covers: the whole selection when several nodes are selected, else
-/// the primary (the planner skips the Queen and subagents with a reason).
+/// the primary (the planner skips the King and subagents with a reason).
 pub fn whip_targets(primary: Option<&NodeId>, selection: &BTreeSet<NodeId>) -> Vec<NodeId> {
     if selection.len() > 1 {
         return selection.iter().cloned().collect();
@@ -56,7 +56,7 @@ pub fn after_escape(
 }
 
 /// The "N selected" panel: the selected nodes (click one to select only it), a close button
-/// for all of them and "Clear selection". `nodes` are the selected nodes still in the fleet.
+/// for all of them and "Clear selection". `nodes` are the selected nodes still in the clan.
 pub fn selection_panel(ui: &mut Ui, nodes: &[&Node]) -> Option<SelectionAction> {
     let mut action = None;
     ui.heading(format!("{} selected", nodes.len()));
@@ -77,7 +77,7 @@ pub fn selection_panel(ui: &mut Ui, nodes: &[&Node]) -> Option<SelectionAction> 
         if ui
             .button(format!("Whip {}", nodes.len()))
             .on_hover_text(
-                "Send each selected agent a Myrstack nudge now (the Queen and subagents are \
+                "Send each selected agent a Myrstack nudge now (the King and subagents are \
                  skipped) — w",
             )
             .clicked()
@@ -152,20 +152,20 @@ mod tests {
     }
 
     #[test]
-    fn close_targets_cover_the_whole_multi_selection_including_the_queen() {
-        let selection: BTreeSet<NodeId> = [id("a"), id("b"), NodeId::queen()].into();
+    fn close_targets_cover_the_whole_multi_selection_including_the_king() {
+        let selection: BTreeSet<NodeId> = [id("a"), id("b"), NodeId::king()].into();
         let targets = close_targets(Some(&id("a")), &selection);
         assert_eq!(targets.len(), 3);
-        assert!(targets.contains(&NodeId::queen()));
+        assert!(targets.contains(&NodeId::king()));
     }
 
     #[test]
-    fn close_targets_of_a_single_selection_is_the_primary_but_never_the_queen() {
+    fn close_targets_of_a_single_selection_is_the_primary_but_never_the_king() {
         assert_eq!(close_targets(Some(&id("a")), &set(&["a"])), vec![id("a")]);
         // A primary hidden by filter is not in the farm's selection.
         assert_eq!(close_targets(Some(&id("a")), &set(&[])), vec![id("a")]);
-        let queen = NodeId::queen();
-        assert!(close_targets(Some(&queen), &[queen.clone()].into()).is_empty());
+        let king = NodeId::king();
+        assert!(close_targets(Some(&king), &[king.clone()].into()).is_empty());
         assert!(close_targets(None, &set(&[])).is_empty());
     }
 
@@ -174,9 +174,9 @@ mod tests {
         let multi = set(&["a", "b"]);
         assert_eq!(whip_targets(Some(&id("a")), &multi), vec![id("a"), id("b")]);
         assert_eq!(whip_targets(Some(&id("a")), &set(&["a"])), vec![id("a")]);
-        // The Queen reaches the planner, which explains why it is skipped.
-        let queen = NodeId::queen();
-        assert_eq!(whip_targets(Some(&queen), &set(&[])), vec![queen]);
+        // The King reaches the planner, which explains why it is skipped.
+        let king = NodeId::king();
+        assert_eq!(whip_targets(Some(&king), &set(&[])), vec![king]);
         assert!(whip_targets(None, &set(&[])).is_empty());
     }
 

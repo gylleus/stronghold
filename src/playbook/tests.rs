@@ -4,7 +4,7 @@ use std::process::Command;
 use super::*;
 
 const PLAYBOOK_MD: &str = "\
-# Fleet playbook
+# Clan playbook
 
 Intro.
 
@@ -22,7 +22,7 @@ Spend little.
 
 ## Coordinator duties
 
-Watch the fleet.
+Watch the clan.
 
 ### Sub
 
@@ -214,7 +214,7 @@ fn coordinator_gets_playbook_and_protocol() {
     let (_d, pb) = temp_playbook();
     let got = pb.get(&Target::Role(Role::Coordinator), None).unwrap();
     assert_eq!(got.files, [PLAYBOOK, PROTOCOL]);
-    assert!(got.body.contains("# Fleet playbook"));
+    assert!(got.body.contains("# Clan playbook"));
     assert!(got.body.contains("# Protocol"));
 }
 
@@ -224,7 +224,7 @@ fn attendant_gets_brief_and_two_playbook_sections() {
     let got = pb.get(&Target::Role(Role::Attendant), None).unwrap();
     assert_eq!(got.files, [ATTENDANT_BRIEF, PLAYBOOK]);
     assert!(got.body.contains("<campaign>"));
-    assert!(got.body.contains("Watch the fleet."));
+    assert!(got.body.contains("Watch the clan."));
     assert!(got.body.contains("Spend little."));
     assert!(!got.body.contains("Tree."));
     assert!(!got.body.contains("Keep it simple."));
@@ -274,7 +274,7 @@ fn workers_and_coordinators_are_told_to_reach_people_through_the_envoy() {
         let got = Playbook::at(BAKED_DIR)
             .get(
                 &Target::Role(role),
-                Some("reaching people outside the fleet"),
+                Some("reaching people outside the clan"),
             )
             .unwrap();
         assert!(got.body.contains("`reach_out`"), "{role:?}");

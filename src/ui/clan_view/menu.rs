@@ -1,8 +1,8 @@
-//! Context actions shared by fleet selections.
+//! Context actions shared by clan selections.
 use super::*;
-const PARK_HINT: &str = "Put this agent to sleep in the resting area: out of the live fleet \
+const PARK_HINT: &str = "Put this agent to sleep in the resting area: out of the live clan \
      and the whip, its terminal, session and worktree kept to continue later";
-const WAKE_HINT: &str = "Bring it back to the live fleet (sending it a message wakes it too)";
+const WAKE_HINT: &str = "Bring it back to the live clan (sending it a message wakes it too)";
 
 /// What a node's context menu asked for this frame.
 #[derive(Debug, Default)]
@@ -13,7 +13,7 @@ pub struct MenuPick {
     pub wake: Vec<NodeId>,
 }
 
-impl FleetView {
+impl ClanView {
     pub fn node_menu(&self, response: &egui::Response, id: &NodeId) -> MenuPick {
         let Some(node) = self.nodes.get(id) else {
             return MenuPick::default();
@@ -63,7 +63,7 @@ impl FleetView {
                 if ui
                     .button(format!("Whip {} selected", selection.len()))
                     .on_hover_text(
-                        "Send each selected agent a Myrstack nudge now (the Queen and \
+                        "Send each selected agent a Myrstack nudge now (the King and \
                          subagents are skipped)",
                     )
                     .clicked()
@@ -74,7 +74,7 @@ impl FleetView {
                 let close = ui
                     .button(format!("Close {} selected…", selection.len()))
                     .on_hover_text(
-                        "Kill the selected sessions in Orca (asks first; the Queen and \
+                        "Kill the selected sessions in Orca (asks first; the King and \
                          subagents are skipped)",
                     );
                 if close.clicked() {
@@ -95,7 +95,7 @@ impl FleetView {
             let refusal = match node.kind {
                 NodeKind::Envoy => None,
                 NodeKind::Subagent => Some(crate::close::SUBAGENT_REFUSAL),
-                NodeKind::Queen => Some(crate::close::QUEEN_REFUSAL),
+                NodeKind::King => Some(crate::close::KING_REFUSAL),
                 NodeKind::Coordinator
                 | NodeKind::Attendant
                 | NodeKind::Worker
@@ -104,7 +104,7 @@ impl FleetView {
             let whip_refusal = match node.kind {
                 NodeKind::Envoy => Some("The Envoy listens while idle."),
                 NodeKind::Subagent => Some("Subagents have no terminal to nudge."),
-                NodeKind::Queen => Some("The Queen is Myrstack itself."),
+                NodeKind::King => Some("The King is Myrstack itself."),
                 NodeKind::Coordinator
                 | NodeKind::Attendant
                 | NodeKind::Worker

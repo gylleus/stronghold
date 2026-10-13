@@ -3,9 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ui::ant_farm::rooms::RoomPlan;
 use crate::ui::dock::NotificationsDock;
-use crate::ui::sidebar::FleetFilter;
+use crate::ui::farm::rooms::RoomPlan;
+use crate::ui::sidebar::ClanFilter;
 
 /// Storage key of [`PersistedState`].
 pub const STORAGE_KEY: &str = "myrstack_state";
@@ -16,9 +16,9 @@ pub const FORMAT_VERSION: u32 = 1;
 #[serde(default)]
 pub struct PersistedState {
     pub version: u32,
-    /// ⌘J hid the Queen's chat shown when nothing is selected.
+    /// ⌘J hid the King's chat shown when nothing is selected.
     pub chat_hidden: bool,
-    pub filter: FleetFilter,
+    pub filter: ClanFilter,
     /// The command palette's recently run actions, newest first.
     pub recent_actions: Vec<String>,
     /// The dock's pane arrangement, see [`crate::ui::dock::PaneLayout::encode`]; `None` for
@@ -26,7 +26,7 @@ pub struct PersistedState {
     pub panes: Option<String>,
     /// The notifications panel: open or collapsed, its side and width.
     pub notifications_panel: NotificationsDock,
-    /// Where the ant farm's rooms are dug, so they keep their places across launches.
+    /// Where the farm's rooms are dug, so they keep their places across launches.
     pub farm_rooms: RoomPlan,
 }
 
@@ -35,7 +35,7 @@ impl Default for PersistedState {
         Self {
             version: FORMAT_VERSION,
             chat_hidden: false,
-            filter: FleetFilter::default(),
+            filter: ClanFilter::default(),
             recent_actions: Vec::new(),
             panes: None,
             notifications_panel: NotificationsDock::default(),
@@ -83,7 +83,7 @@ mod tests {
         PersistedState {
             version: FORMAT_VERSION,
             chat_hidden: true,
-            filter: FleetFilter {
+            filter: ClanFilter {
                 repos: BTreeSet::from(["myrstack".to_owned()]),
                 states: BTreeSet::from([NodeState::NeedsInput, NodeState::Stalled]),
                 kinds: BTreeSet::from([NodeKind::Worker]),
@@ -100,8 +100,8 @@ mod tests {
             },
             farm_rooms: {
                 let mut plan = RoomPlan::default();
-                plan.rooms = vec![crate::ui::ant_farm::rooms::Room {
-                    key: crate::ui::ant_farm::layout::TunnelKey::Repo("myrstack".into()),
+                plan.rooms = vec![crate::ui::farm::rooms::Room {
+                    key: crate::ui::farm::layout::TunnelKey::Repo("myrstack".into()),
                     level: 1,
                     col: 2,
                     rows: 3,
@@ -147,7 +147,7 @@ mod tests {
         let state = PersistedState::load(&storage).unwrap();
         assert_eq!(state.panes, None);
         assert!(!state.chat_hidden);
-        assert_eq!(state.filter, FleetFilter::default());
+        assert_eq!(state.filter, ClanFilter::default());
         assert_eq!(state.notifications_panel, NotificationsDock::default());
         assert!(state.notifications_panel.open, "the panel starts open");
     }

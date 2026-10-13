@@ -20,7 +20,7 @@ const TILE: usize = 256;
 /// Agent guild colours and crests; identity stays visible in every state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Coat {
-    /// No known agent, and the Queen: the dwarf's own colours.
+    /// No known agent, and the King: the dwarf's own colours.
     Plain,
     Claude,
     Codex,
@@ -561,7 +561,7 @@ impl Sprites {
         }
     }
 
-    /// A ring of the Queen's call at `radius` around `center`, drawn as pixel dashes.
+    /// A ring of the King's call at `radius` around `center`, drawn as pixel dashes.
     pub fn ring(&self, painter: &Painter, center: Pos2, radius: f32, px: f32, color: Color32) {
         let dashes = ((radius * std::f32::consts::TAU) / (6.0 * px)).clamp(12.0, 400.0) as usize;
         for i in 0..dashes {

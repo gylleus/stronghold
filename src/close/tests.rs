@@ -62,8 +62,8 @@ fn stop(dispatch: &str, handle: Option<&str>) -> CloseStep {
     }
 }
 
-fn snapshot() -> FleetSnapshot {
-    let mut s = FleetSnapshot::default();
+fn snapshot() -> ClanSnapshot {
+    let mut s = ClanSnapshot::default();
     s.runs = vec![RunSummary {
         id: "run_1".into(),
         objective: Some("ship it".into()),
@@ -298,18 +298,18 @@ fn bulk_candidates_skip_hidden_coordinators_and_dead_nodes() {
 }
 
 #[test]
-fn queen_is_refused_and_never_a_bulk_candidate() {
+fn king_is_refused_and_never_a_bulk_candidate() {
     let mut s = snapshot();
-    s.add_queen();
-    let queen = s.queen().unwrap().clone();
-    let plan = plan_close(&queen, &s, &[], PANE);
-    assert_eq!(plan.refused.as_deref(), Some(QUEEN_REFUSAL));
+    s.add_king();
+    let king = s.king().unwrap().clone();
+    let plan = plan_close(&king, &s, &[], PANE);
+    assert_eq!(plan.refused.as_deref(), Some(KING_REFUSAL));
     assert!(!plan.can_run());
     for coordinators in [false, true] {
         assert!(
             bulk_candidates(&s, &BTreeSet::new(), coordinators)
                 .iter()
-                .all(|n| n.kind != NodeKind::Queen)
+                .all(|n| n.kind != NodeKind::King)
         );
     }
 }
@@ -322,7 +322,7 @@ fn tab_companions_lists_other_sessions_in_the_targets_tabs() {
         node("b", NodeKind::Terminal, Some("t_b")),
         node("term:t_other", NodeKind::Terminal, Some("t_other")),
     ];
-    s.add_queen();
+    s.add_king();
     let terminals = [
         terminal("t_a", "tab_1"),
         terminal("t_other", "tab_1"),
@@ -350,24 +350,24 @@ fn tab_companions_lists_other_sessions_in_the_targets_tabs() {
 }
 
 #[test]
-fn bulk_close_of_a_selection_skips_the_queen_and_subagents() {
+fn bulk_close_of_a_selection_skips_the_king_and_subagents() {
     let mut s = snapshot();
-    s.add_queen();
-    let queen = s.queen().unwrap().clone();
+    s.add_king();
+    let king = s.king().unwrap().clone();
     let loose = node("loose", NodeKind::Terminal, Some("t_1"));
     let sub = node("sub", NodeKind::Subagent, None);
-    let plan = plan_bulk_close([&queen, &loose, &sub], &s, &[], PANE);
+    let plan = plan_bulk_close([&king, &loose, &sub], &s, &[], PANE);
     assert!(plan.can_run());
     assert_eq!(plan.steps, vec![close("t_1", false)]);
     assert_eq!(
         plan.warnings,
         vec![
-            format!("skipped {}: {QUEEN_REFUSAL}", queen.label),
+            format!("skipped {}: {KING_REFUSAL}", king.label),
             format!("skipped sub: {SUBAGENT_REFUSAL}"),
         ]
     );
     // Nothing closable left: refused, but the skips still explain why.
-    let none = plan_bulk_close([&queen, &sub], &s, &[], PANE);
+    let none = plan_bulk_close([&king, &sub], &s, &[], PANE);
     assert!(!none.can_run());
     assert_eq!(none.warnings.len(), 2);
 }

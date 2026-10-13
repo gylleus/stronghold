@@ -49,7 +49,7 @@ pub enum ErrorCode {
     NotSupported,
     /// The app is not ready (no data yet) or not answering.
     Unavailable,
-    /// The app will not do it (e.g. closing a subagent or the Queen).
+    /// The app will not do it (e.g. closing a subagent or the King).
     Refused,
     /// The app took too long to reply.
     Timeout,

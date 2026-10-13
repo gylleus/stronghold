@@ -1,12 +1,12 @@
-//! Sidebar: runs and loose terminals grouped by repo, and fleet filters.
+//! Sidebar: runs and loose terminals grouped by repo, and clan filters.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use eframe::egui::{self, RichText, Sense, Ui};
 
-use crate::model::{FleetSnapshot, Node, NodeId, NodeKind, NodeState, RepoIndex, TaskCounts};
+use crate::model::{ClanSnapshot, Node, NodeId, NodeKind, NodeState, RepoIndex, TaskCounts};
 use crate::park::RESTING_AREA;
-use crate::ui::fleet_view::{kind_label, state_color, state_label};
+use crate::ui::clan_view::{kind_label, state_color, state_label};
 
 pub use crate::model::{NO_REPO, node_repo, repo_of};
 
@@ -31,7 +31,7 @@ const DOT_RADIUS: f32 = 5.0;
 /// Which nodes the farm shows. Empty sets mean "all".
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
-pub struct FleetFilter {
+pub struct ClanFilter {
     pub repos: BTreeSet<String>,
     pub states: BTreeSet<NodeState>,
     pub kinds: BTreeSet<NodeKind>,
@@ -43,7 +43,7 @@ pub struct FleetFilter {
     pub text: String,
 }
 
-impl Default for FleetFilter {
+impl Default for ClanFilter {
     fn default() -> Self {
         Self {
             repos: BTreeSet::new(),
@@ -56,10 +56,10 @@ impl Default for FleetFilter {
     }
 }
 
-impl FleetFilter {
-    /// Whether `node` is shown. The queen always is.
-    pub fn matches(&self, node: &Node, snapshot: &FleetSnapshot) -> bool {
-        if node.kind == NodeKind::Queen {
+impl ClanFilter {
+    /// Whether `node` is shown. The king always is.
+    pub fn matches(&self, node: &Node, snapshot: &ClanSnapshot) -> bool {
+        if node.kind == NodeKind::King {
             return true;
         }
         if !self.show_loose && node.kind == NodeKind::Terminal {
@@ -99,7 +99,7 @@ impl FleetFilter {
     }
 
     /// IDs of the snapshot's nodes this filter hides.
-    pub fn hidden(&self, snapshot: &FleetSnapshot) -> BTreeSet<NodeId> {
+    pub fn hidden(&self, snapshot: &ClanSnapshot) -> BTreeSet<NodeId> {
         snapshot
             .nodes
             .iter()
@@ -114,14 +114,14 @@ impl FleetFilter {
     }
 }
 
-/// Like [`FleetSnapshot::node`], but also works on snapshots assembled by hand.
-fn find_node<'a>(snapshot: &'a FleetSnapshot, id: &NodeId) -> Option<&'a Node> {
+/// Like [`ClanSnapshot::node`], but also works on snapshots assembled by hand.
+fn find_node<'a>(snapshot: &'a ClanSnapshot, id: &NodeId) -> Option<&'a Node> {
     snapshot
         .node(id)
         .or_else(|| snapshot.nodes.iter().find(|n| &n.id == id))
 }
 
-pub fn repo_counts(snapshot: &FleetSnapshot) -> BTreeMap<String, usize> {
+pub fn repo_counts(snapshot: &ClanSnapshot) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     for node in snapshot.agent_nodes() {
         *counts.entry(node_repo(node, snapshot)).or_insert(0) += 1;
@@ -129,7 +129,7 @@ pub fn repo_counts(snapshot: &FleetSnapshot) -> BTreeMap<String, usize> {
     counts
 }
 
-pub fn state_counts(snapshot: &FleetSnapshot) -> BTreeMap<NodeState, usize> {
+pub fn state_counts(snapshot: &ClanSnapshot) -> BTreeMap<NodeState, usize> {
     let mut counts = BTreeMap::new();
     for node in snapshot.agent_nodes() {
         *counts.entry(node.state).or_insert(0) += 1;
@@ -137,7 +137,7 @@ pub fn state_counts(snapshot: &FleetSnapshot) -> BTreeMap<NodeState, usize> {
     counts
 }
 
-pub fn kind_counts(snapshot: &FleetSnapshot) -> BTreeMap<NodeKind, usize> {
+pub fn kind_counts(snapshot: &ClanSnapshot) -> BTreeMap<NodeKind, usize> {
     let mut counts = BTreeMap::new();
     for node in snapshot.agent_nodes() {
         *counts.entry(node.kind).or_insert(0) += 1;
@@ -183,7 +183,7 @@ pub struct RunRow {
 }
 
 /// The snapshot's runs, most recently active first.
-pub fn run_rows(snapshot: &FleetSnapshot) -> Vec<RunRow> {
+pub fn run_rows(snapshot: &ClanSnapshot) -> Vec<RunRow> {
     let mut rows: Vec<RunRow> = snapshot
         .runs
         .iter()
@@ -232,7 +232,7 @@ pub struct LooseRow {
 }
 
 /// Runs and loose terminals grouped by repo, repos by name with [`NO_REPO`] last.
-pub fn repo_groups(snapshot: &FleetSnapshot) -> Vec<RepoGroup> {
+pub fn repo_groups(snapshot: &ClanSnapshot) -> Vec<RepoGroup> {
     let index = RepoIndex::new(snapshot);
     let mut out: BTreeMap<(bool, String), RepoGroup> = BTreeMap::new();
     fn entry<'a>(
@@ -327,7 +327,7 @@ pub struct SidebarResponse {
     pub filter_changed: bool,
     /// "Close shown…" was clicked: ask to close the nodes the filter shows.
     pub close_shown: bool,
-    /// A repo header's "+" was clicked: open "New ant…" for that repo.
+    /// A repo header's "+" was clicked: open "New dwarf…" for that repo.
     pub new_session_repo: Option<String>,
 }
 
@@ -336,7 +336,7 @@ pub struct SidebarResponse {
 pub struct SidebarCache {
     derived: Option<Derived>,
     /// Nodes a filter hides, for the filter it was counted for.
-    hidden: Option<(FleetFilter, usize)>,
+    hidden: Option<(ClanFilter, usize)>,
 }
 
 #[derive(Debug)]
@@ -399,7 +399,7 @@ impl SidebarCache {
         *self = Self::default();
     }
 
-    fn derived(&mut self, snapshot: &FleetSnapshot) -> &Derived {
+    fn derived(&mut self, snapshot: &ClanSnapshot) -> &Derived {
         self.derived.get_or_insert_with(|| Derived {
             groups: repo_groups(snapshot)
                 .into_iter()
@@ -411,7 +411,7 @@ impl SidebarCache {
         })
     }
 
-    fn hidden_count(&mut self, snapshot: &FleetSnapshot, filter: &FleetFilter) -> usize {
+    fn hidden_count(&mut self, snapshot: &ClanSnapshot, filter: &ClanFilter) -> usize {
         match &self.hidden {
             Some((cached, count)) if cached == filter => *count,
             _ => {
@@ -424,7 +424,7 @@ impl SidebarCache {
 }
 
 /// Draws the run list and filter controls; edits `filter` in place.
-pub fn sidebar(ui: &mut Ui, snapshot: &FleetSnapshot, filter: &mut FleetFilter) -> SidebarResponse {
+pub fn sidebar(ui: &mut Ui, snapshot: &ClanSnapshot, filter: &mut ClanFilter) -> SidebarResponse {
     sidebar_with(ui, snapshot, filter, |_| {})
 }
 
@@ -432,8 +432,8 @@ pub fn sidebar(ui: &mut Ui, snapshot: &FleetSnapshot, filter: &mut FleetFilter) 
 /// filters, inside the sidebar's scroll area.
 pub fn sidebar_with(
     ui: &mut Ui,
-    snapshot: &FleetSnapshot,
-    filter: &mut FleetFilter,
+    snapshot: &ClanSnapshot,
+    filter: &mut ClanFilter,
     extra: impl FnOnce(&mut Ui),
 ) -> SidebarResponse {
     sidebar_cached(ui, snapshot, &mut SidebarCache::default(), filter, extra)
@@ -443,9 +443,9 @@ pub fn sidebar_with(
 /// [`SidebarCache::snapshot_changed`] when the snapshot changes.
 pub fn sidebar_cached(
     ui: &mut Ui,
-    snapshot: &FleetSnapshot,
+    snapshot: &ClanSnapshot,
     cache: &mut SidebarCache,
-    filter: &mut FleetFilter,
+    filter: &mut ClanFilter,
     extra: impl FnOnce(&mut Ui),
 ) -> SidebarResponse {
     let before = filter.clone();
@@ -485,7 +485,7 @@ pub fn sidebar_cached(
 
 fn repos_section(
     ui: &mut Ui,
-    snapshot: &FleetSnapshot,
+    snapshot: &ClanSnapshot,
     groups: &[RepoView],
     response: &mut SidebarResponse,
 ) {
@@ -494,8 +494,8 @@ fn repos_section(
             ui,
             crate::ui::art::Portrait::Sleeping,
             140.0,
-            "No ants",
-            "The colony is quiet. New ants show up here.",
+            "No dwarves",
+            "The hold is quiet. New dwarves show up here.",
         );
         return;
     }
@@ -510,14 +510,14 @@ fn repos_section(
     }
 }
 
-/// The repo header's "+": opens "New ant…" with the repo picked.
+/// The repo header's "+": opens "New dwarf…" with the repo picked.
 fn new_session_button(ui: &mut Ui, group: &RepoView, response: &mut SidebarResponse) {
     if group.repo == NO_REPO || group.repo == RESTING_AREA {
         return;
     }
     let button = ui
         .small_button("+")
-        .on_hover_text(format!("New ant in {}…", group.repo));
+        .on_hover_text(format!("New dwarf in {}…", group.repo));
     if button.clicked() {
         response.new_session_repo = Some(group.repo.clone());
     }
@@ -595,7 +595,7 @@ fn dot(ui: &mut Ui, color: egui::Color32, hover: String) {
 
 fn runs_section(
     ui: &mut Ui,
-    snapshot: &FleetSnapshot,
+    snapshot: &ClanSnapshot,
     runs: &[RunView],
     response: &mut SidebarResponse,
 ) {
@@ -650,9 +650,9 @@ fn state_dot(ui: &mut Ui, state: Option<NodeState>) {
 
 fn filters_section(
     ui: &mut Ui,
-    snapshot: &FleetSnapshot,
+    snapshot: &ClanSnapshot,
     cache: &mut SidebarCache,
-    filter: &mut FleetFilter,
+    filter: &mut ClanFilter,
 ) {
     // Right-to-left so the text box gets exactly the width the button leaves: a guessed width
     // that overflows makes the resizable panel grow a little every frame.
@@ -752,7 +752,7 @@ fn filters_section(
             .add_enabled(filter.is_active(), egui::Button::new("Reset"))
             .clicked()
         {
-            *filter = FleetFilter::default();
+            *filter = ClanFilter::default();
         }
     });
 }

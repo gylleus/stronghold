@@ -4,7 +4,7 @@ use eframe::egui;
 
 use super::MyrstackApp;
 use crate::chat::config::MODEL_ENV;
-use crate::ui::settings::{GeneralInfo, NotifyStatus, PaneContext, QueenStatus};
+use crate::ui::settings::{GeneralInfo, KingStatus, NotifyStatus, PaneContext};
 
 impl MyrstackApp {
     /// Opens the Settings window on the section it showed last (⌘,, "Settings…").
@@ -25,7 +25,7 @@ impl MyrstackApp {
         let cx = PaneContext {
             whip_status: &self.whip_status,
             now_ms,
-            queen: QueenStatus {
+            king: KingStatus {
                 auto_mode: self.chat.auto_mode(),
                 running_model: self.chat.running_model(),
                 env_model: env_model.as_deref(),
@@ -45,8 +45,8 @@ impl MyrstackApp {
         if let Some(whip) = out.whip {
             self.whip.update_settings(whip);
         }
-        if let Some(queen) = &out.queen {
-            self.chat.apply_queen_settings(queen);
+        if let Some(king) = &out.king {
+            self.chat.apply_king_settings(king);
         }
         if let Some(on) = out.auto_mode {
             self.chat.set_auto_mode(on);

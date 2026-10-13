@@ -3,14 +3,14 @@
 //! back into the farm for hit testing.
 //!
 //! A mouse wheel, a trackpad pinch and ⌘+scroll zoom around the pointer; a trackpad swipe,
-//! right- or middle-drag and the arrow keys pan (see [`crate::ui::ant_farm::nav`]); a double-click
+//! right- or middle-drag and the arrow keys pan (see [`crate::ui::farm::nav`]); a double-click
 //! on empty ground fits the farm again.
 
 use eframe::egui::{self, Pos2, Rect, Shape, Vec2, emath::TSTransform, layers::ShapeIdx, vec2};
 
 /// The fitted farm; it fills the view, so there is nothing to zoom out to.
 pub const MIN_ZOOM: f32 = 1.0;
-/// Close enough for a single ant's tag to fill a good part of the view.
+/// Close enough for a single dwarf's tag to fill a good part of the view.
 pub const MAX_ZOOM: f32 = 8.0;
 
 /// What part of the farm is on screen: `zoom` times the fitted size, with the point

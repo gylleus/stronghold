@@ -33,8 +33,8 @@ fn node(id: NodeId, kind: NodeKind, handle: Option<&str>) -> Node {
 }
 
 /// Coordinator `term_c` of run `r1`, its worker `term_w` on dispatch `d1`, a loose terminal.
-fn snapshot() -> FleetSnapshot {
-    let mut s = FleetSnapshot::default();
+fn snapshot() -> ClanSnapshot {
+    let mut s = ClanSnapshot::default();
     s.runs = vec![RunSummary {
         id: "r1".into(),
         objective: None,
@@ -54,7 +54,7 @@ fn snapshot() -> FleetSnapshot {
         NodeKind::Terminal,
         Some("term_l"),
     ));
-    s.add_queen();
+    s.add_king();
     s
 }
 
@@ -69,10 +69,10 @@ fn resolves_every_way_an_agent_is_named() {
     assert_eq!(resolve(&s, "term:term_w"), Some(at("term_w")));
     assert_eq!(resolve(&s, "dispatch:d1"), Some(at("term_w")));
     assert_eq!(resolve(&s, "run:r1"), Some(at("term_c")));
-    assert_eq!(resolve(&s, "queen"), Some(Endpoint::Node(NodeId::queen())));
+    assert_eq!(resolve(&s, "king"), Some(Endpoint::Node(NodeId::king())));
     assert_eq!(
         resolve(&s, "myrstack-whip"),
-        Some(Endpoint::Node(NodeId::queen()))
+        Some(Endpoint::Node(NodeId::king()))
     );
     assert_eq!(resolve(&s, "Karl"), Some(Endpoint::Karl));
     assert_eq!(resolve(&s, "slack"), Some(Endpoint::Outside));
@@ -119,6 +119,11 @@ fn bus_messages_map_to_kinds() {
         Some(MessageKind::Status)
     );
     assert_eq!(
+        kind("king", "term_c", "custom"),
+        Some(MessageKind::Instruction)
+    );
+    // Broadcasts sent before the dwarf theme, still in Orca's run history.
+    assert_eq!(
         kind("queen", "term_c", "custom"),
         Some(MessageKind::Instruction)
     );
@@ -163,7 +168,7 @@ fn inbox_timestamps_may_be_text() {
 }
 
 #[test]
-fn sent_whip_nudges_fly_from_the_queen() {
+fn sent_whip_nudges_fly_from_the_king() {
     let mut item = WhipLogItem {
         seq: 1,
         entry: WhipLogEntry {
@@ -181,7 +186,7 @@ fn sent_whip_nudges_fly_from_the_queen() {
     };
     assert_eq!(
         from_whip(&item),
-        Some(AgentMessage::new("queen", "term_w", MessageKind::Nudge))
+        Some(AgentMessage::new("king", "term_w", MessageKind::Nudge))
     );
     item.entry.dry_run = true;
     assert_eq!(from_whip(&item), None);

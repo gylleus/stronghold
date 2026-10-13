@@ -1,6 +1,6 @@
 //! What MCP tool calls do to agents, drawn as beams from the caller: a thin blue line pulling
 //! from an agent it reads, a blue sweep over the agents it lists, a red laser at the agents it
-//! closes (faint and dashed for a dry run), a green burst on an ant it spawns.
+//! closes (faint and dashed for a dry run), a green burst on a dwarf it spawns.
 //!
 //! The MCP server sends one `tool_call` per call after it answered ([`ToolCall::of`]); the app
 //! resolves the ends ([`Beam`]) and both views draw them, see [`crate::ui::beam`]. Messages
@@ -54,9 +54,9 @@ impl BeamKind {
     }
 }
 
-/// One tool call: who made it (`origin`, empty for the Queen), and the agents it acted on, named
+/// One tool call: who made it (`origin`, empty for the King), and the agents it acted on, named
 /// as [`super::resolve`] or the control API's agent lookup knows them. A sweep with no targets
-/// covers the whole fleet.
+/// covers the whole clan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCall {
     pub tool: String,

@@ -23,7 +23,7 @@ pub struct StateInputs<'a> {
     /// Set by the whip when the node has made no progress for too long.
     pub stalled: bool,
     /// Orca failed the dispatch but its agent kept working (see
-    /// [`crate::fleet::FleetData::alive_after_failure`]): the terminal decides, not the failure.
+    /// [`crate::clan::ClanData::alive_after_failure`]): the terminal decides, not the failure.
     pub alive_after_failure: bool,
 }
 

@@ -1,4 +1,4 @@
-//! Fleet state colours and release opacity.
+//! Clan state colours and release opacity.
 use crate::model::{NodeState, RELEASED_FADE_MS};
 use eframe::egui::Color32;
 pub const ALL_STATES: [NodeState; 6] = [
@@ -20,7 +20,7 @@ pub fn envoy_color(dark: bool) -> Color32 {
     }
 }
 
-pub fn queen_color(dark_mode: bool) -> Color32 {
+pub fn king_color(dark_mode: bool) -> Color32 {
     if dark_mode {
         Color32::from_rgb(0xd9, 0xc3, 0x8c)
     } else {

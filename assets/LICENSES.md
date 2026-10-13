@@ -8,7 +8,7 @@ Everything here is compiled into the binary (`include_bytes!`); nothing is fetch
 
 The Phosphor font uses the MIT license; its notice and license text are included below.
 The mine, its props, scenery and dwarves are drawn in Rust with the cutout and pixel
-renderers in `src/ui/dwarf/` and `src/ui/ant_farm/`. No third-party farm artwork is bundled.
+renderers in `src/ui/dwarf/` and `src/ui/farm/`. No third-party farm artwork is bundled.
 
 To add an icon, pick it at phosphoricons.com and add its codepoint (from the package's
 `src/bold/style.css`) to `src/ui/icons.rs`: the whole bold font is bundled.

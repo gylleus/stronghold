@@ -1,11 +1,11 @@
 //! Background thread that polls Orca and sends snapshots to the UI over a channel.
 //!
 //! Each call type runs on its own cadence ([`PollerConfig`]). Every cycle that polled anything
-//! sends a complete [`FleetData`] holding the latest value of everything; a failed call keeps
+//! sends a complete [`ClanData`] holding the latest value of everything; a failed call keeps
 //! its previous value and reports a message in `errors` until the call next succeeds.
 //!
 //! The screen of one watched terminal ([`PollerCommand::WatchScreen`]) is read on its own
-//! thread and cadence, so slow fleet calls never delay it; results arrive as [`ScreenUpdate`]s
+//! thread and cadence, so slow clan calls never delay it; results arrive as [`ScreenUpdate`]s
 //! on a separate channel ([`Poller::latest_screen`]).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,8 +15,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError};
 
+use crate::clan::ClanData;
 use crate::detect::{PromptKind, detect_prompt};
-use crate::fleet::FleetData;
 use crate::orca::spawn::Worktree;
 use crate::orca::{
     AgentIdentity, InboxMessage, OrcaClient, OrcaError, Run, Task, Terminal, TerminalRead,
@@ -84,7 +84,7 @@ pub enum PollerCommand {
 }
 
 /// The Orca calls the poller makes, abstracted for tests.
-pub trait FleetSource: Send + 'static {
+pub trait ClanSource: Send + 'static {
     fn terminals(&self) -> Result<Vec<Terminal>, OrcaError>;
     fn runs(&self) -> Result<Vec<Run>, OrcaError>;
     fn workers(&self) -> Result<Vec<Worker>, OrcaError>;
@@ -96,7 +96,7 @@ pub trait FleetSource: Send + 'static {
     }
 }
 
-impl FleetSource for OrcaClient {
+impl ClanSource for OrcaClient {
     fn terminals(&self) -> Result<Vec<Terminal>, OrcaError> {
         self.terminal_list().map(|l| l.terminals)
     }
@@ -503,11 +503,11 @@ enum CallKey {
 }
 
 /// The poller's merge state: latest values plus outstanding errors. Pure apart from the calls
-/// into the [`FleetSource`], so tests can drive it with a fake source and clock.
+/// into the [`ClanSource`], so tests can drive it with a fake source and clock.
 pub struct PollState {
     schedule: Schedule,
     sampler: PromptSampler,
-    data: FleetData,
+    data: ClanData,
     errors: BTreeMap<CallKey, String>,
 }
 
@@ -516,7 +516,7 @@ impl PollState {
         Self {
             sampler: PromptSampler::new(&config),
             schedule: Schedule::new(config),
-            data: FleetData::default(),
+            data: ClanData::default(),
             errors: BTreeMap::new(),
         }
     }
@@ -537,32 +537,32 @@ impl PollState {
     /// Polls whatever is due at monotonic time `now`; returns a snapshot if anything was polled.
     pub fn tick(
         &mut self,
-        source: &dyn FleetSource,
+        source: &dyn ClanSource,
         now: Duration,
         wall_ms: i64,
-    ) -> Option<FleetData> {
+    ) -> Option<ClanData> {
         self.poll(source, None, now, wall_ms)
     }
 
     /// [`Self::tick`] plus background prompt sampling ([`PromptSampler`]) into
-    /// [`FleetData::needs_input`].
+    /// [`ClanData::needs_input`].
     pub fn tick_with_screens(
         &mut self,
-        source: &dyn FleetSource,
+        source: &dyn ClanSource,
         screens: &dyn ScreenSource,
         now: Duration,
         wall_ms: i64,
-    ) -> Option<FleetData> {
+    ) -> Option<ClanData> {
         self.poll(source, Some(screens), now, wall_ms)
     }
 
     fn poll(
         &mut self,
-        source: &dyn FleetSource,
+        source: &dyn ClanSource,
         screens: Option<&dyn ScreenSource>,
         now: Duration,
         wall_ms: i64,
-    ) -> Option<FleetData> {
+    ) -> Option<ClanData> {
         let due = self.schedule.take_due(now);
         let sample_due = screens.is_some() && self.sampler.is_due(now);
         if !due.any() && !sample_due {
@@ -590,7 +590,7 @@ impl PollState {
             });
             let result = source.worktrees();
             self.apply(CallKey::Worktrees, "worktree list", result, |d, v| {
-                d.worktree_names = crate::fleet::chosen_worktree_names(&v);
+                d.worktree_names = crate::clan::chosen_worktree_names(&v);
                 d.worktrees = v;
             });
         }
@@ -617,7 +617,7 @@ impl PollState {
         Some(self.data.clone())
     }
 
-    fn poll_tasks(&mut self, source: &dyn FleetSource, wall_ms: i64) {
+    fn poll_tasks(&mut self, source: &dyn ClanSource, wall_ms: i64) {
         let active = active_run_ids(
             &self.data.runs,
             &self.data.workers,
@@ -647,7 +647,7 @@ impl PollState {
         key: CallKey,
         call: &str,
         result: Result<T, OrcaError>,
-        store: impl FnOnce(&mut FleetData, T),
+        store: impl FnOnce(&mut ClanData, T),
     ) {
         match result {
             Ok(value) => {
@@ -664,9 +664,9 @@ impl PollState {
 /// Callback that wakes the UI after a snapshot or screen update is sent.
 pub type Repaint = Box<dyn Fn() + Send + Sync>;
 
-/// Handle to the poller threads (fleet and screen). Dropping it shuts both down and joins them.
+/// Handle to the poller threads (clan and screen). Dropping it shuts both down and joins them.
 pub struct Poller {
-    snapshots: Receiver<FleetData>,
+    snapshots: Receiver<ClanData>,
     screens: Receiver<ScreenUpdate>,
     commands: Sender<PollerCommand>,
     screen_commands: Sender<PollerCommand>,
@@ -675,7 +675,7 @@ pub struct Poller {
 
 impl Poller {
     pub fn spawn(
-        source: impl FleetSource + ScreenSource + Clone,
+        source: impl ClanSource + ScreenSource + Clone,
         config: PollerConfig,
         repaint: Option<Repaint>,
     ) -> Poller {
@@ -702,7 +702,7 @@ impl Poller {
                 )
             })
             .expect("spawn screen poller thread");
-        let fleet_thread = std::thread::Builder::new()
+        let clan_thread = std::thread::Builder::new()
             .name("orca-poller".into())
             .spawn(move || {
                 run_loop(
@@ -720,17 +720,17 @@ impl Poller {
             screens: screen_rx,
             commands: cmd_tx,
             screen_commands: screen_cmd_tx,
-            threads: vec![fleet_thread, screen_thread],
+            threads: vec![clan_thread, screen_thread],
         }
     }
 
     /// Snapshots from the poller, oldest first.
-    pub fn rx(&self) -> &Receiver<FleetData> {
+    pub fn rx(&self) -> &Receiver<ClanData> {
         &self.snapshots
     }
 
     /// The newest pending snapshot, discarding older ones; `None` if nothing new arrived.
-    pub fn latest(&self) -> Option<FleetData> {
+    pub fn latest(&self) -> Option<ClanData> {
         self.snapshots.try_iter().last()
     }
 
@@ -817,11 +817,11 @@ fn screen_loop(
 }
 
 fn run_loop(
-    source: &dyn FleetSource,
+    source: &dyn ClanSource,
     screens: &dyn ScreenSource,
     config: PollerConfig,
     repaint: Option<&Repaint>,
-    snapshots: &Sender<FleetData>,
+    snapshots: &Sender<ClanData>,
     commands: &Receiver<PollerCommand>,
 ) {
     let start = Instant::now();
@@ -837,7 +837,7 @@ fn run_loop(
                         repaint();
                     }
                 }
-                Err(TrySendError::Full(_)) => log::debug!("UI behind; dropped a fleet snapshot"),
+                Err(TrySendError::Full(_)) => log::debug!("UI behind; dropped a clan snapshot"),
                 Err(TrySendError::Disconnected(_)) => return,
             },
             Ok(None) => {}
@@ -949,7 +949,7 @@ mod tests {
         }
     }
 
-    impl FleetSource for Fake {
+    impl ClanSource for Fake {
         fn terminals(&self) -> Result<Vec<Terminal>, OrcaError> {
             self.with(|s| {
                 s.calls.terminals += 1;
@@ -1231,10 +1231,10 @@ mod tests {
     }
 
     #[test]
-    fn screen_updates_are_not_delayed_by_slow_fleet_calls() {
+    fn screen_updates_are_not_delayed_by_slow_clan_calls() {
         #[derive(Clone, Default)]
-        struct SlowFleet(Fake);
-        impl FleetSource for SlowFleet {
+        struct SlowClan(Fake);
+        impl ClanSource for SlowClan {
             fn terminals(&self) -> Result<Vec<Terminal>, OrcaError> {
                 std::thread::sleep(ms(1000));
                 self.0.terminals()
@@ -1252,7 +1252,7 @@ mod tests {
                 self.0.inbox(limit)
             }
         }
-        impl ScreenSource for SlowFleet {
+        impl ScreenSource for SlowClan {
             fn read_screen(&self, handle: &str) -> Result<TerminalRead, OrcaError> {
                 self.0.read_screen(handle)
             }
@@ -1262,7 +1262,7 @@ mod tests {
             screen: ms(50),
             ..PollerConfig::default()
         };
-        let poller = Poller::spawn(SlowFleet::default(), config, None);
+        let poller = Poller::spawn(SlowClan::default(), config, None);
         poller.send(PollerCommand::WatchScreen(Some("t1".into())));
         let started = Instant::now();
         for _ in 0..4 {
@@ -1270,7 +1270,7 @@ mod tests {
         }
         assert!(
             started.elapsed() < ms(800),
-            "screen reads waited on the fleet cycle"
+            "screen reads waited on the clan cycle"
         );
     }
 
@@ -1649,7 +1649,7 @@ mod tests {
     }
 
     #[test]
-    fn poll_state_puts_samples_in_fleet_data() {
+    fn poll_state_puts_samples_in_clan_data() {
         let fake = Fake::default();
         fake.with(|s| {
             s.terminals = vec![

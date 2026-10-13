@@ -1,6 +1,6 @@
 # Playbook proposal: heartbeat convention
 
-These are proposed insertions to Karl's fleet docs so that agents follow
+These are proposed insertions to Karl's clan docs so that agents follow
 [`heartbeat-convention.md`](heartbeat-convention.md). Nothing here has been
 applied. Karl approves and applies them.
 
@@ -22,7 +22,7 @@ Insert before the line `## Hard rules`:
 ```markdown
 ## Heartbeats
 
-Myrstack, the fleet's desktop watcher, nudges any dispatched task with no progress for
+Myrstack, the clan's desktop watcher, nudges any dispatched task with no progress for
 15 min. Progress means a bus message from you about the task, a task status change or, as
 a fallback, terminal output. Heartbeats are how you stay off its list.
 

@@ -768,8 +768,8 @@ fn safe_line(text: &str) -> String {
 }
 
 pub(super) fn reply_target(
-    snapshot: &crate::model::FleetSnapshot,
-    data: Option<&crate::fleet::FleetData>,
+    snapshot: &crate::model::ClanSnapshot,
+    data: Option<&crate::clan::ClanData>,
     who: &Requester,
 ) -> Option<String> {
     let live = |n: &crate::model::Node| {

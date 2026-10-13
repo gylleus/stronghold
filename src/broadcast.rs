@@ -10,18 +10,18 @@
 //! every run it covers.
 //!
 //! The message type is `status` (informational, no reply expected). Text is prefixed with
-//! `Queen: ` per `docs/heartbeat-convention.md`: broadcasts are Karl speaking through the Queen.
+//! `King: ` per `docs/heartbeat-convention.md`: broadcasts are Karl speaking through the King.
 
 use std::collections::{BTreeSet, HashMap};
 use std::thread;
 
 use crossbeam_channel::{Receiver, unbounded};
 
-use crate::model::{FleetSnapshot, NodeState};
+use crate::model::{ClanSnapshot, NodeState};
 use crate::orca::{BROADCAST_SENDER, OrcaClient, OutgoingMessage};
 
 /// Every Myrstack message starts with this.
-pub const PREFIX: &str = "Queen: ";
+pub const PREFIX: &str = "King: ";
 /// Longest subject; longer or multi-line text also goes in the body.
 pub const MAX_SUBJECT_CHARS: usize = 100;
 
@@ -77,7 +77,7 @@ pub struct BroadcastPlan {
     pub skipped: Vec<Skipped>,
 }
 
-/// Adds the `Queen: ` prefix unless the text already has it. Trims surrounding whitespace.
+/// Adds the `King: ` prefix unless the text already has it. Trims surrounding whitespace.
 pub fn prefixed(text: &str) -> String {
     let text = text.trim();
     if text.starts_with(PREFIX.trim_end()) {
@@ -113,7 +113,7 @@ pub fn broadcast_message(run_id: &str, text: &str) -> OutgoingMessage {
 ///
 /// Empty or whitespace-only text plans nothing.
 pub fn plan_broadcast(
-    snapshot: &FleetSnapshot,
+    snapshot: &ClanSnapshot,
     selection: &BroadcastSelection,
     text: &str,
 ) -> BroadcastPlan {
@@ -174,7 +174,7 @@ pub struct RunChoice {
 }
 
 /// Runs in the snapshot, with the repo and state of their coordinator.
-pub fn run_choices(snapshot: &FleetSnapshot) -> Vec<RunChoice> {
+pub fn run_choices(snapshot: &ClanSnapshot) -> Vec<RunChoice> {
     snapshot
         .runs
         .iter()
@@ -308,7 +308,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
-    use crate::fleet::FleetData;
+    use crate::clan::ClanData;
     use crate::orca::{Run, Terminal, Worker};
 
     fn terminal(handle: &str, path: &str) -> Terminal {
@@ -341,8 +341,8 @@ mod tests {
 
     /// r1 → c1, r2 → c2, r3 → dead coordinator (live worker w3 keeps it in the snapshot),
     /// r4 → c1 again. Workers keep every run live even though c1's node carries only one run.
-    fn snapshot() -> FleetSnapshot {
-        let data = FleetData {
+    fn snapshot() -> ClanSnapshot {
+        let data = ClanData {
             terminals: vec![
                 terminal("c1", "/u/orca/workspaces/depict/a"),
                 terminal("c2", "/u/repo/saker/myrstack-worktrees/b"),
@@ -361,9 +361,9 @@ mod tests {
                 worker("d3", "r3", "w3"),
                 worker("d4", "r4", "w4"),
             ],
-            ..FleetData::default()
+            ..ClanData::default()
         };
-        FleetSnapshot::build(&data, 0)
+        ClanSnapshot::build(&data, 0)
     }
 
     fn all() -> BroadcastSelection {
@@ -435,19 +435,19 @@ mod tests {
 
     #[test]
     fn prefix_added_once() {
-        assert_eq!(prefixed("  status please "), "Queen: status please");
-        assert_eq!(prefixed("Queen: already"), "Queen: already");
-        assert_eq!(prefixed("Queen:tight"), "Queen:tight");
+        assert_eq!(prefixed("  status please "), "King: status please");
+        assert_eq!(prefixed("King: already"), "King: already");
+        assert_eq!(prefixed("King:tight"), "King:tight");
         let msg = broadcast_message("r1", "hold merges");
-        assert_eq!(msg.subject, "Queen: hold merges");
+        assert_eq!(msg.subject, "King: hold merges");
         assert_eq!(msg.body, None);
     }
 
     #[test]
     fn long_or_multiline_text_goes_in_body() {
         let msg = broadcast_message("r1", "first line\nsecond line");
-        assert_eq!(msg.subject, "Queen: first line…");
-        assert_eq!(msg.body.as_deref(), Some("Queen: first line\nsecond line"));
+        assert_eq!(msg.subject, "King: first line…");
+        assert_eq!(msg.body.as_deref(), Some("King: first line\nsecond line"));
         let long = "x".repeat(300);
         let msg = broadcast_message("r1", &long);
         assert_eq!(msg.subject.chars().count(), MAX_SUBJECT_CHARS);
@@ -462,7 +462,7 @@ mod tests {
         let msg = broadcast_message("r1", "hi");
         assert_eq!(msg.from.as_deref(), Some(BROADCAST_SENDER));
         let args = crate::orca::commands::orchestration_send_args(&msg);
-        assert!(args.contains(&"--from=queen".to_string()), "{args:?}");
+        assert!(args.contains(&"--from=king".to_string()), "{args:?}");
         assert!(args.contains(&"--to=run:r1".to_string()), "{args:?}");
     }
 

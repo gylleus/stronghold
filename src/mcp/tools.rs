@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 use crate::control::protocol::Params;
 use crate::control::server::now_ms;
 use crate::control::view::{
-    AgentView, AlertView, FleetSummary, PromptView, QuotasView, RunView, WhipLogView, WhipView,
+    AgentView, AlertView, ClanSummary, PromptView, QuotasView, RunView, WhipLogView, WhipView,
 };
 use crate::control::{ControlError, ErrorCode};
 use crate::health::HealthReport;
@@ -176,8 +176,8 @@ pub fn definitions() -> Vec<Value> {
     vec![
         tool(
             "fleet_status",
-            "Fleet status",
-            "The Queen's view of the whole fleet: its state, agent counts, every run with its \
+            "Clan status",
+            "The King's view of the whole clan: its state, agent counts, every run with its \
              objective, coordinator and task counts, who needs Karl's input, stalled or \
              escalated agents, the whip and the plan quotas. Start here.",
             object(json!({}), &[]),
@@ -222,8 +222,8 @@ pub fn definitions() -> Vec<Value> {
             "Send text to an agent",
             "Types text into an agent's terminal and, unless submit is false, presses Enter. \
              Needs a live terminal (not a subagent). A parked agent is woken first (back in \
-             the live fleet). This is real input to a running agent: confirm with Karl first \
-             (the Queen in auto mode needn't).",
+             the live clan). This is real input to a running agent: confirm with Karl first \
+             (the King in auto mode needn't).",
             object(
                 json!({
                     "id": id_prop(),
@@ -254,7 +254,7 @@ pub fn definitions() -> Vec<Value> {
             "Kills agents' sessions: an active dispatch is stopped, then the terminal is closed. \
              dry_run defaults to TRUE, which only returns the plan and its warnings. To really \
              close, show Karl the plan and call again with dry_run=false. Subagents and the \
-             Queen cannot be closed. Parked agents are closed only when named here, with a \
+             King cannot be closed. Parked agents are closed only when named here, with a \
              warning in the plan.",
             object(
                 json!({
@@ -269,13 +269,13 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "park_agents",
             "Park or wake agents",
-            "Parks agents in the resting area: an ant that finished but that Karl wants to \
-             keep for later. A parked agent leaves the live fleet (its own room in the farm, \
-             out of fleet state, stalled and needs-input counts), the whip \
+            "Parks agents in the resting area: a dwarf that finished but that Karl wants to \
+             keep for later. A parked agent leaves the live clan (its own room in the farm, \
+             out of clan state, stalled and needs-input counts), the whip \
              never nudges it, and no cleanup closes it or removes its worktree unless named \
              explicitly; its terminal, session and worktree stay, so it can continue later. \
              wake=true brings agents back; send_to_agent also wakes a parked agent. Parking \
-             survives restarts. Only agents with a live terminal can be parked (not the Queen \
+             survives restarts. Only agents with a live terminal can be parked (not the King \
              or subagents). Park or wake when Karl asks.",
             object(
                 json!({
@@ -289,7 +289,7 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "broadcast_to_coordinators",
             "Broadcast to coordinators",
-            "Sends a Queen-prefixed Orca bus message (agents treat it as Karl's instruction) to the live coordinators of the given \
+            "Sends a King-prefixed Orca bus message (agents treat it as Karl's instruction) to the live coordinators of the given \
              runs, or of all runs with all=true. Give exactly one of runs or all.",
             object(
                 json!({
@@ -335,7 +335,7 @@ pub fn definitions() -> Vec<Value> {
             "Sends Myrstack nudges now: with ids, each agent gets the nudge the whip would send \
              when it stalls (a worker about its task on the bus, a coordinator about its run, a \
              loose terminal typed into), live even when the automatic whip is in dry-run and \
-             ignoring threshold and cooldown. The Queen, subagents, released workers and dead \
+             ignoring threshold and cooldown. The King, subagents, released workers and dead \
              terminals are skipped with a reason; agents waiting on Karl's input are nudged with \
              a warning (a nudge won't answer their prompt). With stalled=true, runs an \
              immediate whip pass instead, under the normal rules (threshold, cooldown, \
@@ -351,9 +351,9 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "spawn_session",
-            "Start a new ant",
-            "Starts a new ant: a dedicated Claude or Codex agent session in Orca working on one \
-             task, with an initial prompt (\"make a new ant for X\" means this). Waits \
+            "Start a new dwarf",
+            "Starts a new dwarf: a dedicated Claude or Codex agent session in Orca working on one \
+             task, with an initial prompt (\"make a new dwarf for X\" means this). Waits \
              until the prompt visibly started (answering the Bypass Permissions / folder trust \
              modals and submitting a parked prompt). Modes: \"worktree\" runs a fresh agent in \
              an existing worktree (give worktree: id, path, <repo>/<name> or name); \
@@ -364,7 +364,7 @@ pub fn definitions() -> Vec<Value> {
              Use it when Karl asks for a new session, and as a coordinator to start each \
              worker of its own run (worker mode; the playbook's default way to start one). \
              Returns the new terminal and node id; the dashboard leaves Karl's selection \
-             alone (it selects the new node only with \"Focus new ants\" on in Settings; use \
+             alone (it selects the new node only with \"Focus new dwarves\" on in Settings; use \
              focus_agent to show it). A new worktree whose name or branch already \
              exists is refused with the existing worktree and its live agents (send_to_agent \
              them instead); allow_suffix=true lets Orca pick name-2 for a deliberate second \
@@ -372,13 +372,13 @@ pub fn definitions() -> Vec<Value> {
              After an interrupted or rejected spawn_session, run list_agents for that repo \
              before trying again: if the session started, use send_to_agent. Give every \
              session a label: a short human name (2-4 words, e.g. \"Checkout retries\") that \
-             Myrstack shows on its node and ant. It becomes the worktree's Orca name (all \
+             Myrstack shows on its node and dwarf. It becomes the worktree's Orca name (all \
              agents in that worktree go by it) or, for a worker, its task's display name. To \
              rename an agent later, run `orca worktree set --worktree path:<path> \
-             --display-name <name>`. A Claude ant started without a model gets the Ants \
-             default model and effort from Myrstack's Settings (Queen section), which Karl \
-             uses to move the whole fleet to one model; the result names the model used. An \
-             explicit model wins; Codex ants keep Codex's default.",
+             --display-name <name>`. A Claude dwarf started without a model gets the Dwarves \
+             default model and effort from Myrstack's Settings (King section), which Karl \
+             uses to move the whole clan to one model; the result names the model used. An \
+             explicit model wins; Codex dwarves keep Codex's default.",
             object(
                 json!({
                     "mode": { "type": "string", "enum": ["worktree", "new_worktree", "worker"] },
@@ -392,8 +392,8 @@ pub fn definitions() -> Vec<Value> {
                     "title": { "type": "string", "description": "Worker task title (default: the prompt's first line)." },
                     "label": { "type": "string", "description": "Short human name for the agent (2-4 words), shown in Myrstack's dwarf farm. Sets the worktree's Orca display name, or a worker's task display name." },
                     "agent": { "type": "string", "enum": ["claude", "codex"], "default": "claude" },
-                    "model": { "type": "string", "description": "Model alias or id, e.g. fable, opus, sonnet, gpt-6-astra. Default: the Ants default in Myrstack's Settings for a Claude ant, else the agent's own." },
-                    "effort": { "type": "string", "enum": ["low", "medium", "high", "xhigh", "max"], "description": "Claude only, with a model: --effort level (default: the Ants default's effort when the model is the default too, else the CLI's)." },
+                    "model": { "type": "string", "description": "Model alias or id, e.g. fable, opus, sonnet, gpt-6-astra. Default: the Dwarves default in Myrstack's Settings for a Claude dwarf, else the agent's own." },
+                    "effort": { "type": "string", "enum": ["low", "medium", "high", "xhigh", "max"], "description": "Claude only, with a model: --effort level (default: the Dwarves default's effort when the model is the default too, else the CLI's)." },
                     "allow_suffix": { "type": "boolean", "default": false, "description": "New worktree: when the name or branch is taken, let Orca add a suffix (name-2) instead of failing. Only for a deliberate second copy." },
                 }),
                 &["mode", "prompt"],
@@ -404,7 +404,7 @@ pub fn definitions() -> Vec<Value> {
             "focus_agent",
             "Focus an agent",
             "Selects the agent and zooms the farm camera onto it. Pass \
-             id \"queen\" for the Queen.",
+             id \"king\" for the King.",
             object(
                 json!({
                     "id": id_prop(),
@@ -466,7 +466,7 @@ pub fn definitions() -> Vec<Value> {
             "health",
             "Health",
             "Myrstack's health doctor: whether the whip is live or in dry run, `orca` and `gh` \
-             are found (with versions) and Orca's runtime is reachable, the Queen is running, \
+             are found (with versions) and Orca's runtime is reachable, the King is running, \
              the Claude session hook is installed, notifications are allowed and the Slack \
              reply bridge's heartbeat is fresh. Each problem comes with a one-line fix.",
             object(json!({}), &[]),
@@ -563,7 +563,7 @@ fn agents_of(result: &Value) -> Result<Vec<AgentView>, CallError> {
 
 struct Status {
     status: Value,
-    fleet: FleetSummary,
+    clan: ClanSummary,
     waiting: Vec<AgentView>,
     stalled: Vec<AgentView>,
     coordinators: Vec<AgentView>,
@@ -574,7 +574,7 @@ struct Status {
 fn fleet_status(control: &mut dyn Control) -> ToolResult {
     let (s, fallback) = with_fallback(control, |c| {
         let status = c.call("status", Value::Null)?;
-        let fleet: FleetSummary = parse(status.get("fleet").unwrap_or(&Value::Null))?;
+        let clan: ClanSummary = parse(status.get("clan").unwrap_or(&Value::Null))?;
         let ready = status.get("ready").and_then(Value::as_bool) == Some(true);
         let (waiting, stalled, coordinators, parked) = if ready {
             (
@@ -593,7 +593,7 @@ fn fleet_status(control: &mut dyn Control) -> ToolResult {
             .transpose()?;
         Ok(Status {
             status,
-            fleet,
+            clan,
             waiting,
             stalled,
             coordinators,
@@ -602,25 +602,25 @@ fn fleet_status(control: &mut dyn Control) -> ToolResult {
         })
     })?;
     let now = now_ms();
-    let text = fleet_text(&s, fallback, now);
+    let text = clan_text(&s, fallback, now);
     let structured = json!({
         "fallback": fallback,
         "ready": s.status.get("ready"),
         "polled_at_ms": s.status.get("polled_at_ms"),
         "errors": s.status.get("errors"),
-        "fleet": s.fleet,
+        "clan": s.clan,
         "needs_input": s.waiting.iter().map(compact).collect::<Vec<_>>(),
         "stalled": s.stalled.iter().map(compact).collect::<Vec<_>>(),
         "parked": s.parked.iter().map(compact).collect::<Vec<_>>(),
         "whip": if fallback { Value::Null } else { s.status.get("whip").cloned().unwrap_or_default() },
-        "queen_auto": if fallback { Value::Null } else { s.status.get("queen_auto").cloned().unwrap_or(Value::Bool(false)) },
+        "king_auto": if fallback { Value::Null } else { s.status.get("king_auto").cloned().unwrap_or(Value::Bool(false)) },
         "notifications": if fallback { Value::Null } else { s.status.get("notifications").cloned().unwrap_or_default() },
         "quotas": s.quotas,
     });
     Ok(ToolOutput::ok(text, structured))
 }
 
-fn fleet_text(s: &Status, fallback: bool, now: i64) -> String {
+fn clan_text(s: &Status, fallback: bool, now: i64) -> String {
     let mut out = Vec::new();
     if fallback {
         out.push(FALLBACK_NOTE.to_owned());
@@ -630,10 +630,10 @@ fn fleet_text(s: &Status, fallback: bool, now: i64) -> String {
         out.push("Myrstack has not polled Orca yet; try again in a few seconds.".into());
         return out.join("\n");
     }
-    let f = &s.fleet;
+    let f = &s.clan;
     let kinds = counts(&f.by_kind, &KINDS);
     out.push(format!(
-        "Fleet: {} · {} agents, {} live ({kinds})",
+        "Clan: {} · {} agents, {} live ({kinds})",
         f.state.replace('_', " "),
         f.agents,
         f.live
@@ -703,11 +703,11 @@ fn fleet_text(s: &Status, fallback: bool, now: i64) -> String {
         out.push(whip_line(w, now));
     }
     if !fallback {
-        let auto = s.status.get("queen_auto").and_then(Value::as_bool) == Some(true);
+        let auto = s.status.get("king_auto").and_then(Value::as_bool) == Some(true);
         out.push(format!(
-            "Queen auto mode: {} (Karl sets it in the chat header)",
+            "King auto mode: {} (Karl sets it in the chat header)",
             if auto {
-                "on — the Queen's actions run without Karl's confirmation"
+                "on — the King's actions run without Karl's confirmation"
             } else {
                 "off — destructive actions ask Karl"
             }
@@ -854,7 +854,7 @@ fn runs_text(runs: &[RunView], coordinators: &[AgentView], now: i64) -> String {
     }
     if runs.len() > RUNS_SHOWN {
         out.push(format!(
-            "…and {} older runs (see structuredContent.fleet.runs)",
+            "…and {} older runs (see structuredContent.clan.runs)",
             runs.len() - RUNS_SHOWN
         ));
     }
@@ -1217,7 +1217,7 @@ fn close_text(result: &Value, dry_run: bool) -> String {
             out.push("This plan cannot run.".into());
         } else {
             out.push(
-                "To really close, confirm with Karl (the Queen in auto mode needn't), then call \
+                "To really close, confirm with Karl (the King in auto mode needn't), then call \
                  close_agents again with dry_run=false."
                     .into(),
             );
@@ -1246,7 +1246,7 @@ fn park_agents(control: &mut dyn Control, p: &Params) -> ToolResult {
             .unwrap_or_default();
         out.push(match (r["ok"].as_bool(), r["changed"].as_bool()) {
             (Some(true), Some(true)) if wake => {
-                format!("- {who}{id}: woke, back in the live fleet")
+                format!("- {who}{id}: woke, back in the live clan")
             }
             (Some(true), Some(true)) => format!("- {who}{id}: parked in the resting area"),
             (Some(true), _) if wake => format!("- {who}{id}: wasn't parked"),
@@ -1437,7 +1437,7 @@ fn spawn_text(args: &crate::spawn::SpawnArgs, result: &Value) -> String {
         out.push(match (s("model"), s("effort")) {
             (Some(model), Some(effort)) => format!("Model: {model}, effort {effort}."),
             (Some(model), None) => format!("Model: {model}."),
-            (None, _) => "Model: the CLI default (no Ants default set in Settings).".into(),
+            (None, _) => "Model: the CLI default (no Dwarves default set in Settings).".into(),
         });
     }
     let verified = result.get("verified").and_then(Value::as_bool) == Some(true);
@@ -1503,7 +1503,7 @@ fn manual_whip_text(result: &Value) -> String {
 
 fn whip_pass_text(result: &Value) -> String {
     if result.get("ran").and_then(Value::as_bool) == Some(false) {
-        return "The whip pass did not run: Myrstack has no fleet data yet.".into();
+        return "The whip pass did not run: Myrstack has no clan data yet.".into();
     }
     let dry_run = result.get("dry_run").and_then(Value::as_bool) == Some(true);
     let actions = result

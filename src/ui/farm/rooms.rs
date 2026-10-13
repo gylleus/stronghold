@@ -1,16 +1,16 @@
 //! The room plan: which cell of the grid under the gallery each tunnel's chamber holds and
-//! how many rows of ants it is dug for, carried from frame to frame (and across launches) so
-//! an ant joining a room moves nothing else.
+//! how many rows of dwarves it is dug for, carried from frame to frame (and across launches) so
+//! a dwarf joining a room moves nothing else.
 //!
 //! The ground under the gallery is a grid of columns on `levels` levels, a room to a cell.
 //! The plan is fitted to the view: the biggest scale (up to [`MAX_PX`], in half steps) at
-//! which every room is dug for its ants and [`SPARE_SLOTS`] more, columns as wide as their
+//! which every room is dug for its dwarves and [`SPARE_SLOTS`] more, columns as wide as their
 //! rooms need and stretched to fill the width. Each frame [`RoomPlan::update`] changes as
 //! little as it can:
 //!
-//! - an ant that fits its room's rows moves nothing;
+//! - a dwarf that fits its room's rows moves nothing;
 //! - a full room digs deeper while its level has the height, nothing else moving;
-//! - an emptied room stays for [`GRACE_MS`] in case its ants come back;
+//! - an emptied room stays for [`GRACE_MS`] in case its dwarves come back;
 //! - a new room, a room filled in, a room that can grow no deeper, a resize, or a surface
 //!   band that needs more height lays the plan out afresh (the view glides to it).
 //!
@@ -23,11 +23,11 @@ use super::layout::{
     CELL, Crowd, SHAFT_GAP, SLOT, TunnelKey, band, chamber_per_row, pack, rows_height,
 };
 
-/// Ant slots a room is dug for beyond its ants, when the view has the room.
+/// Dwarf slots a room is dug for beyond its dwarves, when the view has the room.
 pub const SPARE_SLOTS: usize = 2;
 /// How long a room stands empty before it is filled in.
 pub const GRACE_MS: i64 = 120_000;
-/// Biggest points per texel: a near-empty farm draws no giant ants.
+/// Biggest points per texel: a near-empty farm draws no giant dwarves.
 pub const MAX_PX: f32 = 4.5;
 /// Smallest points per texel, which a farm too big for the view still gets.
 const MIN_PX: f32 = 1.0;
@@ -44,9 +44,9 @@ pub struct Room {
     pub key: TunnelKey,
     pub level: usize,
     pub col: usize,
-    /// Rows of ants it is dug for.
+    /// Rows of dwarves it is dug for.
     pub rows: usize,
-    /// Since when it has had no ants (ms since the epoch).
+    /// Since when it has had no dwarves (ms since the epoch).
     pub empty_since_ms: Option<i64>,
 }
 
@@ -74,7 +74,7 @@ struct Fit {
 /// The rooms wanted this frame.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Demand {
-    /// Each room's key and its ants' chamber footprints, in the order a rearrange lists them.
+    /// Each room's key and its dwarves' chamber footprints, in the order a rearrange lists them.
     pub rooms: Vec<(TunnelKey, Vec<usize>)>,
     pub landing: usize,
     pub storage: usize,
@@ -107,7 +107,7 @@ pub struct RoomPlan {
     /// Named apart from the earlier plans' `grid`, so a plan saved by them is laid out afresh.
     fitted: Option<Grid>,
     pub rooms: Vec<Room>,
-    /// Ants the surface band is sized for: it grows with them and shrinks on a rearrange.
+    /// Dwarves the surface band is sized for: it grows with them and shrinks on a rearrange.
     pub landing: usize,
     pub storage: usize,
     fit: Fit,
@@ -230,14 +230,14 @@ fn target_rows(footprints: &[usize], per_row: usize, max_rows: usize) -> usize {
         .unwrap_or_else(|| rows_for(footprints, 0, per_row))
 }
 
-/// Width of a chamber holding `per_row` ants side by side.
+/// Width of a chamber holding `per_row` dwarves side by side.
 fn chamber_width(per_row: usize, a: f32) -> f32 {
     ((per_row - 1) as f32 * SLOT + 2.0).max(SLOT) * a
 }
 
 /// The grid fitted to `size` at `px` for `rooms` (each room's footprints), if every room
-/// holds its ants and `spare` more in at most as many rows as its level has the height for,
-/// and when `packed` side by side (rows outnumbering the ants to a row by one at most);
+/// holds its dwarves and `spare` more in at most as many rows as its level has the height for,
+/// and when `packed` side by side (rows outnumbering the dwarves to a row by one at most);
 /// fewest levels first.
 /// Columns are as wide as their widest room needs, the width left over shared out in
 /// proportion.
@@ -336,7 +336,7 @@ impl RoomPlan {
         if filled_in || new_room || resized || !consistent {
             return self.rearrange(demand, size);
         }
-        // More ants on the landing or in storage: fine while the band keeps its height.
+        // More dwarves on the landing or in storage: fine while the band keeps its height.
         let landing = self.landing.max(demand.landing);
         let storage = self.storage.max(demand.storage);
         if (landing, storage) != (self.landing, self.storage) {

@@ -33,7 +33,7 @@ pub fn route(from: Pos2, to: Pos2, from_spot: &Spot, to_spot: &Spot, scene: &Sce
         }
         let x = match spot {
             Spot::Landing(_) => scene.entrance_x(),
-            Spot::Queen => scene.queen_chamber.center().x,
+            Spot::King => scene.throne_hall.center().x,
             Spot::Storage(_) => scene.storage.center().x,
             Spot::Comms => scene.comms.map_or(at.x, |r| r.shaft.center().x),
             Spot::Mouth(key, _) | Spot::Chamber(key, _) => {
@@ -65,7 +65,7 @@ pub fn hoist_ceiling(scene: &Scene, at: Pos2) -> f32 {
     if let Some(t) = scene.tunnels.iter().find(|t| t.shaft.contains(at)) {
         return t.shaft.top();
     }
-    for r in [scene.queen_chamber, scene.storage] {
+    for r in [scene.throne_hall, scene.storage] {
         if r.contains(at) {
             return r.top();
         }
@@ -103,7 +103,7 @@ pub fn along(path: &[Pos2], t: f32) -> (Pos2, Vec2) {
     (path[n - 1], path[n - 1] - path[n.saturating_sub(2)])
 }
 
-/// Eases a walk in and out, so ants start and stop gently.
+/// Eases a walk in and out, so dwarves start and stop gently.
 pub fn ease(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)

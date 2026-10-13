@@ -14,10 +14,10 @@ pub fn primary_button(ui: &Ui, enabled: bool, text: &str) -> egui::Button<'stati
     }
 }
 
-/// The top bar's title: the Queen's avatar and the app name.
+/// The top bar's title: the King's avatar and the app name.
 pub fn app_title(ui: &mut Ui) {
     let size = ui.text_style_height(&egui::TextStyle::Heading) + 4.0;
-    ui.add(crate::ui::art::queen_avatar(ui.ctx(), size));
+    ui.add(crate::ui::art::king_avatar(ui.ctx(), size));
     ui.heading(crate::APP_NAME);
 }
 
@@ -55,7 +55,7 @@ pub fn section_label(ui: &mut Ui, text: &str) -> Response {
     )
 }
 
-/// Teal of the "Open in Orca" button: apart from the accent, the Queen's gold and the state
+/// Teal of the "Open in Orca" button: apart from the accent, the King's gold and the state
 /// colours, so the most-pressed button is easy to find.
 pub fn orca_color(dark_mode: bool) -> egui::Color32 {
     if dark_mode {

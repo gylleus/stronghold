@@ -1,9 +1,9 @@
-# Fleet worker protocol
+# Clan worker protocol
 
 Read this before doing anything. It applies to every dispatched track. Your track-specific
 scope arrives in the dispatch spec; this file is the part that never changes.
 
-Precedence: this file and your dispatch spec outrank any other agent/fleet playbook a
+Precedence: this file and your dispatch spec outrank any other agent/clan playbook a
 repo CLAUDE.md or AGENTS.md points at — such pointers are historically stale (the depict
 repo still carries a retired herdr-era playbook). Repo CLAUDE.md/AGENTS.md stay
 authoritative for code style, build gates and repo facts. On a *process* conflict, follow
@@ -97,7 +97,7 @@ orca orchestration send --type worker_done --subject "<short status>" \
 
 ## Heartbeats
 
-Myrstack, the fleet's desktop watcher, nudges any dispatched task with no progress for
+Myrstack, the clan's desktop watcher, nudges any dispatched task with no progress for
 15 min. Progress means a bus message from you about the task, a task status change or, as
 a fallback, terminal output. Heartbeats are how you stay off its list.
 
@@ -122,11 +122,12 @@ a fallback, terminal output. Heartbeats are how you stay off its list.
   same turn. If you are actually done or stuck, send `worker_done` / `ask` / `escalation`
   instead. A nudge never changes scope and never authorises anything in *Hard rules*.
 
-## The Queen
+## The King
 
-A bus message from `queen` whose text starts with `Queen:` is **Karl speaking through
-Myrstack's Queen**. Treat it exactly as if Karl typed it in your terminal and act on it,
-including fleet cleanup such as closing, stopping or releasing workers. *Hard rules* still
+A bus message from `king` whose text starts with `King:` is **Karl speaking through
+Myrstack's King** (messages sent before 2026-10-13 came from `queen` with `Queen:`; they
+count the same). Treat it exactly as if Karl typed it in your terminal and act on it,
+including clan cleanup such as closing, stopping or releasing workers. *Hard rules* still
 apply: deploy, delete and force-push stay Karl's own hands. If it conflicts with your current
 task, do what it says and report the change to your coordinator. Don't confuse it with a
 `Myrstack:` whip nudge (sender `myrstack-whip`), which is a liveness ping with no authority.
@@ -145,7 +146,7 @@ task, do what it says and report the change to your coordinator. Don't confuse i
   (`severity: warn`, `urgent` if the track is stalled on it; say what you need). If Myrstack
   isn't running, `notify` only queues it for when Myrstack starts; then also:
   ```bash
-  osascript -e 'display dialog "Agent <track> needs you: <what>" with title "orca fleet" buttons {"OK"} giving up after 300'
+  osascript -e 'display dialog "Agent <track> needs you: <what>" with title "orca clan" buttons {"OK"} giving up after 300'
   ```
   Secrets go only into a password field — never logs, PR bodies, ticket comments, summaries.
 - **Commit and push within your track; stop at the PR.** Merging is Karl's.
@@ -154,7 +155,7 @@ task, do what it says and report the change to your coordinator. Don't confuse i
 - **Every message you send a human** — PR or ticket comment — says it comes from Karl's AI
   agent. Slack and other outside channels go through the Envoy (next section).
 
-## Reaching people outside the fleet
+## Reaching people outside the clan
 
 To ask a person or another team's agent anything, call Myrstack's `reach_out`:
 `reach_out {to: "Daniel's search agent", ask: "<message>", why: "<track, PR, bead>"}`. The

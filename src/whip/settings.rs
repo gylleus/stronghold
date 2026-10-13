@@ -2,8 +2,8 @@
 //! nudges, dry-run.
 //!
 //! Stored as JSON in the user's config dir (`~/Library/Application Support/Myrstack/settings.json`
-//! on macOS) with one top-level key per section (`whip`, `queen`, `voice`, `notifications`, `envoy`,
-//! `spawn`, `ants`, `art`). Missing sections and fields take their defaults, so older files load. A missing file gives the defaults; an
+//! on macOS) with one top-level key per section (`whip`, `king`, `voice`, `notifications`, `envoy`,
+//! `spawn`, `dwarves`, `art`). Missing sections and fields take their defaults, so older files load. A missing file gives the defaults; an
 //! unreadable or invalid one gives the defaults plus a warning.
 
 use std::fs;
@@ -12,11 +12,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::chat::settings::QueenSettings;
+use crate::chat::settings::KingSettings;
 use crate::envoy::settings::EnvoySettings;
 use crate::notify::NotifySettings;
-use crate::spawn::{AntSettings, SpawnSettings};
-use crate::ui::ant_farm::art::ArtSettings;
+use crate::spawn::{DwarfSettings, SpawnSettings};
+use crate::ui::farm::art::ArtSettings;
 use crate::voice::settings::VoiceSettings;
 use crate::whip::rules::{DEFAULT_ABANDON_AFTER_MS, DEFAULT_THRESHOLD_MS};
 
@@ -31,18 +31,20 @@ pub const SETTINGS_ENV: &str = "MYRSTACK_SETTINGS";
 #[serde(default)]
 pub struct Settings {
     pub whip: WhipSettings,
-    /// The Queen's chat process: model and effort.
-    pub queen: QueenSettings,
+    /// The King's chat process: model and effort. Saved as `queen` before the dwarf theme.
+    #[serde(alias = "queen")]
+    pub king: KingSettings,
     pub voice: VoiceSettings,
     /// How notifications reach Karl: pop-ups, sounds, quiet mode.
     pub notifications: NotifySettings,
     /// The Envoy session and its channels.
     pub envoy: EnvoySettings,
-    /// What a new ant's spawn does to the dashboard.
+    /// What a new dwarf's spawn does to the dashboard.
     pub spawn: SpawnSettings,
-    /// The default model and effort of new ants.
-    pub ants: AntSettings,
-    /// What the ant farm's figures look like.
+    /// The default model and effort of new dwarves. Saved as `ants` before the dwarf theme.
+    #[serde(alias = "ants")]
+    pub dwarves: DwarfSettings,
+    /// What the farm's figures look like.
     pub art: ArtSettings,
 }
 
@@ -157,8 +159,8 @@ impl Settings {
         };
         let checks = [
             ("whip", settings.whip.validate()),
-            ("queen", settings.queen.validate()),
-            ("ants", settings.ants.validate()),
+            ("king", settings.king.validate()),
+            ("dwarves", settings.dwarves.validate()),
             ("voice", settings.voice.validate()),
             ("notifications", settings.notifications.validate()),
         ];
@@ -321,31 +323,46 @@ mod tests {
     }
 
     #[test]
-    fn queen_and_voice_sections_round_trip() {
+    fn king_and_voice_sections_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let path = path_in(&dir);
         let mut s = Settings::default();
-        s.queen.model = Some("opus".into());
-        s.queen.effort = Some("high".into());
-        s.ants.model = Some("fable".into());
-        s.ants.effort = Some("max".into());
+        s.king.model = Some("opus".into());
+        s.king.effort = Some("high".into());
+        s.dwarves.model = Some("fable".into());
+        s.dwarves.effort = Some("max".into());
         s.whip.dry_run = false;
         s.save_to(&path).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         let json: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(json["queen"]["model"], "opus");
-        assert_eq!(json["queen"]["effort"], "high");
-        assert_eq!(json["ants"]["model"], "fable");
-        assert_eq!(json["ants"]["effort"], "max");
+        assert_eq!(json["king"]["model"], "opus");
+        assert_eq!(json["king"]["effort"], "high");
+        assert_eq!(json["dwarves"]["model"], "fable");
+        assert_eq!(json["dwarves"]["effort"], "max");
         assert!(json["voice"].is_object());
         assert_eq!(Settings::load_from(&path).settings, s);
     }
 
     #[test]
-    fn old_file_without_queen_or_voice_loads() {
+    fn queen_and_ants_sections_from_before_the_dwarf_theme_load() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(SETTINGS_FILE);
-        // A file as written before the queen and voice sections existed.
+        fs::write(
+            &path,
+            r#"{"queen": {"model": "opus"}, "ants": {"effort": "max"}}"#,
+        )
+        .unwrap();
+        let loaded = Settings::load_from(&path);
+        assert_eq!(loaded.warning, None);
+        assert_eq!(loaded.settings.king.model.as_deref(), Some("opus"));
+        assert_eq!(loaded.settings.dwarves.effort.as_deref(), Some("max"));
+    }
+
+    #[test]
+    fn old_file_without_king_or_voice_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SETTINGS_FILE);
+        // A file as written before the king and voice sections existed.
         fs::write(
             &path,
             r#"{"whip": {"enabled": true, "dry_run": false, "threshold_ms": 900000,
@@ -356,15 +373,15 @@ mod tests {
         let loaded = Settings::load_from(&path);
         assert_eq!(loaded.warning, None);
         assert!(!loaded.settings.whip.dry_run);
-        assert_eq!(loaded.settings.queen, QueenSettings::default());
-        assert_eq!(loaded.settings.ants, AntSettings::default());
+        assert_eq!(loaded.settings.king, KingSettings::default());
+        assert_eq!(loaded.settings.dwarves, DwarfSettings::default());
         assert_eq!(loaded.settings.voice, VoiceSettings::default());
 
-        // A queen section with only some fields.
-        fs::write(&path, r#"{"queen": {"model": "sonnet"}}"#).unwrap();
+        // A king section with only some fields.
+        fs::write(&path, r#"{"king": {"model": "sonnet"}}"#).unwrap();
         let loaded = Settings::load_from(&path).settings;
-        assert_eq!(loaded.queen.model.as_deref(), Some("sonnet"));
-        assert_eq!(loaded.queen.effort, None);
+        assert_eq!(loaded.king.model.as_deref(), Some("sonnet"));
+        assert_eq!(loaded.king.effort, None);
         assert_eq!(loaded.whip, WhipSettings::default());
     }
 
@@ -378,10 +395,10 @@ mod tests {
             r#"{"whip": {"threshold_ms": 0}}"#,
             r#"{"whip": {"tick_ms": -5}}"#,
             r#"{"whip": {"abandon_after_ms": 0}}"#,
-            r#"{"queen": {"effort": "turbo"}}"#,
-            r#"{"ants": {"effort": "turbo"}}"#,
-            r#"{"ants": {"model": "claude fable"}}"#,
-            r#"{"queen": {"model": 5}}"#,
+            r#"{"king": {"effort": "turbo"}}"#,
+            r#"{"dwarves": {"effort": "turbo"}}"#,
+            r#"{"dwarves": {"model": "claude fable"}}"#,
+            r#"{"king": {"model": 5}}"#,
         ] {
             fs::write(&path, bad).unwrap();
             let loaded = Settings::load_from(&path);

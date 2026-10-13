@@ -6,7 +6,7 @@
 //! plus tasks Orca failed while their worker kept working, and types one line per batch into
 //! the coordinator's terminal (a long backlog becomes one digest line). A report Orca refused
 //! only because it revoked the dispatch after misreporting its start
-//! ([`FleetData::is_misreported_launch_report`]) is forwarded as the worker's report. It types only into a live Claude session
+//! ([`ClanData::is_misreported_launch_report`]) is forwarded as the worker's report. It types only into a live Claude session
 //! ([`claude_session_live`]): a coordinator that exited leaves a shell, where the line would run
 //! as a command. If the coordinator stays unreachable, Karl gets one notification per Run.
 //!
@@ -18,7 +18,7 @@
 //! `forwarded.json` next to `settings.json`), so events that arrived while Myrstack was down are
 //! forwarded on start, up to [`MAX_EVENT_AGE_MS`] old. Without that file the first tick counts
 //! events older than [`STARTUP_REPLAY_MS`] as already handled. Runs with an attendant (see
-//! [`crate::fleet::RunRoles`]) are left to it.
+//! [`crate::clan::RunRoles`]) are left to it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -27,8 +27,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::clan::ClanData;
 use crate::detect::claude_session_live;
-use crate::fleet::FleetData;
 use crate::orca::{InboxMessage, MessageType, Timestamp};
 use crate::whip::actions::WhipAction;
 use crate::whip::progress::ProgressReport;
@@ -51,7 +51,7 @@ pub const FORWARDED_FILE: &str = "forwarded.json";
 /// Most events a forwarded line lists; a longer backlog is one digest line ending in a count.
 pub const MAX_LISTED: usize = 5;
 /// Prefix of every forwarded line.
-pub const EVENT_PREFIX: &str = "Fleet event:";
+pub const EVENT_PREFIX: &str = "Clan event:";
 
 /// Bus message types a coordinator must act on.
 const FORWARDED: &[MessageType] = &[
@@ -141,7 +141,7 @@ impl Forwarder {
     /// [`Forwarder::record`] reports its send.
     pub fn tick(
         &mut self,
-        data: &FleetData,
+        data: &ClanData,
         report: &ProgressReport,
         findings: &[StallFinding],
         now_ms: i64,
@@ -347,7 +347,7 @@ pub fn forward_text(batch: &[&Event], run_ids: &BTreeSet<String>) -> String {
 /// its worker kept working, and one per worker that looks finished but never reported (a
 /// [`StallReason::MissingReport`] finding).
 pub fn collect_events(
-    data: &FleetData,
+    data: &ClanData,
     report: &ProgressReport,
     findings: &[StallFinding],
     now_ms: i64,
@@ -402,7 +402,7 @@ pub fn collect_events(
     events
 }
 
-fn message_event(data: &FleetData, m: &InboxMessage, now_ms: i64) -> Option<Event> {
+fn message_event(data: &ClanData, m: &InboxMessage, now_ms: i64) -> Option<Event> {
     let kind = m.message_type.as_ref().filter(|k| FORWARDED.contains(k))?;
     let revoked = data.is_misreported_launch_report(m);
     if is_rejected(m) && !revoked {
@@ -446,7 +446,7 @@ fn message_event(data: &FleetData, m: &InboxMessage, now_ms: i64) -> Option<Even
     })
 }
 
-fn task_label(data: &FleetData, run_id: &str, task_id: &str) -> String {
+fn task_label(data: &ClanData, run_id: &str, task_id: &str) -> String {
     data.tasks
         .get(run_id)
         .and_then(|ts| ts.iter().find(|t| t.id == task_id))
@@ -497,7 +497,7 @@ mod tests {
         .unwrap()
     }
 
-    fn fleet(preview: &str, inbox: Vec<InboxMessage>) -> FleetData {
+    fn clan(preview: &str, inbox: Vec<InboxMessage>) -> ClanData {
         let task: Task = serde_json::from_value(json!({
             "id": "t1", "run_id": RUN, "status": "dispatched", "display_name": "fix-login",
             "created_by_terminal_handle": COORD, "created_at": NOW - 60 * MIN,
@@ -508,7 +508,7 @@ mod tests {
             "dispatchStatus": "dispatched", "agentTerminalHandle": WORKER,
         }))
         .unwrap();
-        FleetData {
+        ClanData {
             polled_at_ms: NOW,
             terminals: vec![
                 coordinator(preview),
@@ -531,7 +531,7 @@ mod tests {
         }
     }
 
-    fn tick(f: &mut Forwarder, data: &FleetData, now: i64) -> Vec<WhipAction> {
+    fn tick(f: &mut Forwarder, data: &ClanData, now: i64) -> Vec<WhipAction> {
         let report = ProgressTracker::new().update(data, now);
         f.tick(data, &report, &[], now)
     }
@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn forwards_real_events_once_and_skips_heartbeats() {
-        let data = fleet(
+        let data = clan(
             CLAUDE_IDLE,
             vec![
                 msg("m2", WORKER, "merge_ready", NOW - MIN, "PR #9 green"),
@@ -560,7 +560,7 @@ mod tests {
         assert_eq!(
             first,
             vec![
-                "term_coord: Fleet event: merge_ready from fix-login: PR #9 green — msg m2. \
+                "term_coord: Clan event: merge_ready from fix-login: PR #9 green — msg m2. \
                  Read in full with `orca orchestration check --run run_1 --all`."
             ]
         );
@@ -569,7 +569,7 @@ mod tests {
 
     #[test]
     fn batches_events_in_time_order() {
-        let data = fleet(
+        let data = clan(
             CLAUDE_IDLE,
             vec![
                 msg("m2", WORKER, "question", NOW - MIN, "A or B?"),
@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn startup_skips_old_events_and_never_forwards_history() {
-        let data = fleet(
+        let data = clan(
             CLAUDE_IDLE,
             vec![
                 msg(
@@ -622,7 +622,7 @@ mod tests {
             "Rejected worker_done: x",
         );
         rejected.payload = Some(json!({"_orcaLifecycleRejection": "revoked"}).to_string());
-        let data = fleet(
+        let data = clan(
             CLAUDE_IDLE,
             vec![msg("m1", COORD, "question", NOW - MIN, "my own"), rejected],
         );
@@ -644,7 +644,7 @@ mod tests {
                 "reason": "Dispatch ctx_1 capability is revoked."}})
             .to_string(),
         );
-        let mut data = fleet(CLAUDE_IDLE, vec![revoked]);
+        let mut data = clan(CLAUDE_IDLE, vec![revoked]);
         let task = &mut data.tasks.get_mut(RUN).unwrap()[0];
         task.status = TaskStatus::Failed;
         task.dispatch_id = Some("ctx_1".into());
@@ -676,11 +676,7 @@ mod tests {
                 )
             })
             .collect();
-        let out = forwards(&tick(
-            &mut Forwarder::new(),
-            &fleet(CLAUDE_IDLE, inbox),
-            NOW,
-        ));
+        let out = forwards(&tick(&mut Forwarder::new(), &clan(CLAUDE_IDLE, inbox), NOW));
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].matches("worker_done from").count(), MAX_LISTED);
         assert!(out[0].contains("| and 3 more."), "{}", out[0]);
@@ -688,7 +684,7 @@ mod tests {
 
     #[test]
     fn never_types_into_a_shell_and_alerts_once() {
-        let data = fleet(
+        let data = clan(
             SHELL,
             vec![msg("m1", WORKER, "worker_done", NOW - MIN, "done")],
         );
@@ -702,7 +698,7 @@ mod tests {
         assert!(tick(&mut f, &data, NOW + 2 * UNREACHABLE_GRACE_MS).is_empty());
 
         // The coordinator comes back: the queued event goes through.
-        let back = fleet(
+        let back = clan(
             CLAUDE_IDLE,
             vec![msg("m1", WORKER, "worker_done", NOW - MIN, "done")],
         );
@@ -713,7 +709,7 @@ mod tests {
 
     #[test]
     fn tells_the_coordinator_about_a_failed_task_whose_worker_kept_going() {
-        let mut data = fleet(
+        let mut data = clan(
             CLAUDE_IDLE,
             vec![msg("hb", WORKER, "heartbeat", NOW - MIN, "implementing")],
         );
@@ -760,7 +756,7 @@ mod tests {
 
     #[test]
     fn success_marks_events_sent() {
-        let data = fleet(
+        let data = clan(
             CLAUDE_IDLE,
             vec![msg("m1", WORKER, "worker_done", NOW - MIN, "done")],
         );
@@ -776,7 +772,7 @@ mod tests {
 
     #[test]
     fn unconfirmed_forward_is_retried_after_the_retry_cap() {
-        let data = fleet(
+        let data = clan(
             CLAUDE_IDLE,
             vec![msg("m1", WORKER, "worker_done", NOW - MIN, "done")],
         );
@@ -788,7 +784,7 @@ mod tests {
 
     #[test]
     fn failed_send_is_retried_with_backoff_and_alerts_once() {
-        let data = fleet(
+        let data = clan(
             CLAUDE_IDLE,
             vec![msg("m1", WORKER, "worker_done", NOW - MIN, "done")],
         );
@@ -829,7 +825,7 @@ mod tests {
 
     #[test]
     fn restored_set_forwards_what_arrived_while_down() {
-        let data = fleet(
+        let data = clan(
             CLAUDE_IDLE,
             vec![
                 msg("seen", WORKER, "worker_done", NOW - 3 * 60 * MIN, "old"),
@@ -873,7 +869,7 @@ mod tests {
 
         // A key no longer visible and older than the event window is dropped.
         let mut f = Forwarder::restored(sent);
-        tick(&mut f, &fleet(CLAUDE_IDLE, vec![]), NOW);
+        tick(&mut f, &clan(CLAUDE_IDLE, vec![]), NOW);
         let kept = f.take_changed().expect("pruned");
         assert_eq!(kept.keys().collect::<Vec<_>>(), vec!["m1"]);
 

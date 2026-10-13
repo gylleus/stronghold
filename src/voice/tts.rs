@@ -1,8 +1,8 @@
-//! Text-to-speech: the Queen's voice (Kokoro via sherpa-onnx).
+//! Text-to-speech: the King's voice (Kokoro via sherpa-onnx).
 //!
 //! [`Speaker`] owns a pipeline thread that loads the model on first use (downloading it if
 //! needed), synthesizes one sentence at a time and hands the audio to an [`AudioSink`], so the
-//! first sentence plays while later ones synthesize. [`SentenceStream`] turns the Queen's
+//! first sentence plays while later ones synthesize. [`SentenceStream`] turns the King's
 //! streamed markdown reply into speakable sentences to [`Speaker::enqueue`].
 
 pub mod speakable;
@@ -508,7 +508,7 @@ fn finish_one(shared: &Shared, generation: u64) {
 const SAY_USAGE: &str = "usage: myrstack say [--wav <file>] [--voice <name>] [--speed <x>] \
                          [--volume <0-1>] <markdown text…>";
 
-/// `myrstack say …`: speaks (or renders to a WAV file) text with the Queen's voice,
+/// `myrstack say …`: speaks (or renders to a WAV file) text with the King's voice,
 /// downloading the model on first use.
 pub fn run_cli(args: &[String]) -> Option<anyhow::Result<()>> {
     let (cmd, rest) = args.split_first()?;
@@ -767,7 +767,7 @@ mod tests {
             .unwrap_or(SpeakerConfig::default().threads);
         let mut synth = KokoroSynth::load(&paths, threads).unwrap();
         eprintln!("load ({threads} threads): {:?}", t.elapsed());
-        let text = "The fleet has three runs active, and terminal ab12 is waiting for you.";
+        let text = "The clan has three runs active, and terminal ab12 is waiting for you.";
         // Warm-up, then measure.
         synth.synthesize("Hello.", 3, 1.0).unwrap();
         let t = Instant::now();
