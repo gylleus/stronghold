@@ -1667,3 +1667,28 @@ fn stalled_dwarf_holds_still_in_a_helmet_for_the_pebble() {
     );
     assert_eq!(super::dwarf_look(stalled).hat, Hat::Helmet);
 }
+
+#[test]
+fn portal_stone_threshold_meets_the_surface_in_every_outline() {
+    use super::world::{Prop, render};
+    use crate::ui::dwarf::cutout::Outline;
+    let scene = scene(&snapshot());
+    let foot = scene.karl_portal();
+    for outline in Outline::ALL {
+        let image = render(Prop::Portal, Prop::Portal.size(), 0, outline);
+        let bottom = (0..image.size[1])
+            .rev()
+            .find(|&y| image[(image.size[0] / 2, y)].a() > 0)
+            .unwrap()
+            + 1;
+        let stone_bottom = foot.y + (bottom as f32 - PORTAL_H) * scene.px;
+        assert!(
+            stone_bottom >= scene.surface_y,
+            "{outline:?}: floating threshold"
+        );
+        assert!(
+            stone_bottom <= scene.surface_y + 3.0 * scene.px,
+            "{outline:?}: buried plate"
+        );
+    }
+}

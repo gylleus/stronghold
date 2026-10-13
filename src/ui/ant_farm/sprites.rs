@@ -470,13 +470,13 @@ impl Sprites {
     pub fn pile(&self, painter: &Painter, rect: Rect, variant: u8) {
         self.prop(painter, Prop::Treasure(variant % 3), rect, 1.0);
     }
-    /// Carved rune arch. Only a scroll entering or leaving lights the threshold.
+    /// Carved rune arch with a moving veil, brighter when a scroll enters or leaves.
     pub fn portal(
         &self,
         painter: &Painter,
         foot: Pos2,
         px: f32,
-        flare: u8,
+        frame: u8,
         text: &str,
         font: egui::FontId,
     ) {
@@ -486,7 +486,7 @@ impl Sprites {
         );
         self.world
             .borrow_mut()
-            .paint(painter, Prop::Portal, rect, self.px, flare, 1.0);
+            .paint(painter, Prop::Portal, rect, self.px, frame, 1.0);
         let room = 20.0 * px;
         let mut galley = painter.layout_no_wrap(text.to_owned(), font.clone(), INK);
         if galley.size().x > room {

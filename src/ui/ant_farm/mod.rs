@@ -575,7 +575,11 @@ impl AntFarmView {
             .filter(|_| !tray_hovered && hovered.is_none())
             .and_then(|p| forest::hit(&trees, p))
             .cloned();
-        let portal_flare = mail::portal_flare(self.mail.tick(now_s), now_s);
+        let portal_frame = world::portal_frame(
+            now_s,
+            mail::portal_flare(self.mail.tick(now_s), now_s),
+            still,
+        );
         paint_ground(
             &painter,
             sprites,
@@ -583,7 +587,7 @@ impl AntFarmView {
             palette,
             now_s,
             daylight,
-            portal_flare,
+            portal_frame,
             &self.forest,
             &trees,
         );
@@ -686,7 +690,7 @@ impl AntFarmView {
             self.camera = Camera::default();
         }
 
-        // Smooth travel and calls; stepped fire, work, snores and pebble bonks.
+        // Smooth travel and calls; stepped portal veil, fire, work, snores and pebble bonks.
         let walking = placed.iter().any(|p| p.heading.is_some())
             || !self.ripples.is_empty()
             || !self.births.is_empty()
@@ -704,7 +708,7 @@ impl AntFarmView {
         });
         if walking {
             ui.ctx().request_repaint_after(WALK_FRAME);
-        } else if stepping || scene.comms.is_some() || scene.gallery.is_positive() {
+        } else if !still || stepping || scene.comms.is_some() || scene.gallery.is_positive() {
             ui.ctx().request_repaint_after(STEP_FRAME);
         }
         daylight::schedule_repaint(ui.ctx());
@@ -1089,7 +1093,7 @@ fn paint_ground(
     palette: Palette,
     now_s: f64,
     daylight: f32,
-    portal_flare: u8,
+    portal_frame: u8,
     forest_view: &forest::ForestView,
     trees: &forest::Forest,
 ) {
@@ -1250,7 +1254,7 @@ fn paint_ground(
         painter,
         scene.karl_portal(),
         px,
-        portal_flare,
+        portal_frame,
         "Karl",
         FontId::monospace(10.0 + 2.0 * px),
     );

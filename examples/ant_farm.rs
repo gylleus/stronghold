@@ -150,6 +150,7 @@ fn main() -> eframe::Result {
                     // As in the app with the Queen's chat showing.
                     let mut farm = AntFarmView::new();
                     farm.set_art(&art);
+                    farm.set_reduce_motion(reduced_motion);
                     farm.set_queen_focused(true);
                     farm.set_envoy_health(health);
                     if health == myrstack::envoy::EnvoyHealth::AwaitingApproval {
@@ -295,7 +296,7 @@ impl Demo {
             let flight = message
                 .resolve(&self.snapshot)
                 .expect("both ends in the fleet");
-            self.farm.message(flight, now_s, false);
+            self.farm.message(flight, now_s, self.reduced_motion);
         }
     }
 

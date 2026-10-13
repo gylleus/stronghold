@@ -102,9 +102,11 @@ impl Prop {
         }
     }
 
-    /// Fires, work and moving cart wheels change frame. A cart is drawn only during travel.
+    /// The open portal's veil, fires, work and moving cart wheels change frame.
+    /// A cart is drawn only during travel.
     pub fn frame(self, now_s: f64) -> u8 {
         match self {
+            Self::Portal => (now_s * 4.0).floor().rem_euclid(PORTAL_PHASES as f64) as u8,
             Self::MineCart
             | Self::Torch
             | Self::Brazier
@@ -113,6 +115,18 @@ impl Prop {
             | Self::ReceivingStone => (now_s * 6.0).floor().rem_euclid(4.0) as u8,
             _ => 0,
         }
+    }
+}
+
+const PORTAL_PHASES: u8 = 8;
+
+/// Eight veil positions at each of four message-flare strengths, all cached as frames.
+/// Reduced motion freezes both the open veil and the mail pulse.
+pub fn portal_frame(now_s: f64, flare: u8, still: bool) -> u8 {
+    if still {
+        0
+    } else {
+        Prop::Portal.frame(now_s) + flare.min(3) * PORTAL_PHASES
     }
 }
 
@@ -635,7 +649,9 @@ fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
             c.detail(16.0, 26.0, 11.0, 1.0, STONE_LIGHT);
         }
         Prop::Portal => {
-            let flare = frame.min(3) as f32 / 3.0;
+            let flare = (frame / PORTAL_PHASES).min(3) as f32 / 3.0;
+            let angle =
+                (frame % PORTAL_PHASES) as f32 / PORTAL_PHASES as f32 * std::f32::consts::TAU;
             let veil = rgb(0x254657).lerp_to_gamma(BLUE, flare * 0.7);
             // A deep doorway, a luminous inner threshold and wedge-cut arch stones.
             c.cut(
@@ -675,17 +691,27 @@ fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
                 ]),
                 veil,
             );
-            c.paint(
-                pts(&[
-                    (13.0, 29.0),
-                    (13.0, 20.0),
-                    (17.0, 15.0),
-                    (19.0, 18.0),
-                    (16.0, 22.0),
-                    (17.0, 29.0),
-                ]),
-                rgb(0x142b3c).lerp_to_gamma(BLUE, flare),
-            );
+            // Two curling ribbons move inside the opening; the stonework stays still.
+            // Movement changes the silhouette of the light so even tiny palettes show it.
+            for (offset, color) in [
+                (0.0, BLUE.lerp_to_gamma(LIGHT, flare)),
+                (
+                    std::f32::consts::PI,
+                    rgb(0x408698).lerp_to_gamma(BLUE, flare),
+                ),
+            ] {
+                let points: Vec<_> = (0..=12)
+                    .map(|i| {
+                        let t = i as f32 / 12.0;
+                        let a = angle + offset + t * 3.8;
+                        let r = 1.0 - t * 0.75;
+                        pos2(16.0 + 4.0 * r * a.cos(), 22.0 + 8.0 * r * a.sin())
+                    })
+                    .collect();
+                for segment in points.windows(2) {
+                    c.paint(capsule(segment[0], segment[1], 0.8), color);
+                }
+            }
             for x in [4.0, 24.0] {
                 for y in [15.0, 24.0] {
                     c.rect(x, y, 4.0, 8.0, STONE);
@@ -714,7 +740,7 @@ fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
             c.rect(2.0, 33.0, 28.0, 5.0, STONE_DARK);
             c.detail(5.0, 33.0, 22.0, 5.0, GOLD);
             c.detail(5.0, 33.0, 22.0, 1.0, LIGHT);
-            if frame > 0 {
+            if flare > 0.0 {
                 for (x, y) in [(14.0, 18.0), (18.0, 26.0), (15.0, 30.0)] {
                     c.detail(x, y - flare * 2.0, 1.0, 2.0, LIGHT);
                 }
@@ -1211,13 +1237,50 @@ mod tests {
     }
 
     #[test]
+    fn portal_veil_moves_without_mail_and_freezes_for_reduced_motion() {
+        let image = |time, flare, still| {
+            render(
+                Prop::Portal,
+                Prop::Portal.size(),
+                portal_frame(time, flare, still),
+                Outline::Fine,
+            )
+        };
+        let resting = image(0.0, 0, false);
+        assert_ne!(resting, image(0.5, 0, false));
+        assert_eq!(resting, image(2.0, 0, false), "seamless two-second loop");
+        for phase in 0..PORTAL_PHASES {
+            let time = phase as f64 / 4.0;
+            let moving = image(time, 0, false);
+            assert_eq!(image(time, 0, true), resting);
+            assert_eq!(image(time, 3, true), resting);
+            assert_ne!(moving, image(time, 3, false), "message flare");
+            for y in 0..40 {
+                for x in 0..32 {
+                    if !(10..=22).contains(&x) || !(11..=33).contains(&y) {
+                        assert_eq!(moving[(x, y)], resting[(x, y)], "stone must not move");
+                    }
+                }
+            }
+        }
+        for palette in pixel::bundled() {
+            let mut a = resting.clone();
+            let mut b = image(0.5, 0, false);
+            let mut mapper = Mapper::new(&palette);
+            mapper.apply(&mut a);
+            mapper.apply(&mut b);
+            assert_ne!(a, b, "{} must retain visible movement", palette.name);
+        }
+    }
+
+    #[test]
     fn every_prop_builds_at_farm_sizes_in_every_palette() {
         for prop in props() {
             for scale in [0.75, 1.0, 2.0] {
                 let size = prop.size().map(|n| (n as f32 * scale).round() as usize);
                 for outline in Outline::ALL {
                     for frame in 0..=if prop == Prop::Portal {
-                        3
+                        4 * PORTAL_PHASES - 1
                     } else {
                         prop.frame(0.5)
                     } {
@@ -1248,11 +1311,12 @@ mod tests {
     }
 
     #[test]
-    fn only_fire_work_receipts_and_travelling_cart_wheels_animate() {
+    fn only_portal_fire_work_receipts_and_travelling_cart_wheels_animate() {
         for prop in props() {
             let active = matches!(
                 prop,
                 Prop::MineCart
+                    | Prop::Portal
                     | Prop::Entrance
                     | Prop::Torch
                     | Prop::Brazier
@@ -1263,7 +1327,7 @@ mod tests {
             assert_eq!(
                 render(prop, prop.size(), 0, Outline::Fine)
                     != render(prop, prop.size(), 3, Outline::Fine),
-                active || prop == Prop::Portal,
+                active,
                 "{prop:?}"
             );
         }
