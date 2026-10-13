@@ -220,10 +220,10 @@ impl MyrstackApp {
                 self.farm.set_king_focused(self.shows_chat());
                 self.farm.set_envoy_health(self.envoy_status().health());
                 self.farm.set_envoy_pending(self.envoy_core.pending_count());
-                let groves = ui::farm::forest::groves(&data.worktrees, &snapshot.nodes);
-                self.farm.set_forest(groves, self.worktrees.saw_job());
+                let sites = ui::farm::rubble::sites(&data.worktrees, &snapshot.nodes);
+                self.farm.set_rubble(sites, self.worktrees.cleanup_job());
                 let response = self.farm.show(ui, snapshot, &mut self.clan);
-                self.saw_in_farm = true;
+                self.cleanup_in_farm = true;
                 if response.open_envoy {
                     self.envoy_core.open_request = true;
                 }

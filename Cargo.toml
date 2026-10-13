@@ -32,7 +32,7 @@ sha2 = "0.10"
 url = "2"
 egui_dock = { version = "0.21", features = ["serde"] }
 ron = "0.12"
-# Decodes the farm's PNG sprites; already in the tree through eframe.
+# Decodes the generated hammer PNG; already in the tree through eframe.
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Native notifications when running from Myrstack.app (see src/notify/native.rs).

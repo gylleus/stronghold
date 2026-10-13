@@ -1,6 +1,6 @@
 //! Orca worktrees in the top bar: how many there are and how much disk they take, and the
-//! cleanup window (evaluate → plan → confirm → saw down). While it runs, a chainsaw cuts the
-//! removed worktrees' trees in the farm ([`crate::ui::farm::forest`]), or runs along
+//! cleanup window (evaluate → plan → confirm → clean up). While it runs, a hammer breaks the
+//! removed worktrees' heaps in the farm ([`crate::ui::farm::rubble`]), or runs along
 //! the bottom of the window in the other views.
 //!
 //! The count comes from the poller's `worktree list` for free; disk usage is measured off the
@@ -18,17 +18,18 @@ use eframe::egui::{self, Color32, RichText, Vec2, pos2, vec2};
 
 use crate::orca::OrcaClient;
 use crate::orca::spawn::Worktree;
-use crate::ui::farm::forest::SawJob;
-use crate::ui::farm::forest::art::Deco;
+use crate::ui::dwarf::cutout::Outline;
+use crate::ui::farm::hammer;
+use crate::ui::farm::rubble::CleanupJob;
 use crate::worktrees::{self, Census, Outcome, Plan, Removal, SweepMarker, format_bytes};
 
 /// How often disk usage is measured (`du` over every worktree takes a while).
 pub const SIZE_SCAN_EVERY_MS: i64 = 30 * 60 * 1000;
 /// How often the sweep marker is checked, for a cleanup the King started.
 const MARKER_CHECK_EVERY_MS: i64 = 1_000;
-/// Seconds for the saw to cross the window once.
+/// Seconds for the hammer to cross the window once.
 const CROSS_SECONDS: f64 = 7.0;
-/// Points per texel of the saw along the window's bottom (the farm sizes its own).
+/// Points per texel of the hammer along the window's bottom (the farm sizes its own).
 const FLOOR_TEXEL: f32 = 3.0;
 
 /// Disk usage of the worktrees and the unlisted directories.
@@ -78,8 +79,8 @@ pub struct WorktreePanel {
     external: Option<SweepMarker>,
     next_marker_check_ms: i64,
     reduced_motion: Arc<AtomicBool>,
-    /// The chainsaw's pixel art, for the menu and the floor.
-    saw: egui::TextureHandle,
+    /// The hammer's pixel art, for the menu and the floor.
+    hammer: egui::TextureHandle,
 }
 
 impl WorktreePanel {
@@ -104,9 +105,9 @@ impl WorktreePanel {
             external: None,
             next_marker_check_ms: 0,
             reduced_motion,
-            saw: ctx.load_texture(
-                "worktrees/saw",
-                Deco::Saw.image(),
+            hammer: ctx.load_texture(
+                "worktrees/hammer",
+                hammer::render([26, 40], Outline::Fine),
                 egui::TextureOptions::NEAREST,
             ),
         }
@@ -283,35 +284,30 @@ impl WorktreePanel {
         });
     }
 
-    /// Whether a cleanup is removing worktrees right now (here or from the MCP tool).
-    pub fn sawing(&self) -> bool {
-        matches!(self.stage, Some(Stage::Running { .. })) || self.external.is_some()
-    }
-
-    /// The cleanup removing worktrees right now (here or from the MCP tool), for the saw in
+    /// The cleanup removing worktrees right now (here or from the MCP tool), for the hammer in
     /// the farm.
-    pub fn saw_job(&self) -> Option<SawJob> {
+    pub fn cleanup_job(&self) -> Option<CleanupJob> {
         match (&self.stage, &self.external) {
             (
                 Some(Stage::Running {
                     queue, done, total, ..
                 }),
                 _,
-            ) => Some(SawJob {
+            ) => Some(CleanupJob {
                 done: done.len(),
                 total: *total,
                 current: queue.get(done.len()).cloned(),
-                felled: done
+                cleared: done
                     .iter()
                     .filter(|r| r.outcome == Outcome::Removed)
                     .map(|r| r.id.clone())
                     .collect(),
             }),
-            (_, Some(m)) => Some(SawJob {
+            (_, Some(m)) => Some(CleanupJob {
                 done: m.done,
                 total: m.total,
                 current: m.current_id.clone(),
-                felled: Vec::new(),
+                cleared: Vec::new(),
             }),
             _ => None,
         }
@@ -347,12 +343,12 @@ impl WorktreePanel {
                 self.stage,
                 Some(Stage::Evaluating(_) | Stage::Running { .. })
             ) || self.external.is_some();
-            let saw = egui::Image::new(&self.saw).fit_to_exact_size(vec2(22.0, 8.0));
+            let hammer = egui::Image::new(&self.hammer).fit_to_exact_size(vec2(16.0, 24.0));
             clean = ui
-                .add_enabled(!busy, egui::Button::image_and_text(saw, "Saw down…"))
+                .add_enabled(!busy, egui::Button::image_and_text(hammer, "Clear…"))
                 .on_hover_text(
-                    "Check which worktrees (the trees in the farm) are still needed and \
-                     plan sawing down the rest. Nothing is cut until you confirm.",
+                    "Check which worktrees (the heaps in the farm) are still needed and \
+                     plan clearing the rest. Nothing is removed until you confirm.",
                 )
                 .clicked();
             if let Some(summary) = &self.last_summary {
@@ -437,7 +433,7 @@ impl WorktreePanel {
         let mut open = true;
         let mut action = None;
         let max_height = ctx.content_rect().height() * 0.7;
-        egui::Window::new("Saw down worktrees")
+        egui::Window::new("Clear worktrees")
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -462,51 +458,49 @@ impl WorktreePanel {
 
     /// The removal progress, while a cleanup runs here or from the MCP tool.
     fn progress(&self) -> Option<(usize, usize)> {
-        self.saw_job().map(|job| (job.done, job.total))
+        self.cleanup_job().map(|job| (job.done, job.total))
     }
 
-    /// The chainsaw running along the bottom of the window while worktrees are removed, when
-    /// the farm (where it cuts their trees) is not on screen.
-    pub fn saw(&self, ctx: &egui::Context) {
+    /// The hammer running along the bottom of the window while worktrees are removed, when
+    /// the farm (where it breaks their heaps) is not on screen.
+    pub fn hammer(&self, ctx: &egui::Context) {
         let Some((done, total)) = self.progress() else {
             return;
         };
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
-            egui::Id::new("worktree_saw"),
+            egui::Id::new("worktree_hammer"),
         ));
         let screen = ctx.content_rect();
-        let size = self.saw.size_vec2() * FLOOR_TEXEL;
-        let floor = screen.bottom() - 6.0;
-        let label = format!("Sawing worktrees {done}/{total}");
+        let floor = screen.bottom() - 8.0;
+        let label = format!("Clearing worktrees {done}/{total}");
         let text_color = ctx.global_style().visuals.weak_text_color();
         let t = ctx.input(|i| i.time);
         let reduced = self.reduced_motion();
-        let span = (screen.width() - 2.0 * size.x).max(1.0);
-        // Ping-pong across the window, eased at each end, buzzing as it goes.
         let phase = (t / CROSS_SECONDS).rem_euclid(2.0);
         let u = if phase < 1.0 { phase } else { 2.0 - phase };
         let eased = 0.5 - 0.5 * (u * std::f64::consts::PI).cos();
-        let (x, buzz) = if reduced {
-            (screen.right() - 150.0, 0.0)
+        let x = if reduced {
+            screen.right() - 170.0
         } else {
-            (
-                screen.left() + size.x + span * eased as f32,
-                (t * 30.0).sin() as f32 * 1.2,
-            )
+            screen.left() + 80.0 + (screen.width() - 280.0).max(1.0) * eased as f32
         };
-        let rect = egui::Rect::from_center_size(pos2(x, floor - size.y / 2.0 + buzz), size);
-        if !reduced {
-            draw_chips(&painter, rect.right_center(), t);
+        let impact = pos2(x, floor - 24.0);
+        let phase = hammer::phase(t, reduced);
+        let (rect, (angle, pivot)) = hammer::placement(impact, FLOOR_TEXEL * 0.6, phase);
+        if !reduced && phase >= 0.68 {
+            draw_chips(&painter, impact, (phase - 0.68) / 0.32);
         }
-        painter.image(
-            self.saw.id(),
+        let mut mesh = egui::Mesh::with_texture(self.hammer.id());
+        mesh.add_rect_with_uv(
             rect,
             egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             Color32::WHITE,
         );
+        mesh.rotate(egui::emath::Rot2::from_angle(angle), pivot);
+        painter.add(mesh);
         painter.text(
-            rect.center_top() - vec2(0.0, 6.0),
+            impact - vec2(0.0, 75.0),
             egui::Align2::CENTER_BOTTOM,
             label,
             egui::FontId::proportional(12.0),
@@ -552,7 +546,7 @@ fn stage_view(ui: &mut egui::Ui, stage: &mut Stage, max_height: f32) -> Option<A
         Stage::Review { plan, chosen } => review_view(ui, plan, chosen, max_height),
         Stage::Running { total, done, .. } => {
             ui.label(format!(
-                "Sawing down worktrees through Orca… {}/{total}",
+                "Clearing worktrees through Orca… {}/{total}",
                 done.len()
             ));
             ui.add(egui::ProgressBar::new(
@@ -590,7 +584,7 @@ fn review_view(
         .filter_map(|e| e.bytes)
         .sum();
     ui.label(format!(
-        "{} linked worktrees: {} can be sawn down, {} are kept (holding {}).",
+        "{} linked worktrees: {} can be cleared, {} are kept (holding {}).",
         plan.entries.len(),
         removable.len(),
         kept.len(),
@@ -607,7 +601,7 @@ fn review_view(
         .max_height(max_height - 140.0)
         .auto_shrink([false, true])
         .show(ui, |ui| {
-            egui::CollapsingHeader::new(format!("Saw down ({})", removable.len()))
+            egui::CollapsingHeader::new(format!("Clear ({})", removable.len()))
                 .default_open(true)
                 .show(ui, |ui| {
                     if removable.is_empty() {
@@ -672,7 +666,7 @@ fn review_view(
                 n > 0,
                 egui::Button::new(
                     RichText::new(format!(
-                        "Saw down {n} worktree{} ({})",
+                        "Clear {n} worktree{} ({})",
                         if n == 1 { "" } else { "s" },
                         format_bytes(freed)
                     ))
@@ -721,11 +715,10 @@ fn removal_list(ui: &mut egui::Ui, removals: &[Removal], max_height: f32) {
         });
 }
 
-/// Wood chips flying off the tip of the bar.
-fn draw_chips(painter: &egui::Painter, tip: egui::Pos2, t: f64) {
-    let chip = Color32::from_rgb(0xd8, 0xb0, 0x70);
+/// Stone chips from a single hammer impact.
+fn draw_chips(painter: &egui::Painter, tip: egui::Pos2, life: f32) {
+    let chip = Color32::from_rgb(0x93, 0x95, 0x8c);
     for i in 0..8 {
-        let life = ((t * 2.0 + i as f64 / 8.0).fract()) as f32;
         let seed = (i as f32 * 2.3).sin();
         let at = tip
             + vec2(

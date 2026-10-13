@@ -36,10 +36,14 @@ pub enum Prop {
     Cave(u8),
     Masonry,
     Peaks,
-    Roots,
     Entrance,
     PitheadWinch,
     Spoil,
+    Rubble(u8, u8),
+    CleanupHammer,
+    Bookcase,
+    ArchiveCabinet,
+    Lectern,
     Soot,
     Portal,
     Scroll,
@@ -73,10 +77,14 @@ impl Prop {
             Self::Nature(d) => d.size(),
             Self::Cave(_) | Self::Masonry => [96, 64],
             Self::Peaks => [192, 52],
-            Self::Roots => [24, 12],
             Self::Entrance => [40, 28],
             Self::PitheadWinch => [24, 18],
             Self::Spoil => [26, 10],
+            Self::Rubble(_, _) => [36, 22],
+            Self::CleanupHammer => [26, 40],
+            Self::Bookcase => [30, 34],
+            Self::ArchiveCabinet => [20, 26],
+            Self::Lectern => [22, 22],
             Self::Soot => [14, 20],
             Self::Portal => [32, 40],
             Self::Scroll => [18, 12],
@@ -228,19 +236,13 @@ impl WorldArt {
         });
     }
 
-    pub fn paint(
+    fn texture(
         &mut self,
         painter: &Painter,
         prop: Prop,
-        rect: Rect,
-        px: f32,
+        size: [usize; 2],
         frame: u8,
-        alpha: f32,
-    ) {
-        let size = [
-            (rect.width() / px).round().max(1.0) as usize,
-            (rect.height() / px).round().max(1.0) as usize,
-        ];
+    ) -> egui::TextureId {
         let key = Key {
             prop,
             size,
@@ -277,6 +279,23 @@ impl WorldArt {
         };
         let cached = self.textures.get_mut(&key).expect("prop just cached");
         cached.used = self.generation;
+        cached.texture.id()
+    }
+
+    pub fn paint(
+        &mut self,
+        painter: &Painter,
+        prop: Prop,
+        rect: Rect,
+        px: f32,
+        frame: u8,
+        alpha: f32,
+    ) {
+        let size = [
+            (rect.width() / px).round().max(1.0) as usize,
+            (rect.height() / px).round().max(1.0) as usize,
+        ];
+        let texture = self.texture(painter, prop, size, frame);
         let rect = Rect::from_min_size(
             pos2(
                 (rect.left() / px).round() * px,
@@ -285,15 +304,48 @@ impl WorldArt {
             vec2(size[0] as f32, size[1] as f32) * px,
         );
         painter.image(
-            cached.texture.id(),
+            texture,
             rect,
             Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
             Color32::WHITE.gamma_multiply(alpha),
         );
     }
+    pub fn paint_turned(
+        &mut self,
+        painter: &Painter,
+        prop: Prop,
+        rect: Rect,
+        px: f32,
+        (angle, pivot): (f32, Pos2),
+        alpha: f32,
+    ) {
+        let size = [
+            (rect.width() / px).round().max(1.0) as usize,
+            (rect.height() / px).round().max(1.0) as usize,
+        ];
+        let texture = self.texture(painter, prop, size, 0);
+        let rect = Rect::from_min_size(
+            pos2(
+                (rect.left() / px).round() * px,
+                (rect.top() / px).round() * px,
+            ),
+            vec2(size[0] as f32, size[1] as f32) * px,
+        );
+        let mut mesh = egui::Mesh::with_texture(texture);
+        mesh.add_rect_with_uv(
+            rect,
+            Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)),
+            Color32::WHITE.gamma_multiply(alpha),
+        );
+        mesh.rotate(egui::emath::Rot2::from_angle(angle), pivot);
+        painter.add(mesh);
+    }
 }
 
 pub fn render(prop: Prop, size: [usize; 2], frame: u8, outline: Outline) -> ColorImage {
+    if prop == Prop::CleanupHammer {
+        return super::hammer::render(size, outline);
+    }
     let room = matches!(prop, Prop::Cave(_) | Prop::Masonry);
     let [w, h] = if room { size } else { prop.size() }.map(|n| n as f32);
     let mut c = Canvas {
@@ -453,6 +505,9 @@ fn coins(c: &mut Canvas, x: f32, y: f32) {
 fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
     match prop {
         Prop::Cave(_) | Prop::Masonry => unreachable!("rooms draw at their actual size"),
+        Prop::CleanupHammer => unreachable!("hammer uses its generated sprite"),
+        Prop::Rubble(health, seed) => super::rubble::draw(c, health, seed),
+        Prop::Bookcase | Prop::ArchiveCabinet | Prop::Lectern => super::library::draw(c, prop),
         Prop::Nature(d) => super::nature::draw(c, d),
         Prop::Peaks => {
             // Matching edge heights make the distant range repeat without a seam.
@@ -514,12 +569,6 @@ fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
                 ]),
                 rgb(0x596d70),
             );
-        }
-        Prop::Roots => {
-            for (x, y) in [(2.0, 9.0), (8.0, 11.0), (20.0, 10.0)] {
-                c.cut(capsule(pos2(12.0, 1.0), pos2(x, y), 0.8), WOOD_DARK);
-                c.line((x, y - 2.0), (x + 3.0, y - 3.0), 0.5, WOOD);
-            }
         }
         Prop::Support => {
             timber(c, 2.0, 3.0, 3.0, 18.0);
@@ -1199,10 +1248,13 @@ mod tests {
     fn props() -> Vec<Prop> {
         let mut props = vec![
             Prop::Peaks,
-            Prop::Roots,
             Prop::Entrance,
             Prop::PitheadWinch,
             Prop::Spoil,
+            Prop::CleanupHammer,
+            Prop::Bookcase,
+            Prop::ArchiveCabinet,
+            Prop::Lectern,
             Prop::Soot,
             Prop::Portal,
             Prop::Scroll,
@@ -1230,6 +1282,7 @@ mod tests {
             Prop::Snore,
             Prop::Pebble,
         ];
+        props.extend((0..3).flat_map(|health| (0..4).map(move |seed| Prop::Rubble(health, seed))));
         props.extend(Deco::ALL.map(Prop::Nature));
         props.extend((0..3).map(Prop::Treasure));
         props.extend((0..5).map(Prop::Bubble));
@@ -1372,6 +1425,43 @@ mod tests {
                     "{name}: wall"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn rotated_hammer_shares_the_palette_cache_with_library_and_rubble() {
+        let ctx = egui::Context::default();
+        let mut world = WorldArt::default();
+        for name in ["endesga-32", "oil-6"] {
+            world.begin_frame(name, Outline::Bold);
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                for prop in [Prop::CleanupHammer, Prop::Bookcase, Prop::Rubble(0, 2)] {
+                    let [w, h] = prop.size().map(|n| n as f32);
+                    let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(w, h));
+                    world.paint_turned(ui.painter(), prop, rect, 1.0, (0.7, rect.center()), 1.0);
+                    world.paint(ui.painter(), prop, rect, 1.0, 0, 1.0);
+                }
+            });
+            assert_eq!(world.textures.len(), 3, "rotation reuses the same texture");
+            let palette = pixel::Palette::from_lospec(
+                pixel::BUNDLED.iter().find(|(n, _)| *n == name).unwrap().1,
+            )
+            .unwrap();
+            for cached in world.textures.values() {
+                let deltas = &output.textures_delta.set[&cached.texture.id()];
+                for delta in deltas {
+                    let egui::ImageData::Color(image) = &delta.image;
+                    assert!(
+                        image
+                            .pixels
+                            .iter()
+                            .filter(|p| p.a() > 0)
+                            .all(|p| palette.colors.contains(p))
+                    );
+                    assert_eq!(delta.options, TextureOptions::NEAREST);
+                }
+            }
+            output.textures_delta.clear();
         }
     }
 

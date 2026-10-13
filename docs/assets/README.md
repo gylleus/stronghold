@@ -1,8 +1,9 @@
 # Myrstack art: inventory, Paleccino and asset descriptions
 
-Status: **all farm art is drawn in code as of 2026-10-12.** The dwarf mine uses the
-same ink cutouts and hard pixel rasterizer for characters, props and scenery. There are
-no farm PNGs and no alternate ant-farm art path. The earlier experiments below are history.
+Status: **the dwarf mine uses code-drawn cutouts, plus one generated hammer sprite
+(2026-10-13).** Characters, props and scenery share the hard pixel renderer, palette and
+outline settings. There is no alternate ant-farm art path. The earlier experiments below
+are history.
 
 ## Dwarven world art: the mountain mine
 
@@ -34,7 +35,7 @@ rendered pixel grid, independent of camera zoom. The setting is persisted as `ar
   have split faces, quartz and lichen; the receiver has a recessed rune panel and tool scars.
   A hand winch and spoil heap dress the entrance. `gallery`, `shoring` and `throne_hall`
   place rails, supports, soot, torches, banners and braziers. `nature.rs` draws
-  pine, spruce, boulders, heather, edelweiss, gentian, mushrooms and celestial pieces;
+  boulders, heather, edelweiss, gentian, mushrooms and celestial pieces;
   `scenery.rs` controls their deterministic placement. `Prop::Peaks` repeats across the
   horizon, with matching edge heights and snow caps.
 - `comms.rs` draws the standing rune stone, pedestal basin and tablet stack. The stone's
@@ -91,6 +92,37 @@ pose tests ensure only work animates. For small palettes, rock and wall source c
 are lifted only if they would map to the ink (or to each other), then passed through the
 same nearest-colour mapper. Baseline for this replacement: `/tmp/farm-before.png`
 and `/tmp/farm-before-walk.png`.
+
+## Excavation rubble, cleanup hammer and library (2026-10-13)
+
+Bead: `myr-17h`. Trees, stumps, roots and the ASCII chainsaw are deleted. `rubble.rs`
+represents each linked worktree as a stable, differently sized heap of granite, earth,
+broken shoring, bent nails and roots. Active heaps have fresh stone and a gold survey
+pennant; resting heaps have a faded pennant; empty heaps are weathered, with no flag.
+Hover/click labels, oldest-first placement, overflow counts and cleanup eligibility retain
+their worktree meaning. Adjust `draw` for materials and debris, `FULL` for heap size and
+`FILL_AT` for surface density. A removed heap collapses and fades; a cleanup's hammer
+swings every 1.2 seconds, with chips only after contact. Reduced motion freezes the tool.
+
+The generated source is [`assets/art/tools/cleanup_hammer.png`](../../assets/art/tools/cleanup_hammer.png).
+It was created with the built-in image generation tool, transparent background, using
+[this exact prompt](prompts/cleanup-hammer.txt). `hammer.rs` crops transparent padding once,
+samples the image onto the farm grid with hard alpha, reduces it to mine material colours
+and adds the selected silhouette outline. `Prop::CleanupHammer` then uses `WorldArt`'s
+normal size/palette/outline cache. `hammer::placement` supplies the grip and strike motion;
+the same sprite is used in the cleanup menu and bottom-of-window progress animation.
+
+`library.rs` prepares a stone library chamber in the largest free upper-room gap, with
+clearance from the entrance, throne, treasury and Envoy shafts. Narrow layouts omit this
+scenery when no usable gap remains. It contains `Bookcase`, `ArchiveCabinet` and `Lectern`
+props: leather-bound volumes, indexed drawers, rune tablets and an open ledger with a red
+bookmark. Adjust `placement` for the chamber and `draw` for furniture. This is scenery
+only: no memory store, fake record counts, retrieval, agent routing or UI controls.
+
+```sh
+cargo run --release --example farm -- --parked --hammer --shot /tmp/farm-rubble.png
+cargo run --release --example farm -- --heaps 80 --shot /tmp/farm-rubble-crowd.png
+```
 
 ## 0. Current direction: code-drawn paper-cutout dwarves
 

@@ -1,11 +1,11 @@
-//! The mine's art entry point. All props use the dwarf cutout tools in `world` and
-//! `nature`, rasterized at one image pixel per farm texel with NEAREST filtering.
-//! Granite, worked stone and alpine turf are procedural `ColorImage`s. No farm art
-//! is loaded from assets. Palette mapping covers textures and the final scene's shapes.
+//! The mine's art entry point. Cutout props and the generated hammer share the `world`
+//! texture cache: one image pixel per farm texel, hard alpha and NEAREST filtering.
+//! Granite, worked stone and alpine turf are procedural `ColorImage`s. All art is drawn
+//! in code except `assets/art/tools/cleanup_hammer.png`, reduced by `hammer::render`.
+//! Palette mapping covers textures and the final scene's shapes.
 //! Art settings choose the ink width for shared cutouts, including Karl's rune portal.
 
 use super::art::ArtSettings;
-use super::forest::art::Deco as ForestDeco;
 use super::layout::{MATTRESS_TOP, Mark, PORTAL_H, PORTAL_W};
 use super::nature::Deco;
 use super::world::{GOLD, INK, IRON, LIGHT, Prop, STONE, STONE_LIGHT, WOOD_DARK, WorldArt, rgb};
@@ -14,7 +14,6 @@ use eframe::egui::{
     self, Color32, ColorImage, Painter, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2,
 };
 use std::cell::RefCell;
-use std::collections::HashMap;
 const TILE: usize = 256;
 
 /// Agent guild colours and crests; identity stays visible in every state.
@@ -73,7 +72,6 @@ impl Palette {
 }
 
 pub struct Sprites {
-    forest: HashMap<ForestDeco, TextureHandle>,
     pub world: RefCell<WorldArt>,
     rock: TextureHandle,
     tunnel: TextureHandle,
@@ -92,19 +90,6 @@ impl Sprites {
             )
         };
         Self {
-            forest: ForestDeco::ALL
-                .into_iter()
-                .map(|d| {
-                    (
-                        d,
-                        ctx.load_texture(
-                            format!("forest/{d:?}"),
-                            d.image(),
-                            TextureOptions::NEAREST,
-                        ),
-                    )
-                })
-                .collect(),
             world: RefCell::new(WorldArt::default()),
             rock: tile("granite", rock_tile(false)),
             tunnel: tile("worked-stone", rock_tile(true)),
@@ -121,11 +106,6 @@ impl Sprites {
         self.world.borrow_mut().begin_frame(palette, art.outline);
         if self.palette != palette {
             self.palette = palette.to_owned();
-            for (deco, texture) in &mut self.forest {
-                let mut image = deco.image();
-                self.world.borrow_mut().map(&mut image);
-                texture.set(image, TextureOptions::NEAREST);
-            }
             let mut rock = rock_tile(false);
             let mut tunnel = rock_tile(true);
             let mut turf = turf_tile();
@@ -158,34 +138,20 @@ impl Sprites {
     pub fn deco(&self, painter: &Painter, deco: Deco, foot: Pos2, px: f32, alpha: f32) {
         self.standing(painter, Prop::Nature(deco), foot, px, alpha);
     }
-    /// A piece of scenery at `k` points per map texel (rather than its own scale), standing on
-    /// `foot`, turned `angle` radians about `pivot`, multiplied by `tint`.
-    pub fn deco_turned(
+    /// A cached prop rotated around a grip or impact point, on the farm's pixel grid.
+    pub fn prop_turned(
         &self,
         painter: &Painter,
-        deco: ForestDeco,
-        foot: Pos2,
-        k: f32,
-        (angle, pivot): (f32, Pos2),
-        tint: Color32,
+        prop: Prop,
+        rect: Rect,
+        turn: (f32, Pos2),
+        alpha: f32,
     ) {
-        let Some(texture) = self.forest.get(&deco) else {
-            return;
-        };
-        let [w, h] = deco.size();
-        let size = vec2(w as f32 * k, h as f32 * k);
-        let rect = Rect::from_min_size(foot - vec2(size.x / 2.0, size.y), size);
-        let mut mesh = egui::Mesh::with_texture(texture.id());
-        mesh.add_rect_with_uv(rect, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), tint);
-        if angle != 0.0 {
-            mesh.rotate(egui::emath::Rot2::from_angle(angle), pivot);
-        }
-        painter.add(mesh);
+        self.world
+            .borrow_mut()
+            .paint_turned(painter, prop, rect, self.px, turn, alpha);
     }
 
-    pub fn roots(&self, painter: &Painter, foot: Pos2, _width: f32, px: f32, _seed: usize) {
-        self.standing(painter, Prop::Roots, foot + vec2(0.0, 12.0 * px), px, 1.0);
-    }
     pub fn entrance(&self, painter: &Painter, x: f32, y: f32, px: f32) {
         self.standing(painter, Prop::Entrance, pos2(x, y + px), px, 1.0);
     }

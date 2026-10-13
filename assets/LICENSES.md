@@ -7,8 +7,13 @@ Everything here is compiled into the binary (`include_bytes!`); nothing is fetch
 | `fonts/Phosphor-Bold.ttf` | [Phosphor Icons](https://phosphoricons.com) 2.1, `@phosphor-icons/web@2.1.2`, bold weight, unmodified | MIT |
 
 The Phosphor font uses the MIT license; its notice and license text are included below.
-The mine, its props, scenery and dwarves are drawn in Rust with the cutout and pixel
-renderers in `src/ui/dwarf/` and `src/ui/farm/`. No third-party farm artwork is bundled.
+The mine, its scenery and dwarves are drawn in Rust with the cutout and pixel renderers
+in `src/ui/dwarf/` and `src/ui/farm/`, with one generated asset:
+
+- `art/tools/cleanup_hammer.png`: generated for Myrstack with OpenAI's built-in image
+  generation tool on 2026-10-13, using no reference image. The exact prompt is in
+  `docs/assets/prompts/cleanup-hammer.txt`. The app downsamples it and maps its colours
+  at texture creation. No third-party source artwork is bundled.
 
 To add an icon, pick it at phosphoricons.com and add its codepoint (from the package's
 `src/bold/style.css`) to `src/ui/icons.rs`: the whole bold font is bundled.
