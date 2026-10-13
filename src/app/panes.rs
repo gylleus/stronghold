@@ -221,10 +221,11 @@ impl MyrstackApp {
                 self.ant_farm.set_envoy_health(self.envoy_status().health());
                 self.ant_farm
                     .set_envoy_pending(self.envoy_core.pending_count());
-                let groves = ui::ant_farm::forest::groves(&data.worktrees, &snapshot.nodes);
-                self.ant_farm.set_forest(groves, self.worktrees.saw_job());
+                let sites = ui::ant_farm::rubble::sites(&data.worktrees, &snapshot.nodes);
+                self.ant_farm
+                    .set_rubble(sites, self.worktrees.cleanup_job());
                 let response = self.ant_farm.show(ui, snapshot, &mut self.fleet);
-                self.saw_in_farm = true;
+                self.cleanup_in_farm = true;
                 if response.open_envoy {
                     self.envoy_core.open_request = true;
                 }

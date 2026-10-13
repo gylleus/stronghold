@@ -9,12 +9,11 @@ mod beams;
 mod comms;
 pub mod death;
 mod excavation;
-pub mod forest;
-#[cfg(test)]
-mod forest_tests;
+pub(crate) mod hammer;
 pub mod layout;
 #[cfg(test)]
 mod layout_tests;
+mod library;
 pub mod mail;
 pub mod motion;
 pub mod nature;
@@ -23,6 +22,9 @@ mod pops;
 pub mod rooms;
 #[cfg(test)]
 mod rooms_tests;
+pub mod rubble;
+#[cfg(test)]
+mod rubble_tests;
 pub mod scenery;
 pub mod sprites;
 mod world;
@@ -227,8 +229,8 @@ pub struct AntFarmView {
     advanced_rect: Option<Rect>,
     /// Reduce motion as set for tests; the system's setting otherwise.
     reduce_motion: Option<bool>,
-    /// A tree per open worktree on the surface, and the saw; see [`forest`].
-    forest: forest::ForestView,
+    /// A heap per open worktree on the surface, and the hammer; see [`rubble`].
+    rubble: rubble::RubbleView,
     /// Dwarf pixel resolution and palette; see [`art`].
     art: ArtSettings,
     dwarf_art: DwarfArt,
@@ -408,9 +410,9 @@ impl AntFarmView {
         self.envoy_pending = pending;
     }
 
-    /// The open worktrees' trees and the cleanup cutting them, if one runs.
-    pub fn set_forest(&mut self, groves: Vec<forest::Grove>, saw: Option<forest::SawJob>) {
-        self.forest.set(groves, saw);
+    /// The open worktrees' heaps and the cleanup breaking them down, if one runs.
+    pub fn set_rubble(&mut self, sites: Vec<rubble::Site>, hammer: Option<rubble::CleanupJob>) {
+        self.rubble.set(sites, hammer);
     }
 
     pub fn set_envoy_receipt(&mut self, receipt: crate::ui::envoy_receipt::ReceiptCue) {
@@ -542,7 +544,7 @@ impl AntFarmView {
         self.bury(&scene, snapshot, now_s, death::reduce_motion);
         let placed = self.advance(&scene, now_s);
         let still = self.still();
-        let trees = self.forest.layout(&scene, now_s, away, still);
+        let heaps = self.rubble.layout(&scene, now_s, away, still);
         if let Some(focus) = fleet.take_focus() {
             self.focus(&scene, &placed, fleet, focus);
         }
@@ -571,9 +573,9 @@ impl AntFarmView {
         let hovered = pointer
             .filter(|_| !tray_hovered)
             .and_then(|p| hit(&scene, &placed, p));
-        let tree_hovered = pointer
+        let heap_hovered = pointer
             .filter(|_| !tray_hovered && hovered.is_none())
-            .and_then(|p| forest::hit(&trees, p))
+            .and_then(|p| rubble::hit(&heaps, p))
             .cloned();
         let portal_frame = world::portal_frame(
             now_s,
@@ -588,8 +590,8 @@ impl AntFarmView {
             now_s,
             daylight,
             portal_frame,
-            &self.forest,
-            &trees,
+            &self.rubble,
+            &heaps,
         );
 
         self.envoy_receipt.repaint(ui.ctx());
@@ -656,12 +658,12 @@ impl AntFarmView {
             self.mail.tick(now_s),
             now_s,
         );
-        self.forest.paint_overlay(
+        self.rubble.paint_overlay(
             &painter,
             sprites,
             &scene,
-            &trees,
-            tree_hovered.as_ref().map(|t| t.grove.id.as_str()),
+            &heaps,
+            heap_hovered.as_ref().map(|t| t.site.id.as_str()),
             palette,
             now_s,
         );
@@ -700,7 +702,7 @@ impl AntFarmView {
             || !self.pops.is_empty()
             || !self.room_glides.is_empty()
             || self.frame_glide.is_some()
-            || (self.forest.animating() && !still);
+            || (self.rubble.animating() && !still);
         let stepping = scene.ants.iter().any(|a| {
             matches!(a.pose, Pose::Dig | Pose::Build | Pose::Wait | Pose::Sleep)
                 || (a.pose == Pose::Queen && self.queen_busy)
@@ -727,12 +729,12 @@ impl AntFarmView {
                 .clone()
                 .on_hover_ui_at_pointer(|ui| fleet.node_tooltip_ui(ui, id));
         }
-        if let Some(tree) = &tree_hovered {
+        if let Some(heap) = &heap_hovered {
             response
                 .clone()
-                .on_hover_text_at_pointer(forest::ForestView::tooltip(tree));
+                .on_hover_text_at_pointer(rubble::RubbleView::tooltip(heap));
             if response.clicked() {
-                self.forest.click(tree);
+                self.rubble.click(heap);
             }
         }
         if response.secondary_clicked() {
@@ -748,7 +750,7 @@ impl AntFarmView {
             clicked_empty: response.clicked()
                 && hovered.is_none()
                 && !tray_hovered
-                && tree_hovered.is_none(),
+                && heap_hovered.is_none(),
             open_envoy: response.clicked() && tray_hovered,
             hovered,
             close_requested: menu.close,
@@ -1094,13 +1096,13 @@ fn paint_ground(
     now_s: f64,
     daylight: f32,
     portal_frame: u8,
-    forest_view: &forest::ForestView,
-    trees: &forest::Forest,
+    rubble_view: &rubble::RubbleView,
+    heaps: &rubble::Rubble,
 ) {
     let px = scene.px;
     let a = scene.cell();
     sprites.ground(painter, scene.rect, scene.surface_y, px, palette);
-    // The sky, then roots under the plants (passages are dug through them). Through dawn and
+    // The sky and mountains behind the excavation heaps. Through dawn and
     // dusk the stars fade, and one orb sets before the other rises.
     if daylight < 1.0 {
         for (at, bright) in scenery::stars(scene) {
@@ -1118,16 +1120,9 @@ fn paint_ground(
     }
     sprites.peaks(painter, scene);
     sprites.surface_edge(painter, scene.rect, scene.surface_y, px);
-    // The forest stands behind everything else on the surface.
-    forest_view.paint_trees(painter, sprites, scene, trees, palette, now_s);
+    // The rubble stands behind everything else on the surface.
+    rubble_view.paint_heaps(painter, sprites, scene, heaps, palette, now_s);
     let plants = scenery::surface(scene);
-    for (i, plant) in plants.iter().enumerate() {
-        if plant.deco.rooted() {
-            let width = plant.deco.extent(px)[0];
-            sprites.roots(painter, plant.foot, width, px, i);
-        }
-    }
-    forest_view.paint_roots(painter, sprites, trees);
     // Shafts up from the gallery to the landing, the Queen's chamber and storage.
     let gy = scene.gallery.center().y;
     let up = |x: f32, top: f32| {
@@ -1170,6 +1165,7 @@ fn paint_ground(
     for plant in &plants {
         sprites.deco(painter, plant.deco, plant.foot, px, 1.0);
     }
+    library::paint(painter, sprites, scene);
     sprites.masonry(painter, scene.queen_chamber);
     sprites.throne_hall(painter, scene.queen_chamber, px);
     sprites.masonry(painter, scene.storage);

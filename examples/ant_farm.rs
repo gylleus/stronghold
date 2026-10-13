@@ -1,21 +1,21 @@
 //! The ant farm on a synthetic fleet of 6 runs, loose terminals and subagents (about 30
 //! agents), one of each state, to check how it looks.
 //!
-//! `cargo run --example ant_farm [--light] [--saw] [--trees N] [--shot out.png]`.
+//! `cargo run --example ant_farm [--light] [--hammer] [--heaps N] [--shot out.png]`.
 //! `--receipt-at-ms 31` freezes a receipt mid-shake; `--reduced-motion` shows its flash.
 //! `--outline fine|regular|bold` chooses ink width.
 //! `--scrying` shows the working rune priest; `--stopped` darkens the rune stone.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
 //! terminals in the resting area; `--ants N` keeps only the first N agents.
 //! `--taskmasters` shows coordinators in every state, plus a parked coordinator and attendant.
-//! The surface grows a tree per worktree: the
-//! agents' own and a few with nobody in them, or `--trees N` of them; `--saw` runs the worktree
-//! cleanup's chainsaw on one. Every few seconds one worker
+//! The surface carries a heap per worktree: the
+//! agents' own and a few with nobody in them, or `--heaps N` of them; `--hammer` runs the worktree
+//! cleanup's hammer on one. Every few seconds one worker
 //! flips between working and waiting on Karl, so ants walk; B broadcasts, S asks for a status
 //! report, N hatches a new worker, M sends a burst of messages between ants, T toggles the
-//! Queen thinking and X closes a worktree (its tree falls). With `--shot`, it saves a
+//! Queen thinking and X closes a worktree (its heap crumbles). With `--shot`, it saves a
 //! screenshot once settled and another while a worker walks, a new one emerges, a broadcast
-//! ripples, messages fly and a tree falls (`-walk`), then exits.
+//! ripples, messages fly and a heap crumbles (`-walk`), then exits.
 //! `--pixels farm|HEIGHT` and `--palette NAME` select dwarf rendering.
 
 use std::collections::HashSet;
@@ -29,7 +29,7 @@ use myrstack::orca::AgentIdentity;
 use myrstack::orca::spawn::Worktree;
 use myrstack::traffic::{AgentMessage, MessageKind};
 use myrstack::ui::ant_farm::art::{ArtSettings, Pixels};
-use myrstack::ui::ant_farm::forest;
+use myrstack::ui::ant_farm::rubble;
 use myrstack::ui::ant_farm::{AntFarmView, Pulse};
 use myrstack::ui::envoy_receipt::ReceiptCue;
 use myrstack::ui::fleet_view::FleetView;
@@ -62,11 +62,11 @@ fn main() -> eframe::Result {
             .expect("receipt age in milliseconds")
     });
     let reduced_motion = args.iter().any(|a| a == "--reduced-motion");
-    let trees = args
+    let heaps = args
         .iter()
-        .position(|a| a == "--trees")
-        .map(|i| args[i + 1].parse::<usize>().expect("a number of trees"));
-    let saw = args.iter().any(|a| a == "--saw").then(sweep_marker);
+        .position(|a| a == "--heaps")
+        .map(|i| args[i + 1].parse::<usize>().expect("a number of heaps"));
+    let hammer = args.iter().any(|a| a == "--hammer").then(sweep_marker);
     let parked = args.iter().any(|a| a == "--parked");
     let value = |flag: &str| {
         args.iter()
@@ -141,8 +141,8 @@ fn main() -> eframe::Result {
                 id("run5-w5"),
             ]));
             fleet.set_selected(Some(&id("run2-coord")));
-            let saw = saw.map(|data| (WorktreePanel::new(&cc.egui_ctx), data));
-            let worktrees = worktrees(&snapshot, trees);
+            let hammer = hammer.map(|data| (WorktreePanel::new(&cc.egui_ctx), data));
+            let worktrees = worktrees(&snapshot, heaps);
             Ok(Box::new(Demo {
                 snapshot,
                 fleet,
@@ -165,7 +165,7 @@ fn main() -> eframe::Result {
                 flipped_at: Instant::now(),
                 stage: 0,
                 thinking: false,
-                saw,
+                hammer,
                 worktrees,
             }))
         }),
@@ -184,9 +184,9 @@ struct Demo {
     thinking: bool,
     /// 0 settling, 1 waiting for the settled shot, 2 walking, 3 waiting for the walk shot.
     stage: u8,
-    /// The cleanup panel running the saw, and the temporary data dir holding its marker.
-    saw: Option<(WorktreePanel, tempfile::TempDir)>,
-    /// One tree each on the surface.
+    /// The cleanup panel running the hammer, and the temporary data dir holding its marker.
+    hammer: Option<(WorktreePanel, tempfile::TempDir)>,
+    /// One heap each on the surface.
     worktrees: Vec<Worktree>,
 }
 
@@ -300,8 +300,8 @@ impl Demo {
         }
     }
 
-    /// Closes the newest worktree: its tree falls.
-    fn fell(&mut self) {
+    /// Closes the newest worktree: its heap crumbles.
+    fn clear_heap(&mut self) {
         self.worktrees.pop();
     }
 
@@ -346,15 +346,15 @@ impl eframe::App for Demo {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                let saw = self.saw.as_mut().and_then(|(panel, _)| {
+                let hammer = self.hammer.as_mut().and_then(|(panel, _)| {
                     let now_ms = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(0, |d| d.as_millis() as i64);
                     panel.tick(None, now_ms);
-                    panel.saw_job()
+                    panel.cleanup_job()
                 });
                 self.farm
-                    .set_forest(forest::groves(&self.worktrees, &self.snapshot.nodes), saw);
+                    .set_rubble(rubble::sites(&self.worktrees, &self.snapshot.nodes), hammer);
                 let response = self.farm.show(ui, &self.snapshot, &mut self.fleet);
                 if let Some(id) = &response.clicked {
                     self.fleet.click_node(id, false);
@@ -375,7 +375,7 @@ impl eframe::App for Demo {
                 )
             });
             if x {
-                self.fell();
+                self.clear_heap();
             }
             if m {
                 self.mail(ui.input(|i| i.time));
@@ -418,7 +418,7 @@ impl eframe::App for Demo {
                     self.hatch();
                     self.farm.pulse(Pulse::Broadcast);
                     self.mail(ui.input(|i| i.time));
-                    self.fell();
+                    self.clear_heap();
                     self.stage = 2;
                 }
             }

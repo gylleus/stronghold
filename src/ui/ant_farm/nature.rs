@@ -1,15 +1,12 @@
 //! Alpine plants and sky pieces, cut and painted with the dwarf's ink tools.
 use super::world::{
-    Canvas, GOLD, LIGHT, PARCHMENT, STONE, STONE_DARK, STONE_LIGHT, WOOD, WOOD_DARK, WOOD_LIGHT,
-    pts, rgb,
+    Canvas, GOLD, LIGHT, PARCHMENT, STONE, STONE_DARK, STONE_LIGHT, WOOD_DARK, pts, rgb,
 };
 use crate::ui::dwarf::cutout::{blob, capsule, ellipse};
 use eframe::egui::{Color32, pos2};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Deco {
-    Pine,
-    Spruce,
     Boulder,
     Rock,
     Heather,
@@ -21,9 +18,7 @@ pub enum Deco {
     Sun,
 }
 impl Deco {
-    pub const ALL: [Deco; 11] = [
-        Self::Pine,
-        Self::Spruce,
+    pub const ALL: [Deco; 9] = [
         Self::Boulder,
         Self::Rock,
         Self::Heather,
@@ -36,8 +31,6 @@ impl Deco {
     ];
     pub fn size(self) -> [usize; 2] {
         match self {
-            Self::Pine => [28, 38],
-            Self::Spruce => [24, 36],
             Self::Boulder => [21, 14],
             Self::Rock => [10, 7],
             Self::Heather => [16, 11],
@@ -50,9 +43,6 @@ impl Deco {
     pub fn extent(self, px: f32) -> [f32; 2] {
         self.size().map(|n| n as f32 * px)
     }
-    pub fn rooted(self) -> bool {
-        matches!(self, Self::Pine | Self::Spruce)
-    }
 }
 const GREEN: Color32 = rgb(0x476351);
 const GREEN_DARK: Color32 = rgb(0x2b443c);
@@ -61,57 +51,6 @@ const GREEN_LIGHT: Color32 = rgb(0x748267);
 pub fn draw(c: &mut Canvas, d: Deco) {
     let [w, h] = d.size().map(|n| n as f32);
     match d {
-        Deco::Pine | Deco::Spruce => {
-            let x = w / 2.0;
-            c.cut(
-                capsule(pos2(x - 1.0, h - 10.0), pos2(x, h - 2.0), 2.0),
-                WOOD,
-            );
-            c.line((x - 1.0, h - 6.0), (x + 3.0, h - 2.0), 0.6, WOOD_LIGHT);
-            // One broken silhouette, with uneven boughs instead of stacked triangles.
-            let lean = if d == Deco::Pine { -1.0 } else { 1.5 };
-            let mut edge = vec![(x + lean, 1.0)];
-            for (dx, y) in [
-                (-3.0, 9.0),
-                (-2.0, 8.0),
-                (-6.0, 15.0),
-                (-4.0, 14.0),
-                (-9.0, 23.0),
-                (-6.0, 21.0),
-                (-12.0, 31.0),
-                (-4.0, 30.0),
-                (-2.0, 32.0),
-                (3.0, 29.0),
-                (11.0, 31.0),
-                (7.0, 25.0),
-                (9.0, 25.0),
-                (4.0, 18.0),
-                (6.0, 19.0),
-                (2.0, 12.0),
-                (4.0, 13.0),
-            ] {
-                edge.push(((x + dx * (w / 28.0)).clamp(1.0, w - 1.0), y * (h / 38.0)));
-            }
-            c.cut(pts(&edge), GREEN_DARK);
-            for (dx, y, r) in [(-1.0, 8.0, 3.0), (-2.0, 15.0, 5.0), (-1.0, 22.0, 8.0)] {
-                c.paint(
-                    pts(&[
-                        (x + dx, y),
-                        (x - r, y + 7.0),
-                        (x - 1.0, y + 5.0),
-                        (x + 3.0, y + 8.0),
-                        (x + 1.0, y + 2.0),
-                    ]),
-                    GREEN,
-                );
-                c.line(
-                    (x + dx - 1.0, y + 2.0),
-                    (x - r + 1.0, y + 6.0),
-                    0.5,
-                    GREEN_LIGHT,
-                );
-            }
-        }
         Deco::Boulder | Deco::Rock => {
             c.cut(
                 pts(&[
