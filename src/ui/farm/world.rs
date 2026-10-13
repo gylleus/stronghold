@@ -1099,7 +1099,7 @@ fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
                     }
                 }
                 Prop::CrackedStone => INK,
-                _ => rgb(0x46606a),
+                _ => rgb(0x8ad8dc),
             };
             rune(c, 15.0, 10.0, glow);
             c.line((14.0, 20.0), (14.0, 25.0), 0.6, glow);

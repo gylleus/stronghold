@@ -605,6 +605,7 @@ impl FarmView {
                 .unwrap_or(crate::envoy::EnvoyHealth::Stopped),
             now_s,
             self.envoy_receipt,
+            still,
         );
         paint_calls(&painter, sprites, &scene, &effects, now_s, true);
         pops::paint(&painter, sprites, &scene, &placed, &pops, true);
@@ -1390,10 +1391,40 @@ fn paint_dwarves(
                 dwarf.alpha,
             );
         }
+        // Messages reaching the Envoy: he casts, his crystal lighting the room.
+        let casting =
+            dwarf.kind == crate::model::NodeKind::Envoy && effects.envoy_receipt.casting();
+        if casting {
+            let dir = if facing_right { 1.0 } else { -1.0 };
+            let crystal = cell.center_bottom() + vec2(0.32 * dir, -1.0) * cell.height() * 0.95;
+            sprites.glow(painter, crystal, 0.45 * cell.height(), world::BLUE, 0.6);
+            // Sparks wink round the crystal.
+            let twinkle = (now_s * 8.0) as usize;
+            for (i, (dx, dy)) in [(-0.22, -0.1), (0.2, -0.18), (0.1, 0.16)]
+                .into_iter()
+                .enumerate()
+            {
+                if !(twinkle + i).is_multiple_of(3) {
+                    let at = crystal + vec2(dx * dir, dy) * cell.height();
+                    let at = Pos2::new((at.x / px).round() * px, (at.y / px).round() * px);
+                    sprites.sparkle(
+                        painter,
+                        at,
+                        px,
+                        world::LIGHT,
+                        (twinkle + i).is_multiple_of(2),
+                    );
+                }
+            }
+        }
         let figure = Figure {
             key: dwarf.id.as_str(),
             look: dwarf_look(dwarf),
-            action: dwarf_action(dwarf, walking, carrying, effects.king_busy),
+            action: if casting {
+                Action::Cast
+            } else {
+                dwarf_action(dwarf, walking, carrying, effects.king_busy)
+            },
             upside_down: false,
             facing_right,
             alpha: dwarf.alpha,
