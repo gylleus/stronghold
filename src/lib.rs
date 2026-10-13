@@ -27,6 +27,7 @@ pub mod park;
 pub mod persist;
 pub mod playbook;
 pub mod poller;
+pub mod queen_inbox;
 pub mod quota;
 pub mod review;
 pub mod spawn;

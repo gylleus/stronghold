@@ -26,6 +26,7 @@ pub struct ReviewEnv {
     /// Where `notify` queues notifications while the app isn't running; `None` refuses to
     /// queue.
     pub notify_pending: Option<PathBuf>,
+    pub queen_inbox: Option<PathBuf>,
 }
 
 impl ReviewEnv {
@@ -36,6 +37,7 @@ impl ReviewEnv {
             pending: mark::default_pending_path(),
             queue_file: (!cfg!(test)).then(ReviewQueue::default_path),
             notify_pending: crate::notify::pending::default_path(),
+            queen_inbox: crate::queen_inbox::default_path(),
         }
     }
 }
@@ -362,6 +364,7 @@ mod tests {
             pending: Some(dir.join(mark::PENDING_FILE)),
             queue_file: Some(dir.join(crate::review::queue::QUEUE_FILE)),
             notify_pending: None,
+            queen_inbox: None,
         }
     }
 

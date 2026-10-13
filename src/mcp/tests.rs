@@ -453,6 +453,8 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "mark_pr_ready",
         "review_queue",
         "notify",
+        "tell_queen",
+        "queen_inbox",
         "ask_karl",
         "finish_session",
         "reach_out",
@@ -484,6 +486,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "attendant_brief",
         "kickoff",
         "review_queue",
+        "queen_inbox",
         "reach_out_status",
         "envoy_request",
         "envoy_inbox",
@@ -1571,6 +1574,7 @@ fn agent_server<C: Control>(control: C) -> McpServer<C> {
         pending: None,
         queue_file: None,
         notify_pending: None,
+        queen_inbox: None,
     })
 }
 
@@ -2523,4 +2527,44 @@ fn tool_calls_on_agents_emit_one_beam_each() {
     assert_eq!(emitted[1].1["kind"], "dry_kill");
     // Emitting is not a call: the app's replies are untouched.
     assert!(!server.control().calls.iter().any(|(m, _)| m == "tool_call"));
+}
+
+#[test]
+fn queen_tools_queue_offline_with_caller_identity_and_read_it_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(crate::queen_inbox::FILE);
+    let mut server = McpServer::new(FakeControl::default()).with_review_env(review::ReviewEnv {
+        origin: agent_origin(),
+        queen_inbox: Some(path),
+        ..Default::default()
+    });
+    let catalog = rpc(&mut server, "tools/list", json!({}));
+    let names: Vec<_> = catalog["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"tell_queen"));
+    assert!(names.contains(&"queen_inbox"));
+    let args = json!({"message":"Need shared schema decision", "kind":"question", "url":"https://example.com/issue", "origin":{"terminal_handle":"imposter"}});
+    let result = call(&mut server, "tell_queen", args.clone());
+    assert!(!is_error(&result), "{}", text(&result));
+    let read = call(&mut server, "queen_inbox", json!({}));
+    assert!(text(&read).contains("term_442fcb9f"));
+    assert!(!text(&read).contains("imposter"));
+    let repeat = call(&mut server, "tell_queen", args);
+    assert!(text(&repeat).contains("collapsed"));
+    for args in [
+        json!({}),
+        json!({"message":"hi", "kind":"bad"}),
+        json!({"message":"hi", "url":12}),
+    ] {
+        assert!(is_error(&call(&mut server, "tell_queen", args)));
+    }
+    assert!(is_error(&call(
+        &mut server,
+        "queen_inbox",
+        json!({"limit":0})
+    )));
 }

@@ -17,6 +17,8 @@ pub(super) fn karl_to_king() -> AgentMessage {
 pub(super) struct AppChat {
     session: ChatSession,
     panel: ChatPanelState,
+    inbox_polled: Option<std::time::Instant>,
+    inbox_error: Option<String>,
 }
 
 impl AppChat {
@@ -25,6 +27,8 @@ impl AppChat {
         Self {
             session: ChatSession::spawn(ChatConfig::from_env(king), Some(repaint_once(ctx))),
             panel: ChatPanelState::default(),
+            inbox_polled: None,
+            inbox_error: None,
         }
     }
 
@@ -115,6 +119,30 @@ impl AppChat {
 impl MyrstackApp {
     pub(super) fn poll_chat(&mut self) {
         self.chat.session.poll();
+        if self
+            .chat
+            .inbox_polled
+            .is_none_or(|at| at.elapsed().as_secs() >= 1)
+        {
+            self.chat.inbox_polled = Some(std::time::Instant::now());
+            if let Some(path) = crate::queen_inbox::default_path() {
+                let terminals = self
+                    .data
+                    .as_ref()
+                    .map_or(&[][..], |d| d.terminals.as_slice());
+                let result =
+                    self.chat
+                        .session
+                        .poll_ant_messages(&path, self.snapshot.as_ref(), terminals);
+                let error = result.err().map(|e| format!("Queen inbox: {e}"));
+                if error != self.chat.inbox_error {
+                    if let Some(error) = &error {
+                        self.chat.session.transcript.push_error(error);
+                    }
+                    self.chat.inbox_error = error;
+                }
+            }
+        }
     }
 
     /// Cmd+J: hide the conversation pane when it shows the King's chat, else show his chat

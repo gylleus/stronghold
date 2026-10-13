@@ -11,6 +11,7 @@ pub mod backend;
 pub mod lifecycle;
 pub mod notify;
 pub mod playbook;
+pub mod queen;
 pub mod review;
 pub mod server;
 #[cfg(test)]
