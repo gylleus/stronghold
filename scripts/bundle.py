@@ -27,7 +27,7 @@ APP_NAME = "Myrstack"
 EXECUTABLE = "myrstack"
 ICON = "Myrstack.icns"
 MIN_MACOS = "11.0"
-MIC_USAGE = "Myrstack listens while you hold the dictation or talk-to-the-Queen shortcut."
+MIC_USAGE = "Myrstack listens while you hold the dictation or talk-to-the-King shortcut."
 FRAMEWORKS_RPATH = "@executable_path/../Frameworks"
 
 

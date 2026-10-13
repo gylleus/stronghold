@@ -1,6 +1,6 @@
 //! Orca worktrees in the top bar: how many there are and how much disk they take, and the
 //! cleanup window (evaluate → plan → confirm → clean up). While it runs, a hammer breaks the
-//! removed worktrees' heaps in the ant farm ([`crate::ui::ant_farm::rubble`]), or runs along
+//! removed worktrees' heaps in the farm ([`crate::ui::farm::rubble`]), or runs along
 //! the bottom of the window in the other views.
 //!
 //! The count comes from the poller's `worktree list` for free; disk usage is measured off the
@@ -18,18 +18,18 @@ use eframe::egui::{self, Color32, RichText, Vec2, pos2, vec2};
 
 use crate::orca::OrcaClient;
 use crate::orca::spawn::Worktree;
-use crate::ui::ant_farm::hammer;
-use crate::ui::ant_farm::rubble::CleanupJob;
 use crate::ui::dwarf::cutout::Outline;
+use crate::ui::farm::hammer;
+use crate::ui::farm::rubble::CleanupJob;
 use crate::worktrees::{self, Census, Outcome, Plan, Removal, SweepMarker, format_bytes};
 
 /// How often disk usage is measured (`du` over every worktree takes a while).
 pub const SIZE_SCAN_EVERY_MS: i64 = 30 * 60 * 1000;
-/// How often the sweep marker is checked, for a cleanup the Queen started.
+/// How often the sweep marker is checked, for a cleanup the King started.
 const MARKER_CHECK_EVERY_MS: i64 = 1_000;
 /// Seconds for the hammer to cross the window once.
 const CROSS_SECONDS: f64 = 7.0;
-/// Points per texel of the hammer along the window's bottom (the ant farm sizes its own).
+/// Points per texel of the hammer along the window's bottom (the farm sizes its own).
 const FLOOR_TEXEL: f32 = 3.0;
 
 /// Disk usage of the worktrees and the unlisted directories.
@@ -114,7 +114,7 @@ impl WorktreePanel {
     }
 
     /// Collects background results and starts what is due. Returns true when a cleanup just
-    /// finished (the fleet should be polled again).
+    /// finished (the clan should be polled again).
     pub fn tick(&mut self, worktrees: Option<&[Worktree]>, now_ms: i64) -> bool {
         if let Some(rx) = &self.size_scan {
             match rx.try_recv() {
@@ -285,7 +285,7 @@ impl WorktreePanel {
     }
 
     /// The cleanup removing worktrees right now (here or from the MCP tool), for the hammer in
-    /// the ant farm.
+    /// the farm.
     pub fn cleanup_job(&self) -> Option<CleanupJob> {
         match (&self.stage, &self.external) {
             (
@@ -347,7 +347,7 @@ impl WorktreePanel {
             clean = ui
                 .add_enabled(!busy, egui::Button::image_and_text(hammer, "Clear…"))
                 .on_hover_text(
-                    "Check which worktrees (the heaps in the ant farm) are still needed and \
+                    "Check which worktrees (the heaps in the farm) are still needed and \
                      plan clearing the rest. Nothing is removed until you confirm.",
                 )
                 .clicked();
@@ -462,7 +462,7 @@ impl WorktreePanel {
     }
 
     /// The hammer running along the bottom of the window while worktrees are removed, when
-    /// the ant farm (where it breaks their heaps) is not on screen.
+    /// the farm (where it breaks their heaps) is not on screen.
     pub fn hammer(&self, ctx: &egui::Context) {
         let Some((done, total)) = self.progress() else {
             return;

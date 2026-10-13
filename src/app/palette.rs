@@ -6,13 +6,13 @@ use eframe::egui;
 use super::MyrstackApp;
 use crate::ui::commands::{self, ActionContext, ActionId, Dispatch};
 use crate::ui::selection::{close_targets, whip_targets};
-use crate::ui::sidebar::FleetFilter;
+use crate::ui::sidebar::ClanFilter;
 
 impl MyrstackApp {
     /// What the palette's actions need to know about the app now.
     pub(super) fn palette_context(&self) -> ActionContext {
         let current = self.selected.as_ref();
-        let selection = self.fleet.selection();
+        let selection = self.clan.selection();
         let selected_terminal = current
             .and_then(|id| self.snapshot.as_ref()?.node(id))
             .and_then(crate::ui::terminal::watch_handle)
@@ -23,7 +23,7 @@ impl MyrstackApp {
             close_targets: close_targets(current, &selection).len(),
             selected_terminal,
             dry_run: self.whip_window.whip().dry_run,
-            filters_active: self.filter != FleetFilter::default(),
+            filters_active: self.filter != ClanFilter::default(),
             show_loose: self.filter.show_loose,
             show_released: self.filter.show_released,
             chat_ready: self.chat_ready(),
@@ -46,14 +46,14 @@ impl MyrstackApp {
             Dispatch::Key(command) => self.run_key_command(ctx, command),
             Dispatch::OpenChat => self.open_chat(),
             Dispatch::Dictate => self.start_dictation(),
-            Dispatch::TalkToQueen => self.start_talk(),
+            Dispatch::TalkToKing => self.start_talk(),
             Dispatch::StopSpeaking => self.stop_speaking(),
             Dispatch::ToggleSpeakReplies => self.toggle_speak_replies(),
             Dispatch::StatusReport => self.status_report(),
             Dispatch::WhipStalled => self.request_whip_stalled(None),
             Dispatch::Broadcast => {
-                self.select_queen();
-                self.queen.open_broadcast = true;
+                self.select_king();
+                self.king.open_broadcast = true;
             }
             Dispatch::ReviewQueue => self.open_review_queue(),
             Dispatch::WhipSettings => self.whip_window.open_window(),
@@ -84,7 +84,7 @@ impl MyrstackApp {
     /// Hides what the filter excludes, as a sidebar filter change does.
     fn apply_filter(&mut self) {
         if let Some(snapshot) = &self.snapshot {
-            self.fleet.set_hidden(&self.filter.hidden(snapshot));
+            self.clan.set_hidden(&self.filter.hidden(snapshot));
         }
     }
 

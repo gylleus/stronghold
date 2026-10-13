@@ -642,7 +642,7 @@ pub mod kokoro {
     }
 
     /// Why the app's Speaker has no model: it never downloads without Karl's go-ahead.
-    pub const NOT_INSTALLED: &str = "The Queen's voice is not downloaded";
+    pub const NOT_INSTALLED: &str = "The King's voice is not downloaded";
 
     /// Size of [`DEFAULT`]'s archive, for the download button.
     pub const SIZE_LABEL: &str = "333 MB";

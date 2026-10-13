@@ -9,7 +9,7 @@ use crate::ask::{AskRequest, PendingAsk};
 use crate::close::{CloseOptions, ClosePlan, plan_close};
 use crate::control::view::kind_name;
 use crate::control::{ControlError, ErrorCode};
-use crate::finish::{CLOSE_DELAY_MS, FinishRequest, FinishedSession, clip, fleet_problems};
+use crate::finish::{CLOSE_DELAY_MS, FinishRequest, FinishedSession, clan_problems, clip};
 use crate::model::Node;
 use crate::notify::agent::outcome_reply;
 use crate::notify::{Incoming, Severity, Source, target_key};
@@ -85,7 +85,7 @@ impl MyrstackApp {
         Ok(reply)
     }
 
-    /// The control API's `finish`: checks the fleet's guards, then records the outcome,
+    /// The control API's `finish`: checks the clan's guards, then records the outcome,
     /// notifies Karl and closes the caller's terminal shortly after replying. With `dry_run`
     /// only reports the caller's node and the problems.
     pub(super) fn control_finish(&mut self, req: FinishRequest) -> Result<Value, ControlError> {
@@ -104,9 +104,9 @@ impl MyrstackApp {
             .map(|r| r.url)
             .collect();
         let snapshot = self.snapshot.as_ref().ok_or_else(|| {
-            ControlError::new(ErrorCode::Unavailable, "the app has no fleet data yet")
+            ControlError::new(ErrorCode::Unavailable, "the app has no clan data yet")
         })?;
-        let (refusal, problems) = fleet_problems(&node, snapshot, &open_prs);
+        let (refusal, problems) = clan_problems(&node, snapshot, &open_prs);
         let agent = json!({
             "id": node.id,
             "label": node.label,

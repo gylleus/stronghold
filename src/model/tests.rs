@@ -18,14 +18,14 @@ const LIVE_WORKER: &str = "term_1744da75-821f-46fe-912d-e252e0bbf3fb";
 const NOW: i64 = 1_790_319_595_528 + 10_000;
 const MINUTE: i64 = 60_000;
 
-/// A coherent fleet built from the captured fixtures:
+/// A coherent clan built from the captured fixtures:
 /// - run `run_7c25…` coordinated by the Claude terminal, with the Codex terminal as its live
 ///   worker (active dispatch `ctx_a4a6…` on task `task_e024…`), which also served an older
 ///   completed dispatch;
 /// - the shell terminal stays loose;
 /// - released workers 5 and 20 minutes ago, a circuit-broken worker whose terminal is gone,
 ///   and a retained worker of a run with no live terminal.
-fn scenario() -> FleetData {
+fn scenario() -> ClanData {
     let terminals = parse_terminal_list(fixture!("terminal_list.json"))
         .unwrap()
         .terminals;
@@ -68,7 +68,7 @@ fn scenario() -> FleetData {
     let dead = into_run(by_id("ctx_5606e1fe5584"));
     let other_run = by_id("ctx_e89e8238e52b");
 
-    FleetData {
+    ClanData {
         polled_at_ms: NOW,
         terminals,
         runs,
@@ -91,7 +91,7 @@ fn term(handle: &str) -> NodeId {
 
 #[test]
 fn run_has_coordinator_workers_and_task_counts() {
-    let snap = FleetSnapshot::build(&scenario(), NOW);
+    let snap = ClanSnapshot::build(&scenario(), NOW);
 
     assert_eq!(snap.runs.len(), 1);
     let run = &snap.runs[0];
@@ -142,14 +142,10 @@ fn run_has_coordinator_workers_and_task_counts() {
         ]
     );
 
-    assert_eq!(fleet_edges(&snap).len(), 3);
-    assert!(
-        fleet_edges(&snap)
-            .iter()
-            .all(|e| e.from == term(COORDINATOR)
-                && e.kind == EdgeKind::CoordinatorWorker
-                && snap.node(&e.to).unwrap().kind == NodeKind::Worker)
-    );
+    assert_eq!(clan_edges(&snap).len(), 3);
+    assert!(clan_edges(&snap).iter().all(|e| e.from == term(COORDINATOR)
+        && e.kind == EdgeKind::CoordinatorWorker
+        && snap.node(&e.to).unwrap().kind == NodeKind::Worker));
 }
 
 #[test]
@@ -160,7 +156,7 @@ fn escalated_handles_render_stalled() {
         LIVE_WORKER.to_string(),
         LOOSE.to_string(),
     ]);
-    let snap = FleetSnapshot::build_with_stalled(&data, None, &stalled, NOW);
+    let snap = ClanSnapshot::build_with_stalled(&data, None, &stalled, NOW);
     // Stalled beats Working and Idle, but not NeedsInput.
     assert_eq!(
         snap.node(&term(COORDINATOR)).unwrap().state,
@@ -171,7 +167,7 @@ fn escalated_handles_render_stalled() {
         snap.node(&term(LIVE_WORKER)).unwrap().state,
         NodeState::NeedsInput
     );
-    let plain = FleetSnapshot::build_with_claude(&data, None, NOW);
+    let plain = ClanSnapshot::build_with_claude(&data, None, NOW);
     assert_eq!(
         plain.node(&term(COORDINATOR)).unwrap().state,
         NodeState::Working
@@ -180,7 +176,7 @@ fn escalated_handles_render_stalled() {
 
 #[test]
 fn loose_terminal_is_labelled_by_title() {
-    let snap = FleetSnapshot::build(&scenario(), NOW);
+    let snap = ClanSnapshot::build(&scenario(), NOW);
     let loose: Vec<_> = snap.loose_nodes().collect();
     assert_eq!(loose.len(), 1);
     assert_eq!(loose[0].id, term(LOOSE));
@@ -189,7 +185,7 @@ fn loose_terminal_is_labelled_by_title() {
     assert_eq!(loose[0].state, NodeState::Idle);
 }
 
-/// A name chosen for the worktree (by the Queen at spawn, or in Orca) beats the title.
+/// A name chosen for the worktree (by the King at spawn, or in Orca) beats the title.
 #[test]
 fn loose_terminal_goes_by_its_worktree_name() {
     let mut data = scenario();
@@ -201,13 +197,13 @@ fn loose_terminal_goes_by_its_worktree_name() {
         path.trim_end_matches('/').to_string(),
         "Replay sessions".into(),
     );
-    let snap = FleetSnapshot::build(&data, NOW);
+    let snap = ClanSnapshot::build(&data, NOW);
     assert_eq!(snap.node(&term(LOOSE)).unwrap().label, "Replay sessions");
 }
 
 #[test]
 fn released_workers_fade_within_window_only() {
-    let snap = FleetSnapshot::build(&scenario(), NOW);
+    let snap = ClanSnapshot::build(&scenario(), NOW);
     let recent = snap.node(&NodeId::dispatch(RUN, "ctx_recent")).unwrap();
     assert_eq!(recent.released_at_ms, Some(NOW - 5 * MINUTE));
     assert_eq!(recent.state, NodeState::Done);
@@ -220,7 +216,7 @@ fn released_workers_fade_within_window_only() {
 
 #[test]
 fn worker_with_dead_terminal_is_failed() {
-    let snap = FleetSnapshot::build(&scenario(), NOW);
+    let snap = ClanSnapshot::build(&scenario(), NOW);
     let dead = snap
         .node(&NodeId::dispatch(RUN, "ctx_5606e1fe5584"))
         .unwrap();
@@ -236,7 +232,7 @@ fn worker_with_dead_terminal_is_failed() {
 
 #[test]
 fn dead_worker_of_a_run_without_live_terminals_is_dropped() {
-    let snap = FleetSnapshot::build(&scenario(), NOW);
+    let snap = ClanSnapshot::build(&scenario(), NOW);
     assert!(snap.nodes_in_run("run_9558d04ad3b3").next().is_none());
     assert!(snap.run("run_9558d04ad3b3").is_none());
     // The older dispatch on the live worker's terminal is not shown separately.
@@ -250,14 +246,14 @@ fn dead_worker_of_a_run_without_live_terminals_is_dropped() {
 #[test]
 fn node_ids_are_stable_across_polls() {
     let mut data = scenario();
-    let first = FleetSnapshot::build(&data, NOW);
+    let first = ClanSnapshot::build(&data, NOW);
 
     data.terminals.reverse();
     data.workers.reverse();
     data.terminals[0].last_output_at = Some(Timestamp::Millis(NOW + 1_000));
-    let second = FleetSnapshot::build(&data, NOW + 2_000);
+    let second = ClanSnapshot::build(&data, NOW + 2_000);
 
-    let ids = |s: &FleetSnapshot| {
+    let ids = |s: &ClanSnapshot| {
         let mut ids: Vec<NodeId> = s.nodes.iter().map(|n| n.id.clone()).collect();
         ids.sort();
         ids
@@ -274,7 +270,7 @@ fn most_recent_active_dispatch_wins_a_shared_terminal() {
     let mut data = scenario();
     // Put the active dispatch first so position alone would pick the older one.
     data.workers.swap(0, 1);
-    let snap = FleetSnapshot::build(&data, NOW);
+    let snap = ClanSnapshot::build(&data, NOW);
     let worker = snap.node(&term(LIVE_WORKER)).unwrap();
     assert_eq!(worker.dispatch_id.as_deref(), Some("ctx_a4a62d1e6146"));
 }
@@ -328,45 +324,45 @@ fn derive_state_on_fixture_workers() {
 }
 
 #[test]
-fn empty_data_gives_only_the_queen() {
-    let snap = FleetSnapshot::build(&FleetData::default(), NOW);
+fn empty_data_gives_only_the_king() {
+    let snap = ClanSnapshot::build(&ClanData::default(), NOW);
     assert!(snap.runs.is_empty() && snap.edges.is_empty());
     let ids: Vec<&str> = snap.nodes.iter().map(|n| n.id.as_str()).collect();
-    assert_eq!(ids, ["queen"]);
-    let queen = snap.queen().unwrap();
-    assert_eq!(queen.state, NodeState::Idle);
-    assert_eq!(queen.preview.as_deref(), Some("0 coordinators · 0 ants"));
+    assert_eq!(ids, ["king"]);
+    let king = snap.king().unwrap();
+    assert_eq!(king.state, NodeState::Idle);
+    assert_eq!(king.preview.as_deref(), Some("0 coordinators · 0 dwarves"));
 }
 
-/// Edges other than the queen's.
-fn fleet_edges(snap: &FleetSnapshot) -> Vec<&Edge> {
+/// Edges other than the king's.
+fn clan_edges(snap: &ClanSnapshot) -> Vec<&Edge> {
     snap.edges
         .iter()
-        .filter(|e| e.kind != EdgeKind::Queen)
+        .filter(|e| e.kind != EdgeKind::King)
         .collect()
 }
 
 #[test]
-fn queen_links_every_coordinator_and_loose_terminal() {
-    let snap = FleetSnapshot::build(&scenario(), NOW);
-    let queens: Vec<&Node> = snap
+fn king_links_every_coordinator_and_loose_terminal() {
+    let snap = ClanSnapshot::build(&scenario(), NOW);
+    let kings: Vec<&Node> = snap
         .nodes
         .iter()
-        .filter(|n| n.kind == NodeKind::Queen)
+        .filter(|n| n.kind == NodeKind::King)
         .collect();
-    assert_eq!(queens.len(), 1);
-    let queen = queens[0];
-    assert_eq!(queen.id, NodeId::queen());
-    assert_eq!(queen.id.as_str(), "queen");
-    assert_eq!(queen.label, "Queen");
-    assert_eq!(queen.terminal_handle, None);
-    assert_eq!(snap.node(&NodeId::queen()), Some(queen));
+    assert_eq!(kings.len(), 1);
+    let king = kings[0];
+    assert_eq!(king.id, NodeId::king());
+    assert_eq!(king.id.as_str(), "king");
+    assert_eq!(king.label, "King");
+    assert_eq!(king.terminal_handle, None);
+    assert_eq!(snap.node(&NodeId::king()), Some(king));
 
     let mut linked: Vec<&NodeId> = snap
         .edges
         .iter()
-        .filter(|e| e.kind == EdgeKind::Queen)
-        .inspect(|e| assert_eq!(e.from, queen.id))
+        .filter(|e| e.kind == EdgeKind::King)
+        .inspect(|e| assert_eq!(e.from, king.id))
         .map(|e| &e.to)
         .collect();
     linked.sort();
@@ -383,41 +379,41 @@ fn queen_links_every_coordinator_and_loose_terminal() {
     let agents = snap.agent_nodes().count();
     assert_eq!(agents, snap.nodes.len() - 1);
     assert_eq!(
-        queen.preview.as_deref(),
-        Some(format!("1 coordinator · {agents} ants").as_str())
+        king.preview.as_deref(),
+        Some(format!("1 coordinator · {agents} dwarves").as_str())
     );
 }
 
 #[test]
-fn queen_is_rebuilt_not_duplicated() {
-    let mut snap = FleetSnapshot::build(&scenario(), NOW);
+fn king_is_rebuilt_not_duplicated() {
+    let mut snap = ClanSnapshot::build(&scenario(), NOW);
     let edges = snap.edges.len();
-    snap.add_queen();
-    snap.add_queen();
+    snap.add_king();
+    snap.add_king();
     assert_eq!(
         snap.nodes
             .iter()
-            .filter(|n| n.kind == NodeKind::Queen)
+            .filter(|n| n.kind == NodeKind::King)
             .count(),
         1
     );
     assert_eq!(snap.edges.len(), edges);
-    assert!(snap.node(&NodeId::queen()).is_some());
+    assert!(snap.node(&NodeId::king()).is_some());
 }
 
 #[test]
-fn queen_state_is_the_most_urgent_fleet_state() {
+fn king_state_is_the_most_urgent_clan_state() {
     let with = |states: &[NodeState]| {
         let nodes: Vec<Node> = states
             .iter()
             .map(|s| {
-                let mut n = queen::queen_node(&[]);
+                let mut n = king::king_node(&[]);
                 n.kind = NodeKind::Worker;
                 n.state = *s;
                 n
             })
             .collect();
-        fleet_state(&nodes)
+        clan_state(&nodes)
     };
     use NodeState::*;
     assert_eq!(with(&[]), Idle);
@@ -428,13 +424,13 @@ fn queen_state_is_the_most_urgent_fleet_state() {
 
     let mut data = scenario();
     let stalled = std::collections::BTreeSet::from([COORDINATOR.to_string()]);
-    let snap = FleetSnapshot::build_with_stalled(&data, None, &stalled, NOW);
+    let snap = ClanSnapshot::build_with_stalled(&data, None, &stalled, NOW);
     // The scenario's live worker needs input, which outranks the escalated coordinator.
-    assert_eq!(snap.queen().unwrap().state, NeedsInput);
+    assert_eq!(snap.king().unwrap().state, NeedsInput);
     data.needs_input.clear();
     data.terminals.retain(|t| t.handle != LIVE_WORKER);
-    let snap = FleetSnapshot::build_with_stalled(&data, None, &stalled, NOW);
-    assert_eq!(snap.queen().unwrap().state, Stalled);
+    let snap = ClanSnapshot::build_with_stalled(&data, None, &stalled, NOW);
+    assert_eq!(snap.king().unwrap().state, Stalled);
 }
 
 mod subagents {
@@ -512,8 +508,8 @@ mod subagents {
             untitled,
             agent("a4", Some("gone"), SubagentState::Failed, MINUTE),
         ]);
-        let snap = FleetSnapshot::build_with_claude(&scenario(), Some(&data), NOW);
-        let plain = FleetSnapshot::build(&scenario(), NOW);
+        let snap = ClanSnapshot::build_with_claude(&scenario(), Some(&data), NOW);
+        let plain = ClanSnapshot::build(&scenario(), NOW);
         assert_eq!(snap.nodes.len(), plain.nodes.len() + 4);
 
         let a1 = snap.node(&sub("a1")).unwrap();
@@ -557,7 +553,7 @@ mod subagents {
             agent("old", None, SubagentState::Done, RELEASED_FADE_MS + 1),
             agent("child", Some("old"), SubagentState::Running, 0),
         ]);
-        let snap = FleetSnapshot::build_with_claude(&scenario(), Some(&data), NOW);
+        let snap = ClanSnapshot::build_with_claude(&scenario(), Some(&data), NOW);
         let done = snap.node(&sub("done")).unwrap();
         assert_eq!(done.state, NodeState::Done);
         assert_eq!(done.released_at_ms, Some(NOW - 5 * MINUTE));
@@ -570,15 +566,15 @@ mod subagents {
     fn sessions_without_a_terminal_node_are_ignored() {
         let mut data = claude(vec![agent("a1", None, SubagentState::Running, 0)]);
         data.session_by_handle.remove(COORDINATOR);
-        let snap = FleetSnapshot::build_with_claude(&scenario(), Some(&data), NOW);
+        let snap = ClanSnapshot::build_with_claude(&scenario(), Some(&data), NOW);
         assert!(snap.nodes.iter().all(|n| n.kind != NodeKind::Subagent));
         assert!(snap.edges.iter().all(|e| e.kind != EdgeKind::Subagent));
-        let none = FleetSnapshot::build_with_claude(&scenario(), None, NOW);
-        assert_eq!(none.nodes, FleetSnapshot::build(&scenario(), NOW).nodes);
+        let none = ClanSnapshot::build_with_claude(&scenario(), None, NOW);
+        assert_eq!(none.nodes, ClanSnapshot::build(&scenario(), NOW).nodes);
     }
 }
 
-fn coordinator_edges(snap: &FleetSnapshot, from: &str) -> Vec<NodeId> {
+fn coordinator_edges(snap: &ClanSnapshot, from: &str) -> Vec<NodeId> {
     let mut to: Vec<NodeId> = snap
         .edges
         .iter()
@@ -589,7 +585,7 @@ fn coordinator_edges(snap: &FleetSnapshot, from: &str) -> Vec<NodeId> {
     to
 }
 
-fn run_workers(snap: &FleetSnapshot, run_id: &str) -> Vec<NodeId> {
+fn run_workers(snap: &ClanSnapshot, run_id: &str) -> Vec<NodeId> {
     let mut ids: Vec<NodeId> = snap
         .nodes_in_run(run_id)
         .filter(|n| n.kind == NodeKind::Worker)
@@ -604,7 +600,7 @@ fn rebound_coordinator_is_the_coordinator_node() {
     let mut data = scenario();
     data.runs[0].coordinator_handle = Some("term_dead".into());
     data.tasks.get_mut(RUN).unwrap()[0].created_by_terminal_handle = Some(LOOSE.into());
-    let snap = FleetSnapshot::build(&data, NOW);
+    let snap = ClanSnapshot::build(&data, NOW);
 
     let run = snap.run(RUN).unwrap();
     assert_eq!(run.coordinator, Some(term(LOOSE)));
@@ -617,7 +613,7 @@ fn rebound_coordinator_is_the_coordinator_node() {
         NodeKind::Terminal
     );
 
-    assert_eq!(fleet_edges(&snap).len(), 3);
+    assert_eq!(clan_edges(&snap).len(), 3);
     assert_eq!(coordinator_edges(&snap, LOOSE), run_workers(&snap, RUN));
 }
 
@@ -625,11 +621,11 @@ fn rebound_coordinator_is_the_coordinator_node() {
 fn dead_declared_coordinator_without_candidates_gives_none() {
     let mut data = scenario();
     data.runs[0].coordinator_handle = Some("term_dead".into());
-    let snap = FleetSnapshot::build(&data, NOW);
+    let snap = ClanSnapshot::build(&data, NOW);
 
     let run = snap.run(RUN).unwrap();
     assert_eq!(run.coordinator, None);
-    assert!(fleet_edges(&snap).is_empty());
+    assert!(clan_edges(&snap).is_empty());
     assert!(snap.nodes.iter().all(|n| n.kind != NodeKind::Coordinator));
 }
 
@@ -642,7 +638,7 @@ fn live_declared_coordinator_that_creates_tasks_stays_coordinator() {
     let tasks = data.tasks.get_mut(RUN).unwrap();
     tasks[0].created_by_terminal_handle = Some(LOOSE.into());
     tasks.push(own);
-    let snap = FleetSnapshot::build(&data, NOW);
+    let snap = ClanSnapshot::build(&data, NOW);
 
     assert_eq!(snap.run(RUN).unwrap().coordinator, Some(term(COORDINATOR)));
     assert_eq!(snap.node(&term(LOOSE)).unwrap().kind, NodeKind::Terminal);
@@ -651,7 +647,7 @@ fn live_declared_coordinator_that_creates_tasks_stays_coordinator() {
 
 /// The declared coordinator is an attendant: LOOSE creates the run's tasks and the declared
 /// one forwards to it.
-fn attendant_scenario() -> FleetData {
+fn attendant_scenario() -> ClanData {
     let mut data = scenario();
     data.terminals
         .iter_mut()
@@ -661,7 +657,7 @@ fn attendant_scenario() -> FleetData {
     data.tasks.get_mut(RUN).unwrap()[0].created_by_terminal_handle = Some(LOOSE.into());
     data.forwards.insert(
         COORDINATOR.into(),
-        vec![crate::fleet::Forward {
+        vec![crate::clan::Forward {
             target: LOOSE.into(),
             at_ms: Some(NOW),
         }],
@@ -670,7 +666,7 @@ fn attendant_scenario() -> FleetData {
 }
 
 /// A coordinator whose topic is the attendant brief: its title says "attendant" but it
-/// creates the run's tasks, so the queen links it as the coordinator.
+/// creates the run's tasks, so the king links it as the coordinator.
 #[test]
 fn attendant_titled_coordinator_is_not_an_attendant() {
     let mut data = scenario();
@@ -680,7 +676,7 @@ fn attendant_titled_coordinator_is_not_an_attendant() {
         .unwrap()
         .title = Some("◑ Attendant brief review".into());
     data.tasks.get_mut(RUN).unwrap()[0].created_by_terminal_handle = Some(COORDINATOR.into());
-    let snap = FleetSnapshot::build(&data, NOW);
+    let snap = ClanSnapshot::build(&data, NOW);
 
     assert_eq!(snap.run(RUN).unwrap().coordinator, Some(term(COORDINATOR)));
     assert_eq!(
@@ -692,7 +688,7 @@ fn attendant_titled_coordinator_is_not_an_attendant() {
 
 #[test]
 fn attendant_hangs_off_the_real_coordinator() {
-    let snap = FleetSnapshot::build(&attendant_scenario(), NOW);
+    let snap = ClanSnapshot::build(&attendant_scenario(), NOW);
 
     let run = snap.run(RUN).unwrap();
     assert_eq!(run.coordinator, Some(term(LOOSE)));
@@ -712,22 +708,22 @@ fn attendant_hangs_off_the_real_coordinator() {
     assert_eq!(attendant_edges.len(), 1);
     assert_eq!(attendant_edges[0].from, term(LOOSE));
     assert_eq!(attendant_edges[0].to, term(COORDINATOR));
-    // Workers stay with the coordinator; the queen links the coordinator, not the attendant.
+    // Workers stay with the coordinator; the king links the coordinator, not the attendant.
     assert_eq!(coordinator_edges(&snap, LOOSE), run_workers(&snap, RUN));
-    let queen_to = |id: &NodeId| {
+    let king_to = |id: &NodeId| {
         snap.edges
             .iter()
-            .any(|e| e.kind == EdgeKind::Queen && &e.to == id)
+            .any(|e| e.kind == EdgeKind::King && &e.to == id)
     };
-    assert!(queen_to(&term(LOOSE)));
-    assert!(!queen_to(&term(COORDINATOR)));
+    assert!(king_to(&term(LOOSE)));
+    assert!(!king_to(&term(COORDINATOR)));
 }
 
 #[test]
-fn attendant_without_coordinator_links_to_the_queen() {
+fn attendant_without_coordinator_links_to_the_king() {
     let mut data = attendant_scenario();
     data.terminals.retain(|t| t.handle != LOOSE);
-    let snap = FleetSnapshot::build(&data, NOW);
+    let snap = ClanSnapshot::build(&data, NOW);
 
     let run = snap.run(RUN).expect("the attendant keeps the run shown");
     assert_eq!(run.coordinator, None);
@@ -737,7 +733,7 @@ fn attendant_without_coordinator_links_to_the_queen() {
     assert!(
         snap.edges
             .iter()
-            .any(|e| e.kind == EdgeKind::Queen && e.to == attendant.id)
+            .any(|e| e.kind == EdgeKind::King && e.to == attendant.id)
     );
     assert!(snap.edges.iter().all(|e| e.kind != EdgeKind::Attendant));
 }
@@ -757,7 +753,7 @@ fn shared_coordinator_has_one_node_with_edges_to_both_runs() {
     worker.task_id = Some("task_other".into());
     worker.agent_terminal_handle = Some(LOOSE.into());
     data.workers.push(worker);
-    let snap = FleetSnapshot::build(&data, NOW);
+    let snap = ClanSnapshot::build(&data, NOW);
 
     let coordinators: Vec<_> = snap
         .nodes
@@ -778,7 +774,7 @@ fn shared_coordinator_has_one_node_with_edges_to_both_runs() {
     expected.push(term(LOOSE));
     expected.sort();
     assert_eq!(coordinator_edges(&snap, COORDINATOR), expected);
-    assert_eq!(fleet_edges(&snap).len(), 4);
+    assert_eq!(clan_edges(&snap).len(), 4);
 }
 
 #[test]
@@ -787,7 +783,7 @@ fn coordinator_also_listed_as_worker_stays_coordinator() {
     let mut worker = data.workers[5].clone();
     worker.agent_terminal_handle = Some(COORDINATOR.into());
     data.workers.push(worker);
-    let snap = FleetSnapshot::build(&data, NOW);
+    let snap = ClanSnapshot::build(&data, NOW);
 
     let coord = snap.node(&term(COORDINATOR)).unwrap();
     assert_eq!(coord.kind, NodeKind::Coordinator);
@@ -801,19 +797,19 @@ fn coordinator_also_listed_as_worker_stays_coordinator() {
 #[ignore]
 fn live_coordinators() {
     use crate::orca::OrcaClient;
-    use crate::poller::{ACTIVE_RUN_WINDOW, FleetSource, active_run_ids};
+    use crate::poller::{ACTIVE_RUN_WINDOW, ClanSource, active_run_ids};
 
     let client = OrcaClient::new();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64;
-    let mut data = FleetData {
+    let mut data = ClanData {
         polled_at_ms: now,
-        terminals: FleetSource::terminals(&client).unwrap(),
-        runs: FleetSource::runs(&client).unwrap(),
-        workers: FleetSource::workers(&client).unwrap(),
-        inbox: FleetSource::inbox(&client, 300).unwrap(),
+        terminals: ClanSource::terminals(&client).unwrap(),
+        runs: ClanSource::runs(&client).unwrap(),
+        workers: ClanSource::workers(&client).unwrap(),
+        inbox: ClanSource::inbox(&client, 300).unwrap(),
         ..Default::default()
     };
     let active = active_run_ids(
@@ -825,9 +821,9 @@ fn live_coordinators() {
     );
     for run_id in &active {
         data.tasks
-            .insert(run_id.clone(), FleetSource::tasks(&client, run_id).unwrap());
+            .insert(run_id.clone(), ClanSource::tasks(&client, run_id).unwrap());
     }
-    let snap = FleetSnapshot::build(&data, now);
+    let snap = ClanSnapshot::build(&data, now);
 
     let live = |h: &str| {
         if data.terminal(h).is_some() {
@@ -883,7 +879,7 @@ fn finished(node_id: &str, at_ms: i64) -> crate::finish::FinishedSession {
     crate::finish::FinishedSession {
         node_id: node_id.into(),
         handle: node_id.strip_prefix("term:").map(str::to_string),
-        label: "ant".into(),
+        label: "dwarf".into(),
         outcome: crate::finish::FinishOutcome::Done,
         approval: crate::finish::Approval::Karl,
         summary: "merged into main".into(),
@@ -897,7 +893,7 @@ fn finished(node_id: &str, at_ms: i64) -> crate::finish::FinishedSession {
 
 #[test]
 fn a_terminal_waiting_on_karls_answer_needs_input() {
-    let mut snap = FleetSnapshot::build(&scenario(), NOW);
+    let mut snap = ClanSnapshot::build(&scenario(), NOW);
     let loose = NodeId::terminal(LOOSE);
     assert_ne!(snap.node(&loose).unwrap().state, NodeState::NeedsInput);
     let waiting = [
@@ -910,11 +906,11 @@ fn a_terminal_waiting_on_karls_answer_needs_input() {
     let node = snap.node(&loose).unwrap();
     assert_eq!(node.state, NodeState::NeedsInput);
     assert_eq!(node.preview.as_deref(), Some("Asks: Merge now?"));
-    assert_eq!(snap.queen().unwrap().state, NodeState::NeedsInput);
+    assert_eq!(snap.king().unwrap().state, NodeState::NeedsInput);
     assert_eq!(
         snap.nodes
             .iter()
-            .filter(|n| n.kind == NodeKind::Queen)
+            .filter(|n| n.kind == NodeKind::King)
             .count(),
         1
     );
@@ -922,7 +918,7 @@ fn a_terminal_waiting_on_karls_answer_needs_input() {
 
 #[test]
 fn a_finished_session_shows_done_then_fades_once_closed() {
-    let mut snap = FleetSnapshot::build(&scenario(), NOW);
+    let mut snap = ClanSnapshot::build(&scenario(), NOW);
     let nodes = snap.nodes.len();
     let edges = snap.edges.len();
     snap.add_finished(&[
@@ -934,7 +930,7 @@ fn a_finished_session_shows_done_then_fades_once_closed() {
     assert_eq!(live.state, NodeState::Done);
     assert_eq!(live.preview.as_deref(), Some("Finished: merged into main"));
     assert_eq!(live.released_at_ms, None);
-    // Closed: back as a fading done terminal, linked to the queen.
+    // Closed: back as a fading done terminal, linked to the king.
     let gone = snap.node(&NodeId("term:term_closed".into())).unwrap();
     assert_eq!(gone.state, NodeState::Done);
     assert!(!gone.live);
@@ -957,15 +953,15 @@ fn parked(node_id: &NodeId, at_ms: i64) -> crate::park::ParkedAgent {
 }
 
 #[test]
-fn a_parked_agent_leaves_the_queens_spokes_and_state() {
-    let mut snap = FleetSnapshot::build(&scenario(), NOW);
+fn a_parked_agent_leaves_the_kings_spokes_and_state() {
+    let mut snap = ClanSnapshot::build(&scenario(), NOW);
     let loose = term(LOOSE);
     snap.mark_waiting(&[(LOOSE.to_string(), "Ship it?".to_string())].into());
     assert_eq!(snap.node(&loose).unwrap().state, NodeState::NeedsInput);
-    let spoke = |s: &FleetSnapshot| {
+    let spoke = |s: &ClanSnapshot| {
         s.edges
             .iter()
-            .any(|e| e.kind == EdgeKind::Queen && e.to == loose)
+            .any(|e| e.kind == EdgeKind::King && e.to == loose)
     };
     assert!(spoke(&snap));
 
@@ -980,9 +976,9 @@ fn a_parked_agent_leaves_the_queens_spokes_and_state() {
     assert_eq!(node.parked_at_ms, Some(NOW - MINUTE));
     assert_eq!(node.state, NodeState::NeedsInput, "parking keeps the state");
     assert!(!spoke(&snap));
-    assert_ne!(snap.queen().unwrap().state, NodeState::NeedsInput);
+    assert_ne!(snap.king().unwrap().state, NodeState::NeedsInput);
     assert!(
-        snap.queen()
+        snap.king()
             .unwrap()
             .preview
             .as_deref()
@@ -993,9 +989,9 @@ fn a_parked_agent_leaves_the_queens_spokes_and_state() {
 }
 
 #[test]
-fn envoy_overlay_uses_handle_not_title_and_keeps_queen_edge() {
+fn envoy_overlay_uses_handle_not_title_and_keeps_king_edge() {
     let data = scenario();
-    let mut snapshot = FleetSnapshot::build(&data, NOW);
+    let mut snapshot = ClanSnapshot::build(&data, NOW);
     let status = crate::envoy::EnvoyStatus {
         session: crate::envoy::SessionState::Running,
         bridge: crate::envoy::BridgeStatus::Ok,
@@ -1016,23 +1012,23 @@ fn envoy_overlay_uses_handle_not_title_and_keeps_queen_edge() {
         snapshot
             .edges
             .iter()
-            .any(|e| e.from == NodeId::queen() && e.to == envoy.id && e.kind == EdgeKind::Queen)
+            .any(|e| e.from == NodeId::king() && e.to == envoy.id && e.kind == EdgeKind::King)
     );
-    let mut fresh = FleetSnapshot::build(&data, NOW);
+    let mut fresh = ClanSnapshot::build(&data, NOW);
     fresh.mark_envoy(Some("absent"), status);
     assert!(!fresh.nodes.iter().any(|n| n.kind == NodeKind::Envoy));
 }
 
 #[test]
 fn idle_envoy_has_no_automatic_or_manual_whip() {
-    let data = FleetData {
+    let data = ClanData {
         terminals: vec![crate::orca::Terminal {
             handle: "envoy".into(),
             ..Default::default()
         }],
         ..Default::default()
     };
-    let mut snapshot = FleetSnapshot::build(&data, NOW);
+    let mut snapshot = ClanSnapshot::build(&data, NOW);
     snapshot.mark_envoy(
         Some("envoy"),
         crate::envoy::EnvoyStatus {
@@ -1066,4 +1062,11 @@ fn idle_envoy_has_no_automatic_or_manual_whip() {
             )
             .is_empty()
     );
+}
+
+#[test]
+fn saved_queen_kind_loads_as_the_king() {
+    let kind: NodeKind = serde_json::from_str("\"Queen\"").unwrap();
+    assert_eq!(kind, NodeKind::King);
+    assert_eq!(serde_json::to_string(&NodeKind::King).unwrap(), "\"King\"");
 }

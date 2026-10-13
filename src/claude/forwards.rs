@@ -10,7 +10,7 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use crate::fleet::Forward;
+use crate::clan::Forward;
 use crate::orca::parse_timestamp_ms;
 use crate::traffic::{AgentMessage, FRESH_MS, MessageKind};
 
@@ -166,7 +166,7 @@ fn read_appended(path: &Path, offset: Option<u64>) -> io::Result<(Vec<u8>, u64)>
 
 /// Forward targets of `data`'s declared coordinators, read once from their transcripts under
 /// the default Claude projects root: for callers without a [`crate::claude::ClaudeWorker`].
-pub fn read_forwards(data: &crate::fleet::FleetData) -> BTreeMap<String, Vec<Forward>> {
+pub fn read_forwards(data: &crate::clan::ClanData) -> BTreeMap<String, Vec<Forward>> {
     use super::hook::{default_session_map_path, load_hook_mappings};
     use super::sessions::{SessionLocator, default_projects_root};
 

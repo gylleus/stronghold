@@ -3,7 +3,7 @@
 //! a shot and burst for a close (dashed for a dry run), and a burst for a spawned agent. Each lasts under a second. With
 //! the system's Reduce motion on, they show in place and fade instead. Shared by the farm, which supply the screen positions.
 //!
-//! Bursts stay calm: the Queen's parallel reads within [`MERGE_S`] become one fan of lines, a
+//! Bursts stay calm: the King's parallel reads within [`MERGE_S`] become one fan of lines, a
 //! repeat of a beam still showing is dropped, and at most [`MAX_BEAMS`] show at once.
 
 use std::f32::consts::TAU;
@@ -11,7 +11,7 @@ use std::f32::consts::TAU;
 use eframe::egui::{Color32, Painter, Pos2, Shape, Stroke, Vec2};
 
 use crate::traffic::beam::{Beam, BeamKind};
-use crate::ui::ant_farm::motion;
+use crate::ui::farm::motion;
 
 /// How long a beam shows, moving or still.
 pub const LIFE_S: f64 = 0.8;
@@ -310,7 +310,7 @@ mod tests {
 
     fn beam(kind: BeamKind, targets: &[&str]) -> Beam {
         Beam {
-            from: Endpoint::Node(NodeId::queen()),
+            from: Endpoint::Node(NodeId::king()),
             targets: targets
                 .iter()
                 .map(|t| Endpoint::Node(NodeId((*t).into())))

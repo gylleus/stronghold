@@ -1,6 +1,6 @@
 //! Runs the whip on a background thread.
 //!
-//! [`WhipRunner::spawn`] starts a thread that keeps the newest [`FleetData`] the app sends it
+//! [`WhipRunner::spawn`] starts a thread that keeps the newest [`ClanData`] the app sends it
 //! and, every `tick_ms` once the first data has arrived, runs [`WhipEngine::tick`] and
 //! [`WhipEngine::execute`]. After each tick it publishes a [`WhipStatus`] for the UI. In dry-run
 //! the executor is a [`DryRunExecutor`] and the live executor factory is called only for ticks
@@ -20,7 +20,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
 
-use crate::fleet::FleetData;
+use crate::clan::ClanData;
 use crate::whip::actions::{DryRunExecutor, WhipAction, WhipExecutor, WhipLogEntry};
 use crate::whip::engine::WhipEngine;
 use crate::whip::forward;
@@ -40,7 +40,7 @@ pub type Repaint = Box<dyn Fn() + Send>;
 /// What the whip evaluates: one poll plus the terminals currently waiting on Karl.
 #[derive(Debug, Clone, Default)]
 pub struct WhipInput {
-    pub data: FleetData,
+    pub data: ClanData,
     /// Handles of terminals in the NeedsInput state; never nudged.
     pub needs_input: BTreeSet<String>,
     /// Handles of parked agents ([`crate::park`]): never nudged, escalated or notified about.
@@ -136,7 +136,7 @@ pub struct WhipStatus {
 /// What a "whip now" request did: the log entries it produced, in order.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WhipNowReport {
-    /// `false` when an immediate tick could not run yet (no fleet data).
+    /// `false` when an immediate tick could not run yet (no clan data).
     pub ran: bool,
     pub items: Vec<WhipLogItem>,
     /// The automatic whip's mode during the request; manual nudges are live regardless.
@@ -551,7 +551,7 @@ mod tests {
     /// A terminal that has waited on Karl since an hour before `now_ms`: the first tick notifies.
     fn waiting_input(now_ms: i64) -> WhipInput {
         WhipInput {
-            data: FleetData {
+            data: ClanData {
                 polled_at_ms: now_ms,
                 terminals: vec![Terminal {
                     handle: HANDLE.into(),
@@ -577,7 +577,7 @@ mod tests {
     /// A Run whose live Claude coordinator has one fresh `worker_done` to hear about.
     fn report_input(now_ms: i64) -> WhipInput {
         use serde_json::json;
-        let data = FleetData {
+        let data = ClanData {
             polled_at_ms: now_ms,
             terminals: vec![Terminal {
                 handle: "term_coord".into(),
@@ -857,7 +857,7 @@ mod tests {
     fn stalled_worker(now_ms: i64) -> WhipInput {
         use serde_json::json;
         let t0 = now_ms - 20 * MIN;
-        let data = FleetData {
+        let data = ClanData {
             polled_at_ms: now_ms,
             terminals: vec![Terminal {
                 handle: WORKER.into(),

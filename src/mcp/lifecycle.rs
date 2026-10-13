@@ -16,7 +16,7 @@ use crate::mcp::notify::reply_text;
 use crate::mcp::tools::ToolOutput;
 use crate::review::mark::Origin;
 
-/// When to call `ask_karl` and `finish_session`, as the fleet playbook says it. A macro so the
+/// When to call `ask_karl` and `finish_session`, as the clan playbook says it. A macro so the
 /// server instructions can `concat!` the same text.
 macro_rules! rules_text {
     () => {
@@ -48,8 +48,8 @@ pub fn definitions() -> Vec<Value> {
             "name": "ask_karl",
             "title": "Ask Karl",
             "description": format!(
-                "Asks Karl, the human who runs this fleet, a question you are waiting on, \
-                 through Myrstack (his fleet dashboard): he gets a notification with the \
+                "Asks Karl, the human who runs this clan, a question you are waiting on, \
+                 through Myrstack (his clan dashboard): he gets a notification with the \
                  question, and your node shows needs input until he answers in your terminal. \
                  Call it whenever you are about to end your turn waiting for his answer to a \
                  plain-text question (a decision, a go-ahead, a missing fact), then end your \

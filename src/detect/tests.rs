@@ -349,7 +349,7 @@ mod claude_session_live {
             ..term(Some(AgentIdentity::Claude), preview)
         };
         let warning = "ule (../.claude/settings.json): Bash(rg --files -g '*.ts') has a wildcard";
-        for title in ["✳ Envoy listener ant", "◑ Recs eval", "⠙ Working"] {
+        for title in ["✳ Envoy listener dwarf", "◑ Recs eval", "⠙ Working"] {
             assert!(claude_session_live(&titled(
                 title,
                 &format!("{warning}\n❯")

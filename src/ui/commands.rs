@@ -11,7 +11,7 @@ use crate::ui::keys::KeyCommand;
 pub enum ActionId {
     OpenChat,
     Dictate,
-    TalkToQueen,
+    TalkToKing,
     StopSpeaking,
     ToggleSpeakReplies,
     StatusReport,
@@ -81,8 +81,8 @@ pub const ACTIONS: &[Action] = &[
     action(
         ActionId::OpenChat,
         "open_chat",
-        "Open Queen chat",
-        "queen chat talk ask message",
+        "Open King chat",
+        "king chat talk ask message",
         Some("⌘J"),
     ),
     action(
@@ -93,9 +93,9 @@ pub const ACTIONS: &[Action] = &[
         Some("⌘E"),
     ),
     action(
-        ActionId::TalkToQueen,
-        "talk_to_queen",
-        "Talk to the Queen",
+        ActionId::TalkToKing,
+        "talk_to_king",
+        "Talk to the King",
         "voice speak ask microphone hold hotkey conversation",
         None,
     ),
@@ -103,14 +103,14 @@ pub const ACTIONS: &[Action] = &[
         ActionId::StatusReport,
         "status_report",
         "Status report",
-        "queen chat ask summary fleet overview",
+        "king chat ask summary clan overview",
         None,
     ),
     action(
         ActionId::NewSession,
         "new_session",
-        "New ant…",
-        "ant session spawn start launch agent claude codex worktree worker prompt",
+        "New dwarf…",
+        "dwarf session spawn start launch agent claude codex worktree worker prompt",
         None,
     ),
     action(
@@ -138,7 +138,7 @@ pub const ACTIONS: &[Action] = &[
         ActionId::Broadcast,
         "broadcast",
         "Broadcast…",
-        "message coordinators send all queen",
+        "message coordinators send all king",
         None,
     ),
     action(
@@ -159,7 +159,7 @@ pub const ACTIONS: &[Action] = &[
         ActionId::Settings,
         "settings",
         "Settings…",
-        "preferences options configure queen model effort voice whip data dir socket version",
+        "preferences options configure king model effort voice whip data dir socket version",
         Some("⌘,"),
     ),
     action(
@@ -173,14 +173,14 @@ pub const ACTIONS: &[Action] = &[
         ActionId::StopSpeaking,
         "stop_speaking",
         "Stop speaking",
-        "voice quiet silence mute reply queen audio",
+        "voice quiet silence mute reply king audio",
         None,
     ),
     action(
         ActionId::ToggleSpeakReplies,
         "toggle_speak_replies",
         "Speak replies on/off",
-        "voice read aloud tts queen audio",
+        "voice read aloud tts king audio",
         None,
     ),
     action(
@@ -361,11 +361,11 @@ pub struct ActionContext {
     pub filters_active: bool,
     pub show_loose: bool,
     pub show_released: bool,
-    /// The Queen's chat can take a message now.
+    /// The King's chat can take a message now.
     pub chat_ready: bool,
-    /// The talk-to-the-Queen hotkey's label, e.g. `⌘⇧E`.
+    /// The talk-to-the-King hotkey's label, e.g. `⌘⇧E`.
     pub talk_hotkey: String,
-    /// The Queen is speaking.
+    /// The King is speaking.
     pub speaking: bool,
     /// Every reply is spoken.
     pub speak_replies: bool,
@@ -408,7 +408,7 @@ pub fn title(id: ActionId, cx: &ActionContext) -> String {
             "{} recently released",
             if cx.show_released { "Hide" } else { "Show" }
         ),
-        ActionId::TalkToQueen => format!("Talk to the Queen (hold {})", cx.talk_hotkey),
+        ActionId::TalkToKing => format!("Talk to the King (hold {})", cx.talk_hotkey),
         ActionId::ToggleSpeakReplies => {
             format!("Speak replies on/off (now {})", on_off(cx.speak_replies))
         }
@@ -421,12 +421,12 @@ pub fn disabled_reason(id: ActionId, cx: &ActionContext) -> Option<&'static str>
     use ActionId::*;
     let reason = match id {
         WhipSelected if cx.whip_targets == 0 => "Select a node first",
-        CloseSelected if cx.close_targets == 0 => "Select a node other than the Queen first",
+        CloseSelected if cx.close_targets == 0 => "Select a node other than the King first",
         OpenInOrca | TypeIntoTerminal if !cx.selected_terminal => {
             "Select a node with a terminal first"
         }
-        StatusReport if !cx.chat_ready => "The Queen's chat is busy or not ready",
-        StopSpeaking if !cx.speaking => "The Queen is not speaking",
+        StatusReport if !cx.chat_ready => "The King's chat is busy or not ready",
+        StopSpeaking if !cx.speaking => "The King is not speaking",
         ClearFilters if !cx.filters_active => "No filters are set",
         HistoryBack if !cx.can_back => "No earlier selection",
         HistoryForward if !cx.can_forward => "No later selection",
@@ -434,7 +434,7 @@ pub fn disabled_reason(id: ActionId, cx: &ActionContext) -> Option<&'static str>
         | NextNode | PrevNode | FitFarm | KeyboardHelp
             if !cx.has_data =>
         {
-            "Waiting for the first fleet poll"
+            "Waiting for the first clan poll"
         }
         _ => return None,
     };
@@ -446,20 +446,20 @@ pub fn disabled_reason(id: ActionId, cx: &ActionContext) -> Option<&'static str>
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dispatch {
     Key(KeyCommand),
-    /// Select the Queen and focus her chat (unlike ⌘J, never closes it).
+    /// Select the King and focus his chat (unlike ⌘J, never closes it).
     OpenChat,
-    /// Record until ⌘E or Stop, then put the text into the Queen's chat.
+    /// Record until ⌘E or Stop, then put the text into the King's chat.
     Dictate,
-    /// Record until the talk hotkey or Send, then send it to the Queen as a voice message.
-    TalkToQueen,
+    /// Record until the talk hotkey or Send, then send it to the King as a voice message.
+    TalkToKing,
     StopSpeaking,
     ToggleSpeakReplies,
     /// Open the chat and send the Status report prompt, like its button.
     StatusReport,
     WhipStalled,
-    /// Select the Queen and open her broadcast section.
+    /// Select the King and open his broadcast section.
     Broadcast,
-    /// Select the Queen and open her "Ready for review" section.
+    /// Select the King and open his "Ready for review" section.
     ReviewQueue,
     /// Open the Settings window on its Whip section.
     WhipSettings,
@@ -474,7 +474,7 @@ pub enum Dispatch {
     ShowOnly(NodeState),
     ToggleLoose,
     ToggleReleased,
-    /// Open the "New ant…" dialog.
+    /// Open the "New dwarf…" dialog.
     NewSession,
     /// Open the log file in Console.
     OpenLog,
@@ -485,7 +485,7 @@ pub fn dispatch(id: ActionId) -> Dispatch {
     match id {
         A::OpenChat => Dispatch::OpenChat,
         A::Dictate => Dispatch::Dictate,
-        A::TalkToQueen => Dispatch::TalkToQueen,
+        A::TalkToKing => Dispatch::TalkToKing,
         A::StopSpeaking => Dispatch::StopSpeaking,
         A::ToggleSpeakReplies => Dispatch::ToggleSpeakReplies,
         A::StatusReport => Dispatch::StatusReport,
@@ -632,7 +632,7 @@ mod tests {
         let cases = [
             (A::OpenChat, Dispatch::OpenChat),
             (A::Dictate, Dispatch::Dictate),
-            (A::TalkToQueen, Dispatch::TalkToQueen),
+            (A::TalkToKing, Dispatch::TalkToKing),
             (A::StopSpeaking, Dispatch::StopSpeaking),
             (A::ToggleSpeakReplies, Dispatch::ToggleSpeakReplies),
             (A::StatusReport, Dispatch::StatusReport),
@@ -690,12 +690,12 @@ mod tests {
         assert_eq!(disabled_reason(ActionId::OpenChat, &cx), None);
         assert_eq!(
             disabled_reason(ActionId::StopSpeaking, &cx),
-            Some("The Queen is not speaking")
+            Some("The King is not speaking")
         );
-        assert_eq!(disabled_reason(ActionId::TalkToQueen, &cx), None);
+        assert_eq!(disabled_reason(ActionId::TalkToKing, &cx), None);
         assert_eq!(
-            title(ActionId::TalkToQueen, &cx),
-            "Talk to the Queen (hold ⌘⇧E)"
+            title(ActionId::TalkToKing, &cx),
+            "Talk to the King (hold ⌘⇧E)"
         );
         assert_eq!(
             title(ActionId::ToggleSpeakReplies, &cx),
@@ -728,7 +728,7 @@ mod tests {
         cx.has_data = false;
         assert_eq!(
             disabled_reason(ActionId::WhipStalled, &cx),
-            Some("Waiting for the first fleet poll")
+            Some("Waiting for the first clan poll")
         );
     }
 

@@ -1,4 +1,4 @@
-//! The Queen's chat pane: header with the session state and buttons, the message list
+//! The King's chat pane: header with the session state and buttons, the message list
 //! (user bubbles, markdown replies streaming in, collapsible tool rows, permission cards) and
 //! the input box.
 
@@ -90,7 +90,7 @@ pub enum ChatAction {
         decision: Decision,
     },
     NewChat,
-    /// Send `/compact` to the Queen's session.
+    /// Send `/compact` to the King's session.
     Compact,
     Retry,
     SelectNode(NodeId),
@@ -104,12 +104,12 @@ pub struct ChatView<'a> {
     pub state: &'a SessionState,
     /// Whether a node id names a node in the current snapshot (only those become links).
     pub is_node: &'a dyn Fn(&NodeId) -> bool,
-    /// The Queen's tool calls run without asking.
+    /// The King's tool calls run without asking.
     pub auto_mode: bool,
 }
 
 /// Line under the input while auto mode is on.
-pub const AUTO_HINT: &str = "Auto mode: the Queen's actions run without asking";
+pub const AUTO_HINT: &str = "Auto mode: the King's actions run without asking";
 
 /// Color of the auto mode badge, hint and notices.
 fn accent(ui: &Ui) -> Color32 {
@@ -118,7 +118,7 @@ fn accent(ui: &Ui) -> Color32 {
 
 /// Id of the input box, for focusing it from a shortcut.
 pub fn input_id() -> egui::Id {
-    egui::Id::new("queen_chat_input")
+    egui::Id::new("king_chat_input")
 }
 
 /// Draws the pane into the rest of `ui`.
@@ -128,7 +128,7 @@ pub fn chat_ui(ui: &mut Ui, state: &mut ChatPanelState, view: ChatView<'_>) -> V
     let ready = *view.state == SessionState::Ready;
     header(ui, &view, &mut actions);
 
-    egui::Panel::bottom("queen_chat_input_panel")
+    egui::Panel::bottom("king_chat_input_panel")
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
             input_box(ui, state, ready, running, &mut actions);
@@ -142,14 +142,14 @@ pub fn chat_ui(ui: &mut Ui, state: &mut ChatPanelState, view: ChatView<'_>) -> V
             ui,
             crate::ui::art::Portrait::King,
             96.0,
-            "Ask the Queen",
-            "Ask her about the fleet, or press Status report above.",
+            "Ask the King",
+            "Ask him about the clan, or press Status report above.",
         );
     } else {
         let thinking = running && !streaming_text(view.transcript);
         if let Some(id) = conversation(
             ui,
-            "queen_chat_messages",
+            "king_chat_messages",
             &mut state.list,
             view.transcript,
             thinking,
@@ -369,7 +369,7 @@ pub fn state_text(
 fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
     let running = view.transcript.running;
     ui.horizontal(|ui| {
-        ui.add(crate::ui::art::queen_avatar(
+        ui.add(crate::ui::art::king_avatar(
             ui.ctx(),
             ui.text_style_height(&egui::TextStyle::Body) + 4.0,
         ));
@@ -378,7 +378,7 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
         ui.label(RichText::new(format!("● {text}")).color(color))
             .on_hover_text(match view.state {
                 SessionState::Crashed { reason, .. } => reason.as_str(),
-                _ => "The Queen's Claude Code session",
+                _ => "The King's Claude Code session",
             });
         if view.auto_mode {
             auto_badge(ui);
@@ -399,7 +399,7 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
             if ui
                 .toggle_value(&mut auto, "Auto")
                 .on_hover_text(
-                    "Auto mode: every tool call of the Queen's (Myrstack sends, keys, closes, \
+                    "Auto mode: every tool call of the King's (Myrstack sends, keys, closes, \
                      spawns and whip changes, file reads, web fetches, other MCP servers) \
                      runs without asking. close_agents still dry-runs unless told otherwise.",
                 )
@@ -491,8 +491,8 @@ fn context_offer(
         .on_hover_text(gauge.tooltip());
         if ui
             .add_enabled(can_compact, egui::Button::new("Compact"))
-            .on_hover_text("Send /compact: the Queen summarizes the conversation so far")
-            .on_disabled_hover_text("Wait for the Queen to finish this turn")
+            .on_hover_text("Send /compact: the King summarizes the conversation so far")
+            .on_disabled_hover_text("Wait for the King to finish this turn")
             .clicked()
         {
             actions.push(ChatAction::Compact);
@@ -521,7 +521,7 @@ fn auto_badge(ui: &mut Ui) {
             )
         })
         .response
-        .on_hover_text("Auto mode is on: the Queen's actions run without asking");
+        .on_hover_text("Auto mode is on: the King's actions run without asking");
 }
 
 fn input_box(
@@ -542,7 +542,7 @@ fn input_box(
         ready,
         egui::TextEdit::multiline(&mut state.draft)
             .id(id)
-            .hint_text("Ask the Queen…  Enter sends, Shift+Enter adds a line")
+            .hint_text("Ask the King…  Enter sends, Shift+Enter adds a line")
             .desired_rows(2)
             .desired_width(f32::INFINITY),
     );
@@ -562,7 +562,7 @@ fn input_box(
             if !ready {
                 ui.weak("waiting for the session…");
             } else if running {
-                ui.weak("the Queen is answering…");
+                ui.weak("the King is answering…");
             }
             send
         })
@@ -614,7 +614,7 @@ fn item_ui(
     None
 }
 
-/// Marker in front of the Queen's spoken line.
+/// Marker in front of the King's spoken line.
 pub const SAY_MARKER: &str = "🔊";
 
 /// The reply's spoken line (`<say>…</say>`): a highlighted summary above the rest, with the
@@ -793,7 +793,7 @@ fn tool_row(ui: &mut Ui, call: &ToolCall) {
         ),
         Some(_) => (
             crate::ui::icons::CHECK,
-            crate::ui::fleet_view::state_color(crate::model::NodeState::Done, visuals.dark_mode),
+            crate::ui::clan_view::state_color(crate::model::NodeState::Done, visuals.dark_mode),
             visuals.weak_text_color(),
         ),
         None => (
@@ -864,7 +864,7 @@ fn permission_card(ui: &mut Ui, card: &PermissionCard, actions: &mut Vec<ChatAct
                     .color(accent),
             );
             if reaches_agents {
-                ui.weak("This acts on agents as the Queen; they treat it as your instruction.");
+                ui.weak("This acts on agents as the King; they treat it as your instruction.");
             }
             if let Some(description) = &request.description {
                 ui.weak(description);
@@ -1612,7 +1612,7 @@ mod tests {
             request_id: "p1".into(),
             tool_name: "mcp__myrstack__send_to_agent".into(),
             display_name: None,
-            input: json!({"agent": "term:term_1", "text": "Queen: carry on"}),
+            input: json!({"agent": "term:term_1", "text": "King: carry on"}),
             tool_use_id: None,
             description: None,
         });
@@ -1811,7 +1811,7 @@ mod tests {
         assert!(on.contains("AUTO"), "{on}");
         assert!(on.contains(AUTO_HINT), "{on}");
         assert!(
-            on.contains("⚙ Auto mode on: the Queen's actions run without asking"),
+            on.contains("⚙ Auto mode on: the King's actions run without asking"),
             "{on}"
         );
         assert!(on.contains("send_to_agent · auto"), "{on}");

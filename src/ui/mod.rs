@@ -1,10 +1,10 @@
 //! UI panels drawn by the app.
 
-pub mod ant_farm;
 pub mod art;
 pub mod beam;
 pub mod broadcast;
 pub mod chat;
+pub mod clan_view;
 pub mod close;
 pub mod columns;
 pub mod commands;
@@ -15,16 +15,16 @@ pub mod dwarf;
 pub mod envelope;
 pub mod envoy;
 pub mod envoy_receipt;
-pub mod fleet_view;
+pub mod farm;
 pub mod frame_stats;
 pub mod health;
 pub mod history;
 pub mod icons;
 pub mod keys;
+pub mod king;
 pub mod message_list;
 pub mod notifications;
 pub mod playbook;
-pub mod queen;
 pub mod quota;
 pub mod review;
 pub mod search;

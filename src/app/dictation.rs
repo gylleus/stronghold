@@ -1,5 +1,5 @@
 //! The app side of ⌘E dictation: runs the push-to-talk keys, puts the transcript into the
-//! focused text field (else the Queen's chat), and shows the pill and the model download.
+//! focused text field (else the King's chat), and shows the pill and the model download.
 
 use std::time::{Duration, Instant};
 
@@ -44,7 +44,7 @@ impl AppDictation {
         }
     }
 
-    /// The dictation machine, shared with talking to the Queen (one microphone, one model).
+    /// The dictation machine, shared with talking to the King (one microphone, one model).
     pub(super) fn machine_mut(&mut self) -> &mut MicDictation {
         &mut self.machine
     }
@@ -144,7 +144,7 @@ impl MyrstackApp {
     /// finished transcript and draws the pill. Call first in `ui`.
     pub(super) fn dictation_frame(&mut self, ctx: &egui::Context) {
         if self.talk.owns_dictation() {
-            // Talking to the Queen has the machine: her talk code ticks it, and the window
+            // Talking to the King has the machine: his talk code ticks it, and the window
             // is usually not focused, so no focus-loss release either. Esc still cancels.
             let busy = KeyState {
                 holding: false,
@@ -246,7 +246,7 @@ impl MyrstackApp {
     }
 
     /// Starts a dictation from the palette: it records until ⌘E or the pill's Stop, and the
-    /// text goes to the Queen's chat (the palette's own field is gone by then).
+    /// text goes to the King's chat (the palette's own field is gone by then).
     pub(super) fn start_dictation(&mut self) {
         let d = &mut self.dictation;
         d.target = None;
@@ -257,7 +257,7 @@ impl MyrstackApp {
     }
 
     /// Puts `text` into the field focused when dictation started: the chat's or a terminal's
-    /// input at its cursor, any other focused field as typed text, else the Queen's chat.
+    /// input at its cursor, any other focused field as typed text, else the King's chat.
     fn deliver_dictation(&mut self, ctx: &egui::Context, text: &str) {
         let focused = ctx.memory(|m| m.focused());
         let target = self.dictation.target.take().or(focused);

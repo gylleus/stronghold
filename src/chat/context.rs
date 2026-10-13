@@ -1,4 +1,4 @@
-//! How full the Queen's context window is: the newest top-level assistant message's input
+//! How full the King's context window is: the newest top-level assistant message's input
 //! tokens against the window the CLI reports (or a per-model default).
 
 /// Window of models without a reported size.

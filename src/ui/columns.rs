@@ -1,27 +1,27 @@
-//! What the conversation pane shows (the Queen's chat, or the selected agent's screen and
-//! input; the Queen's chat when nothing is selected, unless ⌘J hid it) and where the top bar's
-//! Queen quick actions sit above it. The panes themselves are dock tabs, see [`super::dock`].
+//! What the conversation pane shows (the King's chat, or the selected agent's screen and
+//! input; the King's chat when nothing is selected, unless ⌘J hid it) and where the top bar's
+//! King quick actions sit above it. The panes themselves are dock tabs, see [`super::dock`].
 
 /// What the selection is, for the conversation column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Picked {
     Nothing,
-    Queen,
+    King,
     /// One agent, or several nodes.
     Other,
 }
 
-/// Whether the conversation column shows the Queen's chat: when she is selected, or when
+/// Whether the conversation column shows the King's chat: when he is selected, or when
 /// nothing is and the user has not hidden it.
 pub fn shows_chat(picked: Picked, chat_hidden: bool) -> bool {
     match picked {
-        Picked::Queen => true,
+        Picked::King => true,
         Picked::Nothing => !chat_hidden,
         Picked::Other => false,
     }
 }
 
-/// Where the top bar's Queen quick actions (`width` wide) start: above the conversation
+/// Where the top bar's King quick actions (`width` wide) start: above the conversation
 /// column's content when it is open, else at the bar's right end; always inside the bar.
 pub fn quick_actions_x(
     bar_left: f32,
@@ -42,8 +42,8 @@ mod tests {
         assert!(shows_chat(Picked::Nothing, false));
         assert!(!shows_chat(Picked::Nothing, true));
         assert!(
-            shows_chat(Picked::Queen, true),
-            "selecting her always shows it"
+            shows_chat(Picked::King, true),
+            "selecting him always shows it"
         );
         assert!(!shows_chat(Picked::Other, false));
     }

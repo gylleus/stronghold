@@ -8,8 +8,8 @@ use std::collections::VecDeque;
 use eframe::egui::{self, Color32, RichText, Sense, Ui};
 use jiff::tz::TimeZone;
 
-use crate::model::{FleetSnapshot, NodeId};
-use crate::ui::fleet_view::format_age;
+use crate::model::{ClanSnapshot, NodeId};
+use crate::ui::clan_view::format_age;
 use crate::whip::{WhipLogItem, WhipStatus};
 
 /// Most entries kept in the app.
@@ -129,7 +129,7 @@ impl LogFilter {
 
 /// The node an entry is about: the worker node of its task, else its terminal's node, else a
 /// node last seen on its terminal, else its run's coordinator.
-pub fn link_node(snapshot: &FleetSnapshot, item: &WhipLogItem) -> Option<NodeId> {
+pub fn link_node(snapshot: &ClanSnapshot, item: &WhipLogItem) -> Option<NodeId> {
     let nodes = &snapshot.nodes;
     if let (Some(run), Some(task)) = (&item.run_id, &item.task_id) {
         let workers: Vec<_> = nodes
@@ -157,7 +157,7 @@ pub fn link_node(snapshot: &FleetSnapshot, item: &WhipLogItem) -> Option<NodeId>
 }
 
 /// The linked node's label, else the terminal handle, else the logged target text.
-pub fn target_text(snapshot: &FleetSnapshot, item: &WhipLogItem, link: Option<&NodeId>) -> String {
+pub fn target_text(snapshot: &ClanSnapshot, item: &WhipLogItem, link: Option<&NodeId>) -> String {
     link.and_then(|id| snapshot.nodes.iter().find(|n| &n.id == id))
         .map(|n| n.label.clone())
         .filter(|l| !l.is_empty())
@@ -218,7 +218,7 @@ struct RowView {
 }
 
 impl RowView {
-    fn new(item: &WhipLogItem, snapshot: &FleetSnapshot, tz: &TimeZone) -> Self {
+    fn new(item: &WhipLogItem, snapshot: &ClanSnapshot, tz: &TimeZone) -> Self {
         let entry = &item.entry;
         let link = link_node(snapshot, item);
         let target = target_text(snapshot, item, link.as_ref());
@@ -231,7 +231,7 @@ impl RowView {
             if link.is_some() {
                 "\n\nClick to select the node"
             } else {
-                "\n\nNode no longer in the fleet"
+                "\n\nNode no longer in the clan"
             }
         );
         Self {
@@ -287,7 +287,7 @@ impl WhipLog {
         &mut self,
         ui: &mut Ui,
         status: &WhipStatus,
-        snapshot: &FleetSnapshot,
+        snapshot: &ClanSnapshot,
         now_ms: i64,
     ) -> Option<NodeId> {
         egui::CollapsingHeader::new(format!("Whip ({})", self.entries.len()))
@@ -299,7 +299,7 @@ impl WhipLog {
     }
 
     /// The shown rows, newest first, rebuilt if stale.
-    fn rows(&mut self, snapshot: &FleetSnapshot) -> &[RowView] {
+    fn rows(&mut self, snapshot: &ClanSnapshot) -> &[RowView] {
         let (entries, filter) = (&self.entries, self.filter);
         self.rows.get_or_insert_with(|| {
             let tz = TimeZone::system();
@@ -317,7 +317,7 @@ impl WhipLog {
         &mut self,
         ui: &mut Ui,
         status: &WhipStatus,
-        snapshot: &FleetSnapshot,
+        snapshot: &ClanSnapshot,
         now_ms: i64,
     ) -> Option<NodeId> {
         let status_text = RichText::new(status_line(status, now_ms)).small();
@@ -501,7 +501,7 @@ mod tests {
 
     #[test]
     fn rows_are_cached_until_entries_or_snapshot_change() {
-        let mut s = FleetSnapshot::default();
+        let mut s = ClanSnapshot::default();
         let mut log = WhipLog::default();
         log.extend((1..=SHOWN_LEN as u64 + 5).map(item));
         let rows = log.rows(&s).to_vec();
@@ -525,7 +525,7 @@ mod tests {
 
     #[test]
     fn draws_only_rows_in_view() {
-        let s = FleetSnapshot::default();
+        let s = ClanSnapshot::default();
         let mut log = WhipLog::default();
         log.extend((1..=SHOWN_LEN as u64).map(item));
         let ctx = egui::Context::default();
@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn links_prefer_the_task_then_terminal_then_coordinator() {
-        let mut s = FleetSnapshot::default();
+        let mut s = ClanSnapshot::default();
         let mut worker = node(NodeId::dispatch("r1", "d1"), "worker t1");
         worker.run_id = Some("r1".into());
         worker.task_id = Some("t1".into());
@@ -627,7 +627,7 @@ mod tests {
 
     #[test]
     fn links_a_released_worker_by_its_last_terminal() {
-        let mut s = FleetSnapshot::default();
+        let mut s = ClanSnapshot::default();
         let mut worker = node(NodeId::dispatch("r1", "d1"), "worker");
         worker.terminal_handle = Some("term_w".into());
         worker.live = false;

@@ -1,6 +1,6 @@
 //! A scripted voice turn through the real talk pipeline, with a WAV file in place of the
-//! microphone and the Queen's spoken reply rendered to a WAV file instead of the speakers:
-//! WAV → `Recorder` → Parakeet → `Talk` → the Queen's chat → `SayFilter` → `SentenceStream` →
+//! microphone and the King's spoken reply rendered to a WAV file instead of the speakers:
+//! WAV → `Recorder` → Parakeet → `Talk` → the King's chat → `SayFilter` → `SentenceStream` →
 //! Kokoro → `BufferSink`. Prints the say-line and a latency breakdown.
 //!
 //! ```text
@@ -9,9 +9,9 @@
 //! ```
 //!
 //! Nothing is downloaded: Kokoro must already be in `$MYRSTACK_DATA_DIR/speech-models` and
-//! Parakeet there or in Orca's data dir. The chat is a real `claude` Queen session in
+//! Parakeet there or in Orca's data dir. The chat is a real `claude` King session in
 //! `$MYRSTACK_DATA_DIR/chat` (use a scratch data dir: with no Myrstack app on its control
-//! socket her actions are refused, and permission cards are denied); `--fake-chat` streams a
+//! socket his actions are refused, and permission cards are denied); `--fake-chat` streams a
 //! canned reply instead.
 
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
-use myrstack::chat::settings::QueenSettings;
+use myrstack::chat::settings::KingSettings;
 use myrstack::chat::transcript::Decision;
 use myrstack::chat::{ChatConfig, ChatSession, SessionState, SpeechEvent};
 use myrstack::voice::audio_in::{
@@ -29,7 +29,7 @@ use myrstack::voice::audio_out::{AudioSink, BufferSink, write_wav};
 use myrstack::voice::dictation::Dictation;
 use myrstack::voice::models::kokoro;
 use myrstack::voice::stt::Transcriber;
-use myrstack::voice::talk::{QueenChat, Talk, TalkEvent};
+use myrstack::voice::talk::{KingChat, Talk, TalkEvent};
 use myrstack::voice::tts::{
     BackendFactory, DEFAULT_VOICE, KokoroSynth, Speaker, SpeakerStatus, Synthesizer, Voice,
 };
@@ -50,7 +50,7 @@ impl InputSource for WavSource {
     }
 }
 
-/// A stand-in Queen: after `delay` her reply streams in small deltas.
+/// A stand-in King: after `delay` his reply streams in small deltas.
 struct FakeChat {
     reply: &'static str,
     delay: Duration,
@@ -59,7 +59,7 @@ struct FakeChat {
     offset: usize,
 }
 
-impl QueenChat for FakeChat {
+impl KingChat for FakeChat {
     fn can_send(&self) -> bool {
         self.sent_at.is_none()
     }
@@ -104,24 +104,24 @@ impl FakeChat {
     }
 }
 
-enum Queen {
+enum King {
     Real(Box<ChatSession>),
     Fake(FakeChat),
 }
 
-impl Queen {
-    fn chat(&mut self) -> &mut dyn QueenChat {
+impl King {
+    fn chat(&mut self) -> &mut dyn KingChat {
         match self {
-            Queen::Real(c) => c.as_mut(),
-            Queen::Fake(c) => c,
+            King::Real(c) => c.as_mut(),
+            King::Fake(c) => c,
         }
     }
 
     fn take_speech(&mut self) -> Vec<SpeechEvent> {
         match self {
-            Queen::Real(c) => {
+            King::Real(c) => {
                 c.poll();
-                // Nobody is here to approve her actions.
+                // Nobody is here to approve his actions.
                 if let Some(card) = c.transcript.pending_permission() {
                     let id = card.request.request_id.clone();
                     eprintln!("[chat] denying {}", card.request.tool_name);
@@ -129,7 +129,7 @@ impl Queen {
                 }
                 c.take_speech()
             }
-            Queen::Fake(c) => c.take(),
+            King::Fake(c) => c.take(),
         }
     }
 }
@@ -158,7 +158,7 @@ fn main() -> anyhow::Result<()> {
         samples.len() as f32 / rate as f32
     );
 
-    // Her voice, rendered into a buffer. Loaded up front, as the app does at start.
+    // His voice, rendered into a buffer. Loaded up front, as the app does at start.
     let root = kokoro::speech_models_dir();
     let paths = kokoro::installed(&root, &kokoro::DEFAULT)
         .context("Kokoro is not installed in $MYRSTACK_DATA_DIR/speech-models (not downloading)")?;
@@ -201,8 +201,8 @@ fn main() -> anyhow::Result<()> {
     let recorder = Recorder::new(Arc::new(WavSource { samples, rate }));
     let mut dictation = Dictation::new(recorder, transcriber);
 
-    let mut queen = if fake {
-        Queen::Fake(FakeChat {
+    let mut king = if fake {
+        King::Fake(FakeChat {
             reply: "<say>Two agents need you: the reviewer and the docs one. Want the list?</say>\n\n\
                     - `term:term_7c25` reviewer on run 7c25\n- `term:term_d0c5` docs worker",
             delay: Duration::from_millis(800),
@@ -211,8 +211,8 @@ fn main() -> anyhow::Result<()> {
             offset: 0,
         })
     } else {
-        let config = ChatConfig::from_env(&QueenSettings::default());
-        eprintln!("starting the Queen's chat in {}", config.dir.display());
+        let config = ChatConfig::from_env(&KingSettings::default());
+        eprintln!("starting the King's chat in {}", config.dir.display());
         let mut chat = ChatSession::spawn(config, None);
         let t = Instant::now();
         while chat.state != SessionState::Ready {
@@ -226,7 +226,7 @@ fn main() -> anyhow::Result<()> {
             std::thread::sleep(Duration::from_millis(20));
         }
         eprintln!("chat ready in {}", ms(t.elapsed()));
-        Queen::Real(Box::new(chat))
+        King::Real(Box::new(chat))
     };
 
     let mut talk = Talk::new(speaker);
@@ -241,7 +241,7 @@ fn main() -> anyhow::Result<()> {
     let mut last_pending = 0;
     let mut stable_since = Instant::now();
     loop {
-        for event in talk.tick(&mut dictation, queen.chat()) {
+        for event in talk.tick(&mut dictation, king.chat()) {
             match event {
                 TalkEvent::Sent(text) => {
                     eprintln!("transcript: {text:?}");
@@ -250,7 +250,7 @@ fn main() -> anyhow::Result<()> {
                 other => bail!("talk: {other:?}"),
             }
         }
-        for speech in queen.take_speech() {
+        for speech in king.take_speech() {
             if let SpeechEvent::Text(t) = &speech {
                 first_text.get_or_insert(released.elapsed());
                 reply.push_str(t);
@@ -311,7 +311,7 @@ fn main() -> anyhow::Result<()> {
     println!("release → first audio:       {}", show(first_audio));
     println!("release → turn finished:     {}", show(ended));
     if let (Some(s), Some(f)) = (sent, first_text) {
-        println!("  of which the Queen's first token: {}", ms(f - s));
+        println!("  of which the King's first token: {}", ms(f - s));
     }
     if let (Some(f), Some(a)) = (first_sentence, first_audio) {
         println!("  of which first-sentence synthesis: {}", ms(a - f));

@@ -1,6 +1,6 @@
-//! The app side of starting sessions: the "New ant…" dialog, spawns requested through the
-//! control API (the Queen's `spawn_session`), and selecting the new node once it appears (only
-//! with "Focus new ants when they're spawned" on).
+//! The app side of starting sessions: the "New dwarf…" dialog, spawns requested through the
+//! control API (the King's `spawn_session`), and selecting the new node once it appears (only
+//! with "Focus new dwarves when they're spawned" on).
 
 use std::collections::HashMap;
 
@@ -13,7 +13,7 @@ use crate::spawn::exec::{Job, JobId, OrcaBackend};
 use crate::spawn::pending::{PendingSelect, take_ready};
 use crate::spawn::resolve::outcome_json;
 use crate::spawn::{LiveAgent, SpawnArgs, SpawnEvent, SpawnRunner};
-use crate::ui::spawn::{SpawnDialog, SpawnFleet};
+use crate::ui::spawn::{SpawnClan, SpawnDialog};
 
 /// The spawn runner, the dialog, API spawns waiting for their reply, and the node to select.
 pub(super) struct AppSpawn {
@@ -35,7 +35,7 @@ impl AppSpawn {
 }
 
 impl MyrstackApp {
-    /// Opens "New ant…", with the sidebar repo `repo` picked.
+    /// Opens "New dwarf…", with the sidebar repo `repo` picked.
     pub(super) fn open_spawn_dialog(&mut self, repo: Option<&str>) {
         self.spawn.dialog.open(repo);
     }
@@ -45,9 +45,9 @@ impl MyrstackApp {
         if !self.spawn.dialog.open {
             return;
         }
-        let fleet = SpawnFleet::from_data(self.data.as_ref()).with_agents(self.snapshot.as_ref());
-        let ants = self.whip_window.ants().clone();
-        if let Some(plan) = self.spawn.dialog.show(ctx, &fleet, &ants) {
+        let clan = SpawnClan::from_data(self.data.as_ref()).with_agents(self.snapshot.as_ref());
+        let dwarves = self.whip_window.dwarves().clone();
+        if let Some(plan) = self.spawn.dialog.show(ctx, &clan, &dwarves) {
             log::info!("spawn: launching {:?}", plan.steps);
             let job = self.spawn.runner.submit(Job::Plan(plan.clone()));
             self.spawn.dialog.started(job, plan);
@@ -99,7 +99,7 @@ impl MyrstackApp {
         reply: Reply,
     ) -> Result<(), ControlError> {
         let Some(data) = &self.data else {
-            let e = ControlError::new(ErrorCode::Unavailable, "the app has no fleet data yet");
+            let e = ControlError::new(ErrorCode::Unavailable, "the app has no clan data yet");
             reply.send(Err(e.clone()));
             return Err(e);
         };
@@ -127,7 +127,7 @@ impl MyrstackApp {
             }
         }
         self.whip_window
-            .ants()
+            .dwarves()
             .fill(args.agent, &mut args.model, &mut args.effort);
         let job = Job::Args {
             args,

@@ -1,14 +1,14 @@
 # Myrstack
 
-A native Rust/egui desktop app that shows the agent fleet running in the
+A native Rust/egui desktop app that shows the agent clan running in the
 Orca agent IDE as a dwarf farm: coordinators, their
 workers and their subagents. Select a dwarf to see its terminal and type into it.
 
-The farm is the only fleet view. Settings → Art controls pixel size and palette;
+The farm is the only clan view. Settings → Art controls pixel size and palette;
 `f` or Fit shows the whole farm, and selecting a run or repo focuses its rooms.
 
-**Ant**: one dedicated agent session working on a task (what the Queen, or "New ant…",
-starts). The fleet is the colony of ants.
+**Dwarf**: one dedicated agent session working on a task (what the King, or "New dwarf…",
+starts). The clan is all of Karl's dwarves; the King is its hub.
 
 ## Run
 
@@ -62,7 +62,7 @@ again. To keep permissions across builds, sign with a stable identity, e.g. a se
 
 ## Talk to it from a chat
 
-`myrstack mcp` is an MCP server that lets Claude Code (or another MCP client) read the fleet
+`myrstack mcp` is an MCP server that lets Claude Code (or another MCP client) read the clan
 status and drive the dashboard while Myrstack runs:
 
 ```bash
@@ -70,14 +70,14 @@ cargo build --release
 claude mcp add --scope user myrstack -- "$PWD/target/release/myrstack" mcp
 ```
 
-Then ask Claude things like "what's the fleet status?" or "who needs my input?". The tools
+Then ask Claude things like "what's the clan status?" or "who needs my input?". The tools
 are listed in [docs/mcp.md](docs/mcp.md); the local API it proxies to is in
 [docs/control-api.md](docs/control-api.md).
 
 ## Envoy
 
-Start and stop the Envoy from the Queen controls. It uses one Claude session in the dedicated
-`envoy-home` worktree, with read-only fleet tools and the guarded `envoy_*` tools. Codex starts
+Start and stop the Envoy from the King controls. It uses one Claude session in the dedicated
+`envoy-home` worktree, with read-only clan tools and the guarded `envoy_*` tools. Codex starts
 are unavailable until its MCP tools can be restricted. Sessions from before these restrictions
 must be stopped and restarted; if the identity file was lost, close the existing agent in
 `envoy-home` before starting another.
@@ -88,7 +88,7 @@ on the next Start. Polling has a 30-second minimum, including values loaded from
 
 ## Playbook
 
-Myrstack owns the fleet playbook, the rules coordinators, attendants and workers run by. The
+Myrstack owns the clan playbook, the rules coordinators, attendants and workers run by. The
 files live in [`playbook/`](playbook/README.md) and are served straight from disk, stamped
 with the git commit they came from, so no app needs to run:
 

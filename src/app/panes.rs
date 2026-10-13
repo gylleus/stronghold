@@ -23,7 +23,7 @@ impl TabViewer for Panes<'_> {
 
     fn title(&mut self, tab: &mut Pane) -> egui::WidgetText {
         match tab {
-            Pane::Sidebar => "Fleet".into(),
+            Pane::Sidebar => "Clan".into(),
             Pane::Farm => "Dwarf farm".into(),
             Pane::Details => "Details".into(),
             Pane::Conversation => self.app.conversation_title().into(),
@@ -64,7 +64,7 @@ impl TabViewer for Panes<'_> {
         false
     }
 
-    /// Each pane scrolls its own content; the fleet, chat and terminal fill theirs.
+    /// Each pane scrolls its own content; the clan, chat and terminal fill theirs.
     fn scroll_bars(&self, _tab: &Pane) -> [bool; 2] {
         [false, false]
     }
@@ -113,11 +113,11 @@ impl MyrstackApp {
 
     /// The conversation tab's title: whom it talks to.
     fn conversation_title(&self) -> String {
-        let count = self.fleet.selection().len();
+        let count = self.clan.selection().len();
         if count > 1 {
             format!("{count} selected")
         } else if self.shows_chat() {
-            "Queen".to_owned()
+            "King".to_owned()
         } else {
             self.selected_node()
                 .map_or_else(|| "Conversation".to_owned(), |node| node.label.clone())
@@ -138,17 +138,17 @@ impl MyrstackApp {
         }
     }
 
-    /// Hides the conversation: the Queen's chat and the selection, like ⌘J over her chat.
+    /// Hides the conversation: the King's chat and the selection, like ⌘J over his chat.
     pub(super) fn hide_conversation(&mut self) {
         self.chat_hidden = true;
         self.selected = None;
-        self.fleet.set_selected(None);
+        self.clan.set_selected(None);
     }
 
     /// Filters, runs and the whip log.
     fn sidebar_pane(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         let Some(snapshot) = &self.snapshot else {
-            ui.weak("Waiting for the first fleet poll…");
+            ui.weak("Waiting for the first clan poll…");
             return;
         };
         let mut whip_pick = None;
@@ -163,19 +163,19 @@ impl MyrstackApp {
             })
             .inner;
         if response.filter_changed {
-            self.fleet.set_hidden(&self.filter.hidden(snapshot));
+            self.clan.set_hidden(&self.filter.hidden(snapshot));
         }
         if let Some(run_id) = &response.focus_run {
-            self.fleet.focus_run(run_id);
+            self.clan.focus_run(run_id);
         }
         if let Some(repo) = &response.focus_repo {
-            self.fleet.focus_repo(repo);
+            self.clan.focus_repo(repo);
         }
         if let Some(id) = &response.focus_node {
-            self.fleet.center_on(id);
+            self.clan.center_on(id);
         }
         if let Some(id) = response.select {
-            self.fleet.set_selected(Some(&id));
+            self.clan.set_selected(Some(&id));
             self.selected = Some(id);
         }
         if response.close_shown {
@@ -211,48 +211,46 @@ impl MyrstackApp {
                 });
             }
             Some(data) => {
-                self.ant_farm.set_envoy_receipt(receipt);
+                self.farm.set_envoy_receipt(receipt);
                 let Some(snapshot) = &self.snapshot else {
                     return;
                 };
-                self.ant_farm.set_art(self.whip_window.art());
-                self.ant_farm.set_queen_busy(self.queen_thinking());
-                self.ant_farm.set_queen_focused(self.shows_chat());
-                self.ant_farm.set_envoy_health(self.envoy_status().health());
-                self.ant_farm
-                    .set_envoy_pending(self.envoy_core.pending_count());
-                let sites = ui::ant_farm::rubble::sites(&data.worktrees, &snapshot.nodes);
-                self.ant_farm
-                    .set_rubble(sites, self.worktrees.cleanup_job());
-                let response = self.ant_farm.show(ui, snapshot, &mut self.fleet);
+                self.farm.set_art(self.whip_window.art());
+                self.farm.set_king_busy(self.king_thinking());
+                self.farm.set_king_focused(self.shows_chat());
+                self.farm.set_envoy_health(self.envoy_status().health());
+                self.farm.set_envoy_pending(self.envoy_core.pending_count());
+                let sites = ui::farm::rubble::sites(&data.worktrees, &snapshot.nodes);
+                self.farm.set_rubble(sites, self.worktrees.cleanup_job());
+                let response = self.farm.show(ui, snapshot, &mut self.clan);
                 self.cleanup_in_farm = true;
                 if response.open_envoy {
                     self.envoy_core.open_request = true;
                 }
                 if let Some(id) = &response.clicked {
-                    let additive = ui.input(|i| ui::fleet_view::is_additive(i.modifiers));
-                    self.fleet.click_node(id, additive);
-                    self.selected = self.fleet.selected();
+                    let additive = ui.input(|i| ui::clan_view::is_additive(i.modifiers));
+                    self.clan.click_node(id, additive);
+                    self.selected = self.clan.selected();
                 } else if response.clicked_empty
-                    && !ui.input(|i| ui::fleet_view::is_additive(i.modifiers))
+                    && !ui.input(|i| ui::clan_view::is_additive(i.modifiers))
                 {
-                    self.fleet.set_selected(None);
+                    self.clan.set_selected(None);
                     self.selected = None;
                 }
                 if let Some((hits, additive)) = response.boxed {
                     let mut selection = if additive {
-                        self.fleet.selection()
+                        self.clan.selection()
                     } else {
                         Default::default()
                     };
                     selection.extend(hits.iter().cloned());
                     let primary = self
-                        .fleet
+                        .clan
                         .selected()
                         .filter(|p| selection.contains(p))
                         .or_else(|| hits.first().cloned());
-                    self.fleet.set_selection(&selection, primary.as_ref());
-                    self.selected = self.fleet.selected();
+                    self.clan.set_selection(&selection, primary.as_ref());
+                    self.selected = self.clan.selected();
                 }
                 if !response.close_requested.is_empty() {
                     self.close
@@ -274,7 +272,7 @@ impl MyrstackApp {
         }
     }
 
-    /// The selected node's attributes and actions, or the Queen's review queue, fleet
+    /// The selected node's attributes and actions, or the King's review queue, clan
     /// summary and broadcast.
     fn details_pane(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         if !self.has_details() {

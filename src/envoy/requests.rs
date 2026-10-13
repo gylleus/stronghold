@@ -454,7 +454,7 @@ impl Requests {
             .count()
             >= 6
         {
-            return Err("New request limit: 6 per hour per ant".into());
+            return Err("New request limit: 6 per hour per dwarf".into());
         }
         let old = self.saved.clone();
         let follow_up = target_id.is_some();

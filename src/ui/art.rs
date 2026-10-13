@@ -54,7 +54,7 @@ pub fn portrait(ctx: &egui::Context, who: Portrait, size: f32) -> egui::Image<'s
         .texture_options(egui::TextureOptions::NEAREST)
 }
 
-pub fn queen_avatar(ctx: &egui::Context, size: f32) -> egui::Image<'static> {
+pub fn king_avatar(ctx: &egui::Context, size: f32) -> egui::Image<'static> {
     portrait(ctx, Portrait::King, size)
 }
 

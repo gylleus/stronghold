@@ -1,6 +1,6 @@
 //! The worktree cleanup window on a synthetic plan, with the hammer running along the bottom
-//! (driven by a sweep marker in a temporary data dir, as when the Queen runs `clean_worktrees`).
-//! `cargo run --example ant_farm -- --hammer` shows it breaking heaps in the ant farm.
+//! (driven by a sweep marker in a temporary data dir, as when the King runs `clean_worktrees`).
+//! `cargo run --example farm -- --hammer` shows it breaking heaps in the farm.
 //!
 //! `cargo run --example worktree_cleanup [--shot out.png] [--light]`: with `--shot`, saves a
 //! screenshot after a moment and exits.
@@ -51,7 +51,7 @@ fn plan() -> Plan {
         entries: vec![
             entry(
                 "myrstack",
-                "ant-farm-view",
+                "farm-view",
                 Some(12 * GB),
                 true,
                 "everything is in origin/main",
@@ -132,7 +132,7 @@ impl eframe::App for Demo {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("Ant farm goes here");
+            ui.heading("Farm goes here");
         });
         self.panel.tick(None, now_ms());
         self.panel.window(&ctx);

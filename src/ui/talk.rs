@@ -1,4 +1,4 @@
-//! Talk-to-the-Queen UI: the pill inside the window (with buttons) and the small always-on-top
+//! Talk-to-the-King UI: the pill inside the window (with buttons) and the small always-on-top
 //! overlay window shown while Myrstack is in the background ("● Listening…" with a level
 //! meter, then transcribing, thinking and speaking). The overlay never takes focus or clicks.
 
@@ -70,30 +70,26 @@ pub fn status_text(view: &TalkView<'_>) -> String {
     match view.phase {
         TalkPhase::Listening { .. } => "Listening…".into(),
         TalkPhase::Transcribing => "Transcribing…".into(),
-        TalkPhase::Waiting => "Waiting for the Queen…".into(),
-        TalkPhase::Thinking => "The Queen is thinking…".into(),
-        TalkPhase::Speaking => "The Queen is speaking".into(),
+        TalkPhase::Waiting => "Waiting for the King…".into(),
+        TalkPhase::Thinking => "The King is thinking…".into(),
+        TalkPhase::Speaking => "The King is speaking".into(),
         TalkPhase::Idle => match &view.notice {
             Some(TalkNotice::Info(t) | TalkNotice::Error(t)) => (*t).to_owned(),
             Some(TalkNotice::SpeechModelMissing) => {
-                "Talking to the Queen needs the Parakeet speech model.".into()
+                "Talking to the King needs the Parakeet speech model.".into()
             }
             Some(TalkNotice::VoiceMissing) => {
-                "The Queen's voice is not downloaded, so her reply is text only.".into()
+                "The King's voice is not downloaded, so his reply is text only.".into()
             }
             Some(TalkNotice::Downloading { voice: true, .. }) => {
-                "Downloading the Queen's voice…".into()
+                "Downloading the King's voice…".into()
             }
             Some(TalkNotice::Downloading { voice: false, .. }) => {
                 "Downloading the speech model…".into()
             }
             Some(TalkNotice::DownloadFailed { voice, error }) => format!(
                 "{} download failed: {error}",
-                if *voice {
-                    "Queen voice"
-                } else {
-                    "Speech model"
-                }
+                if *voice { "King voice" } else { "Speech model" }
             ),
             None => String::new(),
         },
@@ -157,7 +153,7 @@ pub fn pill_contents(ui: &mut egui::Ui, view: &TalkView<'_>) -> Option<TalkActio
             action = Some(a);
         }
     };
-    ui.label(RichText::new("Queen").small().weak());
+    ui.label(RichText::new("King").small().weak());
     status_line(ui, view);
     if let Some(hint) = hint_text(view) {
         ui.weak(hint);
@@ -249,7 +245,7 @@ pub fn overlay_position(monitor: Option<egui::Vec2>) -> egui::Pos2 {
 pub fn overlay(ctx: &egui::Context, view: &TalkView<'_>) {
     let monitor = ctx.input(|i| i.viewport().monitor_size);
     let builder = egui::ViewportBuilder::default()
-        .with_title("Myrstack: talking to the Queen")
+        .with_title("Myrstack: talking to the King")
         .with_decorations(false)
         .with_always_on_top()
         .with_active(false)
@@ -259,7 +255,7 @@ pub fn overlay(ctx: &egui::Context, view: &TalkView<'_>) {
         .with_inner_size(OVERLAY_SIZE)
         .with_position(overlay_position(monitor));
     ctx.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("queen_talk_overlay"),
+        egui::ViewportId::from_hash_of("king_talk_overlay"),
         builder,
         |ui, _class| {
             egui::Frame::central_panel(ui.style()).show(ui, |ui| {
@@ -310,9 +306,9 @@ mod tests {
             (TalkPhase::Listening { latched: false }, "Listening…"),
             (TalkPhase::Listening { latched: true }, "Listening…"),
             (TalkPhase::Transcribing, "Transcribing…"),
-            (TalkPhase::Waiting, "Waiting for the Queen…"),
-            (TalkPhase::Thinking, "The Queen is thinking…"),
-            (TalkPhase::Speaking, "The Queen is speaking"),
+            (TalkPhase::Waiting, "Waiting for the King…"),
+            (TalkPhase::Thinking, "The King is thinking…"),
+            (TalkPhase::Speaking, "The King is speaking"),
         ];
         for (phase, text) in phases {
             let v = view(phase, None);
@@ -360,7 +356,7 @@ mod tests {
                 error: "offline",
             }),
         );
-        assert_eq!(status_text(&failed), "Queen voice download failed: offline");
+        assert_eq!(status_text(&failed), "King voice download failed: offline");
         assert_eq!(
             hint_text(&view(TalkPhase::Listening { latched: false }, None)).as_deref(),
             Some("release ⌘⇧E to send")

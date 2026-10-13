@@ -1,4 +1,4 @@
-//! The Envoy: Karl's long-running listener ant for the outside world (Slack now, other
+//! The Envoy: Karl's long-running listener dwarf for the outside world (Slack now, other
 //! protocols later). The app ingests channel events, keeps the drafts Karl approves and sends
 //! only on his approval; the Envoy session reads, triages and drafts.
 

@@ -10,13 +10,13 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::broadcast::{BroadcastSelection, plan_broadcast};
+use crate::clan::ClanData;
 use crate::detect::PromptKind;
-use crate::fleet::FleetData;
-use crate::model::{FleetSnapshot, NodeKind, NodeState};
+use crate::model::{ClanSnapshot, NodeKind, NodeState};
 use crate::orca::OutgoingMessage;
 use crate::orca::commands::{parse_run_list, parse_terminal_list, parse_worker_list};
 use crate::quota::Quotas;
-use crate::ui::sidebar::FleetFilter;
+use crate::ui::sidebar::ClanFilter;
 use crate::whip::{WhipSettings, WhipStatus};
 
 const COORDINATOR: &str = "term_70c8df0b-cf78-4b43-a6f8-aefab63bca21";
@@ -25,7 +25,7 @@ const LOOSE: &str = "term_08fe0725-96a1-4355-a4fd-6c8a07aa6c72";
 const RUN: &str = "run_7c25cdcf46e0";
 const NOW: i64 = 1_790_319_595_528 + 10_000;
 
-fn fleet() -> FleetData {
+fn clan() -> ClanData {
     let terminals = parse_terminal_list(include_bytes!(
         "../../tests/fixtures/orca/terminal_list.json"
     ))
@@ -50,19 +50,19 @@ fn fleet() -> FleetData {
             .unwrap();
     worker.run_id = Some(RUN.into());
     worker.agent_terminal_handle = Some(CODEX.into());
-    FleetData {
+    ClanData {
         polled_at_ms: NOW,
         terminals,
         runs,
         workers: vec![worker],
         needs_input,
-        ..FleetData::default()
+        ..ClanData::default()
     }
 }
 
 fn status_view() -> StatusView {
-    let data = fleet();
-    let snapshot = FleetSnapshot::build(&data, NOW);
+    let data = clan();
+    let snapshot = ClanSnapshot::build(&data, NOW);
     let whip_status = WhipStatus {
         escalated: BTreeSet::from([LOOSE.to_string()]),
         findings: 1,
@@ -70,9 +70,9 @@ fn status_view() -> StatusView {
         dry_run: true,
         ..WhipStatus::default()
     };
-    let filter = FleetFilter {
+    let filter = ClanFilter {
         kinds: BTreeSet::from([NodeKind::Coordinator]),
-        ..FleetFilter::default()
+        ..ClanFilter::default()
     };
     StatusView::build(&ViewInputs {
         snapshot: Some(&snapshot),
@@ -195,19 +195,19 @@ fn mode(path: &Path) -> u32 {
 // View
 
 #[test]
-fn view_summarizes_the_fleet() {
+fn view_summarizes_the_clan() {
     let view = status_view();
     assert_eq!(
-        view.fleet.state, "needs_input",
-        "the Queen takes the most urgent state"
+        view.clan.state, "needs_input",
+        "the King takes the most urgent state"
     );
-    assert_eq!(view.fleet.agents, 3, "the Queen is not an agent");
-    assert!(view.agents.iter().all(|a| a.kind != "queen"));
-    assert!(view.find_agent("queen").is_none());
-    assert_eq!(view.fleet.live, 3);
-    assert_eq!(view.fleet.by_kind["coordinator"], 1);
-    assert_eq!(view.fleet.needs_input, vec![format!("term:{CODEX}")]);
-    let run = &view.fleet.runs[0];
+    assert_eq!(view.clan.agents, 3, "the King is not an agent");
+    assert!(view.agents.iter().all(|a| a.kind != "king"));
+    assert!(view.find_agent("king").is_none());
+    assert_eq!(view.clan.live, 3);
+    assert_eq!(view.clan.by_kind["coordinator"], 1);
+    assert_eq!(view.clan.needs_input, vec![format!("term:{CODEX}")]);
+    let run = &view.clan.runs[0];
     assert_eq!(run.id, RUN);
     assert_eq!(
         run.coordinator.as_deref(),
@@ -287,8 +287,8 @@ fn status_returns_summary_and_dashboard() {
     let h = Harness::new();
     let r = h.ok("status", Value::Null);
     assert_eq!(r["ready"], true);
-    assert_eq!(r["fleet"]["agents"], 3);
-    assert_eq!(r["fleet"]["runs"][0]["id"], RUN);
+    assert_eq!(r["clan"]["agents"], 3);
+    assert_eq!(r["clan"]["runs"][0]["id"], RUN);
     assert_eq!(r["whip"]["dry_run"], true);
     assert_eq!(r["whip"]["escalated"], json!([LOOSE]));
     assert_eq!(r["dashboard"]["selected"], "term:x");
@@ -334,8 +334,8 @@ fn agents_filters() {
 
 #[test]
 fn a_parked_agent_is_reported_apart_from_the_live_counts() {
-    let data = fleet();
-    let mut snapshot = FleetSnapshot::build(&data, NOW);
+    let data = clan();
+    let mut snapshot = ClanSnapshot::build(&data, NOW);
     let codex = crate::model::NodeId::terminal(CODEX);
     snapshot.mark_parked(&[crate::park::ParkedAgent {
         node_id: codex.to_string(),
@@ -357,16 +357,16 @@ fn a_parked_agent_is_reported_apart_from_the_live_counts() {
 
         selected: None,
         selection: Vec::new(),
-        filter: &FleetFilter::default(),
+        filter: &ClanFilter::default(),
         whip_settings_open: false,
         now_ms: NOW,
     });
-    assert_eq!(view.fleet.parked, vec![codex.to_string()]);
-    assert!(view.fleet.needs_input.is_empty());
-    assert_eq!(view.fleet.agents, 3, "a parked agent is still an agent");
-    assert_eq!(view.fleet.by_state.values().sum::<usize>(), 2);
-    assert_ne!(view.fleet.state, "needs_input");
-    assert!(!view.fleet.runs[0].needs_input);
+    assert_eq!(view.clan.parked, vec![codex.to_string()]);
+    assert!(view.clan.needs_input.is_empty());
+    assert_eq!(view.clan.agents, 3, "a parked agent is still an agent");
+    assert_eq!(view.clan.by_state.values().sum::<usize>(), 2);
+    assert_ne!(view.clan.state, "needs_input");
+    assert!(!view.clan.runs[0].needs_input);
     let agent = view.find_agent(CODEX).unwrap();
     assert!(agent.parked);
     assert_eq!(agent.parked_at_ms, Some(NOW - 1_000));
@@ -878,8 +878,8 @@ impl crate::broadcast::BroadcastSender for FakeSender {
 
 #[test]
 fn broadcast_delivery_reports_each_outcome() {
-    let data = fleet();
-    let snapshot = FleetSnapshot::build(&data, NOW);
+    let data = clan();
+    let snapshot = ClanSnapshot::build(&data, NOW);
     let plan = plan_broadcast(
         &snapshot,
         &BroadcastSelection::new([RUN, "run_gone"]),
@@ -894,7 +894,7 @@ fn broadcast_delivery_reports_each_outcome() {
     assert_eq!(r["deliveries"][0]["coordinator"], COORDINATOR);
     assert_eq!(r["deliveries"][0]["message_id"], "msg_1");
     assert_eq!(r["skipped"][0]["run_id"], "run_gone");
-    assert_eq!(ok.sent[0].subject, "Queen: wrap up");
+    assert_eq!(ok.sent[0].subject, "King: wrap up");
 
     let mut failing = FakeSender {
         sent: Vec::new(),
@@ -908,10 +908,10 @@ fn broadcast_delivery_reports_each_outcome() {
 
 #[test]
 fn filter_change_applies_only_given_fields() {
-    let mut filter = FleetFilter {
+    let mut filter = ClanFilter {
         text: "old".into(),
         show_loose: false,
-        ..FleetFilter::default()
+        ..ClanFilter::default()
     };
     FilterChange {
         repos: Some(BTreeSet::from(["myrstack".to_string()])),
@@ -929,9 +929,9 @@ fn filter_change_applies_only_given_fields() {
     .apply(&mut filter);
     assert_eq!(
         filter,
-        FleetFilter {
+        ClanFilter {
             text: "new".into(),
-            ..FleetFilter::default()
+            ..ClanFilter::default()
         }
     );
 }
@@ -1003,10 +1003,10 @@ fn whip_with_targets_is_an_action_and_without_them_a_read() {
 }
 
 #[test]
-fn fleet_data_serves_the_raw_poll_and_status_carries_the_playbook() {
+fn clan_data_serves_the_raw_poll_and_status_carries_the_playbook() {
     let h = Harness::new();
-    let r = h.ok("fleet_data", Value::Null);
-    let facts: crate::playbook::fill::FleetFacts = serde_json::from_value(r).unwrap();
+    let r = h.ok("clan_data", Value::Null);
+    let facts: crate::playbook::fill::ClanFacts = serde_json::from_value(r).unwrap();
     assert_eq!(facts.runs[0].id, RUN);
     assert!(!facts.terminals.is_empty());
     assert!(facts.terminals.iter().all(|t| t.preview.is_none()));
@@ -1014,7 +1014,7 @@ fn fleet_data_serves_the_raw_poll_and_status_carries_the_playbook() {
         h.ok("ping", Value::Null)["methods"]["read"]
             .as_array()
             .unwrap()
-            .contains(&json!("fleet_data"))
+            .contains(&json!("clan_data"))
     );
 
     let mut view = status_view();
@@ -1034,48 +1034,48 @@ fn fleet_data_serves_the_raw_poll_and_status_carries_the_playbook() {
     assert_eq!(status["playbook"]["nodes"][0]["stale"], true);
 
     h.status.publish(StatusView::default());
-    assert_eq!(h.err("fleet_data", Value::Null), ErrorCode::Unavailable);
+    assert_eq!(h.err("clan_data", Value::Null), ErrorCode::Unavailable);
 }
 
 #[test]
 fn health_serves_the_published_report() {
-    use crate::health::{AppFacts, QueenFact, evaluate};
+    use crate::health::{AppFacts, KingFact, evaluate};
     let h = Harness::new();
     let mut view = status_view();
     let facts = AppFacts {
         whip_enabled: true,
         whip_dry_run: false,
-        queen: QueenFact::Crashed("exit 1".into()),
+        king: KingFact::Crashed("exit 1".into()),
     };
     view.health = evaluate(&facts, None, 0);
     h.status.publish(view);
     let health = h.ok("health", Value::Null);
     assert_eq!(health["level"], "error");
     assert_eq!(health["checked_at_ms"], Value::Null);
-    assert_eq!(health["checks"][1]["key"], "queen");
+    assert_eq!(health["checks"][1]["key"], "king");
     assert_eq!(health["checks"][1]["detail"], "crashed: exit 1");
     assert!(health["checks"][1]["fix"].is_string());
     assert!(crate::control::server::READ_METHODS.contains(&"health"));
 }
 
 #[test]
-fn status_reports_queen_auto_read_only() {
+fn status_reports_king_auto_read_only() {
     use crate::control::server::{ACTION_METHODS, READ_METHODS};
     let h = Harness::new();
-    assert_eq!(h.ok("status", Value::Null)["queen_auto"], false);
+    assert_eq!(h.ok("status", Value::Null)["king_auto"], false);
     let mut view = status_view();
-    view.queen_auto = true;
+    view.king_auto = true;
     h.status.publish(view);
-    assert_eq!(h.ok("status", Value::Null)["queen_auto"], true);
+    assert_eq!(h.ok("status", Value::Null)["king_auto"], true);
 
     // Nothing sets it: no method, and no action parses one.
     for method in [
-        "queen_auto",
+        "king_auto",
         "auto",
         "auto_mode",
         "set_auto",
         "set_auto_mode",
-        "set_queen_auto",
+        "set_king_auto",
     ] {
         assert!(!READ_METHODS.contains(&method) && !ACTION_METHODS.contains(&method));
         assert!(

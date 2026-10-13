@@ -1,16 +1,16 @@
-//! Talking to the Queen: hold the talk hotkey to record, release to transcribe and send the
-//! text to her chat as a voice message, and hear her reply as it streams in.
+//! Talking to the King: hold the talk hotkey to record, release to transcribe and send the
+//! text to his chat as a voice message, and hear his reply as it streams in.
 //!
 //! [`Talk`] is the state machine. It borrows the app's one [`Dictation`] machine (one
 //! microphone, one loaded Parakeet model) for the recording, so while it owns a recording the
 //! ⌘E dictation code must leave that machine alone (see [`Talk::owns_dictation`]). The chat
-//! and the speaker sit behind [`QueenChat`] and [`Say`], so tests drive it with fakes.
+//! and the speaker sit behind [`KingChat`] and [`Say`], so tests drive it with fakes.
 //!
 //! Behaviour:
-//! - A press stops her speaking (and silences the rest of that reply) and starts recording.
-//!   A press that only interrupted her and heard nothing sends nothing and says nothing.
-//! - A transcript is sent as soon as the chat can take it. If she is mid-turn, that turn is
-//!   interrupted first: Karl talking over her is a new request, like in a conversation, and a
+//! - A press stops him speaking (and silences the rest of that reply) and starts recording.
+//!   A press that only interrupted him and heard nothing sends nothing and says nothing.
+//! - A transcript is sent as soon as the chat can take it. If he is mid-turn, that turn is
+//!   interrupted first: Karl talking over the King is a new request, like in a conversation, and a
 //!   turn waiting on a permission card would otherwise never end. If the chat does not
 //!   become ready within [`SEND_TIMEOUT`], the text comes back as [`TalkEvent::NotSent`].
 //! - Replies to voice messages are always spoken; other replies only with "Speak replies".
@@ -48,8 +48,8 @@ impl Say for Speaker {
     }
 }
 
-/// The Queen's chat as the talk machine drives it ([`ChatSession`] in the app).
-pub trait QueenChat {
+/// The King's chat as the talk machine drives it ([`ChatSession`] in the app).
+pub trait KingChat {
     /// Ready and not in a turn.
     fn can_send(&self) -> bool;
     /// A turn is running.
@@ -60,7 +60,7 @@ pub trait QueenChat {
     fn interrupt(&mut self);
 }
 
-impl QueenChat for ChatSession {
+impl KingChat for ChatSession {
     fn can_send(&self) -> bool {
         ChatSession::can_send(self)
     }
@@ -87,9 +87,9 @@ pub enum TalkPhase {
         latched: bool,
     },
     Transcribing,
-    /// The transcript waits for the Queen to finish or start.
+    /// The transcript waits for the King to finish or start.
     Waiting,
-    /// Her reply to a voice message is on its way; nothing to hear yet.
+    /// His reply to a voice message is on its way; nothing to hear yet.
     Thinking,
     Speaking,
 }
@@ -123,7 +123,7 @@ struct ReplySpeech {
     speak: bool,
     /// The turn started with a voice message.
     voice: bool,
-    /// Karl stopped her: the rest of this reply stays silent.
+    /// Karl stopped the King: the rest of this reply stays silent.
     muted: bool,
     /// The turn is still running.
     running: bool,
@@ -134,12 +134,12 @@ struct ReplySpeech {
     spoken: usize,
 }
 
-/// The talk-to-the-Queen state machine.
+/// The talk-to-the-King state machine.
 pub struct Talk<S> {
     speaker: S,
     /// The dictation machine's recording or transcription is ours.
     active: bool,
-    /// The current recording began by interrupting her speech.
+    /// The current recording began by interrupting his speech.
     began_by_interrupting: bool,
     pending: Option<Pending>,
     reply: Option<ReplySpeech>,
@@ -222,7 +222,7 @@ impl<S: Say> Talk<S> {
     }
 
     /// Starts a recording that runs until the next press or [`finish`](Self::finish) (the
-    /// palette's "Talk to the Queen").
+    /// palette's "Talk to the King").
     pub fn start_latched<C: Capture, R: Recognize>(
         &mut self,
         dictation: &mut Dictation<C, R>,
@@ -254,7 +254,7 @@ impl<S: Say> Talk<S> {
         cancelled
     }
 
-    /// Stops her speaking now and keeps the rest of this reply silent. Returns whether she was
+    /// Stops him speaking now and keeps the rest of this reply silent. Returns whether he was
     /// speaking.
     pub fn stop_speaking(&mut self) -> bool {
         let speaking = self.speaker.is_speaking();
@@ -271,7 +271,7 @@ impl<S: Say> Talk<S> {
 
     /// Advances the machine: collects the transcript and sends it when the chat can take it.
     /// Call every frame (also while the window is hidden).
-    pub fn tick<C: Capture, R: Recognize, Q: QueenChat + ?Sized>(
+    pub fn tick<C: Capture, R: Recognize, Q: KingChat + ?Sized>(
         &mut self,
         dictation: &mut Dictation<C, R>,
         chat: &mut Q,
@@ -321,7 +321,7 @@ impl<S: Say> Talk<S> {
 
     fn queue(&mut self, text: String) {
         match &mut self.pending {
-            // Said twice before she could take the first: send both.
+            // Said twice before he could take the first: send both.
             Some(pending) => {
                 pending.text.push(' ');
                 pending.text.push_str(&text);
@@ -519,7 +519,7 @@ mod tests {
         interrupts: usize,
     }
 
-    impl QueenChat for Chat {
+    impl KingChat for Chat {
         fn can_send(&self) -> bool {
             self.up && !self.running
         }
@@ -582,7 +582,7 @@ mod tests {
             self.voice.said.borrow().clone()
         }
         /// Records and transcribes `text` with a press and release.
-        fn say_to_queen(&mut self, text: &str) -> Vec<TalkEvent> {
+        fn say_to_king(&mut self, text: &str) -> Vec<TalkEvent> {
             self.talk.press(&mut self.dict).unwrap();
             self.talk.release(&mut self.dict);
             self.stt.answer(text);
@@ -616,7 +616,7 @@ mod tests {
         assert_eq!(r.chat.sent, ["How many agents need input?"]);
         assert_eq!(*r.mic.log.borrow(), ["start", "stop"]);
 
-        // The chat starts the voice turn; her say-line streams in and is spoken by sentence,
+        // The chat starts the voice turn; his say-line streams in and is spoken by sentence,
         // the details after it are not.
         assert_eq!(
             r.talk.on_speech(&SpeechEvent::TurnStart { voice: true }),
@@ -708,15 +708,15 @@ mod tests {
         r.talk.on_speech(&SpeechEvent::TurnEnd);
         assert!(r.talk.is_speaking());
         r.talk.press(&mut r.dict).unwrap();
-        assert!(!r.talk.is_speaking(), "the press stopped her");
+        assert!(!r.talk.is_speaking(), "the press stopped him");
         assert_eq!(r.phase(), TalkPhase::Listening { latched: false });
         r.talk.release(&mut r.dict);
         r.stt.answer("");
-        assert_eq!(r.tick(), [], "a tap to stop her is not a failed message");
+        assert_eq!(r.tick(), [], "a tap to stop him is not a failed message");
         assert!(r.chat.sent.is_empty());
 
-        // Without interrupting her, an empty recording is reported.
-        assert_eq!(r.say_to_queen("  "), [TalkEvent::NoSpeech]);
+        // Without interrupting him, an empty recording is reported.
+        assert_eq!(r.say_to_king("  "), [TalkEvent::NoSpeech]);
         assert!(r.chat.sent.is_empty());
     }
 
@@ -724,7 +724,7 @@ mod tests {
     fn a_busy_chat_is_interrupted_then_sent_to() {
         let mut r = rig();
         r.chat.running = true;
-        assert_eq!(r.say_to_queen("Stop that and check run 7."), []);
+        assert_eq!(r.say_to_king("Stop that and check run 7."), []);
         assert_eq!(r.chat.interrupts, 1);
         assert_eq!(r.phase(), TalkPhase::Waiting);
         assert_eq!(r.tick(), []);
@@ -743,7 +743,7 @@ mod tests {
         r.chat.up = false;
         r.talk.set_send_timeout(Duration::ZERO);
         assert_eq!(
-            r.say_to_queen("Anyone there?"),
+            r.say_to_king("Anyone there?"),
             [TalkEvent::NotSent("Anyone there?".into())]
         );
         assert_eq!(
@@ -757,8 +757,8 @@ mod tests {
     fn two_messages_before_she_is_ready_go_together() {
         let mut r = rig();
         r.chat.up = false;
-        assert_eq!(r.say_to_queen("First."), []);
-        assert_eq!(r.say_to_queen("Second."), []);
+        assert_eq!(r.say_to_king("First."), []);
+        assert_eq!(r.say_to_king("Second."), []);
         r.chat.up = true;
         assert_eq!(r.tick(), [TalkEvent::Sent("First. Second.".into())]);
     }
@@ -839,7 +839,7 @@ mod tests {
         let mut r = rig();
         r.talk.on_speech(&SpeechEvent::TurnStart { voice: true });
         // Narration before a tool call is held back, not spoken.
-        deltas(&mut r, &["Let me check the fleet."]);
+        deltas(&mut r, &["Let me check the clan."]);
         r.talk.on_speech(&SpeechEvent::BlockEnd);
         assert!(r.said().is_empty());
         deltas(

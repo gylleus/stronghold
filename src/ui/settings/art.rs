@@ -2,8 +2,8 @@
 
 use eframe::egui;
 
-use crate::ui::ant_farm::art::{ArtSettings, Pixels};
 use crate::ui::dwarf::{cutout::Outline, pixel};
+use crate::ui::farm::art::{ArtSettings, Pixels};
 
 pub const PIXELS_LABEL: &str = "Pixels";
 pub const PALETTE_LABEL: &str = "Palette";

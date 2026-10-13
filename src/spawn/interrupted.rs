@@ -14,7 +14,7 @@ use serde_json::Value;
 const FILE: &str = "interrupted-spawns.json";
 /// How long a record is shown.
 pub const MAX_AGE_MS: i64 = 6 * 3600 * 1000;
-/// A record whose agent is not in the fleet is dropped once it is this old (the poller needs a
+/// A record whose agent is not in the clan is dropped once it is this old (the poller needs a
 /// few seconds to see a new terminal).
 pub const GONE_GRACE_MS: i64 = 2 * 60 * 1000;
 /// Most records kept.
@@ -120,7 +120,7 @@ pub fn record(path: &Path, record: InterruptedSpawn) -> io::Result<()> {
     save(path, &records)
 }
 
-/// The records whose agent is still around, each with its current state, given the fleet's
+/// The records whose agent is still around, each with its current state, given the clan's
 /// agents as `(id, terminal handle, state)`. Records of agents that are gone are dropped from
 /// the file once [`GONE_GRACE_MS`] old.
 pub fn current(

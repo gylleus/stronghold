@@ -7,10 +7,10 @@ use std::rc::Rc;
 
 use eframe::egui::{self, Key, Modifiers, RichText};
 
-use crate::fleet::FleetData;
-use crate::model::{FleetSnapshot, NO_REPO, Node, NodeId, NodeKind, NodeState, RepoIndex};
+use crate::clan::ClanData;
+use crate::model::{ClanSnapshot, NO_REPO, Node, NodeId, NodeKind, NodeState, RepoIndex};
+use crate::ui::clan_view::{kind_label, state_color, state_label};
 use crate::ui::commands::{self, ACTIONS, ActionContext, ActionId, Recents};
-use crate::ui::fleet_view::{kind_label, state_color, state_label};
 
 /// Most agents the palette lists for a query.
 pub const MAX_RESULTS: usize = 12;
@@ -131,7 +131,7 @@ impl SearchEntry {
 }
 
 /// Search entries for every node of `snapshot`; `data` adds task titles.
-pub fn search_entries(snapshot: &FleetSnapshot, data: Option<&FleetData>) -> Vec<SearchEntry> {
+pub fn search_entries(snapshot: &ClanSnapshot, data: Option<&ClanData>) -> Vec<SearchEntry> {
     let repos = RepoIndex::new(snapshot);
     snapshot
         .nodes
@@ -142,8 +142,8 @@ pub fn search_entries(snapshot: &FleetSnapshot, data: Option<&FleetData>) -> Vec
 
 fn entry(
     node: &Node,
-    snapshot: &FleetSnapshot,
-    data: Option<&FleetData>,
+    snapshot: &ClanSnapshot,
+    data: Option<&ClanData>,
     repos: &RepoIndex,
 ) -> SearchEntry {
     let run = node.run_id.as_deref();
@@ -168,7 +168,7 @@ fn entry(
             Field::Repo,
             repos
                 .node(&node.id)
-                .filter(|r| *r != NO_REPO && node.kind != NodeKind::Queen)
+                .filter(|r| *r != NO_REPO && node.kind != NodeKind::King)
                 .map(str::to_string),
         ),
         (Field::Worktree, node.worktree_path.clone()),
@@ -396,7 +396,7 @@ pub struct PaletteRow {
 
 /// The palette's rows for `query`. Empty: recent actions (or a few suggestions), then the
 /// first agents. `>` prefix: actions only (all of them, recents first, for a bare `>`).
-/// Otherwise an "Ants" and an "Actions" section, the one with the better top match first
+/// Otherwise an "Dwarves" and an "Actions" section, the one with the better top match first
 /// (actions on a tie).
 pub fn palette_rows(
     entries: &[SearchEntry],
@@ -439,7 +439,10 @@ pub fn palette_rows(
                 section("Recent actions", recent);
             }
             let nodes = rank(entries, "", EMPTY_QUERY_NODES);
-            section("Ants", nodes.into_iter().map(PaletteItem::Node).collect());
+            section(
+                "Dwarves",
+                nodes.into_iter().map(PaletteItem::Node).collect(),
+            );
         }
         return rows;
     }
@@ -466,11 +469,11 @@ pub fn palette_rows(
         .map(|(id, _)| PaletteItem::Action(id))
         .collect();
     if agents_first {
-        section("Ants", agent_items);
+        section("Dwarves", agent_items);
         section("Actions", action_items);
     } else {
         section("Actions", action_items);
-        section("Ants", agent_items);
+        section("Dwarves", agent_items);
     }
     rows
 }
@@ -583,8 +586,8 @@ impl SearchPalette {
     pub fn show(
         &mut self,
         ctx: &egui::Context,
-        snapshot: Option<&FleetSnapshot>,
-        data: Option<&FleetData>,
+        snapshot: Option<&ClanSnapshot>,
+        data: Option<&ClanData>,
         hidden: &BTreeSet<NodeId>,
         cx: &ActionContext,
     ) -> Option<SearchOutcome> {
@@ -624,7 +627,7 @@ impl SearchPalette {
                 ui.set_width(520.0_f32.min(ctx.content_rect().width() - 40.0));
                 let edit = ui.add(
                     egui::TextEdit::singleline(&mut self.query)
-                        .hint_text("Search ants and actions (> for actions only)…")
+                        .hint_text("Search dwarves and actions (> for actions only)…")
                         .desired_width(f32::INFINITY),
                 );
                 if std::mem::take(&mut self.focus_query) {
@@ -635,7 +638,7 @@ impl SearchPalette {
                 }
                 ui.separator();
                 if rows.is_empty() {
-                    ui.weak("No matching ants or actions");
+                    ui.weak("No matching dwarves or actions");
                 }
                 egui::ScrollArea::vertical()
                     .max_height(420.0)
@@ -980,7 +983,7 @@ mod tests {
 
     #[test]
     fn entries_include_objective_and_task_title() {
-        let mut snapshot = FleetSnapshot::default();
+        let mut snapshot = ClanSnapshot::default();
         snapshot.runs = vec![RunSummary {
             id: "run1".into(),
             objective: Some("Migrate checkout".into()),
@@ -995,7 +998,7 @@ mod tests {
         w.worktree_path = Some("/Users/x/repo/hackathon/commerce-platform".into());
         snapshot.nodes = vec![w];
 
-        let mut data = FleetData::default();
+        let mut data = ClanData::default();
         data.tasks.insert(
             "run1".into(),
             vec![Task {
@@ -1028,11 +1031,11 @@ mod tests {
     }
 
     #[test]
-    fn search_finds_the_queen() {
-        let snapshot = FleetSnapshot::build(&FleetData::default(), 0);
+    fn search_finds_the_king() {
+        let snapshot = ClanSnapshot::build(&ClanData::default(), 0);
         let entries = search_entries(&snapshot, None);
-        let hits = rank(&entries, "que", MAX_RESULTS);
-        assert_eq!(entries[hits[0].index].id, NodeId::queen());
+        let hits = rank(&entries, "kin", MAX_RESULTS);
+        assert_eq!(entries[hits[0].index].id, NodeId::king());
     }
 
     #[test]
@@ -1119,7 +1122,7 @@ mod tests {
         w.task_id = Some("task-7".into());
         w.terminal_handle = Some("term_ABC".into());
         w.worktree_path = Some("/x/commerce-platform".into());
-        let mut snapshot = FleetSnapshot::default();
+        let mut snapshot = ClanSnapshot::default();
         snapshot.nodes = vec![w, node("term:other", NodeKind::Terminal, "worker 3")];
         let entries = search_entries(&snapshot, None);
         for (query, field) in [
@@ -1190,7 +1193,7 @@ mod tests {
 
     #[test]
     fn entries_follow_the_snapshot_once_invalidated() {
-        let mut snapshot = FleetSnapshot::build(&FleetData::default(), 0);
+        let mut snapshot = ClanSnapshot::build(&ClanData::default(), 0);
         let mut palette = SearchPalette::default();
         palette.open();
         palette.query = "newc".into();
@@ -1207,7 +1210,7 @@ mod tests {
         palette.snapshot_changed();
         let (_, output) = run_palette(&mut palette, &snapshot, &cx, vec![]);
         assert!(text_center(&output, "newcomer").is_some());
-        assert!(text_center(&output, "Ants").is_some());
+        assert!(text_center(&output, "Dwarves").is_some());
     }
 
     #[test]
@@ -1281,7 +1284,7 @@ mod tests {
         // An exact node label outranks an action matching only by keyword.
         let rows = palette_rows(&entries, "chat", &Recents::default(), &cx);
         assert_eq!(row_names(&entries, &rows)[0], "chat-node");
-        assert_eq!(rows[0].header, Some("Ants"));
+        assert_eq!(rows[0].header, Some("Dwarves"));
         assert!(actions(&rows).contains(&ActionId::OpenChat));
         // Every token must match an action's title or keywords.
         let rows = palette_rows(&entries, "whip stalled", &Recents::default(), &cx);
@@ -1292,7 +1295,7 @@ mod tests {
         assert_eq!(names[0], ">whip_stalled", "{names:?}");
         assert!(names.contains(&"whipper".to_string()));
         let headers: Vec<_> = rows.iter().filter_map(|r| r.header).collect();
-        assert_eq!(headers, ["Actions", "Ants"]);
+        assert_eq!(headers, ["Actions", "Dwarves"]);
         // Dynamic titles are searchable, and so are the fixed ones.
         let rows = palette_rows(&entries, "hide loose", &Recents::default(), &cx);
         assert_eq!(actions(&rows), [ActionId::ToggleLoose]);
@@ -1357,7 +1360,7 @@ mod tests {
         );
         assert_eq!(rows[0].header, Some("Recent actions"));
         assert_eq!(rows[1].header, None);
-        assert_eq!(rows[2].header, Some("Ants"));
+        assert_eq!(rows[2].header, Some("Dwarves"));
     }
 
     #[test]
@@ -1394,7 +1397,7 @@ mod tests {
     /// and the last frame's output.
     fn run_palette(
         palette: &mut SearchPalette,
-        snapshot: &FleetSnapshot,
+        snapshot: &ClanSnapshot,
         cx: &ActionContext,
         events: Vec<egui::Event>,
     ) -> (Option<SearchOutcome>, egui::FullOutput) {
@@ -1423,7 +1426,7 @@ mod tests {
 
     #[test]
     fn palette_renders_actions_with_shortcuts_and_reasons() {
-        let snapshot = FleetSnapshot::build(&FleetData::default(), 0);
+        let snapshot = ClanSnapshot::build(&ClanData::default(), 0);
         let cx = ready();
         let mut palette = SearchPalette::default();
         palette.open();
@@ -1432,7 +1435,7 @@ mod tests {
         assert_eq!(outcome, None);
         use crate::ui::test_util::text_center;
         for text in [
-            "Open Queen chat",
+            "Open King chat",
             "⌘J",
             "Toggle whip dry-run (now on)",
             "Select a node first",
@@ -1442,18 +1445,18 @@ mod tests {
             assert!(text_center(&output, text).is_some(), "{text:?} is drawn");
         }
 
-        palette.query = "que".into();
+        palette.query = "kin".into();
         let (_, output) = run_palette(&mut palette, &snapshot, &cx, vec![]);
         assert!(
-            text_center(&output, "Queen").is_some(),
+            text_center(&output, "King").is_some(),
             "nodes and actions mix"
         );
-        assert!(text_center(&output, "Open Queen chat").is_some());
+        assert!(text_center(&output, "Open King chat").is_some());
     }
 
     #[test]
     fn enter_runs_an_enabled_action_and_records_it() {
-        let snapshot = FleetSnapshot::build(&FleetData::default(), 0);
+        let snapshot = ClanSnapshot::build(&ClanData::default(), 0);
         let cx = ready();
         let enter = key(Key::Enter, Modifiers::NONE);
 

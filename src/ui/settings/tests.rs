@@ -23,12 +23,12 @@ fn general() -> GeneralInfo {
 fn cx<'a>(
     status: &'a WhipStatus,
     general: &'a GeneralInfo,
-    queen: QueenStatus<'a>,
+    king: KingStatus<'a>,
 ) -> PaneContext<'a> {
     PaneContext {
         whip_status: status,
         now_ms: 0,
-        queen,
+        king,
         general,
         voice: VoiceStatus::default(),
         notify: NotifyStatus::default(),
@@ -66,20 +66,20 @@ fn drawn(pane: &mut SettingsPane, cx: &PaneContext<'_>, labels: &[&str]) -> Vec<
 fn each_section_renders_headless() {
     let status = WhipStatus::default();
     let info = general();
-    let queen = QueenStatus {
+    let king = KingStatus {
         auto_mode: true,
         running_model: Some("claude-fable-5"),
         env_model: None,
     };
     let cases: [(Section, &[&str]); 7] = [
         (
-            Section::Queen,
+            Section::King,
             &[
                 "Model",
                 "Effort",
-                queen::CLI_DEFAULT,
+                king::CLI_DEFAULT,
                 "claude-fable-5",
-                "Save and restart the Queen",
+                "Save and restart the King",
                 "Speak replies",
             ],
         ),
@@ -118,9 +118,9 @@ fn each_section_renders_headless() {
         (
             Section::Voice,
             &[
-                "Talk to the Queen",
+                "Talk to the King",
                 "⌘⇧E",
-                "Speak all of the Queen's replies",
+                "Speak all of the King's replies",
                 "▶ Test voice",
                 "Speech recognition (Parakeet)",
             ],
@@ -146,7 +146,7 @@ fn each_section_renders_headless() {
     for (section, labels) in cases {
         let mut pane = SettingsPane::load(None);
         pane.open_section(section);
-        let c = cx(&status, &info, queen);
+        let c = cx(&status, &info, king);
         let mut want: Vec<&str> = labels.to_vec();
         want.extend(Section::ALL.iter().map(|s| s.title()));
         let got = drawn(&mut pane, &c, &want);
@@ -159,20 +159,20 @@ fn each_section_renders_headless() {
 }
 
 #[test]
-fn queen_section_shows_the_env_override() {
+fn king_section_shows_the_env_override() {
     let status = WhipStatus::default();
     let info = general();
     let mut pane = SettingsPane::load(None);
-    pane.open_section(Section::Queen);
-    let queen = QueenStatus {
+    pane.open_section(Section::King);
+    let king = KingStatus {
         auto_mode: false,
         running_model: None,
         env_model: Some("haiku"),
     };
-    let text = "Overridden by env: MYRSTACK_CHAT_MODEL=haiku. The Queen runs haiku; the model \
+    let text = "Overridden by env: MYRSTACK_CHAT_MODEL=haiku. The King runs haiku; the model \
                 above applies once the variable is unset.";
     assert_eq!(
-        drawn(&mut pane, &cx(&status, &info, queen), &[text]),
+        drawn(&mut pane, &cx(&status, &info, king), &[text]),
         vec![text]
     );
 }
@@ -191,11 +191,11 @@ fn old_whip_entry_points_open_the_whip_section() {
     assert!(pane.open);
     assert_eq!(pane.section, Section::Whip);
 
-    // The gear opens the last section shown (Queen at first).
+    // The gear opens the last section shown (King at first).
     let mut pane = SettingsPane::load(None);
     click_label("⚙", |ui| pane.gear_button(ui));
     assert!(pane.open);
-    assert_eq!(pane.section, Section::Queen);
+    assert_eq!(pane.section, Section::King);
     pane.open = false;
     pane.section = Section::General;
     pane.open_settings();
@@ -209,7 +209,7 @@ fn whip_all_stalled_now_is_taken_once() {
     let status = WhipStatus::default();
     let info = general();
     let out = click_label("Whip all stalled now", |ui| {
-        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+        pane.show(ui.ctx(), &cx(&status, &info, KingStatus::default()))
     });
     assert!(out.whip_stalled);
     assert!(pane.take_whip_stalled());
@@ -233,97 +233,101 @@ fn save_writes_the_file_and_applies() {
 }
 
 #[test]
-fn queen_save_keeps_the_other_sections() {
+fn king_save_keeps_the_other_sections() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
     let mut pane = SettingsPane::load(Some(path.clone()));
     pane.whip_draft.dry_run = false;
     pane.save_whip().unwrap();
 
-    pane.queen_draft.pick(Some("opus"));
-    pane.queen_draft.settings.effort = Some("high".into());
-    let queen = pane.save_queen().unwrap();
-    assert_eq!(queen.model.as_deref(), Some("opus"));
+    pane.king_draft.pick(Some("opus"));
+    pane.king_draft.settings.effort = Some("high".into());
+    let king = pane.save_king().unwrap();
+    assert_eq!(king.model.as_deref(), Some("opus"));
     let on_disk = Settings::load_from(&path).settings;
-    assert_eq!(on_disk.queen, queen);
+    assert_eq!(on_disk.king, king);
     assert!(!on_disk.whip.dry_run, "whip section kept");
 
     // A custom model is trimmed; a blank one means the CLI default.
-    pane.queen_draft.pick_custom("  claude-opus-4-8 ");
+    pane.king_draft.pick_custom("  claude-opus-4-8 ");
     assert_eq!(
-        pane.save_queen().unwrap().model.as_deref(),
+        pane.save_king().unwrap().model.as_deref(),
         Some("claude-opus-4-8")
     );
     assert!(
-        pane.queen_draft.custom,
+        pane.king_draft.custom,
         "an unlisted model reopens as custom"
     );
-    pane.queen_draft.pick_custom("   ");
-    assert_eq!(pane.save_queen().unwrap().model, None);
+    pane.king_draft.pick_custom("   ");
+    assert_eq!(pane.save_king().unwrap().model, None);
 
     // Invalid: nothing saved.
-    pane.queen_draft.pick_custom("claude opus");
-    assert_eq!(pane.save_queen(), None);
+    pane.king_draft.pick_custom("claude opus");
+    assert_eq!(pane.save_king(), None);
     assert!(pane.message.as_ref().unwrap().0);
-    assert_eq!(Settings::load_from(&path).settings.queen.model, None);
+    assert_eq!(Settings::load_from(&path).settings.king.model, None);
 
     // Reloading keeps everything.
     let reloaded = SettingsPane::load(Some(path));
-    assert_eq!(reloaded.queen(), pane.queen());
+    assert_eq!(reloaded.king(), pane.king());
     assert_eq!(reloaded.whip(), pane.whip());
 }
 
 #[test]
-fn clicking_save_reports_the_queen_settings() {
+fn clicking_save_reports_the_king_settings() {
     let dir = tempfile::tempdir().unwrap();
     let mut pane = SettingsPane::load(Some(dir.path().join("settings.json")));
-    pane.open_section(Section::Queen);
-    pane.queen_draft.pick(Some("sonnet"));
+    pane.open_section(Section::King);
+    pane.king_draft.pick(Some("sonnet"));
     let status = WhipStatus::default();
     let info = general();
-    let out = click_label("Save and restart the Queen", |ui| {
-        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+    let out = click_label("Save and restart the King", |ui| {
+        pane.show(ui.ctx(), &cx(&status, &info, KingStatus::default()))
     });
-    assert_eq!(out.queen.unwrap().model.as_deref(), Some("sonnet"));
+    assert_eq!(out.king.unwrap().model.as_deref(), Some("sonnet"));
 }
 
 #[test]
-fn ants_default_saves_in_the_queen_section_and_keeps_the_queens_own() {
+fn dwarves_default_saves_in_the_king_section_and_keeps_the_kings_own() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
     let mut pane = SettingsPane::load(Some(path.clone()));
-    pane.queen_draft.pick(Some("opus"));
-    pane.save_queen().unwrap();
-    assert_eq!(pane.ants(), &AntSettings::default(), "off until chosen");
+    pane.king_draft.pick(Some("opus"));
+    pane.save_king().unwrap();
+    assert_eq!(
+        pane.dwarves(),
+        &DwarfSettings::default(),
+        "off until chosen"
+    );
 
-    pane.open_section(Section::Queen);
-    pane.ants_draft.pick(Some("fable"));
-    pane.ants_draft.settings.effort = Some("high".into());
+    pane.open_section(Section::King);
+    pane.dwarves_draft.pick(Some("fable"));
+    pane.dwarves_draft.settings.effort = Some("high".into());
     let status = WhipStatus::default();
     let info = general();
-    let out = click_label("Save for new ants", |ui| {
-        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+    let out = click_label("Save for new dwarves", |ui| {
+        pane.show(ui.ctx(), &cx(&status, &info, KingStatus::default()))
     });
-    let ants = out.ants.unwrap();
-    assert_eq!(ants.model.as_deref(), Some("fable"));
-    assert_eq!(ants.effort.as_deref(), Some("high"));
-    assert_eq!(out.queen, None, "the Queen's own save row was not clicked");
-    assert_eq!(pane.ants(), &ants);
-    assert_eq!(pane.queen().model.as_deref(), Some("opus"));
+    let dwarves = out.dwarves.unwrap();
+    assert_eq!(dwarves.model.as_deref(), Some("fable"));
+    assert_eq!(dwarves.effort.as_deref(), Some("high"));
+    assert_eq!(out.king, None, "the King's own save row was not clicked");
+    assert_eq!(pane.dwarves(), &dwarves);
+    assert_eq!(pane.king().model.as_deref(), Some("opus"));
     let on_disk = Settings::load_from(&path).settings;
-    assert_eq!(on_disk.ants, ants);
-    assert_eq!(on_disk.queen.model.as_deref(), Some("opus"));
+    assert_eq!(on_disk.dwarves, dwarves);
+    assert_eq!(on_disk.king.model.as_deref(), Some("opus"));
 
     // Back to the CLI default; an invalid effort saves nothing.
-    pane.ants_draft.pick(None);
-    pane.ants_draft.settings.effort = None;
-    assert_eq!(pane.save_ants().unwrap(), AntSettings::default());
-    pane.ants_draft.settings.effort = Some("turbo".into());
-    assert_eq!(pane.save_ants(), None);
+    pane.dwarves_draft.pick(None);
+    pane.dwarves_draft.settings.effort = None;
+    assert_eq!(pane.save_dwarves().unwrap(), DwarfSettings::default());
+    pane.dwarves_draft.settings.effort = Some("turbo".into());
+    assert_eq!(pane.save_dwarves(), None);
     assert!(pane.message.as_ref().unwrap().0);
     assert_eq!(
-        SettingsPane::load(Some(path)).ants(),
-        &AntSettings::default()
+        SettingsPane::load(Some(path)).dwarves(),
+        &DwarfSettings::default()
     );
 }
 
@@ -432,7 +436,7 @@ fn missing_models_offer_downloads_without_starting_them() {
     let voices = voices();
     let mut pane = SettingsPane::load(None);
     pane.open_section(Section::Voice);
-    let mut c = cx(&status, &info, QueenStatus::default());
+    let mut c = cx(&status, &info, KingStatus::default());
     c.voice = VoiceStatus {
         voices: &voices,
         speech_model: ModelStatus::Installed("Orca's copy".into()),
@@ -446,7 +450,7 @@ fn missing_models_offer_downloads_without_starting_them() {
     ];
     let want: Vec<&str> = labels.into_iter().collect();
     let voice_label = voice::voice_download_label();
-    assert_eq!(voice_label, "Download Queen voice (333 MB)");
+    assert_eq!(voice_label, "Download King voice (333 MB)");
     let mut want_all = want.clone();
     want_all.push(&voice_label);
     assert_eq!(drawn(&mut pane, &c, &want_all).len(), want_all.len());
@@ -480,7 +484,7 @@ fn voice_settings_save_and_reload() {
     let status = WhipStatus::default();
     let info = general();
     let out = click_label("Save", |ui| {
-        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+        pane.show(ui.ctx(), &cx(&status, &info, KingStatus::default()))
     });
     let saved = out.voice.expect("saved");
     assert_eq!(saved.voice, "bm_george");
@@ -490,15 +494,15 @@ fn voice_settings_save_and_reload() {
 }
 
 #[test]
-fn queen_speak_replies_applies_and_saves_at_once() {
+fn king_speak_replies_applies_and_saves_at_once() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
     let mut pane = SettingsPane::load(Some(path.clone()));
-    pane.open_section(Section::Queen);
+    pane.open_section(Section::King);
     let status = WhipStatus::default();
     let info = general();
     let out = click_label("Speak replies", |ui| {
-        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+        pane.show(ui.ctx(), &cx(&status, &info, KingStatus::default()))
     });
     assert!(out.voice.expect("applied").speak_replies);
     assert!(pane.voice().speak_replies);
@@ -515,7 +519,7 @@ fn notification_test_buttons_report_the_draft() {
     pane.open_section(Section::Notifications);
     pane.notify_draft.volume_percent = 40;
     let out = click_label("Test urgent", |ui| {
-        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+        pane.show(ui.ctx(), &cx(&status, &info, KingStatus::default()))
     });
     let (severity, settings) = out.test_notification.expect("test notification");
     assert_eq!(severity, crate::notify::Severity::Urgent);
@@ -523,7 +527,7 @@ fn notification_test_buttons_report_the_draft() {
     assert_eq!(pane.notifications().volume_percent, 70, "nothing saved");
 
     let out = click_label("▶ Test", |ui| {
-        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+        pane.show(ui.ctx(), &cx(&status, &info, KingStatus::default()))
     });
     assert_eq!(
         out.test_sound,
@@ -567,7 +571,7 @@ fn envoy_save_reports_safety_on_and_explains_codex_restriction() {
     pane.open_section(Section::Envoy);
     let status = WhipStatus::default();
     let info = general();
-    let context = cx(&status, &info, QueenStatus::default());
+    let context = cx(&status, &info, KingStatus::default());
     let warning = "Codex Envoy starts are unavailable: its MCP tool restrictions are not supported. Choose Claude.";
     assert_eq!(drawn(&mut pane, &context, &[warning]), [warning]);
     let mut safe = pane.envoy().clone();
@@ -579,7 +583,7 @@ fn envoy_save_reports_safety_on_and_explains_codex_restriction() {
 }
 
 #[test]
-fn focus_new_ants_is_off_by_default_and_saves_at_once() {
+fn focus_new_dwarves_is_off_by_default_and_saves_at_once() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
     std::fs::write(&path, r#"{"whip":{"dry_run":false}}"#).unwrap();
@@ -593,7 +597,7 @@ fn focus_new_ants_is_off_by_default_and_saves_at_once() {
     let status = WhipStatus::default();
     let info = general();
     click_label(general::FOCUS_NEW_LABEL, |ui| {
-        pane.show(ui.ctx(), &cx(&status, &info, QueenStatus::default()))
+        pane.show(ui.ctx(), &cx(&status, &info, KingStatus::default()))
     });
     assert!(pane.spawn().focus_new);
     let reloaded = SettingsPane::load(Some(path.clone()));

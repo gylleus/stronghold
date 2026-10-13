@@ -1,7 +1,7 @@
 //! Starting new agent sessions from Myrstack: in an existing worktree, in a new worktree, or as
 //! a worker of an existing run.
 //!
-//! A [`SpawnRequest`] (what Karl or the Queen asked for, resolved to Orca ids) becomes a
+//! A [`SpawnRequest`] (what Karl or the King asked for, resolved to Orca ids) becomes a
 //! [`SpawnPlan`]: the `orca` calls to make, in order ([`Step`]). Building the plan is pure, so
 //! the dialog can show the exact commands before launch; [`exec`] runs them on a background
 //! thread and makes sure the prompt was really submitted ([`verify`]).
@@ -26,7 +26,7 @@ use crate::orca::spawn::{
 pub use catalog::Catalog;
 pub use exec::{SpawnEvent, SpawnOutcome, SpawnRunner, StepStatus};
 pub use resolve::{LiveAgent, ModeName, NameConflict, SpawnArgs, name_conflict, new_worktree_of};
-pub use settings::{AntSettings, SpawnSettings};
+pub use settings::{DwarfSettings, SpawnSettings};
 pub use verify::{Expect, ScreenVerdict, classify_screen, codex_approvals_on};
 
 /// How long `terminal wait --for tui-idle` waits after launch. An agent that took its prompt
@@ -102,7 +102,7 @@ pub struct SpawnRequest {
     pub target: SpawnTarget,
     pub agent: Agent,
     /// Model alias or id (`--model`); `None` for the agent's default. The app fills a Claude
-    /// ant's missing model from the `ants` settings ([`AntSettings::fill`]) before planning.
+    /// dwarf's missing model from the `dwarves` settings ([`DwarfSettings::fill`]) before planning.
     pub model: Option<String>,
     /// `--effort` level (Claude only, and only with a model for a worker).
     pub effort: Option<String>,

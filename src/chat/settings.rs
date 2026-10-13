@@ -1,4 +1,4 @@
-//! The Queen's saved model settings (the `queen` section of `settings.json`) and how they
+//! The King's saved model settings (the `king` section of `settings.json`) and how they
 //! combine with the `MYRSTACK_CHAT_MODEL` override.
 
 use serde::{Deserialize, Serialize};
@@ -20,17 +20,17 @@ pub const MODEL_IDS: &[&str] = &[
 /// Levels the CLI accepts for `--effort`.
 pub const EFFORT_LEVELS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 
-/// The Queen's `claude` process options. `None` leaves the choice to the CLI.
+/// The King's `claude` process options. `None` leaves the choice to the CLI.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct QueenSettings {
+pub struct KingSettings {
     /// `--model`: an alias (`opus`) or a full id (`claude-opus-5-5`).
     pub model: Option<String>,
     /// `--effort`: one of [`EFFORT_LEVELS`].
     pub effort: Option<String>,
 }
 
-impl QueenSettings {
+impl KingSettings {
     /// Trims the values and drops empty ones.
     pub fn normalized(&self) -> Self {
         let clean = |v: &Option<String>| {
@@ -64,7 +64,7 @@ impl QueenSettings {
     }
 }
 
-/// Where the Queen's model comes from.
+/// Where the King's model comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelSource {
     /// `MYRSTACK_CHAT_MODEL` is set and wins over the settings.
@@ -84,9 +84,9 @@ impl ModelSource {
     }
 }
 
-/// The model the Queen runs with: `env` (the value of `MYRSTACK_CHAT_MODEL`) when non-empty,
+/// The model the King runs with: `env` (the value of `MYRSTACK_CHAT_MODEL`) when non-empty,
 /// else the settings' model, else the CLI default.
-pub fn resolve_model(settings: &QueenSettings, env: Option<String>) -> ModelSource {
+pub fn resolve_model(settings: &KingSettings, env: Option<String>) -> ModelSource {
     if let Some(env) = env.map(|e| e.trim().to_owned()).filter(|e| !e.is_empty()) {
         return ModelSource::Env(env);
     }
@@ -97,7 +97,7 @@ pub fn resolve_model(settings: &QueenSettings, env: Option<String>) -> ModelSour
 }
 
 /// [`resolve_model`] with this process's `MYRSTACK_CHAT_MODEL`.
-pub fn resolve_model_from_env(settings: &QueenSettings) -> ModelSource {
+pub fn resolve_model_from_env(settings: &KingSettings) -> ModelSource {
     resolve_model(settings, std::env::var(MODEL_ENV).ok())
 }
 
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn env_override_wins_over_settings() {
-        let saved = QueenSettings {
+        let saved = KingSettings {
             model: Some("opus".into()),
             effort: None,
         };
@@ -125,41 +125,41 @@ mod tests {
             ModelSource::Settings("opus".into())
         );
         assert_eq!(
-            resolve_model(&QueenSettings::default(), None),
+            resolve_model(&KingSettings::default(), None),
             ModelSource::CliDefault
         );
         assert_eq!(
-            resolve_model(&QueenSettings::default(), Some("haiku".into())).model(),
+            resolve_model(&KingSettings::default(), Some("haiku".into())).model(),
             Some("haiku")
         );
     }
 
     #[test]
     fn normalizes_and_validates() {
-        let s = QueenSettings {
+        let s = KingSettings {
             model: Some("  opus ".into()),
             effort: Some("".into()),
         };
         assert_eq!(
             s.normalized(),
-            QueenSettings {
+            KingSettings {
                 model: Some("opus".into()),
                 effort: None
             }
         );
         assert!(s.normalized().validate().is_ok());
-        let bad_effort = QueenSettings {
+        let bad_effort = KingSettings {
             model: None,
             effort: Some("turbo".into()),
         };
         assert!(bad_effort.validate().is_err());
-        let bad_model = QueenSettings {
+        let bad_model = KingSettings {
             model: Some("claude opus".into()),
             effort: None,
         };
         assert!(bad_model.validate().is_err());
         for level in EFFORT_LEVELS {
-            let s = QueenSettings {
+            let s = KingSettings {
                 model: None,
                 effort: Some((*level).into()),
             };

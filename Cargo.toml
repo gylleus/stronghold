@@ -2,7 +2,7 @@
 name = "myrstack"
 version = "0.1.0"
 edition = "2024"
-description = "Native desktop view of the agent fleet running in Orca"
+description = "Native desktop view of the agent clan running in Orca"
 publish = false
 
 [lib]

@@ -26,7 +26,7 @@ pub enum Role {
     Apprentice,
     /// The Envoy: a broad rune hat, long robe and beard, rune staff and blue crystal.
     RunePriest,
-    /// The Queen: a crown, heavy brows, white braids and embroidered regalia.
+    /// The King: a crown, heavy brows, white braids and embroidered regalia.
     King,
 }
 

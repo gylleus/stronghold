@@ -1,4 +1,4 @@
-//! Broadcast composer, shown in the Queen's details: pick runs, write one message, confirm, send
+//! Broadcast composer, shown in the King's details: pick runs, write one message, confirm, send
 //! to their coordinators.
 
 use std::collections::{BTreeSet, HashSet};
@@ -9,8 +9,8 @@ use crate::broadcast::{
     BroadcastJob, BroadcastPlan, BroadcastSelection, BroadcastSender, RunChoice, plan_broadcast,
     run_choices,
 };
-use crate::model::FleetSnapshot;
-use crate::ui::fleet_view::{state_color, state_label};
+use crate::model::ClanSnapshot;
+use crate::ui::clan_view::{state_color, state_label};
 
 enum Stage {
     Compose,
@@ -51,7 +51,7 @@ impl BroadcastComposer {
         Self::default()
     }
 
-    /// Whether a send was confirmed since the last call (for the ant farm's ripple).
+    /// Whether a send was confirmed since the last call (for the farm's ripple).
     pub fn take_sent(&mut self) -> bool {
         std::mem::take(&mut self.sent)
     }
@@ -60,7 +60,7 @@ impl BroadcastComposer {
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
-        snapshot: Option<&FleetSnapshot>,
+        snapshot: Option<&ClanSnapshot>,
         make_sender: impl FnOnce() -> Box<dyn BroadcastSender>,
     ) {
         let Some(snapshot) = snapshot else {
@@ -116,7 +116,7 @@ impl BroadcastComposer {
         choice.coordinator_state.is_some() && !self.unchecked.contains(&choice.run_id)
     }
 
-    fn compose(&mut self, ui: &mut egui::Ui, snapshot: &FleetSnapshot) {
+    fn compose(&mut self, ui: &mut egui::Ui, snapshot: &ClanSnapshot) {
         let choices = run_choices(snapshot);
         if choices.is_empty() {
             ui.label("No live runs.");
@@ -205,7 +205,7 @@ impl BroadcastComposer {
             egui::TextEdit::multiline(&mut self.text)
                 .desired_rows(4)
                 .desired_width(f32::INFINITY)
-                .hint_text("Sent as \"Queen: …\" — agents treat it as Karl's instruction"),
+                .hint_text("Sent as \"King: …\" — agents treat it as Karl's instruction"),
         );
         crate::ui::widgets::focus_ring(ui, &response);
 
@@ -286,7 +286,7 @@ impl BroadcastComposer {
     }
 }
 
-fn results(ui: &mut egui::Ui, snapshot: &FleetSnapshot, plan: &BroadcastPlan, job: &BroadcastJob) {
+fn results(ui: &mut egui::Ui, snapshot: &ClanSnapshot, plan: &BroadcastPlan, job: &BroadcastJob) {
     let ok = ui.visuals().widgets.noninteractive.fg_stroke.color;
     let err = ui.visuals().error_fg_color;
     for (index, delivery) in plan.deliveries.iter().enumerate() {
@@ -326,7 +326,7 @@ fn results(ui: &mut egui::Ui, snapshot: &FleetSnapshot, plan: &BroadcastPlan, jo
 mod tests {
     use super::*;
     use crate::broadcast::BroadcastSender;
-    use crate::fleet::FleetData;
+    use crate::clan::ClanData;
     use crate::orca::{OutgoingMessage, Run, Terminal};
 
     struct NeverSender;
@@ -340,7 +340,7 @@ mod tests {
     /// Draws every stage's frame path headlessly; nothing is sent.
     #[test]
     fn composer_draws_without_panicking() {
-        let data = FleetData {
+        let data = ClanData {
             terminals: vec![Terminal {
                 handle: "c1".into(),
                 worktree_path: Some("/u/orca/workspaces/depict/a".into()),
@@ -352,9 +352,9 @@ mod tests {
                 coordinator_handle: Some("c1".into()),
                 ..Run::default()
             }],
-            ..FleetData::default()
+            ..ClanData::default()
         };
-        let snapshot = FleetSnapshot::build(&data, 0);
+        let snapshot = ClanSnapshot::build(&data, 0);
         let mut composer = BroadcastComposer::new();
         composer.text = "hello".into();
         let ctx = egui::Context::default();

@@ -61,7 +61,7 @@ the cheap one is what makes the UI feel "clunky" day to day.
 | `src/main.rs`, `hotkey.rs`, `persist.rs` | ~0.5k | yes |
 | Everything else: `chat/`, `claude/`, `model/`, `orca/`, `voice/`, `whip/`, `mcp/`, `review/`, `spawn/`, … | ~50k | **no — zero egui imports** |
 
-The domain layers (chat session + streaming protocol, transcript model, fleet model, Orca
+The domain layers (chat session + streaming protocol, transcript model, clan model, Orca
 CLI, voice, whip, MCP server) would survive any migration untouched. What would not:
 
 - **Chat pane** — `src/ui/chat.rs` (1.1k lines): hand-rolled markdown block/span parser

@@ -1,8 +1,8 @@
 //! Agents ending their own sessions (`finish_session`): the guards that keep an agent from
 //! leaving with work stranded, and the record of how each finished session ended.
 //!
-//! The MCP server checks the agent's git worktree ([`git_problems`]); the app checks the fleet
-//! ([`fleet_problems`]: workers belong to their coordinator, a coordinator's open tasks, a PR
+//! The MCP server checks the agent's git worktree ([`git_problems`]); the app checks the clan
+//! ([`clan_problems`]: workers belong to their coordinator, a coordinator's open tasks, a PR
 //! still in Karl's review queue). Past the
 //! guards the app records a [`FinishedSession`] in `<data dir>/finished.jsonl`, closes the
 //! terminal with the same plan as `close_agents`, and shows the node as done while it fades
@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use crate::close::has_active_dispatch;
 use crate::control::ControlError;
 use crate::control::protocol::Params;
-use crate::model::{FleetSnapshot, Node, NodeKind};
+use crate::model::{ClanSnapshot, Node, NodeKind};
 use crate::review::mark::Origin;
 
 /// The record file in the data dir.
@@ -210,7 +210,7 @@ pub struct FinishRequest {
     pub force: bool,
     /// Problems found outside the app (the git worktree), overridden by `force`.
     pub forced: Vec<String>,
-    /// Only check: report the caller's node and the fleet's problems.
+    /// Only check: report the caller's node and the clan's problems.
     pub dry_run: bool,
     pub origin: Origin,
 }
@@ -278,15 +278,15 @@ pub fn origin_of(params: &Value) -> Result<Origin, ControlError> {
     }
 }
 
-/// What the fleet says about `node` leaving: a refusal no `force` overrides, and problems
+/// What the clan says about `node` leaving: a refusal no `force` overrides, and problems
 /// that `force` does. `open_prs` are the node's PRs still in Karl's review queue.
-pub fn fleet_problems(
+pub fn clan_problems(
     node: &Node,
-    snapshot: &FleetSnapshot,
+    snapshot: &ClanSnapshot,
     open_prs: &[String],
 ) -> (Option<String>, Vec<String>) {
     let refusal = match node.kind {
-        NodeKind::Queen | NodeKind::Subagent => {
+        NodeKind::King | NodeKind::Subagent => {
             Some(format!("{} isn't an agent session of its own", node.label))
         }
         NodeKind::Worker if has_active_dispatch(node) => Some(format!(

@@ -19,11 +19,11 @@ use crate::notify::history::{Entry, History};
 use crate::notify::{
     self, Incoming, NotificationCenter, NotifySettings, Outcome, Post, Severity, Sound, Source,
 };
+use crate::ui::clan_view::UnreadBadge;
 use crate::ui::dock::{Pane, Side};
-use crate::ui::fleet_view::UnreadBadge;
 use crate::ui::notifications::{NoticeAction, NotificationsPanel, PanelAction, Toasts};
 
-/// How long queued notifications wait for the first fleet snapshot before they are taken anyway.
+/// How long queued notifications wait for the first clan snapshot before they are taken anyway.
 const PENDING_WAIT_MS: i64 = 20_000;
 /// How often the pending-notifications file is checked once the app runs.
 const PENDING_EVERY_MS: i64 = 5_000;
@@ -422,7 +422,7 @@ impl MyrstackApp {
             badge.count += 1;
             badge.severity = badge.severity.max(entry.severity);
         }
-        self.fleet.set_unread(badges);
+        self.clan.set_unread(badges);
     }
 
     /// The top bar's bell: opens the notifications panel, or collapses it when it is in front.

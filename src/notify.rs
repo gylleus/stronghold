@@ -35,7 +35,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
-use crate::model::{FleetSnapshot, NodeId, NodeKind, NodeState};
+use crate::model::{ClanSnapshot, NodeId, NodeKind, NodeState};
 
 pub use dispatch::{Incoming, NotificationCenter, Outcome, Source};
 pub use settings::{Delivery, NotifySettings, Severity, Sound};
@@ -270,12 +270,12 @@ impl NeedsInputDetector {
     }
 
     /// Notifications for the nodes of `snapshot` that are NeedsInput now but were not before.
-    pub fn update(&mut self, snapshot: &FleetSnapshot) -> Vec<Incoming> {
+    pub fn update(&mut self, snapshot: &ClanSnapshot) -> Vec<Incoming> {
         let waiting: HashSet<NodeId> = snapshot
             .nodes
             .iter()
             .filter(|n| {
-                n.state == NodeState::NeedsInput && n.kind != NodeKind::Queen && !n.is_parked()
+                n.state == NodeState::NeedsInput && n.kind != NodeKind::King && !n.is_parked()
             })
             .map(|n| n.id.clone())
             .collect();
@@ -343,13 +343,13 @@ pub fn decode_payload(payload: &str) -> Option<Clicked> {
 }
 
 /// The node to select for a notification covering `targets`: the first one that resolves.
-pub fn click_target(snapshot: &FleetSnapshot, targets: &[String]) -> Option<NodeId> {
+pub fn click_target(snapshot: &ClanSnapshot, targets: &[String]) -> Option<NodeId> {
     targets.iter().find_map(|t| resolve_target(snapshot, t))
 }
 
 /// The node to select for a notification target: the node with that id, else a node on that
 /// terminal handle, preferring a live one.
-pub fn resolve_target(snapshot: &FleetSnapshot, target: &str) -> Option<NodeId> {
+pub fn resolve_target(snapshot: &ClanSnapshot, target: &str) -> Option<NodeId> {
     if let Some(node) = snapshot.nodes.iter().find(|n| n.id.as_str() == target) {
         return Some(node.id.clone());
     }

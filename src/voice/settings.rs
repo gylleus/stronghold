@@ -1,5 +1,5 @@
 //! Voice settings: the `voice` section of `settings.json`, edited in the Settings pane's Voice
-//! section (`crate::ui::settings::voice`); "Speak replies" is also in the Queen section.
+//! section (`crate::ui::settings::voice`); "Speak replies" is also in the King section.
 //!
 //! Give every new field a serde default (the struct is `#[serde(default)]`) so older settings
 //! files keep loading.
@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::tts::DEFAULT_VOICE;
 
-/// The default talk-to-the-Queen hotkey, in `global-hotkey`'s string form: ⌘⇧E.
+/// The default talk-to-the-King hotkey, in `global-hotkey`'s string form: ⌘⇧E.
 pub const DEFAULT_TALK_HOTKEY: &str = "shift+super+KeyE";
 
 /// Talk hotkeys offered in the Settings dropdown, as `(global-hotkey string, label)`.
@@ -27,9 +27,9 @@ const SHOW_WINDOW_HOTKEY: &str = "shift+super+KeyM";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceSettings {
-    /// Hold to talk to the Queen from anywhere (`global-hotkey` string, e.g. `shift+super+KeyE`).
+    /// Hold to talk to the King from anywhere (`global-hotkey` string, e.g. `shift+super+KeyE`).
     pub talk_hotkey: String,
-    /// Speak every reply of the Queen, not only replies to voice messages.
+    /// Speak every reply of the King, not only replies to voice messages.
     pub speak_replies: bool,
     /// Kokoro voice name, e.g. `af_heart`.
     pub voice: String,

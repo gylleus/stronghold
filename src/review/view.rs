@@ -1,10 +1,10 @@
 //! What the queue shows: one [`ReviewRow`] per listed PR with its agent resolved to a farm
-//! node, for the Queen panel, the control API (`review_queue`) and the MCP tool.
+//! node, for the King panel, the control API (`review_queue`) and the MCP tool.
 
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::model::{FleetSnapshot, NodeId, NodeKind};
+use crate::model::{ClanSnapshot, NodeId, NodeKind};
 use crate::orca::Terminal;
 use crate::review::github::{Ci, PrState};
 use crate::review::mark::Origin;
@@ -22,7 +22,7 @@ pub struct AgentRef {
 /// whose `<tabId>:<leafId>` is its pane key, else the only agent terminal in its tab.
 pub fn resolve_agent(
     origin: &Origin,
-    snapshot: &FleetSnapshot,
+    snapshot: &ClanSnapshot,
     terminals: &[Terminal],
 ) -> Option<AgentRef> {
     let handle = origin
@@ -211,7 +211,7 @@ pub fn queue_json(rows: &[ReviewRow], github_unavailable: Option<&str>) -> Value
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fleet::FleetData;
+    use crate::clan::ClanData;
     use crate::orca::{AgentIdentity, Terminal};
 
     fn terminals() -> Vec<Terminal> {
@@ -233,11 +233,11 @@ mod tests {
         ]
     }
 
-    fn snapshot() -> FleetSnapshot {
-        FleetSnapshot::build(
-            &FleetData {
+    fn snapshot() -> ClanSnapshot {
+        ClanSnapshot::build(
+            &ClanData {
                 terminals: terminals(),
-                ..FleetData::default()
+                ..ClanData::default()
             },
             0,
         )

@@ -299,7 +299,7 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
                 text,
             },
             true,
-            |_| panic!("reply must not reach Queen"),
+            |_| panic!("reply must not reach King"),
         );
         if secret {
             assert!(result.is_err());
@@ -437,7 +437,7 @@ fn seed_envoy_panel_fixture() {
         .begin_approval(&failed.id, None, false, now_ms())
         .unwrap();
     queue
-        .finish(&failed.id, Err("Fixture: Queen was busy".into()), now_ms())
+        .finish(&failed.id, Err("Fixture: King was busy".into()), now_ms())
         .unwrap();
     let mut notices =
         crate::notify::NotificationCenter::new(crate::notify::history::History::default());
@@ -674,7 +674,7 @@ fn idle_envoy_with_a_bare_composer_preview_takes_events() {
 }
 
 #[test]
-fn batches_name_candidate_ants_and_fold_the_backlog() {
+fn batches_name_candidate_dwarves_and_fold_the_backlog() {
     let dir = tempfile::tempdir().unwrap();
     let mut core = AppEnvoy::load(dir.path().into());
     core.handle = Some("term_envoy".into());
@@ -694,13 +694,13 @@ fn batches_name_candidate_ants_and_fold_the_backlog() {
         inbox.insert(event.clone());
     }
     core.merge_polled(inbox, events);
-    let ants = [Ant {
-        id: "term:term_ant".into(),
+    let dwarves = [Dwarf {
+        id: "term:term_dwarf".into(),
         label: "Recs rollout".into(),
         prs: vec!["realtime#694".into()],
-        ..Ant::default()
+        ..Dwarf::default()
     }];
-    let (action, batch) = core.next_forward(now, &ants).expect("batch");
+    let (action, batch) = core.next_forward(now, &dwarves).expect("batch");
     assert_eq!(batch.len(), 4, "the backlog is acknowledged with the batch");
     let Action::Send { input, .. } = action else {
         panic!("typed batch")
@@ -713,14 +713,14 @@ fn batches_name_candidate_ants_and_fold_the_backlog() {
         .collect();
     assert_eq!(lines.len(), 4);
     assert!(lines[0].starts_with("Envoy backlog: 1 event(s) older than 30 min"));
-    assert!(lines[1].ends_with("ants: Recs rollout (term:term_ant, realtime#694)"));
+    assert!(lines[1].ends_with("dwarves: Recs rollout (term:term_dwarf, realtime#694)"));
     assert!(
         lines[2].contains("push the merge commit")
-            && lines[2].ends_with("ants: Recs rollout (term:term_ant, realtime#694)"),
+            && lines[2].ends_with("dwarves: Recs rollout (term:term_dwarf, realtime#694)"),
         "a reply inherits its thread's refs: {}",
         lines[2]
     );
-    assert!(lines[3].ends_with("— no ant match"));
+    assert!(lines[3].ends_with("— no dwarf match"));
 }
 
 #[test]
@@ -1101,7 +1101,7 @@ fn size_guards_reset_mid_burst_but_never_while_a_send_is_in_flight() {
     core.outgoing.clear();
     core.relay_actions.insert(
         5,
-        AgentMessage::new("term_envoy", "term_ant", MessageKind::Relay),
+        AgentMessage::new("term_envoy", "term_dwarf", MessageKind::Relay),
     );
     assert_eq!(core.in_flight(), Some("relay in flight"));
     assert_eq!(clear_action(&core, 300, None), None);
@@ -1222,7 +1222,7 @@ fn thread_notes_are_written_by_tool_and_typed_with_every_event_in_the_thread() {
     assert!(
         core.request(&envoy_command(
             "envoy_note",
-            json!({"conversation":"C123","thread_ts":"10.000001","text":"Avery asked for a realtime#694 review;\npromised an answer today; waiting on the Recs ant"})
+            json!({"conversation":"C123","thread_ts":"10.000001","text":"Avery asked for a realtime#694 review;\npromised an answer today; waiting on the Recs dwarf"})
         ))
         .is_ok()
     );
@@ -1245,11 +1245,11 @@ fn thread_notes_are_written_by_tool_and_typed_with_every_event_in_the_thread() {
     let (action, _) = core.next_forward(20_000, &[]).unwrap();
     let lines: Vec<String> = typed(&action).split(" | ").map(str::to_owned).collect();
     assert_eq!(lines.len(), 4);
-    let note = "— note: Avery asked for a realtime#694 review; promised an answer today; waiting on the Recs ant";
+    let note = "— note: Avery asked for a realtime#694 review; promised an answer today; waiting on the Recs dwarf";
     assert!(lines[0].ends_with(note), "root: {}", lines[0]);
     assert!(lines[1].ends_with(note), "reply: {}", lines[1]);
     assert!(
-        lines[2].ends_with("— no ant match"),
+        lines[2].ends_with("— no dwarf match"),
         "no note: {}",
         lines[2]
     );
@@ -1465,30 +1465,30 @@ fn batches_say_who_each_event_is_for() {
     let now = 1_791_300_000_000;
     let karl = core.karl().to_owned();
     assert_eq!(karl, "U0AMMLGSFL0");
-    let mut ant_root = receipt_event("1791299800.000001");
-    ant_root.text = "Request from Recs rollout: who owns the wheat index?".into();
+    let mut dwarf_root = receipt_event("1791299800.000001");
+    dwarf_root.text = "Request from Recs rollout: who owns the wheat index?".into();
     let mut envoy_root = receipt_event("1791299850.000001");
     envoy_root.text = "Anyone know the recs rollout status?".into();
     let mut tagged_other = receipt_event("1791299900.000001");
     tagged_other.text = "<@U0177NR3GG4> can your search agent reindex wheat?".into();
     let mut tagged_karl = receipt_event("1791299910.000001");
     tagged_karl.text = format!("<@{karl}> is realtime#694 ready?");
-    let mut in_ant_thread = receipt_event("1791299920.000001");
-    in_ant_thread.thread_ts = Some(ant_root.ts.clone());
-    in_ant_thread.text = "<@U0177NR3GG4> your agent should answer this".into();
+    let mut in_dwarf_thread = receipt_event("1791299920.000001");
+    in_dwarf_thread.thread_ts = Some(dwarf_root.ts.clone());
+    in_dwarf_thread.text = "<@U0177NR3GG4> your agent should answer this".into();
     let mut in_envoy_thread = receipt_event("1791299930.000001");
     in_envoy_thread.thread_ts = Some(envoy_root.ts.clone());
     in_envoy_thread.text = "@depict-search-agent take it from here".into();
     let mut chatter = receipt_event("1791299960.000001");
     chatter.text = "lunch?".into();
     let mut inbox = Inbox::default();
-    for event in [&ant_root, &envoy_root] {
+    for event in [&dwarf_root, &envoy_root] {
         inbox.insert(event.clone());
     }
     let batch = vec![
         tagged_other,
         tagged_karl,
-        in_ant_thread,
+        in_dwarf_thread,
         in_envoy_thread,
         chatter,
     ];
@@ -1508,13 +1508,13 @@ fn batches_say_who_each_event_is_for() {
     );
     sent.status = DraftStatus::Sent;
     core.queue().unwrap().create(sent).unwrap();
-    let ants = [Ant {
-        id: "term:term_ant".into(),
+    let dwarves = [Dwarf {
+        id: "term:term_dwarf".into(),
         label: "Recs rollout".into(),
-        threads: vec![format!("C123:{}", ant_root.ts)],
-        ..Ant::default()
+        threads: vec![format!("C123:{}", dwarf_root.ts)],
+        ..Dwarf::default()
     }];
-    let (action, _) = core.next_forward(now, &ants).expect("batch");
+    let (action, _) = core.next_forward(now, &dwarves).expect("batch");
     let Action::Send { input, .. } = action else {
         panic!("typed batch")
     };
@@ -1522,7 +1522,7 @@ fn batches_say_who_each_event_is_for() {
     let lines: Vec<&str> = text.split(" | ").collect();
     assert_eq!(lines.len(), 5, "{text}");
     assert!(
-        lines[0].contains("— addressee: not Karl (tags <@U0177NR3GG4>, not Karl) — no ant match"),
+        lines[0].contains("— addressee: not Karl (tags <@U0177NR3GG4>, not Karl) — no dwarf match"),
         "{}",
         lines[0]
     );
@@ -1533,7 +1533,7 @@ fn batches_say_who_each_event_is_for() {
     );
     assert!(
         lines[2].contains(
-            "— addressee: unclear (tags <@U0177NR3GG4> in Karl's thread) — ants: Recs rollout (term:term_ant, its thread)"
+            "— addressee: unclear (tags <@U0177NR3GG4> in Karl's thread) — dwarves: Recs rollout (term:term_dwarf, its thread)"
         ),
         "{}",
         lines[2]
@@ -1544,7 +1544,7 @@ fn batches_say_who_each_event_is_for() {
         lines[3]
     );
     assert!(
-        lines[4].contains("— addressee: unclear (no mention) — no ant match"),
+        lines[4].contains("— addressee: unclear (no mention) — no dwarf match"),
         "{}",
         lines[4]
     );

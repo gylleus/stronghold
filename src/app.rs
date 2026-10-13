@@ -24,19 +24,19 @@ mod talk;
 mod traffic;
 mod whip_now;
 use crate::actions::{ActionRunner, OrcaExecutor};
+use crate::clan::ClanData;
 use crate::claude::{ClaudeData, ClaudeWorker, SubagentInfo};
 use crate::detect::detect_prompt;
-use crate::fleet::FleetData;
 use crate::hotkey::Hotkey;
-use crate::model::{FleetSnapshot, Node, NodeId, NodeKind, NodeState};
+use crate::model::{ClanSnapshot, Node, NodeId, NodeKind, NodeState};
 use crate::notify::{NeedsInputDetector, Notifier};
 use crate::orca::OrcaClient;
 use crate::persist::PersistedState;
 use crate::poller::{Poller, PollerCommand, PollerConfig, ScreenUpdate};
 use crate::quota::{QuotaPoller, Quotas};
 use crate::ui;
-use crate::ui::fleet_view::FleetView;
-use crate::ui::sidebar::FleetFilter;
+use crate::ui::clan_view::ClanView;
+use crate::ui::sidebar::ClanFilter;
 use crate::whip::{self, WhipInput, WhipRunner, WhipStatus};
 
 /// How often the UI redraws without new data, so relative times keep ticking.
@@ -52,12 +52,12 @@ pub struct MyrstackApp {
     hotkey: Option<Hotkey>,
     poller: Poller,
     /// Newest snapshot; `None` until the first poll completes.
-    data: Option<FleetData>,
-    /// Fleet snapshot built from `data`.
-    snapshot: Option<FleetSnapshot>,
-    fleet: FleetView,
-    ant_farm: ui::ant_farm::AntFarmView,
-    /// Node selected in the fleet, shared with the side panels.
+    data: Option<ClanData>,
+    /// Clan snapshot built from `data`.
+    snapshot: Option<ClanSnapshot>,
+    clan: ClanView,
+    farm: ui::farm::FarmView,
+    /// Node selected in the clan, shared with the side panels.
     selected: Option<NodeId>,
     /// The nodes selected so far, for back/forward.
     history: ui::history::SelectionHistory,
@@ -66,27 +66,27 @@ pub struct MyrstackApp {
     /// A pane to bring to the front of its tab group next frame (the dock is out of `panes`
     /// while it draws).
     bring_forward: Option<ui::dock::Pane>,
-    /// ⌘J hid the Queen's chat, which otherwise fills the conversation pane when nothing
+    /// ⌘J hid the King's chat, which otherwise fills the conversation pane when nothing
     /// is selected.
     chat_hidden: bool,
     /// Left edge of the conversation pane's content last frame, `None` while it is not drawn;
-    /// the top bar puts the Queen's quick actions above it.
+    /// the top bar puts the King's quick actions above it.
     conversation_left: Option<f32>,
-    /// Width of the top bar's Queen quick actions last frame.
+    /// Width of the top bar's King quick actions last frame.
     quick_actions_width: f32,
     /// Terminal whose screen the poller is reading (the selected node's, if live).
     watched_screen: Option<String>,
     /// Newest screen of `watched_screen`.
     screen: Option<ScreenUpdate>,
-    /// Which nodes the fleet shows; edited in the sidebar.
-    filter: FleetFilter,
+    /// Which nodes the clan shows; edited in the sidebar.
+    filter: ClanFilter,
     /// Maps terminals to Claude sessions and scans subagents off the UI thread.
     claude: ClaudeWorker,
     claude_data: Option<ClaudeData>,
     /// The selected agent's or subagent's conversation, read from its session transcript.
     transcript: Option<ui::chat::TranscriptView>,
-    /// The Queen's details: fleet summary and the broadcast composer.
-    queen: ui::queen::QueenPanel,
+    /// The King's details: clan summary and the broadcast composer.
+    king: ui::king::KingPanel,
     /// Runs terminal sends and tab switches off the UI thread.
     actions: ActionRunner,
     /// Input box drafts and send statuses, per terminal.
@@ -102,7 +102,7 @@ pub struct MyrstackApp {
     whip_log: ui::whip_log::WhipLog,
     /// Sidebar rows and counts derived from `snapshot`.
     sidebar_cache: ui::sidebar::SidebarCache,
-    /// The Settings window (Queen, Whip, Voice, General); owns `settings.json`.
+    /// The Settings window (King, Whip, Voice, General); owns `settings.json`.
     whip_window: ui::settings::SettingsPane,
     /// Pops up and sounds notifications; shared with the whip's executors, which raise theirs
     /// through it.
@@ -135,20 +135,20 @@ pub struct MyrstackApp {
     close: ui::close::CloseDialog,
     /// Worktree count in the top bar, the cleanup window and its hammer.
     worktrees: ui::worktrees::WorktreePanel,
-    /// The ant farm drew the rubble (and the hammer breaking it) this frame, so the hammer skips the
+    /// The farm drew the rubble (and the hammer breaking it) this frame, so the hammer skips the
     /// window's bottom edge.
     cleanup_in_farm: bool,
     /// Who fetched which playbook version, re-read off the UI thread.
     playbook_watch: playbook::PlaybookWatch,
-    /// The Queen's chat, drawn in the conversation column.
+    /// The King's chat, drawn in the conversation column.
     chat: chat::AppChat,
     /// Manual whips in flight, their confirmation popover and result toast.
     whip_now: whip_now::WhipNowState,
-    /// "New ant…" dialog, spawns in flight and the new node to select.
+    /// "New dwarf…" dialog, spawns in flight and the new node to select.
     spawn: spawn::AppSpawn,
     /// ⌘E push-to-talk dictation.
     dictation: dictation::AppDictation,
-    /// Hold-to-talk to the Queen (global hotkey) and her spoken replies.
+    /// Hold-to-talk to the King (global hotkey) and his spoken replies.
     talk: talk::AppTalk,
     /// PRs agents marked ready for review, their GitHub state and the poller reading it.
     review: review::AppReview,
@@ -189,7 +189,7 @@ impl MyrstackApp {
             crate::quota::POLL_INTERVAL,
             Some(repaint_once(ctx)),
         );
-        let chat = chat::AppChat::start(ctx, whip_window.queen());
+        let chat = chat::AppChat::start(ctx, whip_window.king());
         let talk = talk::AppTalk::new(ctx, whip_window.voice());
         let envoy_session = crate::envoy::session::Session::load(
             crate::claude::hook::data_dir().join("envoy-session.json"),
@@ -204,8 +204,8 @@ impl MyrstackApp {
             poller,
             data: None,
             snapshot: None,
-            fleet: FleetView::new(),
-            ant_farm: ui::ant_farm::AntFarmView::new(),
+            clan: ClanView::new(),
+            farm: ui::farm::FarmView::new(),
             selected: None,
             history: ui::history::SelectionHistory::default(),
             panes: ui::dock::PaneLayout::default(),
@@ -215,11 +215,11 @@ impl MyrstackApp {
             quick_actions_width: 0.0,
             watched_screen: None,
             screen: None,
-            filter: FleetFilter::default(),
+            filter: ClanFilter::default(),
             claude,
             claude_data: None,
             transcript: None,
-            queen: ui::queen::QueenPanel::default(),
+            king: ui::king::KingPanel::default(),
             actions,
             input: ui::terminal::InputPanelState::default(),
             whip,
@@ -372,27 +372,26 @@ impl MyrstackApp {
         self.snapshot.as_ref()?.node(self.selected.as_ref()?)
     }
 
-    fn queen_selected(&self) -> bool {
-        self.selected.as_ref() == Some(&NodeId::queen())
+    fn king_selected(&self) -> bool {
+        self.selected.as_ref() == Some(&NodeId::king())
     }
 
-    /// Whether the conversation column has something to show: the Queen's chat (also when
+    /// Whether the conversation column has something to show: the King's chat (also when
     /// nothing is selected, unless hidden), the selected agent's screen or transcript, or the
     /// multi-selection.
     fn has_conversation(&self) -> bool {
         self.shows_chat()
             || self.selected_node().is_some()
-            || (self.snapshot.is_some() && self.fleet.selection().len() > 1)
+            || (self.snapshot.is_some() && self.clan.selection().len() > 1)
     }
 
-    /// Whether the details column has something to show: one selected node (or the Queen).
+    /// Whether the details column has something to show: one selected node (or the King).
     fn has_details(&self) -> bool {
-        self.fleet.selection().len() <= 1
-            && (self.queen_selected() || self.selected_node().is_some())
+        self.clan.selection().len() <= 1 && (self.king_selected() || self.selected_node().is_some())
     }
 
     pub(super) fn conversation_contents(&mut self, ui: &mut egui::Ui, now_ms: i64) {
-        if self.fleet.selection().len() > 1 {
+        if self.clan.selection().len() > 1 {
             self.selection_contents(ui);
         } else if self.shows_chat() {
             if let Some(id) = self.chat.ui(ui, self.snapshot.as_ref(), &self.traffic) {
@@ -452,8 +451,8 @@ impl MyrstackApp {
         {
             self.envoy_drafts_button(ui);
         }
-        if self.queen_selected() {
-            self.queen_details(ui, now_ms);
+        if self.king_selected() {
+            self.king_details(ui, now_ms);
             return;
         }
         if let Some((node, info)) = self.selected_subagent() {
@@ -468,7 +467,7 @@ impl MyrstackApp {
             .as_ref()
             .is_some_and(|s| s.coordinator_gone(node))
         {
-            ui::fleet_view::coordinator_gone_note(ui);
+            ui::clan_view::coordinator_gone_note(ui);
         }
         let usage = self.claude_data.as_ref().and_then(|c| c.node_usage(node));
         let response = ui::terminal::details_panel(ui, node, self.screen.as_ref(), usage, now_ms);
@@ -508,15 +507,15 @@ impl MyrstackApp {
         }
         if response.close {
             self.selected = None;
-            self.fleet.set_selected(None);
+            self.clan.set_selected(None);
         }
         if let Some(id) = response.select {
             self.select_and_focus(id);
         }
     }
 
-    /// The Queen's details: the review queue, her header and fleet summary, and broadcast.
-    fn queen_details(&mut self, ui: &mut egui::Ui, now_ms: i64) {
+    /// The King's details: the review queue, his header and clan summary, and broadcast.
+    fn king_details(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         let (review_rows, review_note, review_state) = self.review_view(now_ms);
         let playbook = self.playbook_status();
         let review_action = ui::review::review_section(
@@ -526,7 +525,7 @@ impl MyrstackApp {
             now_ms,
             review_state,
         );
-        let inputs = ui::queen::QueenInputs {
+        let inputs = ui::king::KingInputs {
             snapshot: self.snapshot.as_ref(),
             whip: &self.whip_status,
             quotas: &self.quotas,
@@ -534,9 +533,9 @@ impl MyrstackApp {
             playbook: playbook.as_ref(),
         };
         let response =
-            ui::queen::queen_details(ui, &mut self.queen, inputs, || Box::new(OrcaClient::new()));
-        if self.queen.broadcast.take_sent() {
-            self.ant_farm.pulse(ui::ant_farm::Pulse::Broadcast);
+            ui::king::king_details(ui, &mut self.king, inputs, || Box::new(OrcaClient::new()));
+        if self.king.broadcast.take_sent() {
+            self.farm.pulse(ui::farm::Pulse::Broadcast);
         }
         if response.whip_stalled {
             self.request_whip_stalled(None);
@@ -546,31 +545,31 @@ impl MyrstackApp {
             self.select_and_focus(id);
         } else if response.close {
             self.selected = None;
-            self.fleet.set_selected(None);
+            self.clan.set_selected(None);
         }
     }
 
-    /// Selects the queen, opening her chat and details, and focuses the farm camera on her.
-    fn select_queen(&mut self) {
-        let id = NodeId::queen();
-        self.fleet.set_selected(Some(&id));
-        self.fleet.center_on(&id);
+    /// Selects the king, opening his chat and details, and focuses the farm camera on him.
+    fn select_king(&mut self) {
+        let id = NodeId::king();
+        self.clan.set_selected(Some(&id));
+        self.clan.center_on(&id);
         self.selected = Some(id);
     }
 
-    /// Selects `id` in the app and the fleet, and pans/zooms onto it unless it is filtered out.
+    /// Selects `id` in the app and the clan, and pans/zooms onto it unless it is filtered out.
     fn select_and_focus(&mut self, id: NodeId) {
-        self.fleet.set_selected(Some(&id));
-        if self.fleet.is_visible(&id) {
-            self.fleet.focus_nodes(std::slice::from_ref(&id));
+        self.clan.set_selected(Some(&id));
+        if self.clan.is_visible(&id) {
+            self.clan.focus_nodes(std::slice::from_ref(&id));
         }
         self.selected = Some(id);
     }
 
     fn clear_filters(&mut self) {
-        self.filter = FleetFilter::default();
+        self.filter = ClanFilter::default();
         if let Some(snapshot) = &self.snapshot {
-            self.fleet.set_hidden(&self.filter.hidden(snapshot));
+            self.clan.set_hidden(&self.filter.hidden(snapshot));
         }
     }
 
@@ -585,7 +584,7 @@ impl MyrstackApp {
             ctx,
             self.snapshot.as_ref(),
             self.data.as_ref(),
-            self.fleet.hidden(),
+            self.clan.hidden(),
             &cx,
         );
         match outcome {
@@ -631,7 +630,7 @@ impl MyrstackApp {
         let Some(snapshot) = &self.snapshot else {
             return;
         };
-        let hidden = self.fleet.hidden();
+        let hidden = self.clan.hidden();
         let current = self.selected.as_ref();
         let target = match command {
             KeyCommand::NextNode | KeyCommand::PrevNode => {
@@ -658,8 +657,8 @@ impl MyrstackApp {
                 };
                 let groups = ui::keys::repo_nav(snapshot, hidden);
                 if let Some((repo, id)) = ui::keys::step_repo(&groups, current, delta) {
-                    self.fleet.set_selected(Some(&id));
-                    self.fleet.focus_repo(&repo);
+                    self.clan.set_selected(Some(&id));
+                    self.clan.focus_repo(&repo);
                     self.selected = Some(id);
                 }
                 None
@@ -687,9 +686,9 @@ impl MyrstackApp {
                 } else if self.help_open {
                     self.help_open = false;
                 } else if let Some(keep) =
-                    ui::selection::after_escape(current, &self.fleet.selection())
+                    ui::selection::after_escape(current, &self.clan.selection())
                 {
-                    self.fleet.set_selected(keep.as_ref());
+                    self.clan.set_selected(keep.as_ref());
                     self.selected = keep;
                 }
                 None
@@ -706,7 +705,7 @@ impl MyrstackApp {
                 None
             }
             KeyCommand::Fit => {
-                self.ant_farm.fit_to_screen();
+                self.farm.fit_to_screen();
                 None
             }
             KeyCommand::ToggleHelp => {
@@ -718,14 +717,14 @@ impl MyrstackApp {
             | KeyCommand::HistoryBack
             | KeyCommand::HistoryForward => None,
             KeyCommand::CloseSession => {
-                let ids = ui::selection::close_targets(current, &self.fleet.selection());
+                let ids = ui::selection::close_targets(current, &self.clan.selection());
                 if !ids.is_empty() {
                     self.request_close(ids);
                 }
                 None
             }
             KeyCommand::Whip => {
-                let ids = ui::selection::whip_targets(current, &self.fleet.selection());
+                let ids = ui::selection::whip_targets(current, &self.clan.selection());
                 if !ids.is_empty() {
                     self.request_whip(ids);
                 }
@@ -733,13 +732,13 @@ impl MyrstackApp {
             }
         };
         if let Some(id) = target {
-            self.fleet.set_selected(Some(&id));
-            self.fleet.center_on(&id);
+            self.clan.set_selected(Some(&id));
+            self.clan.center_on(&id);
             self.selected = Some(id);
         }
     }
 
-    /// How fresh the fleet data is; `None` before the first poll.
+    /// How fresh the clan data is; `None` before the first poll.
     fn freshness(&self, now_ms: i64) -> Option<crate::stale::Freshness> {
         let data = self.data.as_ref()?;
         Some(crate::stale::freshness(
@@ -768,7 +767,7 @@ impl MyrstackApp {
             .unwrap_or_default();
         let shown = age_ms.map_or_else(
             || "no data yet".to_owned(),
-            |ms| format!("showing data from {} ago", ui::fleet_view::format_age(ms)),
+            |ms| format!("showing data from {} ago", ui::clan_view::format_age(ms)),
         );
         let retry = egui::Panel::top("stale_banner")
             .show(ui, |ui| {
@@ -795,7 +794,7 @@ impl MyrstackApp {
         let Some(id) = self.selected.clone() else {
             return;
         };
-        if !self.fleet.hidden().contains(&id) {
+        if !self.clan.hidden().contains(&id) {
             return;
         }
         let clear = egui::Panel::top("hidden_selection")
@@ -816,7 +815,7 @@ impl MyrstackApp {
         }
     }
 
-    /// The top bar: the app's controls, and the Queen and Status report buttons and plan
+    /// The top bar: the app's controls, and the King and Status report buttons and plan
     /// quotas at the right, above the conversation column.
     fn top_bar(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         let bar = ui.max_rect();
@@ -846,7 +845,7 @@ impl MyrstackApp {
         let quick = ui.scope_builder(
             egui::UiBuilder::new().max_rect(right).layout(row_layout),
             |ui| {
-                self.queen_quick_actions(ui);
+                self.king_quick_actions(ui);
                 self.quota_chips(ui, now_ms);
             },
         );
@@ -861,7 +860,7 @@ impl MyrstackApp {
             self.history_step(step);
         }
         if ui.button("Fit").clicked() {
-            self.ant_farm.fit_to_screen();
+            self.farm.fit_to_screen();
         }
         ui.separator();
         if let Some(data) = &self.data {
@@ -879,18 +878,18 @@ impl MyrstackApp {
                 ui.visuals().warn_fg_color
             };
             ui.colored_label(color, label)
-                .on_hover_text("Orca hasn't answered lately: the fleet shown may be out of date");
+                .on_hover_text("Orca hasn't answered lately: the clan shown may be out of date");
         }
         if ui.button("Refresh").clicked() {
             self.poller.send(PollerCommand::RefreshNow);
         }
         if ui
             .button("Broadcast…")
-            .on_hover_text("Select the Queen and open the broadcast to coordinators")
+            .on_hover_text("Select the King and open the broadcast to coordinators")
             .clicked()
         {
-            self.select_queen();
-            self.queen.open_broadcast = true;
+            self.select_king();
+            self.king.open_broadcast = true;
         }
         self.whip_window.gear_button(ui);
         self.whip_window.button(ui);
@@ -919,7 +918,7 @@ impl MyrstackApp {
 /// Selection history: back and forward over the nodes selected so far.
 ///
 /// Every change of the selected node is recorded once per frame, whoever made it (a click,
-/// the keyboard, the palette, a notification, the Queen's `focus_agent`, a spawned session
+/// the keyboard, the palette, a notification, the King's `focus_agent`, a spawned session
 /// being selected), so back always returns to what was on screen before the jump.
 impl MyrstackApp {
     /// Records the selected node if it changed since the last frame.
@@ -927,7 +926,7 @@ impl MyrstackApp {
         self.history.record(self.selected.as_ref());
     }
 
-    /// Selects the previous or next node in the history and centers the fleet on it.
+    /// Selects the previous or next node in the history and centers the clan on it.
     fn history_step(&mut self, step: ui::history::HistoryStep) {
         let target = match step {
             ui::history::HistoryStep::Back => self.history.back(self.selected.as_ref()),
@@ -936,19 +935,19 @@ impl MyrstackApp {
         let Some(id) = target else {
             return;
         };
-        self.fleet.set_selected(Some(&id));
-        if self.fleet.is_visible(&id) {
-            self.fleet.center_on(&id);
+        self.clan.set_selected(Some(&id));
+        if self.clan.is_visible(&id) {
+            self.clan.center_on(&id);
         }
         self.selected = Some(id);
     }
 }
 
-/// Multi-selection: several nodes selected in the fleet (box or Shift/Cmd-click).
+/// Multi-selection: several nodes selected in the clan (box or Shift/Cmd-click).
 impl MyrstackApp {
     /// The "N selected" panel, in the conversation column while 2+ nodes are selected.
     fn selection_contents(&mut self, ui: &mut egui::Ui) {
-        let selection = self.fleet.selection();
+        let selection = self.clan.selection();
         let Some(snapshot) = self.snapshot.as_ref() else {
             return;
         };
@@ -958,8 +957,8 @@ impl MyrstackApp {
             .collect();
         match ui::selection::selection_panel(ui, &nodes) {
             Some(ui::selection::SelectionAction::SelectOnly(id)) => {
-                self.fleet.set_selected(Some(&id));
-                self.fleet.center_on(&id);
+                self.clan.set_selected(Some(&id));
+                self.clan.center_on(&id);
                 self.selected = Some(id);
             }
             Some(ui::selection::SelectionAction::Close) => {
@@ -969,7 +968,7 @@ impl MyrstackApp {
                 self.request_whip(selection.into_iter().collect());
             }
             Some(ui::selection::SelectionAction::Clear) => {
-                self.fleet.set_selected(None);
+                self.clan.set_selected(None);
                 self.selected = None;
             }
             None => {}
@@ -977,7 +976,7 @@ impl MyrstackApp {
     }
 }
 
-/// Closing (killing) sessions: requests from the terminal panel, the fleet's context menu, `x`
+/// Closing (killing) sessions: requests from the terminal panel, the clan's context menu, `x`
 /// and the sidebar's "Close shown…" open one confirmation dialog; confirmed steps run on the
 /// action runner.
 impl MyrstackApp {
@@ -1000,9 +999,9 @@ impl MyrstackApp {
 
     fn close_dialog(&mut self, ctx: &egui::Context) {
         let terminals = self.data.as_ref().map_or(&[][..], |d| &d.terminals[..]);
-        let confirmed =
-            self.close
-                .show(ctx, self.snapshot.as_ref(), terminals, self.fleet.hidden());
+        let confirmed = self
+            .close
+            .show(ctx, self.snapshot.as_ref(), terminals, self.clan.hidden());
         if let Some((plan, labels)) = confirmed {
             log::info!("closing sessions: {:?}", plan.steps);
             let ids: Vec<_> = plan
@@ -1031,7 +1030,7 @@ impl MyrstackApp {
         self.panes.notifications = state.notifications_panel;
         self.chat_hidden = state.chat_hidden;
         self.filter = state.filter;
-        self.ant_farm.set_rooms(state.farm_rooms);
+        self.farm.set_rooms(state.farm_rooms);
         self.search
             .set_recents(ui::commands::Recents::from_keys(&state.recent_actions));
     }
@@ -1043,7 +1042,7 @@ impl MyrstackApp {
             recent_actions: self.search.recents().keys(),
             panes: self.panes.encode(),
             notifications_panel: self.panes.notifications,
-            farm_rooms: self.ant_farm.rooms().clone(),
+            farm_rooms: self.farm.rooms().clone(),
             ..PersistedState::default()
         }
     }
@@ -1139,7 +1138,7 @@ impl eframe::App for MyrstackApp {
         self.poll_playbook();
         if rebuild && let Some(data) = &self.data {
             let now = now_ms();
-            let mut snapshot = FleetSnapshot::build_with_stalled(
+            let mut snapshot = ClanSnapshot::build_with_stalled(
                 data,
                 self.claude_data.as_ref(),
                 &self.whip_status.escalated,
@@ -1158,11 +1157,11 @@ impl eframe::App for MyrstackApp {
             }
             snapshot.mark_parked(self.parking.entries());
             snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_status());
-            self.fleet.set_hidden(&self.filter.hidden(&snapshot));
-            self.fleet.sync(&snapshot);
+            self.clan.set_hidden(&self.filter.hidden(&snapshot));
+            self.clan.sync(&snapshot);
             if let Some(claude) = &self.claude_data {
-                self.fleet.set_usage(claude.node_usages(&snapshot.nodes));
-                self.fleet
+                self.clan.set_usage(claude.node_usages(&snapshot.nodes));
+                self.clan
                     .set_building(claude.building_nodes(&snapshot.nodes));
             }
             if let Some(id) = &self.selected

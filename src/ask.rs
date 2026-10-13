@@ -4,7 +4,7 @@
 //! - the `ask_karl` MCP tool records a [`PendingAsk`] (and notifies Karl straight away);
 //! - a Claude session whose last turn ended on a question ([`crate::claude::turns`]).
 //!
-//! Either way the node shows NeedsInput (see [`crate::model::FleetSnapshot::mark_waiting`]),
+//! Either way the node shows NeedsInput (see [`crate::model::ClanSnapshot::mark_waiting`]),
 //! which the dashboard and the needs-input notification pick up. An ask is answered once the
 //! transcript shows a prompt after it; for agents without a Claude transcript (Codex), once
 //! the terminal has produced output [`ASK_SETTLE_MS`] after it.
@@ -13,11 +13,11 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
+use crate::clan::ClanData;
 use crate::claude::ClaudeData;
 use crate::control::ControlError;
 use crate::control::protocol::Params;
 use crate::finish::{clip, origin_of};
-use crate::fleet::FleetData;
 use crate::notify::Severity;
 use crate::review::mark::Origin;
 
@@ -119,7 +119,7 @@ impl Asks {
     }
 
     /// Drops answered asks and those whose terminal is gone; `true` when any was dropped.
-    pub fn prune(&mut self, data: &FleetData, claude: Option<&ClaudeData>) -> bool {
+    pub fn prune(&mut self, data: &ClanData, claude: Option<&ClaudeData>) -> bool {
         let before = self.by_handle.len();
         self.by_handle
             .retain(|handle, ask| !answered(handle, ask, data, claude));
@@ -130,7 +130,7 @@ impl Asks {
     /// sessions whose last turn ended on a question.
     pub fn waiting(
         &self,
-        data: &FleetData,
+        data: &ClanData,
         claude: Option<&ClaudeData>,
     ) -> BTreeMap<String, String> {
         let mut out: BTreeMap<String, String> = self
@@ -155,7 +155,7 @@ impl Asks {
 
 /// Whether `ask` no longer stands: its terminal left, Karl answered in the transcript, or (with
 /// no transcript to read) the terminal went on well after it.
-fn answered(handle: &str, ask: &PendingAsk, data: &FleetData, claude: Option<&ClaudeData>) -> bool {
+fn answered(handle: &str, ask: &PendingAsk, data: &ClanData, claude: Option<&ClaudeData>) -> bool {
     let Some(terminal) = data.terminal(handle) else {
         return true;
     };
@@ -177,8 +177,8 @@ mod tests {
 
     const AT: i64 = 1_790_000_000_000;
 
-    fn data(handles: &[(&str, Option<i64>)]) -> FleetData {
-        FleetData {
+    fn data(handles: &[(&str, Option<i64>)]) -> ClanData {
+        ClanData {
             terminals: handles
                 .iter()
                 .map(|(h, out)| Terminal {
@@ -187,7 +187,7 @@ mod tests {
                     ..Terminal::default()
                 })
                 .collect(),
-            ..FleetData::default()
+            ..ClanData::default()
         }
     }
 

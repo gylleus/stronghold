@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use super::{FleetSnapshot, Node, NodeId};
+use super::{ClanSnapshot, Node, NodeId};
 
 /// Repo bucket for nodes without a worktree.
 pub const NO_REPO: &str = "(no repo)";
@@ -39,8 +39,8 @@ fn own_repo(node: &Node) -> Option<String> {
     node.worktree_path.as_deref().and_then(repo_of)
 }
 
-/// Like [`FleetSnapshot::node`], but also works on snapshots assembled by hand.
-fn find_node<'a>(snapshot: &'a FleetSnapshot, id: &NodeId) -> Option<&'a Node> {
+/// Like [`ClanSnapshot::node`], but also works on snapshots assembled by hand.
+fn find_node<'a>(snapshot: &'a ClanSnapshot, id: &NodeId) -> Option<&'a Node> {
     snapshot
         .node(id)
         .or_else(|| snapshot.nodes.iter().find(|n| &n.id == id))
@@ -48,7 +48,7 @@ fn find_node<'a>(snapshot: &'a FleetSnapshot, id: &NodeId) -> Option<&'a Node> {
 
 /// A run's repo: its coordinator's, else its attendant's, else the most common among its
 /// nodes (ties to the smaller name), else [`NO_REPO`].
-pub fn run_repo(snapshot: &FleetSnapshot, run_id: &str) -> String {
+pub fn run_repo(snapshot: &ClanSnapshot, run_id: &str) -> String {
     let lead = snapshot
         .run(run_id)
         .and_then(|r| r.coordinator.as_ref())
@@ -73,7 +73,7 @@ pub fn run_repo(snapshot: &FleetSnapshot, run_id: &str) -> String {
 
 /// The repo a node is grouped under: its run's for run members (so a run stays in one
 /// repo), else its own worktree's, else [`NO_REPO`].
-pub fn node_repo(node: &Node, snapshot: &FleetSnapshot) -> String {
+pub fn node_repo(node: &Node, snapshot: &ClanSnapshot) -> String {
     match node.run_id.as_deref() {
         Some(run) if snapshot.run(run).is_some() => run_repo(snapshot, run),
         _ => own_repo(node).unwrap_or_else(|| NO_REPO.to_string()),
@@ -88,7 +88,7 @@ pub struct RepoIndex {
 }
 
 impl RepoIndex {
-    pub fn new(snapshot: &FleetSnapshot) -> Self {
+    pub fn new(snapshot: &ClanSnapshot) -> Self {
         let by_run: HashMap<String, String> = snapshot
             .runs
             .iter()

@@ -3,7 +3,7 @@
 //!
 //! Orca can report a launch as done while the prompt sits unsubmitted in the input box
 //! (bracketed paste) or behind Claude's "Bypass Permissions" modal on a new worktree; see the
-//! fleet playbook's *Setup and dispatch*.
+//! clan playbook's *Setup and dispatch*.
 
 use super::Agent;
 

@@ -2,12 +2,12 @@
 
 use eframe::egui;
 
-use super::{SettingsPane, queen, save_row};
+use super::{SettingsPane, king, save_row};
 use crate::envoy::settings::EnvoySettings;
 
 pub(super) struct EnvoyDraft {
     settings: EnvoySettings,
-    model: queen::QueenDraft,
+    model: king::KingDraft,
     channels: String,
 }
 
@@ -15,7 +15,7 @@ impl EnvoyDraft {
     pub(super) fn new(settings: &EnvoySettings) -> Self {
         Self {
             settings: settings.clone(),
-            model: queen::QueenDraft::new(&crate::chat::settings::QueenSettings {
+            model: king::KingDraft::new(&crate::chat::settings::KingSettings {
                 model: settings.model.clone(),
                 ..Default::default()
             }),
@@ -68,7 +68,7 @@ pub(super) fn section(pane: &mut SettingsPane, ui: &mut egui::Ui, out: &mut supe
             ui.end_row();
             ui.label("Model");
             ui.push_id("envoy", |ui| {
-                queen::model_picker(ui, "envoy", &mut draft.model)
+                king::model_picker(ui, "envoy", &mut draft.model)
             });
             ui.end_row();
             ui.label("Poll interval (seconds)");
@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(loaded.envoy(), pane.envoy());
         assert_eq!(loaded.envoy().channels, ["C_TEST", "C_OTHER"]);
         assert_eq!(loaded.envoy().model.as_deref(), Some("test-model"));
-        assert_eq!(loaded.queen(), pane.queen());
+        assert_eq!(loaded.king(), pane.king());
         assert!(!loaded.envoy().dry_run);
     }
 

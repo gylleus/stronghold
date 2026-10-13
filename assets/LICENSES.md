@@ -8,7 +8,7 @@ Everything here is compiled into the binary (`include_bytes!`); nothing is fetch
 
 The Phosphor font uses the MIT license; its notice and license text are included below.
 The mine, its scenery and dwarves are drawn in Rust with the cutout and pixel renderers
-in `src/ui/dwarf/` and `src/ui/ant_farm/`, with one generated asset:
+in `src/ui/dwarf/` and `src/ui/farm/`, with one generated asset:
 
 - `art/tools/cleanup_hammer.png`: generated for Myrstack with OpenAI's built-in image
   generation tool on 2026-10-13, using no reference image. The exact prompt is in

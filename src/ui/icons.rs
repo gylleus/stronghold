@@ -69,7 +69,7 @@ pub fn add_font(fonts: &mut egui::FontDefinitions) {
 pub fn kind_icon(kind: NodeKind) -> char {
     match kind {
         NodeKind::Envoy => ENVELOPE,
-        NodeKind::Queen => CROWN,
+        NodeKind::King => CROWN,
         NodeKind::Coordinator => TREE_STRUCTURE,
         NodeKind::Attendant => HEADSET,
         NodeKind::Worker => HARD_HAT,
@@ -117,10 +117,10 @@ pub fn with_icon(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::fleet_view::ALL_STATES;
+    use crate::ui::clan_view::ALL_STATES;
 
     const ALL_KINDS: [NodeKind; 6] = [
-        NodeKind::Queen,
+        NodeKind::King,
         NodeKind::Coordinator,
         NodeKind::Attendant,
         NodeKind::Worker,

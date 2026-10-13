@@ -10,7 +10,7 @@ use crate::model::{Node, NodeId, NodeKind, NodeState};
 use crate::orca::{Terminal, TerminalInput, TerminalStatus};
 use crate::poller::ScreenUpdate;
 use crate::ui::chat::TranscriptView;
-use crate::ui::fleet_view::state_color;
+use crate::ui::clan_view::state_color;
 use crate::ui::styled_view::styled_view;
 use crate::ui::term_style::AgentKind;
 
@@ -511,7 +511,7 @@ pub fn terminal_panel(
 }
 
 /// Open in Orca and Whip for `node`, in a right-to-left header (Whip is added first so it ends
-/// up right of Open in Orca). Neither is shown for the Queen or a subagent: they have no
+/// up right of Open in Orca). Neither is shown for the King or a subagent: they have no
 /// terminal of their own.
 fn agent_actions(
     ui: &mut egui::Ui,
@@ -519,7 +519,7 @@ fn agent_actions(
     handle: Option<&str>,
     response: &mut TerminalPanelResponse,
 ) {
-    if matches!(node.kind, NodeKind::Queen | NodeKind::Subagent) {
+    if matches!(node.kind, NodeKind::King | NodeKind::Subagent) {
         return;
     }
     let whippable = handle.is_some()
@@ -863,7 +863,7 @@ pub fn format_screen_age(age_ms: i64) -> String {
     if age_ms < 60_000 {
         format!("{:.1}s", age_ms as f64 / 1000.0)
     } else {
-        crate::ui::fleet_view::format_age(age_ms)
+        crate::ui::clan_view::format_age(age_ms)
     }
 }
 
@@ -875,7 +875,7 @@ fn kind_label(kind: NodeKind) -> &'static str {
         NodeKind::Terminal => "terminal",
         NodeKind::Envoy => "envoy",
         NodeKind::Subagent => "subagent",
-        NodeKind::Queen => "queen",
+        NodeKind::King => "king",
     }
 }
 

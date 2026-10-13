@@ -1,5 +1,5 @@
-//! Parking agents: Karl shelves an ant that finished its task but that he wants to keep for
-//! later. A parked agent sleeps in the resting area, out of the live fleet: the whip leaves it
+//! Parking agents: Karl shelves a dwarf that finished its task but that he wants to keep for
+//! later. A parked agent sleeps in the resting area, out of the live clan: the whip leaves it
 //! alone, it counts in no stalled or needs-input total, and no cleanup closes its terminal or
 //! removes its worktree unless it is named explicitly. Its terminal, session and worktree stay
 //! as they are, so waking it (unparking, or sending it a message) continues the conversation.
@@ -20,11 +20,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::fleet::FleetData;
+use crate::clan::ClanData;
 use crate::model::{Node, NodeId, NodeKind};
 
 /// Where parked agents are shown: the farm region and sidebar group they gather in, in place
-/// of their repo's, and the ant farm's chamber.
+/// of their repo's, and the farm's chamber.
 pub const RESTING_AREA: &str = "Resting area";
 
 /// The parked set's file in the data dir.
@@ -46,7 +46,7 @@ pub struct ParkedAgent {
 /// Why `node` can't be parked, if it can't.
 pub fn refusal(node: &Node) -> Option<&'static str> {
     match node.kind {
-        NodeKind::Queen => Some("the Queen isn't a session; it stands for the whole fleet"),
+        NodeKind::King => Some("the King isn't a session; it stands for the whole clan"),
         NodeKind::Subagent => Some("subagents run inside their parent session; park the parent"),
         NodeKind::Envoy => Some("the Envoy is a standing session with its own room"),
         NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {
@@ -129,7 +129,7 @@ impl Parking {
 
     /// Drops agents whose terminal is no longer in a clean poll's terminal list, and returns
     /// them. A poll with errors or no terminals at all proves nothing and drops none.
-    pub fn prune_gone(&mut self, data: &FleetData) -> Vec<ParkedAgent> {
+    pub fn prune_gone(&mut self, data: &ClanData) -> Vec<ParkedAgent> {
         if !data.errors.is_empty() || data.terminals.is_empty() {
             return Vec::new();
         }

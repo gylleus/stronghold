@@ -85,7 +85,7 @@ fn fixtures(outbox: bool) -> (Vec<Draft>, Inbox) {
     let task = Draft::proposal(
         "Review the fixture build and report any regressions.".into(),
         Some("myrstack".into()),
-        "Avery requested a review; the Queen can start an ant to check it.".into(),
+        "Avery requested a review; the King can start a dwarf to check it.".into(),
         link.into(),
         0,
     );
@@ -121,7 +121,7 @@ fn main() -> eframe::Result {
     let (mut drafts, inbox) = fixtures(outbox);
     let gateway = args.iter().any(|a| a == "--gateway");
     if gateway {
-        let link=myrstack::envoy::drafts::RequestLink{id:"envoy-request-1".into(),turn_id:1,original_ask:"Please review abc012def at 2026-10-06T12:34:56Z.\nCount: 42\n```rust\nlet x = 17;\n```\n".into(),requester:"Build ant".into(),why:"Unblock the fixture release review".into(),agent:true};
+        let link=myrstack::envoy::drafts::RequestLink{id:"envoy-request-1".into(),turn_id:1,original_ask:"Please review abc012def at 2026-10-06T12:34:56Z.\nCount: 42\n```rust\nlet x = 17;\n```\n".into(),requester:"Build dwarf".into(),why:"Unblock the fixture release review".into(),agent:true};
         let mut draft = Draft::outgoing(
             "C123".into(),
             None,
@@ -175,12 +175,12 @@ fn main() -> eframe::Result {
                         id: 1,
                         requester: myrstack::envoy::requests::Requester::from_origin(
                             myrstack::review::mark::Origin {
-                                terminal_handle: Some("Build ant".into()),
+                                terminal_handle: Some("Build dwarf".into()),
                                 ..Default::default()
                             },
                         )
                         .unwrap(),
-                        reason: "The build ant owns this review and needs the replies.".into(),
+                        reason: "The build dwarf owns this review and needs the replies.".into(),
                         preview: myrstack::envoy::requests::BindingPreview {
                             thread: orphan.thread.clone().unwrap(),
                             first_line: "Please review the fixture release.".into(),

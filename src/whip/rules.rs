@@ -6,8 +6,8 @@
 
 use std::collections::BTreeSet;
 
+use crate::clan::ClanData;
 use crate::detect::claude_session_live;
-use crate::fleet::FleetData;
 use crate::orca::{Task, TaskStatus, Timestamp};
 use crate::whip::progress::{ProgressReport, ProgressSource, RunProgress, TaskProgress};
 
@@ -16,7 +16,7 @@ pub const DEFAULT_THRESHOLD_MS: i64 = 15 * 60_000;
 /// Default abandon window: a Run with no activity for 24 h is left alone.
 pub const DEFAULT_ABANDON_AFTER_MS: i64 = 24 * 60 * 60_000;
 
-/// Inputs to [`evaluate`] besides the report and the fleet data.
+/// Inputs to [`evaluate`] besides the report and the clan data.
 #[derive(Debug, Clone, Copy)]
 pub struct RuleContext<'a> {
     /// Silence longer than this is a stall.
@@ -117,7 +117,7 @@ pub struct StallFinding {
 /// most severe, then the longest idle.
 pub fn evaluate(
     report: &ProgressReport,
-    data: &FleetData,
+    data: &ClanData,
     ctx: &RuleContext<'_>,
     now_ms: i64,
 ) -> Vec<StallFinding> {
@@ -184,7 +184,7 @@ pub fn is_abandoned(run: &RunProgress, ctx: &RuleContext<'_>, now_ms: i64) -> bo
 /// declared) of a newer Run: the terminal has moved on, so its output and silence are about
 /// the newer Run. Its coordinator is never nudged, nor a worker of it whose terminal has been
 /// silent for longer than the abandon window.
-pub fn is_superseded(run_id: &str, data: &FleetData) -> bool {
+pub fn is_superseded(run_id: &str, data: &ClanData) -> bool {
     let Some(coordinator) = effective_coordinator(run_id, data) else {
         return false;
     };
@@ -197,8 +197,8 @@ pub fn is_superseded(run_id: &str, data: &FleetData) -> bool {
     })
 }
 
-/// The terminal actually coordinating a Run; see [`FleetData::effective_coordinator`].
-pub fn effective_coordinator(run_id: &str, data: &FleetData) -> Option<String> {
+/// The terminal actually coordinating a Run; see [`ClanData::effective_coordinator`].
+pub fn effective_coordinator(run_id: &str, data: &ClanData) -> Option<String> {
     data.effective_coordinator(run_id)
 }
 
@@ -213,7 +213,7 @@ pub fn effective_coordinator(run_id: &str, data: &FleetData) -> Option<String> {
 /// [`StallReason::MissingReport`].
 fn worker_stalled(
     task: &TaskProgress,
-    data: &FleetData,
+    data: &ClanData,
     ctx: &RuleContext<'_>,
     now_ms: i64,
 ) -> Option<StallFinding> {
@@ -272,7 +272,7 @@ fn worker_stalled(
 }
 
 /// See rule 1b on [`worker_stalled`]; the caller has checked the silence.
-fn looks_unreported(task: &TaskProgress, data: &FleetData, owner: &str) -> bool {
+fn looks_unreported(task: &TaskProgress, data: &ClanData, owner: &str) -> bool {
     task.status == TaskStatus::Dispatched
         && !task.failed_but_alive
         && !task.reported
@@ -286,7 +286,7 @@ fn coordinator_idle(
     run: &RunProgress,
     coordinator: &str,
     report: &ProgressReport,
-    data: &FleetData,
+    data: &ClanData,
     ctx: &RuleContext<'_>,
     now_ms: i64,
 ) -> Option<StallFinding> {
@@ -371,7 +371,7 @@ fn coordinator_idle(
 fn unanswered_asks(
     run: &RunProgress,
     coordinator: &str,
-    data: &FleetData,
+    data: &ClanData,
     ctx: &RuleContext<'_>,
     now_ms: i64,
 ) -> Option<StallFinding> {
@@ -408,7 +408,7 @@ fn unanswered_asks(
 fn quiet_taskless_run(
     run: &RunProgress,
     coordinator: &str,
-    data: &FleetData,
+    data: &ClanData,
     ctx: &RuleContext<'_>,
     now_ms: i64,
 ) -> Option<StallFinding> {
@@ -461,7 +461,7 @@ fn coordinator_target(handle: &str, run: &RunProgress) -> StallTarget {
     }
 }
 
-fn task_label(data: &FleetData, run_id: &str, task_id: &str) -> String {
+fn task_label(data: &ClanData, run_id: &str, task_id: &str) -> String {
     let label = data
         .tasks
         .get(run_id)
@@ -474,7 +474,7 @@ fn task_label(data: &FleetData, run_id: &str, task_id: &str) -> String {
     }
 }
 
-fn labels(data: &FleetData, run_id: &str, ids: &[String]) -> String {
+fn labels(data: &ClanData, run_id: &str, ids: &[String]) -> String {
     ids.iter()
         .map(|id| task_label(data, run_id, id))
         .collect::<Vec<_>>()
@@ -578,7 +578,7 @@ mod tests {
     /// A Run with a live coordinator and one dispatched task `t1` owned by a live worker. Both
     /// have been active within the last minute.
     struct Scenario {
-        data: FleetData,
+        data: ClanData,
         report: ProgressReport,
         needs_input: BTreeSet<String>,
         abandon_after_ms: i64,
@@ -586,7 +586,7 @@ mod tests {
 
     impl Scenario {
         fn new() -> Self {
-            let data = FleetData {
+            let data = ClanData {
                 terminals: vec![terminal(COORD), terminal(WORKER)],
                 runs: vec![run(RUN, COORD, NOW - 60 * MIN, NOW - MIN)],
                 workers: vec![worker("t1", WORKER)],
@@ -1180,13 +1180,13 @@ mod tests {
     #[test]
     fn superseded_detection() {
         const REBOUND: &str = "term_440";
-        let with = |f: fn(&mut FleetData)| {
+        let with = |f: fn(&mut ClanData)| {
             let mut d = Scenario::new().data;
             d.terminals.push(terminal(REBOUND));
             f(&mut d);
             d
         };
-        let cases: Vec<(&str, FleetData, bool)> = vec![
+        let cases: Vec<(&str, ClanData, bool)> = vec![
             ("only run", with(|_| {}), false),
             (
                 "newer run, same declared coordinator",
@@ -1475,7 +1475,7 @@ mod tests {
             s.data.terminals = vec![terminal(WORKER), terminal(rebound), terminal("term_x")];
             s.data
         };
-        let cases: Vec<(&str, FleetData, Option<&str>)> = vec![
+        let cases: Vec<(&str, ClanData, Option<&str>)> = vec![
             ("declared live", Scenario::new().data, Some(COORD)),
             (
                 "declared dead, no other evidence",

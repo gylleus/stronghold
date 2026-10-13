@@ -14,7 +14,7 @@ use crate::envoy::context::{CLEAR_COMMAND, ContextBudget, ResetReason, handoff_p
 use crate::envoy::control::EnvoyCommand;
 use crate::envoy::drafts::{Draft, DraftKind, DraftQueue, DraftStatus, ReplyTo};
 use crate::envoy::inbox::{Inbox, timestamp_us};
-use crate::envoy::matching::{self, Ant};
+use crate::envoy::matching::{self, Dwarf};
 use crate::envoy::notes::ThreadNotes;
 use crate::envoy::relay::{RelayLimiter, RelayRequest};
 use crate::envoy::settings::EnvoySettings;
@@ -674,8 +674,8 @@ impl AppEnvoy {
         &mut self,
         id: &str,
         edited_text: Option<&str>,
-        queen_ready: bool,
-        queen: impl FnOnce(&str) -> bool,
+        king_ready: bool,
+        king: impl FnOnce(&str) -> bool,
     ) -> Result<bool, String> {
         if self.dispatch_blocked {
             return Err(
@@ -704,8 +704,8 @@ impl AppEnvoy {
         }
         let proposal = draft.kind == DraftKind::TaskProposal;
         if !self.settings.dry_run {
-            if proposal && !queen_ready {
-                return Err("Queen chat is busy; try approval when she is ready".into());
+            if proposal && !king_ready {
+                return Err("King chat is busy; try approval when he is ready".into());
             }
             if !proposal {
                 self.worker()?;
@@ -723,10 +723,10 @@ impl AppEnvoy {
             now_ms(),
             |draft| {
                 if draft.kind == DraftKind::TaskProposal {
-                    if queen(&draft.queen_request()) {
+                    if king(&draft.king_request()) {
                         Ok(true)
                     } else {
-                        Err("Queen chat refused the request".into())
+                        Err("King chat refused the request".into())
                     }
                 } else {
                     let worker = self.worker.as_ref().ok_or("Envoy worker unavailable")?;
@@ -933,12 +933,17 @@ impl AppEnvoy {
         (notifications, traffic)
     }
 
-    /// Who `event` is for. Karl's side owns a thread when an ant opened it (`reach_out`), the
+    /// Who `event` is for. Karl's side owns a thread when a dwarf opened it (`reach_out`), the
     /// app watches it, or the Envoy posted in it.
-    fn addressee(&self, event: &InboundEvent, thread: &[&InboundEvent], ants: &[Ant]) -> Verdict {
+    fn addressee(
+        &self,
+        event: &InboundEvent,
+        thread: &[&InboundEvent],
+        dwarves: &[Dwarf],
+    ) -> Verdict {
         let root = event.thread_ts.as_deref().unwrap_or(&event.ts);
         let key = format!("{}:{root}", event.conversation);
-        let karls_thread = ants.iter().any(|a| a.threads.contains(&key))
+        let karls_thread = dwarves.iter().any(|a| a.threads.contains(&key))
             || self.inbox.thread_watches.values().any(|w| {
                 w.watch.thread.conversation == event.conversation && w.watch.thread.ts == root
             })
@@ -949,7 +954,7 @@ impl AppEnvoy {
         addressee::classify(event, thread, self.karl(), karls_thread)
     }
 
-    fn next_forward(&mut self, now: i64, ants: &[Ant]) -> Option<(Action, Vec<InboundEvent>)> {
+    fn next_forward(&mut self, now: i64, dwarves: &[Dwarf]) -> Option<(Action, Vec<InboundEvent>)> {
         if self.pending.is_empty() || self.forwarding.is_some() || now < self.forward_after_ms {
             return None;
         }
@@ -978,11 +983,11 @@ impl AppEnvoy {
                     .collect();
                 let thread = &thread[thread.len().saturating_sub(20)..];
                 e.summary()
-                    + &self.addressee(e, thread, ants).annotation()
+                    + &self.addressee(e, thread, dwarves).annotation()
                     + &matching::annotation(&matching::candidates(
                         e,
                         thread,
-                        ants,
+                        dwarves,
                         &self.inbox.pr_heads,
                     ))
                     + &self.note_suffix(e)
@@ -1032,8 +1037,8 @@ impl AppEnvoy {
     fn panel_action(
         &mut self,
         action: crate::ui::envoy::DraftAction,
-        queen_ready: bool,
-        queen: impl FnOnce(&str) -> bool,
+        king_ready: bool,
+        king: impl FnOnce(&str) -> bool,
     ) -> (String, Result<bool, String>) {
         match action {
             crate::ui::envoy::DraftAction::DismissRequest(id) => {
@@ -1120,7 +1125,7 @@ impl AppEnvoy {
             crate::ui::envoy::DraftAction::Approve { id, text } => {
                 let result = self
                     .envoy_edit(&id, &text)
-                    .and_then(|()| self.envoy_approve(&id, None, queen_ready, queen));
+                    .and_then(|()| self.envoy_approve(&id, None, king_ready, king));
                 (id, result)
             }
             crate::ui::envoy::DraftAction::Reject(id) => {
@@ -1143,7 +1148,7 @@ impl AppEnvoy {
 
 impl MyrstackApp {
     pub(super) fn envoy_drafts_button(&mut self, ui: &mut egui::Ui) {
-        if crate::ui::queen::envoy_drafts_button(ui, self.envoy_core.pending_count()) {
+        if crate::ui::king::envoy_drafts_button(ui, self.envoy_core.pending_count()) {
             self.envoy_core.open_request = true;
         }
     }
@@ -1200,7 +1205,7 @@ impl MyrstackApp {
                         Source::Envoy,
                         Severity::Warn,
                         "Blocking request to Envoy",
-                        "An ant is waiting for an external reply.",
+                        "A dwarf is waiting for an external reply.",
                     )
                     .with_target(DRAFTS_TARGET),
                 );
@@ -1287,8 +1292,7 @@ impl MyrstackApp {
                 .map_err(|_| "Relay requires to, summary, slack_link and why".to_owned())
                 .and_then(|mut request| {
                     if request.to == "coordinators" {
-                        let snapshot =
-                            self.snapshot.as_ref().ok_or("Fleet snapshot unavailable")?;
+                        let snapshot = self.snapshot.as_ref().ok_or("Clan snapshot unavailable")?;
                         let selection = crate::broadcast::BroadcastSelection::new(
                             snapshot.runs.iter().map(|r| r.id.clone()),
                         );
@@ -1348,7 +1352,7 @@ impl MyrstackApp {
         let from = self.envoy_core.handle.clone().expect("authorized Envoy");
         if request.to == "coordinators" {
             let Some(snapshot) = &self.snapshot else {
-                let error = ControlError::new(ErrorCode::Unavailable, "Fleet snapshot unavailable");
+                let error = ControlError::new(ErrorCode::Unavailable, "Clan snapshot unavailable");
                 reply.send(Err(error.clone()));
                 return Err(error);
             };
@@ -1471,8 +1475,8 @@ impl MyrstackApp {
         if self.envoy_reset() {
             return;
         }
-        let ants = self.envoy_ants();
-        if let Some((action, batch)) = self.envoy_core.next_forward(now_ms(), &ants) {
+        let dwarves = self.envoy_dwarves();
+        if let Some((action, batch)) = self.envoy_core.next_forward(now_ms(), &dwarves) {
             log::info!("envoy: typing {} event(s)", batch.len());
             let id = self.actions.submit(action);
             self.envoy_core.forwarding = Some((id, batch));
@@ -1503,8 +1507,8 @@ impl MyrstackApp {
         true
     }
 
-    /// Live ants the Envoy may relay to, with what identifies their work.
-    fn envoy_ants(&self) -> Vec<Ant> {
+    /// Live dwarves the Envoy may relay to, with what identifies their work.
+    fn envoy_dwarves(&self) -> Vec<Dwarf> {
         let Some(snapshot) = &self.snapshot else {
             return Vec::new();
         };
@@ -1555,7 +1559,7 @@ impl MyrstackApp {
                     .map(|t| format!("{}:{}", t.conversation, t.ts))
                     .collect();
                 let repo = crate::model::node_repo(n, snapshot);
-                Ant {
+                Dwarf {
                     id: n.id.0.clone(),
                     label: n.label.clone(),
                     repo: (repo != crate::model::NO_REPO).then_some(repo),
