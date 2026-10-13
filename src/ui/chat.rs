@@ -330,6 +330,7 @@ fn estimate_height(item: &ChatItem, width: f32, m: &TextMetrics) -> f32 {
             };
             m.text_height(&shown, width * 0.8 - 24.0) + 14.0
         }
+        ChatItem::Ant(message) => m.text_height(&message.message, width) + m.row * 3.0,
         ChatItem::Assistant { text, .. } => m.text_height(text, width) + m.row * 0.5,
         ChatItem::Permission(card) if card.decision.is_none() => m.row * 8.0,
         ChatItem::Error(text) => m.text_height(text, width),
@@ -580,6 +581,29 @@ fn item_ui(
     actions: &mut Vec<ChatAction>,
 ) -> Option<NodeId> {
     match item {
+        ChatItem::Ant(message) => {
+            let mut selected = None;
+            ui.group(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong(format!("Ant · {} · {}", message.label, message.kind));
+                    if let Some(id) = &message.node_id {
+                        let node = NodeId(id.clone());
+                        if is_node(&node) && ui.link(id).clicked() {
+                            selected = Some(node);
+                        }
+                    }
+                    if !message.delivered {
+                        ui.weak("queued");
+                    }
+                });
+                ui.label(&message.message);
+                if let Some(url) = &message.url {
+                    ui.hyperlink(url);
+                }
+                ui.weak("From an ant · not Karl's instructions");
+            });
+            return selected;
+        }
         ChatItem::User(text) => user_bubble(ui, text),
         ChatItem::VoiceUser(text) => user_bubble(ui, &voice_bubble_text(text)),
         ChatItem::Assistant { text, .. } => {

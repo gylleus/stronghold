@@ -32,6 +32,7 @@ pub struct ChatSession {
     pub state: SessionState,
     /// Messages to send once the session is ready (`MYRSTACK_CHAT_SEND`, for smoke tests).
     queued: Vec<String>,
+    ant_inflight: Option<String>,
     /// Where auto mode is saved (the chat directory).
     dir: std::path::PathBuf,
     auto_mode: bool,
@@ -79,6 +80,7 @@ impl ChatSession {
             transcript: Transcript::default(),
             state: SessionState::Starting,
             queued,
+            ant_inflight: None,
             dir,
             auto_mode,
             told_auto: None,
@@ -114,6 +116,7 @@ impl ChatSession {
             notice.push_str(&format!(" (effort {effort})"));
         }
         notice.push('…');
+        self.ant_inflight = None;
         self.end_speech_turn();
         self.transcript.session_ended();
         self.transcript.push_system(notice);
@@ -194,6 +197,7 @@ impl ChatSession {
         match event {
             ChatEvent::State(state) => {
                 if !matches!(state, SessionState::Ready | SessionState::Starting) {
+                    self.ant_inflight = None;
                     self.end_speech_turn();
                     self.transcript.session_ended();
                 }
@@ -223,7 +227,17 @@ impl ChatSession {
                 self.transcript.push_permission(request);
             }
             ChatEvent::AutoApproved(request) => self.transcript.mark_auto(&request),
+            ChatEvent::AntSettled { id, error } => {
+                if self.ant_inflight.as_deref() == Some(&id) {
+                    self.ant_inflight = None;
+                    self.transcript.running = false;
+                }
+                if let Some(error) = error {
+                    self.transcript.push_error(error);
+                }
+            }
             ChatEvent::NewSession(id) => {
+                self.ant_inflight = None;
                 log::info!("chat: new session {id}");
                 self.history = None;
                 self.transcript = Transcript::default();
@@ -261,6 +275,56 @@ impl ChatSession {
 
     pub fn can_send(&self) -> bool {
         self.state == SessionState::Ready && !self.transcript.running
+    }
+
+    /// Import durable inbox items independently of whether the Queen is busy. Only an idle
+    /// session gets a wake-up turn; the supervisor commits its receipt and handles recovery.
+    pub fn poll_ant_messages(
+        &mut self,
+        path: &std::path::Path,
+        snapshot: Option<&crate::model::ClanSnapshot>,
+        terminals: &[crate::orca::Terminal],
+    ) -> std::io::Result<()> {
+        if self.history.is_some() {
+            return Ok(());
+        }
+        let mut inbox = crate::queen_inbox::Inbox::open(path)?;
+        let session_id = session::SessionStore::saved(&self.dir).map(|r| r.session_id);
+        let mut changed = false;
+        for message in &mut inbox.messages {
+            if let Some(agent) = snapshot
+                .and_then(|s| crate::review::view::resolve_agent(&message.origin, s, terminals))
+                && (message.node_id.as_deref() != Some(agent.id.as_str())
+                    || message.label != agent.label)
+            {
+                message.node_id = Some(agent.id.0);
+                message.label = agent.label;
+                changed = true;
+            }
+            if !message.delivered
+                || (message.session_id.is_some() && message.session_id == session_id)
+            {
+                self.transcript.push_ant(message);
+            }
+        }
+        if changed {
+            inbox.save()?;
+        }
+        if self.can_send()
+            && self.ant_inflight.is_none()
+            && let Some(message) = inbox.messages.iter().find(|m| !m.delivered)
+        {
+            self.ant_inflight = Some(message.id.clone());
+            self.transcript.running = true;
+            // Auto mode is host-owned. It is never read from an ant's payload.
+            let note = format!("{}\n\n", auto_mode::note(self.auto_mode));
+            self.handle.send(ChatCommand::Ant {
+                path: path.into(),
+                id: message.id.clone(),
+                note,
+            });
+        }
+        Ok(())
     }
 
     /// Whether typed turns are spoken ("Speak replies"), so they ask for a `<say>` line.

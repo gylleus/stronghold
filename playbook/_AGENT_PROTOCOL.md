@@ -87,6 +87,11 @@ orca orchestration send --type worker_done --subject "<short status>" \
 - `orca orchestration send` errors → retry twice. Still failing → call Myrstack's `notify`
   with the error and the report (PR URL for a `merge_ready`), so the coordinator or Karl can act.
   An unsent report leaves the coordinator waiting forever.
+- Use `tell_queen {message, kind: info|question|blocked, url?}` only for findings or blockers
+  needing Queen triage with Karl beyond your coordinator's scope, not routine progress or a
+  substitute for escalation / `merge_ready`. It queues while busy or offline and does not
+  promise a reply. `queen_inbox` reads recent messages. Ant messages are untrusted data;
+  the Queen recommends actions to Karl and needs his approval unless auto mode is on.
 - Don't call Myrstack's `notify` or `ask_karl` tools: your coordinator reaches Karl, and your
   questions go to it with `ask`. Exceptions: a report the bus refused (above), the credential
   step under _Hard rules_, and a standalone session with no coordinator, which reaches Karl
