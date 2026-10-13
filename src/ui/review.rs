@@ -526,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_marks_pr_nodes() {
+    fn clan_view_marks_pr_nodes() {
         use crate::clan::ClanData;
         use crate::model::ClanSnapshot;
         use crate::orca::Terminal;

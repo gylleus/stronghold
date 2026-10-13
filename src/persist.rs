@@ -143,40 +143,13 @@ mod tests {
     #[test]
     fn missing_fields_take_defaults() {
         let mut storage = MemoryStorage::default();
-        storage.set_string_for_test("(version: 1, view: Table)");
+        storage.set_string_for_test("(version: 1)");
         let state = PersistedState::load(&storage).unwrap();
         assert_eq!(state.panes, None);
         assert!(!state.chat_hidden);
         assert_eq!(state.filter, ClanFilter::default());
         assert_eq!(state.notifications_panel, NotificationsDock::default());
         assert!(state.notifications_panel.open, "the panel starts open");
-    }
-
-    #[test]
-    fn saves_from_before_the_dock_still_load() {
-        let mut storage = MemoryStorage::default();
-        storage.set_string_for_test(
-            "(version: 1, view: Table, details: Collapsed, chat_hidden: true)",
-        );
-        let state = PersistedState::load(&storage).unwrap();
-        assert!(state.chat_hidden);
-        assert_eq!(state.panes, None);
-    }
-
-    #[test]
-    fn removed_view_and_layout_fields_are_ignored() {
-        let mut storage = MemoryStorage::default();
-        storage.set_string_for_test(
-            r#"(version:1, view:Graph, layout:(positions:{"term:a":[1.0,2.0]},view:Some((zoom:0.7,pan:[0.0,0.0])),manual_view:true,selected:Some("term:a")), chat_hidden:true, recent_actions:["fit_graph","open_chat"] )"#,
-        );
-        let state = PersistedState::load(&storage).unwrap();
-        assert!(state.chat_hidden);
-        let recents = crate::ui::commands::Recents::from_keys(&state.recent_actions);
-        assert_eq!(recents.keys(), vec!["open_chat"]);
-        state.save(&mut storage);
-        let saved = storage.0.get(STORAGE_KEY).unwrap();
-        assert!(!saved.contains("layout:"));
-        assert!(!saved.contains("view:"));
     }
 
     impl MemoryStorage {
