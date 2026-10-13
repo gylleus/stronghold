@@ -14,6 +14,9 @@ pub enum Action {
     Study,
     /// Hands raised over a scrying basin; only active work pulses the runes.
     Scry,
+    /// Staff thrust up in his fist, the other arm flung back, the crystal blazing and runes
+    /// circling it: the rune priest taking in a message.
+    Cast,
     /// Swinging the tool overhead into the rock.
     Mine,
     /// Hammering at chest height (editing, building).
@@ -32,11 +35,12 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 12] = [
+    pub const ALL: [Action; 13] = [
         Action::Still,
         Action::Wait,
         Action::Study,
         Action::Scry,
+        Action::Cast,
         Action::Mine,
         Action::Build,
         Action::Walk,
@@ -53,6 +57,7 @@ impl Action {
             self,
             Action::Study
                 | Action::Scry
+                | Action::Cast
                 | Action::Mine
                 | Action::Build
                 | Action::Walk
@@ -106,6 +111,8 @@ pub struct Pose {
     pub roll: f32,
     /// Blue crystal and rune pulse, zero except while scrying.
     pub scry: f32,
+    /// While casting: the staff raised and the turn, radians, of the runes circling its crystal.
+    pub cast: Option<f32>,
 }
 
 /// The pose for `action` at `t` seconds (each dwarf passes its own phase offset in `t`).
@@ -217,6 +224,20 @@ pub fn pose(action: Action, t: f64) -> Pose {
                 lean: 0.05,
                 brows: -0.5,
                 scry: 0.55 + 0.45 * wave,
+                ..rest
+            }
+        }
+        Action::Cast => {
+            let surge = (t as f32 * 7.0).sin();
+            Pose {
+                arm: 1.9 + surge * 0.04,
+                back_arm: -1.3 - surge * 0.1,
+                head: -0.22,
+                lean: -0.04,
+                stretch: 0.03 + 0.015 * surge,
+                brows: 1.0,
+                scry: 1.6 + 0.4 * surge,
+                cast: Some((t as f32 * 2.4).rem_euclid(TAU)),
                 ..rest
             }
         }

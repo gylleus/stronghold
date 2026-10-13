@@ -521,6 +521,9 @@ pub fn draw(
         cutout::draw(o, &parts::nugget(), body, finish);
     }
     cutout::draw(o, &parts::arm(look, pose), arm, finish);
+    if look.role == Role::RunePriest && !pose.stowed {
+        cutout::draw(o, &parts::priest_spell(pose), body, finish);
+    }
     if let Some(s) = pose
         .since_strike
         .filter(|s| *s < 0.16 && look.tool != Tool::None)
