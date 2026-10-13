@@ -2,11 +2,11 @@ use std::collections::{BTreeSet, HashSet};
 
 use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
 
-use super::AntFarmView;
+use super::FarmView;
 use super::layout::*;
 use super::motion::{along, route};
 use crate::model::{
-    Edge, EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
+    ClanSnapshot, Edge, EdgeKind, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
 };
 use crate::orca::{DispatchStatus, WorkerState, WorkerTerminalState};
 
@@ -53,12 +53,12 @@ pub(super) fn run(name: &str, completed: usize, total: usize) -> RunSummary {
     }
 }
 
-/// The Queen, run "r1" with a coordinator and one worker per state, a loose terminal.
-pub(super) fn snapshot() -> FleetSnapshot {
-    let mut s = FleetSnapshot::default();
+/// The King, run "r1" with a coordinator and one worker per state, a loose terminal.
+pub(super) fn snapshot() -> ClanSnapshot {
+    let mut s = ClanSnapshot::default();
     s.runs = vec![run("r1", 1, 4)];
     s.nodes
-        .push(node("queen", NodeKind::Queen, None, NodeState::Working));
+        .push(node("king", NodeKind::King, None, NodeState::Working));
     s.nodes.push(node(
         "r1-coord",
         NodeKind::Coordinator,
@@ -81,7 +81,7 @@ pub(super) fn snapshot() -> FleetSnapshot {
     s
 }
 
-fn scene_with(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>, pr: &[&str]) -> Scene {
+fn scene_with(snapshot: &ClanSnapshot, hidden: &BTreeSet<NodeId>, pr: &[&str]) -> Scene {
     let pr_ready: HashSet<NodeId> = pr.iter().map(|p| id(p)).collect();
     let input = FarmInput {
         snapshot,
@@ -93,18 +93,18 @@ fn scene_with(snapshot: &FleetSnapshot, hidden: &BTreeSet<NodeId>, pr: &[&str]) 
     layout(&input, RECT)
 }
 
-pub(super) fn scene(snapshot: &FleetSnapshot) -> Scene {
+pub(super) fn scene(snapshot: &ClanSnapshot) -> Scene {
     scene_with(snapshot, &BTreeSet::new(), &[])
 }
 
-pub(super) fn ant<'a>(scene: &'a Scene, name: &str) -> &'a Ant {
+pub(super) fn dwarf<'a>(scene: &'a Scene, name: &str) -> &'a Dwarf {
     scene
-        .ant(&id(name))
+        .dwarf(&id(name))
         .unwrap_or_else(|| panic!("{name} is drawn"))
 }
 
 fn tunnel_of(scene: &Scene, name: &str) -> usize {
-    match ant(scene, name).spot {
+    match dwarf(scene, name).spot {
         Spot::Mouth(ref t, _) | Spot::Chamber(ref t, _) => scene
             .tunnels
             .iter()
@@ -117,14 +117,14 @@ fn tunnel_of(scene: &Scene, name: &str) -> usize {
 #[test]
 fn king_has_a_regular_body_and_stands_on_the_throne_hall_floor() {
     let scene = scene(&snapshot());
-    let king = ant(&scene, "queen");
-    assert_eq!(king.size, ant(&scene, "working").size);
+    let king = dwarf(&scene, "king");
+    assert_eq!(king.size, dwarf(&scene, "working").size);
     assert_eq!(
         crate::ui::dwarf::Role::King.scale(),
         crate::ui::dwarf::Role::Miner.scale()
     );
     let foot = king.pos.y + king.size / 2.0;
-    assert!((scene.queen_chamber.bottom() - foot - 0.1 * king.size).abs() < 0.01);
+    assert!((scene.throne_hall.bottom() - foot - 0.1 * king.size).abs() < 0.01);
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn state_picks_the_place() {
         );
     }
     for state in [Working, Idle, NeedsInput, Stalled, Done, Failed] {
-        assert_eq!(home(NodeKind::Queen, state, false), Queen);
+        assert_eq!(home(NodeKind::King, state, false), King);
         assert_eq!(home(NodeKind::Subagent, state, false), Trail);
     }
 }
@@ -196,20 +196,20 @@ fn state_picks_pose_and_mark() {
 }
 
 #[test]
-fn ants_go_where_their_state_says() {
+fn dwarves_go_where_their_state_says() {
     let scene = scene(&snapshot());
     let t = tunnel_of(&scene, "r1-coord");
     let tunnel = &scene.tunnels[t];
     assert_eq!(tunnel.key, TunnelKey::Run("r1".into()));
 
-    let queen = ant(&scene, "queen");
-    assert_eq!(queen.spot, Spot::Queen);
-    assert!(scene.queen_chamber.contains(queen.pos));
+    let king = dwarf(&scene, "king");
+    assert_eq!(king.spot, Spot::King);
+    assert!(scene.throne_hall.contains(king.pos));
 
-    let coord = ant(&scene, "r1-coord");
+    let coord = dwarf(&scene, "r1-coord");
     assert!(matches!(coord.spot, Spot::Mouth(..)));
     assert_eq!(coord.tag, None, "its tunnel's label names it");
-    assert_eq!(ant(&scene, "working").tag.as_deref(), Some("working"));
+    assert_eq!(dwarf(&scene, "working").tag.as_deref(), Some("working"));
     assert!(
         (coord.pos.x - tunnel.shaft.center().x).abs() < 1.0,
         "at the mouth"
@@ -217,27 +217,27 @@ fn ants_go_where_their_state_says() {
     assert!(coord.pos.y < tunnel.chamber.top(), "above the chamber");
 
     for name in ["working", "idle", "stalled", "failed"] {
-        let a = ant(&scene, name);
+        let a = dwarf(&scene, name);
         assert!(matches!(a.spot, Spot::Chamber(..)), "{name}");
         assert_eq!(tunnel_of(&scene, name), t, "{name}");
         assert!(tunnel.chamber.contains(a.pos), "{name} in the chamber");
     }
     assert!(
-        ant(&scene, "working").facing_right,
+        dwarf(&scene, "working").facing_right,
         "diggers face the dig face"
     );
-    let (working, idle) = (ant(&scene, "working").pos, ant(&scene, "idle").pos);
+    let (working, idle) = (dwarf(&scene, "working").pos, dwarf(&scene, "idle").pos);
     assert!(
-        working.x > ant(&scene, "stalled").pos.x && working.x >= idle.x,
+        working.x > dwarf(&scene, "stalled").pos.x && working.x >= idle.x,
         "diggers at the face, sleepers behind them"
     );
 
-    let waiting = ant(&scene, "waiting");
+    let waiting = dwarf(&scene, "waiting");
     assert_eq!(waiting.spot, Spot::Landing(0));
     assert!(waiting.pos.y < scene.surface_y, "on the surface");
     assert!(scene.landing.contains(waiting.pos));
 
-    let done = ant(&scene, "done");
+    let done = dwarf(&scene, "done");
     assert_eq!(done.spot, Spot::Storage(0));
     assert!(scene.storage.contains(done.pos));
     assert_eq!(done.pose, Pose::Carry);
@@ -245,7 +245,7 @@ fn ants_go_where_their_state_says() {
 
 #[test]
 fn everyone_waiting_on_karl_shares_the_landing() {
-    let mut s = FleetSnapshot::default();
+    let mut s = ClanSnapshot::default();
     s.runs = vec![run("a", 0, 0), run("b", 0, 0)];
     s.nodes.push(node(
         "a-coord",
@@ -263,29 +263,29 @@ fn everyone_waiting_on_karl_shares_the_landing() {
         .push(node("t", NodeKind::Terminal, None, NodeState::NeedsInput));
     let scene = scene(&s);
     assert_eq!(
-        ant(&scene, "a-coord").tag.as_deref(),
+        dwarf(&scene, "a-coord").tag.as_deref(),
         Some("Objective a"),
         "a coordinator away from its tunnel is named by its run"
     );
-    assert_eq!(ant(&scene, "b1").tag.as_deref(), Some("b1"));
+    assert_eq!(dwarf(&scene, "b1").tag.as_deref(), Some("b1"));
     let spots: Vec<Spot> = ["a-coord", "b1", "t"]
         .iter()
-        .map(|n| ant(&scene, n).spot.clone())
+        .map(|n| dwarf(&scene, n).spot.clone())
         .collect();
     assert_eq!(
         spots,
         [Spot::Landing(0), Spot::Landing(1), Spot::Landing(2)]
     );
     for n in ["a-coord", "b1", "t"] {
-        assert!(scene.landing.contains(ant(&scene, n).pos), "{n}");
+        assert!(scene.landing.contains(dwarf(&scene, n).pos), "{n}");
     }
 }
 
 #[test]
-fn pr_ready_ants_mark_and_pile_in_storage() {
+fn pr_ready_dwarves_mark_and_pile_in_storage() {
     let scene = scene_with(&snapshot(), &BTreeSet::new(), &["done", "idle"]);
-    assert_eq!(ant(&scene, "done").mark, Some(Mark::PrReady));
-    let idle = ant(&scene, "idle");
+    assert_eq!(dwarf(&scene, "done").mark, Some(Mark::PrReady));
+    let idle = dwarf(&scene, "idle");
     assert_eq!(
         idle.spot,
         Spot::Storage(0),
@@ -297,7 +297,7 @@ fn pr_ready_ants_mark_and_pile_in_storage() {
 
 #[test]
 fn one_tunnel_per_run_then_per_repo() {
-    let mut s = FleetSnapshot::default();
+    let mut s = ClanSnapshot::default();
     s.runs = vec![run("second", 0, 0), run("first", 0, 0)];
     s.nodes.push(node(
         "first-coord",
@@ -339,7 +339,7 @@ fn one_tunnel_per_run_then_per_repo() {
 
 #[test]
 fn past_dispatches_without_a_terminal_are_not_drawn() {
-    let mut s = FleetSnapshot::default();
+    let mut s = ClanSnapshot::default();
     s.runs = vec![run("r1", 1, 4)];
     s.nodes.push(node(
         "r1-coord",
@@ -380,24 +380,24 @@ fn past_dispatches_without_a_terminal_are_not_drawn() {
     });
     let scene = scene(&s);
     assert!(
-        scene.ant(&id("old-done")).is_none(),
+        scene.dwarf(&id("old-done")).is_none(),
         "no done without a terminal"
     );
-    assert!(scene.ant(&id("superseded")).is_none());
+    assert!(scene.dwarf(&id("superseded")).is_none());
     assert_eq!(
-        ant(&scene, "lost").pose,
+        dwarf(&scene, "lost").pose,
         Pose::Failed,
         "an open dispatch that lost its terminal stays, failed"
     );
     assert!(
-        scene.ant(&id("released")).is_some(),
+        scene.dwarf(&id("released")).is_some(),
         "released ones fade out"
     );
 }
 
 #[test]
 fn a_finished_run_without_workers_has_no_tunnel() {
-    let mut s = FleetSnapshot::default();
+    let mut s = ClanSnapshot::default();
     s.runs = vec![run("over", 1, 1), run("ongoing", 2, 2)];
     let mut coord = node(
         "over-coord",
@@ -430,14 +430,14 @@ fn a_finished_run_without_workers_has_no_tunnel() {
         ],
         "a finished run's coordinator digs in its repo's tunnel; one with a worker keeps its own"
     );
-    let c = ant(&scene, "over-coord");
+    let c = dwarf(&scene, "over-coord");
     assert!(matches!(c.spot, Spot::Chamber(TunnelKey::Repo(ref r), _) if r == "alpha"));
     assert_eq!(c.tag.as_deref(), Some("Other work"));
 }
 
 #[test]
 fn tunnels_deepen_with_progress() {
-    let mut s = FleetSnapshot::default();
+    let mut s = ClanSnapshot::default();
     s.runs = vec![run("early", 0, 4), run("late", 4, 4)];
     s.nodes.push(node(
         "e",
@@ -483,22 +483,22 @@ fn subagents_trail_their_parent() {
         kind: EdgeKind::Subagent,
     });
     let scene = scene(&s);
-    let (parent, sub) = (ant(&scene, "idle"), ant(&scene, "sub"));
+    let (parent, sub) = (dwarf(&scene, "idle"), dwarf(&scene, "sub"));
     assert_eq!(sub.spot, Spot::Trail(id("idle"), 0));
     assert!(sub.size < parent.size, "smaller than its parent");
     assert!(sub.pos.x > parent.pos.x, "behind a left-facing parent");
     assert!((sub.pos - parent.pos).length() < 2.0 * parent.size);
-    let parent_at = scene.ants.iter().position(|a| a.id == id("idle"));
-    let sub_at = scene.ants.iter().position(|a| a.id == id("sub"));
+    let parent_at = scene.dwarves.iter().position(|a| a.id == id("idle"));
+    let sub_at = scene.dwarves.iter().position(|a| a.id == id("sub"));
     assert!(parent_at < sub_at, "drawn after its parent");
-    assert!(matches!(ant(&scene, "orphan").spot, Spot::Chamber(..)));
+    assert!(matches!(dwarf(&scene, "orphan").spot, Spot::Chamber(..)));
 }
 
 #[test]
 fn hidden_nodes_are_not_drawn() {
     let hidden: BTreeSet<NodeId> = [id("idle"), id("loose")].into();
     let scene = scene_with(&snapshot(), &hidden, &[]);
-    assert!(scene.ant(&id("idle")).is_none());
+    assert!(scene.dwarf(&id("idle")).is_none());
     assert!(
         scene
             .tunnels
@@ -508,12 +508,12 @@ fn hidden_nodes_are_not_drawn() {
     );
 }
 
-/// About 30 agents in 6 runs plus loose terminals all fit, without ants on top of each other.
+/// About 30 agents in 6 runs plus loose terminals all fit, without dwarves on top of each other.
 #[test]
-fn a_big_fleet_fits_without_overlap() {
-    let mut s = FleetSnapshot::default();
+fn a_big_clan_fits_without_overlap() {
+    let mut s = ClanSnapshot::default();
     s.nodes
-        .push(node("queen", NodeKind::Queen, None, NodeState::Working));
+        .push(node("king", NodeKind::King, None, NodeState::Working));
     let states = [
         NodeState::Working,
         NodeState::Working,
@@ -553,7 +553,7 @@ fn a_big_fleet_fits_without_overlap() {
 /// A crowd waiting on Karl and a pile of finished work grow the landing and storage.
 #[test]
 fn crowds_on_the_landing_and_in_storage_fit() {
-    let mut s = FleetSnapshot::default();
+    let mut s = ClanSnapshot::default();
     s.runs = vec![run("r", 0, 0)];
     for i in 0..14 {
         s.nodes.push(node(
@@ -570,7 +570,7 @@ fn crowds_on_the_landing_and_in_storage_fit() {
         ));
     }
     let scene = assert_fits(&s);
-    for a in &scene.ants {
+    for a in &scene.dwarves {
         let area = if a.state == NodeState::Done {
             scene.storage
         } else {
@@ -586,11 +586,11 @@ fn crowds_on_the_landing_and_in_storage_fit() {
     assert!(scene.storage.bottom() < scene.gallery.top());
 }
 
-/// Lays `s` out and checks every ant is drawn inside the view and none sit on each other.
-fn assert_fits(s: &FleetSnapshot) -> Scene {
+/// Lays `s` out and checks every dwarf is drawn inside the view and none sit on each other.
+fn assert_fits(s: &ClanSnapshot) -> Scene {
     let scene = scene(s);
-    assert_eq!(scene.ants.len(), s.nodes.len());
-    for a in &scene.ants {
+    assert_eq!(scene.dwarves.len(), s.nodes.len());
+    for a in &scene.dwarves {
         let cell = Rect::from_center_size(a.pos, Vec2::splat(a.size));
         assert!(
             RECT.expand(1.0).contains_rect(cell),
@@ -599,8 +599,8 @@ fn assert_fits(s: &FleetSnapshot) -> Scene {
             a.pos
         );
     }
-    for (i, a) in scene.ants.iter().enumerate() {
-        for b in &scene.ants[i + 1..] {
+    for (i, a) in scene.dwarves.iter().enumerate() {
+        for b in &scene.dwarves[i + 1..] {
             let d = (a.pos - b.pos).abs();
             let apart = (a.size + b.size) / 2.0 - 1.0;
             assert!(d.x >= apart || d.y >= apart, "{} overlaps {}", a.id, b.id);
@@ -612,7 +612,7 @@ fn assert_fits(s: &FleetSnapshot) -> Scene {
 #[test]
 fn cart_routes_use_the_chamber_shaft_and_entrance() {
     let scene = scene(&snapshot());
-    let worker = ant(&scene, "working");
+    let worker = dwarf(&scene, "working");
     let t = &scene.tunnels[tunnel_of(&scene, "working")];
     let to = pos2(
         scene.landing.center().x,
@@ -644,7 +644,7 @@ fn cart_routes_use_the_chamber_shaft_and_entrance() {
 fn dwarves_ride_only_during_travel_and_arrive_in_their_work_pose() {
     use crate::ui::dwarf::{Action, pose};
     let scene = scene(&snapshot());
-    let worker = ant(&scene, "working");
+    let worker = dwarf(&scene, "working");
     assert_eq!(
         super::dwarf_action(worker, true, false, false),
         Action::Ride
@@ -661,12 +661,12 @@ fn dwarves_ride_only_during_travel_and_arrive_in_their_work_pose() {
 }
 
 #[test]
-fn a_state_change_walks_the_ant_over() {
-    let mut farm = AntFarmView::new();
+fn a_state_change_walks_the_dwarf_over() {
+    let mut farm = FarmView::new();
     let mut s = snapshot();
     let before = scene(&s);
     farm.advance(&before, 0.0);
-    let start = ant(&before, "idle").pos;
+    let start = dwarf(&before, "idle").pos;
 
     s.nodes
         .iter_mut()
@@ -674,10 +674,14 @@ fn a_state_change_walks_the_ant_over() {
         .unwrap()
         .state = NodeState::NeedsInput;
     let after = scene(&s);
-    let target = ant(&after, "idle").pos;
-    let at = |farm: &mut AntFarmView, t: f64| {
+    let target = dwarf(&after, "idle").pos;
+    let at = |farm: &mut FarmView, t: f64| {
         let placed = farm.advance(&after, t);
-        let i = after.ants.iter().position(|a| a.id == id("idle")).unwrap();
+        let i = after
+            .dwarves
+            .iter()
+            .position(|a| a.id == id("idle"))
+            .unwrap();
         placed[i]
     };
     let first = at(&mut farm, 10.0);
@@ -688,9 +692,9 @@ fn a_state_change_walks_the_ant_over() {
     let end = at(&mut farm, 20.0);
     assert_eq!(end.pos, target);
     assert_eq!(end.heading, None, "arrived");
-    // Unchanged ants never walked.
+    // Unchanged dwarves never walked.
     let i = after
-        .ants
+        .dwarves
         .iter()
         .position(|a| a.id == id("working"))
         .unwrap();
@@ -698,8 +702,8 @@ fn a_state_change_walks_the_ant_over() {
 }
 
 #[test]
-fn a_resize_moves_ants_without_walking() {
-    let mut farm = AntFarmView::new();
+fn a_resize_moves_dwarves_without_walking() {
+    let mut farm = FarmView::new();
     let s = snapshot();
     farm.advance(&scene(&s), 0.0);
     let pr_ready = HashSet::new();
@@ -719,18 +723,18 @@ fn a_resize_moves_ants_without_walking() {
     );
 }
 
-/// Clicking an ant reports it, as clicking a node does in the fleet; clicking soil reports
+/// Clicking a dwarf reports it, as clicking a node does in the clan; clicking soil reports
 /// an empty click.
 #[test]
-fn clicking_an_ant_reports_it() {
+fn clicking_an_dwarf_reports_it() {
     use eframe::egui::{self, Event, PointerButton};
     let s = snapshot();
-    let mut fleet = crate::ui::fleet_view::FleetView::new();
-    fleet.sync(&s);
-    let mut farm = AntFarmView::new();
+    let mut clan = crate::ui::clan_view::ClanView::new();
+    clan.sync(&s);
+    let mut farm = FarmView::new();
     let ctx = egui::Context::default();
     let mut time = 0.0;
-    let mut frame = |events: Vec<Event>, farm: &mut AntFarmView| {
+    let mut frame = |events: Vec<Event>, farm: &mut FarmView| {
         time += 1.0 / 60.0;
         let input = egui::RawInput {
             screen_rect: Some(RECT),
@@ -741,7 +745,7 @@ fn clicking_an_ant_reports_it() {
         let mut out = None;
         let mut output = ctx.run_ui(input, |ui| {
             let rect = ui.available_rect_before_wrap();
-            out = Some((rect, farm.show(ui, &s, &mut fleet)));
+            out = Some((rect, farm.show(ui, &s, &mut clan)));
         });
         output.textures_delta.clear();
         out.expect("a frame ran")
@@ -757,7 +761,7 @@ fn clicking_an_ant_reports_it() {
         now_ms: 0,
     };
     let scene = layout(&input, rect);
-    let target = ant(&scene, "working").pos;
+    let target = dwarf(&scene, "working").pos;
     let soil = pos2(rect.center().x, rect.bottom() - 4.0);
     let mut responses = Vec::new();
     for at in [target, soil] {
@@ -777,17 +781,17 @@ fn clicking_an_ant_reports_it() {
     assert!(responses[1].clicked_empty);
 }
 
-/// Dragging a box from empty ground over a chamber selects the ants in it, as in the fleet.
+/// Dragging a box from empty ground over a chamber selects the dwarves in it, as in the clan.
 #[test]
-fn dragging_a_box_selects_the_ants_in_it() {
+fn dragging_a_box_selects_the_dwarves_in_it() {
     use eframe::egui::{self, Event, PointerButton};
     let s = snapshot();
-    let mut fleet = crate::ui::fleet_view::FleetView::new();
-    fleet.sync(&s);
-    let mut farm = AntFarmView::new();
+    let mut clan = crate::ui::clan_view::ClanView::new();
+    clan.sync(&s);
+    let mut farm = FarmView::new();
     let ctx = egui::Context::default();
     let mut time = 0.0;
-    let mut frame = |events: Vec<Event>, farm: &mut AntFarmView| {
+    let mut frame = |events: Vec<Event>, farm: &mut FarmView| {
         time += 1.0 / 60.0;
         let input = egui::RawInput {
             screen_rect: Some(RECT),
@@ -798,7 +802,7 @@ fn dragging_a_box_selects_the_ants_in_it() {
         let mut out = None;
         let mut output = ctx.run_ui(input, |ui| {
             let rect = ui.available_rect_before_wrap();
-            out = Some((rect, farm.show(ui, &s, &mut fleet)));
+            out = Some((rect, farm.show(ui, &s, &mut clan)));
         });
         output.textures_delta.clear();
         out.expect("a frame ran")
@@ -843,10 +847,10 @@ fn dragging_a_box_selects_the_ants_in_it() {
     assert_eq!(hits, expected);
 }
 
-/// A broadcast grows from the Queen to the farthest corner, a status report closes in from
-/// there to her, and both are gone after; an ant hops only while the ring is on it.
+/// A broadcast grows from the King to the farthest corner, a status report closes in from
+/// there to him, and both are gone after; a dwarf hops only while the ring is on it.
 #[test]
-fn ripples_spread_and_ants_hop_as_they_pass() {
+fn ripples_spread_and_dwarves_hop_as_they_pass() {
     use super::{Pulse, hop, ripple_radius};
     let out = |t| ripple_radius(Pulse::Broadcast, t, 1000.0);
     assert_eq!(out(-0.1), None);
@@ -866,11 +870,11 @@ fn ripples_spread_and_ants_hop_as_they_pass() {
     assert_eq!(hop(300.0, 100.0, 40.0, 8.0), 0.0, "not reached yet");
 }
 
-/// Ants present when the farm opens are placed; one that appears later walks out of the
-/// Queen's chamber.
+/// Dwarves present when the farm opens are placed; one that appears later walks out of the
+/// Throne hall.
 #[test]
-fn new_ants_emerge_from_the_queen() {
-    let mut farm = AntFarmView::new();
+fn new_dwarves_emerge_from_the_king() {
+    let mut farm = FarmView::new();
     let mut s = snapshot();
     let first = scene(&s);
     assert!(
@@ -887,7 +891,7 @@ fn new_ants_emerge_from_the_queen() {
     ));
     let after = scene(&s);
     let i = after
-        .ants
+        .dwarves
         .iter()
         .position(|a| a.id == id("hatchling"))
         .unwrap();
@@ -895,14 +899,14 @@ fn new_ants_emerge_from_the_queen() {
     assert!(placed[i].heading.is_some(), "walks");
     assert!(
         after
-            .queen_chamber
+            .throne_hall
             .expand(after.cell())
             .contains(placed[i].pos),
-        "from the Queen's chamber"
+        "from the throne hall"
     );
     assert_eq!(
         farm.advance(&after, 10.0)[i].pos,
-        ant(&after, "hatchling").pos
+        dwarf(&after, "hatchling").pos
     );
 }
 
@@ -973,10 +977,10 @@ fn building_diggers_build() {
         now_ms: 0,
     };
     let scene = layout(&input, RECT);
-    let pose_of = |name: &str| scene.ant(&id(name)).unwrap().pose;
+    let pose_of = |name: &str| scene.dwarf(&id(name)).unwrap().pose;
     assert_eq!(pose_of("working"), Pose::Build);
-    assert!(scene.ant(&id("working")).unwrap().facing_right);
-    assert_eq!(pose_of("idle"), Pose::Sleep, "only working ants build");
+    assert!(scene.dwarf(&id("working")).unwrap().facing_right);
+    assert_eq!(pose_of("idle"), Pose::Sleep, "only working dwarves build");
     assert_eq!(
         pose_of("r1-coord"),
         Pose::Stand,
@@ -984,10 +988,10 @@ fn building_diggers_build() {
     );
 }
 
-/// An ant removed from the fleet falls; one filtered out or changing state does not.
+/// A dwarf removed from the clan falls; one filtered out or changing state does not.
 #[test]
-fn only_removed_ants_fall() {
-    let mut farm = AntFarmView::new();
+fn only_removed_dwarves_fall() {
+    let mut farm = FarmView::new();
     let mut s = snapshot();
     let first = scene(&s);
     farm.bury(&first, &s, 0.0, || false);
@@ -1003,11 +1007,14 @@ fn only_removed_ants_fall() {
     farm.bury(&filtered, &s, 1.0, || false);
     let drawn = farm.advance(&filtered, 1.0);
     let waiting = filtered
-        .ants
+        .dwarves
         .iter()
         .position(|a| a.id == id("waiting"))
         .unwrap();
-    assert!(farm.falls.is_empty(), "done and filtered ants stay alive");
+    assert!(
+        farm.falls.is_empty(),
+        "done and filtered dwarves stay alive"
+    );
 
     s.nodes
         .retain(|n| n.id != id("waiting") && n.id != id("idle"));
@@ -1017,7 +1024,7 @@ fn only_removed_ants_fall() {
     assert_eq!(
         farm.falls.len(),
         1,
-        "only the removed ant, not the filtered one"
+        "only the removed dwarf, not the filtered one"
     );
     let fall = farm.falls[0];
     assert_eq!(
@@ -1030,10 +1037,10 @@ fn only_removed_ants_fall() {
     assert_eq!(farm.falls.len(), 1, "falls once");
 }
 
-/// A falling ant hops, flips legs up, lands on the farm's bottom after FALL_S, bounces and
+/// A falling dwarf hops, flips legs up, lands on the farm's bottom after FALL_S, bounces and
 /// fades; with reduced motion it fades where it stood.
 #[test]
-fn a_dead_ant_falls_to_the_bottom() {
+fn a_dead_dwarf_falls_to_the_bottom() {
     use super::death::*;
     let body = Body {
         kind: NodeKind::Worker,
@@ -1080,13 +1087,13 @@ fn a_dead_ant_falls_to_the_bottom() {
     assert_eq!(still.frame(RECT, 10.0 + STILL_FADE_S), None);
 }
 
-/// A crowded chamber in a narrow tunnel packs its ants side by side, spread across the
+/// A crowded chamber in a narrow tunnel packs its dwarves side by side, spread across the
 /// chamber, rather than one per row down a tall farm.
 #[test]
 fn a_crowded_chamber_packs_side_by_side() {
-    let mut s = FleetSnapshot::default();
+    let mut s = ClanSnapshot::default();
     s.nodes
-        .push(node("queen", NodeKind::Queen, None, NodeState::Working));
+        .push(node("king", NodeKind::King, None, NodeState::Working));
     for r in 0..6 {
         let name = format!("r{r}");
         s.runs.push(run(&name, 1, 4));
@@ -1112,36 +1119,36 @@ fn a_crowded_chamber_packs_side_by_side() {
     };
     let scene = layout(&input, rect);
     let chamber = scene.tunnels[tunnel_of(&scene, "r0-w0")].chamber;
-    let ants: Vec<&Ant> = scene
-        .ants
+    let dwarves: Vec<&Dwarf> = scene
+        .dwarves
         .iter()
         .filter(|a| a.id.as_str().starts_with("r0-"))
         .collect();
-    let mut rows: Vec<f32> = ants.iter().map(|a| a.pos.y).collect();
+    let mut rows: Vec<f32> = dwarves.iter().map(|a| a.pos.y).collect();
     rows.sort_by(f32::total_cmp);
     rows.dedup();
     let widest = rows
         .iter()
-        .map(|y| ants.iter().filter(|a| a.pos.y == *y).count())
+        .map(|y| dwarves.iter().filter(|a| a.pos.y == *y).count())
         .max()
         .unwrap();
     assert!(widest >= 2, "{} rows of up to {widest}", rows.len());
-    for ant in ants {
+    for dwarf in dwarves {
         // The name tag is two cells wide.
-        let tag = Rect::from_center_size(ant.pos, vec2(2.0 * ant.size, ant.size));
+        let tag = Rect::from_center_size(dwarf.pos, vec2(2.0 * dwarf.size, dwarf.size));
         assert!(
             tag.left() >= chamber.left() - 0.5 && tag.right() <= chamber.right() + 0.5,
             "{} stays in its chamber",
-            ant.id.as_str()
+            dwarf.id.as_str()
         );
     }
 }
 
-/// A chamber ant's subagents, nested ones too, line up behind it in room it reserves:
-/// they never cover another ant or each other.
+/// A chamber dwarf's subagents, nested ones too, line up behind it in room it reserves:
+/// they never cover another dwarf or each other.
 #[test]
 fn subagent_trails_take_room_in_the_chamber() {
-    let mut s = FleetSnapshot::default();
+    let mut s = ClanSnapshot::default();
     s.runs = vec![run("r1", 1, 4)];
     for name in ["a", "b", "c", "d"] {
         s.nodes
@@ -1163,10 +1170,10 @@ fn subagent_trails_take_room_in_the_chamber() {
         });
     }
     let scene = scene(&s);
-    let nested = ant(&scene, "s4");
+    let nested = dwarf(&scene, "s4");
     assert!(matches!(&nested.spot, Spot::Trail(root, _) if *root == id("a")));
     let boxes: Vec<(&str, Rect)> = scene
-        .ants
+        .dwarves
         .iter()
         .map(|a| {
             (
@@ -1185,13 +1192,13 @@ fn subagent_trails_take_room_in_the_chamber() {
         }
     }
     let chamber = scene.tunnels[0].chamber;
-    for a in &scene.ants {
+    for a in &scene.dwarves {
         assert!(chamber.expand(1.0).contains(a.pos), "{} outside", a.id.0);
     }
 }
 
 #[test]
-fn parked_ants_sleep_in_the_resting_area() {
+fn parked_dwarves_sleep_in_the_resting_area() {
     let mut s = snapshot();
     let room = |scene: &Scene| {
         scene
@@ -1223,7 +1230,7 @@ fn parked_ants_sleep_in_the_resting_area() {
     assert_eq!(t, scene.tunnels.len() - 1, "the last tunnel");
     assert_eq!(scene.tunnels[t].label, crate::park::RESTING_AREA);
     for a in scene
-        .ants
+        .dwarves
         .iter()
         .filter(|a| a.id.as_str().starts_with("parked"))
     {
@@ -1244,8 +1251,8 @@ fn parked_ants_sleep_in_the_resting_area() {
     );
     // Each sleeper lies on a bed of its own in the room; the beds don't overlap.
     let chamber = scene.tunnels[t].chamber;
-    let sleepers: Vec<&Ant> = scene
-        .ants
+    let sleepers: Vec<&Dwarf> = scene
+        .dwarves
         .iter()
         .filter(|a| a.id.as_str().starts_with("parked"))
         .collect();
@@ -1272,13 +1279,13 @@ fn only_the_resting_area_has_beds() {
     assert!(scene(&snapshot()).beds.is_empty());
 }
 
-/// Many runs in a tall view stack their chambers two to a column, which draws the ants
+/// Many runs in a tall view stack their chambers two to a column, which draws the dwarves
 /// bigger than one long row of narrow columns, and no shaft cuts through another chamber.
 #[test]
-fn many_tunnels_stack_chambers_to_draw_ants_bigger() {
-    let mut s = FleetSnapshot::default();
+fn many_tunnels_stack_chambers_to_draw_dwarves_bigger() {
+    let mut s = ClanSnapshot::default();
     s.nodes
-        .push(node("queen", NodeKind::Queen, None, NodeState::Working));
+        .push(node("king", NodeKind::King, None, NodeState::Working));
     for r in 0..10 {
         let name = format!("r{r}");
         s.runs.push(run(&name, r % 4, 4));
@@ -1291,7 +1298,7 @@ fn many_tunnels_stack_chambers_to_draw_ants_bigger() {
             ));
         }
     }
-    // A tall, narrow view: ten rooms side by side would draw the ants at scale 1.
+    // A tall, narrow view: ten rooms side by side would draw the dwarves at scale 1.
     let size = vec2(800.0, 1400.0);
     let rect = Rect::from_min_size(Pos2::ZERO, size);
     let input = FarmInput {
@@ -1325,7 +1332,7 @@ fn many_tunnels_stack_chambers_to_draw_ants_bigger() {
             );
         }
     }
-    for a in scene.ants.iter().filter(|a| a.kind == NodeKind::Worker) {
+    for a in scene.dwarves.iter().filter(|a| a.kind == NodeKind::Worker) {
         let t = &tunnels[tunnel_of(&scene, a.id.as_str())];
         assert!(t.chamber.contains(a.pos), "{} in its chamber", a.id);
     }
@@ -1333,28 +1340,28 @@ fn many_tunnels_stack_chambers_to_draw_ants_bigger() {
 
 #[test]
 fn envoy_stays_in_its_comms_room_without_a_work_tunnel() {
-    let mut snapshot = FleetSnapshot::default();
+    let mut snapshot = ClanSnapshot::default();
     snapshot
         .nodes
-        .push(node("queen", NodeKind::Queen, None, NodeState::Idle));
+        .push(node("king", NodeKind::King, None, NodeState::Idle));
     snapshot
         .nodes
         .push(node("envoy", NodeKind::Envoy, None, NodeState::Idle));
     for state in [NodeState::Idle, NodeState::Working, NodeState::NeedsInput] {
         snapshot.nodes[1].state = state;
         let scene = scene(&snapshot);
-        let envoy = ant(&scene, "envoy");
+        let envoy = dwarf(&scene, "envoy");
         assert_eq!(envoy.spot, Spot::Comms);
         assert_eq!(envoy.pose, Pose::Stand);
         assert_eq!(envoy.mark, None);
         assert!(scene.comms.unwrap().chamber.contains(envoy.pos));
-        assert!(envoy.pos.x < scene.queen_chamber.left());
+        assert!(envoy.pos.x < scene.throne_hall.left());
         assert!(scene.tunnels.is_empty());
     }
 }
 
 #[test]
-fn comms_room_fits_beside_entrance_at_small_and_large_fleets() {
+fn comms_room_fits_beside_entrance_at_small_and_large_clans() {
     for size in [
         vec2(176.0, 400.0),
         vec2(320.0, 400.0),
@@ -1363,10 +1370,10 @@ fn comms_room_fits_beside_entrance_at_small_and_large_fleets() {
         vec2(2560.0, 1600.0),
     ] {
         for count in [0, 1, 8, 40, 100] {
-            let mut snapshot = FleetSnapshot::default();
+            let mut snapshot = ClanSnapshot::default();
             snapshot
                 .nodes
-                .push(node("queen", NodeKind::Queen, None, NodeState::Idle));
+                .push(node("king", NodeKind::King, None, NodeState::Idle));
             snapshot
                 .nodes
                 .push(node("envoy", NodeKind::Envoy, None, NodeState::Idle));
@@ -1391,11 +1398,11 @@ fn comms_room_fits_beside_entrance_at_small_and_large_fleets() {
             let room = scene.comms.unwrap();
             assert!(scene.rect.contains_rect(room.chamber));
             assert!(room.chamber.top() > scene.surface_y);
-            assert!(room.chamber.width() >= scene.queen_chamber.width());
-            assert!(room.chamber.height() >= scene.queen_chamber.height());
+            assert!(room.chamber.width() >= scene.throne_hall.width());
+            assert!(room.chamber.height() >= scene.throne_hall.height());
             assert!(scene.landing.left() - room.chamber.right() >= scene.cell());
             assert!(room.feed().y > scene.rect.top());
-            assert!(!room.chamber.intersects(scene.queen_chamber));
+            assert!(!room.chamber.intersects(scene.throne_hall));
             assert!(!room.chamber.intersects(scene.storage));
             let entrance = Rect::from_min_max(
                 pos2(scene.entrance_x() - 0.6 * scene.cell(), scene.surface_y),
@@ -1415,23 +1422,26 @@ fn comms_room_fits_beside_entrance_at_small_and_large_fleets() {
                 room.receiver,
                 pos2(room.chamber.center().x, scene.surface_y)
             );
-            let envoy = ant(&scene, "envoy");
-            let ant_cell = Rect::from_center_size(envoy.pos, Vec2::splat(envoy.size));
+            let envoy = dwarf(&scene, "envoy");
+            let dwarf_cell = Rect::from_center_size(envoy.pos, Vec2::splat(envoy.size));
             let basin = room.basin_rect();
             let tray = room.tray_rect();
             assert!(room.chamber.contains_rect(tray));
             assert!(room.chamber.contains_rect(basin));
             assert!(!tray.intersects(basin));
-            assert!(!tray.intersects(ant_cell));
-            assert!(!tray.intersects(scene.queen_chamber));
-            assert!(basin.center().x >= ant_cell.right());
-            assert!(basin.top() > ant_cell.top(), "rim below the priest's head");
+            assert!(!tray.intersects(dwarf_cell));
+            assert!(!tray.intersects(scene.throne_hall));
+            assert!(basin.center().x >= dwarf_cell.right());
             assert!(
-                basin.top() < ant_cell.bottom(),
+                basin.top() > dwarf_cell.top(),
+                "rim below the priest's head"
+            );
+            assert!(
+                basin.top() < dwarf_cell.bottom(),
                 "hands can reach across the rim"
             );
             assert_eq!(room.shaft.center().x, envoy.pos.x);
-            assert!(!room.shaft.intersects(scene.queen_chamber));
+            assert!(!room.shaft.intersects(scene.throne_hall));
             assert!(
                 room.chamber
                     .contains_rect(Rect::from_center_size(envoy.pos, Vec2::splat(envoy.size)))
@@ -1453,12 +1463,12 @@ fn comms_room_disappears_with_envoy() {
 }
 
 #[test]
-fn waiting_ants_keep_clear_of_the_comms_room() {
+fn waiting_dwarves_keep_clear_of_the_comms_room() {
     for (size, count) in [(vec2(640.0, 800.0), 8), (vec2(1280.0, 800.0), 24)] {
-        let mut snapshot = FleetSnapshot::default();
+        let mut snapshot = ClanSnapshot::default();
         snapshot
             .nodes
-            .push(node("queen", NodeKind::Queen, None, NodeState::Idle));
+            .push(node("king", NodeKind::King, None, NodeState::Idle));
         snapshot
             .nodes
             .push(node("envoy", NodeKind::Envoy, None, NodeState::Idle));
@@ -1481,12 +1491,12 @@ fn waiting_ants_keep_clear_of_the_comms_room() {
             Rect::from_min_size(Pos2::ZERO, size),
         );
         let room = scene.comms.unwrap();
-        for ant in scene
-            .ants
+        for dwarf in scene
+            .dwarves
             .iter()
-            .filter(|ant| matches!(ant.spot, Spot::Landing(_)))
+            .filter(|dwarf| matches!(dwarf.spot, Spot::Landing(_)))
         {
-            let cell = Rect::from_center_size(ant.pos, Vec2::splat(ant.size));
+            let cell = Rect::from_center_size(dwarf.pos, Vec2::splat(dwarf.size));
             assert!(scene.landing.contains_rect(cell));
             assert!(scene.rect.contains_rect(cell));
             assert!(cell.left() - room.chamber.right() >= scene.cell());
@@ -1494,12 +1504,12 @@ fn waiting_ants_keep_clear_of_the_comms_room() {
     }
 }
 
-/// The Envoy, the Queen and `n` agents: runs of a coordinator and up to four workers, every
+/// The Envoy, the King and `n` agents: runs of a coordinator and up to four workers, every
 /// third worker idle, every fifth waiting on Karl, every seventh done.
-pub(super) fn typical_fleet(n: usize) -> FleetSnapshot {
-    let mut s = FleetSnapshot::default();
+pub(super) fn typical_clan(n: usize) -> ClanSnapshot {
+    let mut s = ClanSnapshot::default();
     s.nodes
-        .push(node("queen", NodeKind::Queen, None, NodeState::Working));
+        .push(node("king", NodeKind::King, None, NodeState::Working));
     s.nodes
         .push(node("envoy", NodeKind::Envoy, None, NodeState::Idle));
     for i in 0..n {
@@ -1553,11 +1563,11 @@ pub(super) fn reach(scene: &Scene) -> f32 {
     (bottom - scene.rect.top()) / scene.rect.height()
 }
 
-/// At typical fleet sizes the rooms use most of the ground under the gallery, with ants
-/// drawn bigger than a fixed grid drew them, and every ant in its chamber.
+/// At typical clan sizes the rooms use most of the ground under the gallery, with dwarves
+/// drawn bigger than a fixed grid drew them, and every dwarf in its chamber.
 #[test]
 fn the_farm_fills_the_view() {
-    // (view, ants, smallest ant cell in points, least fill)
+    // (view, dwarves, smallest dwarf cell in points, least fill)
     let cases = [
         (vec2(1280.0, 800.0), 5, 56.0, 0.75),
         (vec2(1280.0, 800.0), 15, 48.0, 0.75),
@@ -1567,7 +1577,7 @@ fn the_farm_fills_the_view() {
         (vec2(900.0, 650.0), 30, 24.0, 0.7),
     ];
     for (size, n, cell, least) in cases {
-        let s = typical_fleet(n);
+        let s = typical_clan(n);
         let rect = Rect::from_min_size(Pos2::ZERO, size);
         let input = FarmInput {
             snapshot: &s,
@@ -1580,12 +1590,12 @@ fn the_farm_fills_the_view() {
         let fill = fill(&scene);
         assert!(
             (least..=0.95).contains(&fill),
-            "{n} ants in {size:?}: fill {fill}"
+            "{n} dwarves in {size:?}: fill {fill}"
         );
-        assert!(reach(&scene) > 0.85, "{n} ants in {size:?} reach down");
+        assert!(reach(&scene) > 0.85, "{n} dwarves in {size:?} reach down");
         assert!(
             scene.cell() >= cell,
-            "{n} ants in {size:?}: {}",
+            "{n} dwarves in {size:?}: {}",
             scene.cell()
         );
         for (i, t) in scene.tunnels.iter().enumerate() {
@@ -1594,7 +1604,7 @@ fn the_farm_fills_the_view() {
                 assert!(!t.chamber.intersects(u.chamber), "chambers overlap");
             }
         }
-        for a in scene.ants.iter().filter(|a| a.kind == NodeKind::Worker) {
+        for a in scene.dwarves.iter().filter(|a| a.kind == NodeKind::Worker) {
             if let Spot::Chamber(..) = a.spot {
                 let t = &scene.tunnels[tunnel_of(&scene, a.id.as_str())];
                 assert!(t.chamber.contains(a.pos), "{} in its chamber", a.id);
@@ -1603,10 +1613,10 @@ fn the_farm_fills_the_view() {
     }
 }
 
-/// A near-empty farm in a big view draws its ants no bigger than the largest scale.
+/// A near-empty farm in a big view draws its dwarves no bigger than the largest scale.
 #[test]
-fn a_lone_ant_is_not_drawn_giant() {
-    let s = typical_fleet(2);
+fn a_lone_dwarf_is_not_drawn_giant() {
+    let s = typical_clan(2);
     let input = FarmInput {
         snapshot: &s,
         hidden: &BTreeSet::new(),
@@ -1624,12 +1634,12 @@ fn a_lone_ant_is_not_drawn_giant() {
 #[test]
 fn rune_priest_scries_only_while_working() {
     use crate::ui::dwarf::{self, Action, Role};
-    let mut ant = scene(&snapshot())
-        .ants
+    let mut dwarf = scene(&snapshot())
+        .dwarves
         .into_iter()
-        .find(|a| a.kind != NodeKind::Queen)
+        .find(|a| a.kind != NodeKind::King)
         .unwrap();
-    ant.kind = NodeKind::Envoy;
+    dwarf.kind = NodeKind::Envoy;
     for state in [
         NodeState::Working,
         NodeState::Idle,
@@ -1638,8 +1648,8 @@ fn rune_priest_scries_only_while_working() {
         NodeState::Failed,
         NodeState::Stalled,
     ] {
-        ant.state = state;
-        let action = super::dwarf_action(&ant, false, false, false);
+        dwarf.state = state;
+        let action = super::dwarf_action(&dwarf, false, false, false);
         assert_eq!(
             action,
             if state == NodeState::Working {
@@ -1652,7 +1662,7 @@ fn rune_priest_scries_only_while_working() {
             dwarf::pose(action, 0.0) != dwarf::pose(action, 0.3),
             state == NodeState::Working
         );
-        assert_eq!(super::dwarf_look(&ant).role, Role::RunePriest);
+        assert_eq!(super::dwarf_look(&dwarf).role, Role::RunePriest);
     }
 }
 
@@ -1660,7 +1670,7 @@ fn rune_priest_scries_only_while_working() {
 fn stalled_dwarf_holds_still_in_a_helmet_for_the_pebble() {
     use crate::ui::dwarf::{Action, Hat};
     let scene = scene(&snapshot());
-    let stalled = ant(&scene, "stalled");
+    let stalled = dwarf(&scene, "stalled");
     assert_eq!(
         super::dwarf_action(stalled, false, false, false),
         Action::Wait

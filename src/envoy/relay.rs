@@ -136,7 +136,7 @@ mod tests {
     }
 }
 
-/// Keep the broadcast routing while replacing the Queen's authority with the Envoy's.
+/// Keep the broadcast routing while replacing the King's authority with the Envoy's.
 pub fn attribute_broadcast(plan: &mut crate::broadcast::BroadcastPlan, from: &str, text: &str) {
     for delivery in &mut plan.deliveries {
         delivery.message.from = Some(from.into());

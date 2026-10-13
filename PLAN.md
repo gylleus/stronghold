@@ -1,6 +1,6 @@
 # Myrstack — plan
 
-A native desktop view of the agent fleet running in Orca: a dwarf farm of
+A native desktop view of the agent clan running in Orca: a dwarf farm of
 coordinators, their worker agents and their subagents, where clicking a dwarf
 shows that agent's terminal and lets you type into it.
 
@@ -9,7 +9,7 @@ Myrstack only observes and talks to them through Orca.
 
 ## Goals
 
-1. **See the fleet:** every live agent as a pixel dwarf, with runs in rooms and
+1. **See the clan:** every live agent as a pixel dwarf, with runs in rooms and
    pose and location showing state (working, needs input, stalled, done).
 2. **Talk to any agent:** select a node to see its screen and send it input.
 3. **Whip stalled coordinators:** detect runs that have gone quiet with work
@@ -59,7 +59,7 @@ hook shows `ORCA_PANE_KEY` and `ORCA_TAB_ID` are in the agent's environment.
 Subagent state: running while its jsonl was written recently and the parent
 transcript has no `tool_result` for its `toolUseId`, done once it does.
 
-## Fleet model
+## Clan model
 
 ```
 Run room:      [coordinator] ── [worker terminal] ── [subagent] ── [sub-subagent]
@@ -82,13 +82,13 @@ src/
   main.rs          eframe setup
   orca/            CLI wrapper: spawn `orca … --json`, serde types, error on ok:false
   claude/          transcript/subagent scanner (notify-based watcher on ~/.claude/projects)
-  model.rs         FleetSnapshot { runs, nodes, edges }, built from orca and claude data
+  model.rs         ClanSnapshot { runs, nodes, edges }, built from orca and claude data
   poller.rs        background thread: list every 2 s, selected screen every 500 ms;
                    sends snapshots over a channel; UI never blocks on I/O
   whip.rs          stall rules plus nudge/notify actions
   ui/
-    fleet_view.rs  selection, filters, badges, tooltip data and focus requests
-    ant_farm/      rooms, pixel dwarves, camera, input and traffic effects
+    clan_view.rs  selection, filters, badges, tooltip data and focus requests
+    farm/      rooms, pixel dwarves, camera, input and traffic effects
     dwarf/         code-drawn parts, poses and pixel rendering
     terminal.rs    screen panel, input box, Send / Interrupt / Open in Orca
     sidebar.rs     run list, filters (repo, state), stall list
@@ -100,7 +100,7 @@ Crates: `eframe`/`egui`, `serde`/`serde_json`,
 ## Milestones
 
 **M0 — Skeleton.** eframe window; `orca` client with typed `terminal list`,
-`run-list` and `worker-list`; a fleet snapshot refreshing every 2 s.
+`run-list` and `worker-list`; a clan snapshot refreshing every 2 s.
 *Done when:* the snapshot matches `orca terminal list`.
 
 **M1 — Farm.** Build the snapshot, render runs in rooms with their coordinators,
@@ -161,7 +161,7 @@ Settings (global): stall threshold (default 15 min), cooldown (default
 10 min), max nudges before escalating (default 2), dry-run toggle. Every
 action goes to an action log shown in the sidebar.
 
-**Agent-side convention**, to add to the fleet playbook: workers send a
+**Agent-side convention**, to add to the clan playbook: workers send a
 heartbeat with `taskId` and `phase` at each phase change, and at least
 every threshold/2 during long steps. Coordinators update task status when
 they act on results.

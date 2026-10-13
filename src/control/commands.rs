@@ -13,7 +13,7 @@ use crate::broadcast::{BroadcastPlan, BroadcastSender};
 use crate::control::protocol::{ControlError, ErrorCode, Params};
 use crate::control::view::{kinds_of, states_of};
 use crate::model::{NodeKind, NodeState};
-use crate::ui::sidebar::FleetFilter;
+use crate::ui::sidebar::ClanFilter;
 
 /// How long a terminal send may take: Orca waits up to 30 s for the agent, the runner 45 s.
 pub const ACTION_REPLY_TIMEOUT: Duration = Duration::from_secs(60);
@@ -50,9 +50,9 @@ pub struct FilterChange {
 }
 
 impl FilterChange {
-    pub fn apply(&self, filter: &mut FleetFilter) {
+    pub fn apply(&self, filter: &mut ClanFilter) {
         if self.clear {
-            *filter = FleetFilter::default();
+            *filter = ClanFilter::default();
         }
         if let Some(repos) = &self.repos {
             filter.repos = repos.clone();
@@ -82,7 +82,7 @@ pub enum ControlCommand {
     /// Inbox, drafting and relay requests, restricted to the persisted Envoy terminal.
     Envoy(crate::envoy::control::EnvoyCommand),
     /// Type `text` into the agent's terminal, then Enter when `enter`. `from` is the sender's
-    /// terminal handle (`from`, or the caller's `origin`), `None` for the Queen or Karl.
+    /// terminal handle (`from`, or the caller's `origin`), `None` for the King or Karl.
     Send {
         agent: String,
         text: String,

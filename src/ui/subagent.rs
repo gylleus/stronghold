@@ -6,7 +6,7 @@ use eframe::egui::{self, RichText, Ui};
 use crate::claude::{SubagentInfo, SubagentState};
 use crate::model::{Node, NodeId};
 use crate::ui::chat::TranscriptView;
-use crate::ui::fleet_view::{format_ago, state_color};
+use crate::ui::clan_view::{format_ago, state_color};
 
 /// Header rows (label, value) describing `info` as of `now_ms`.
 pub fn header_rows(info: &SubagentInfo, now_ms: i64) -> Vec<(&'static str, String)> {

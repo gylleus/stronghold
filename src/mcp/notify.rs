@@ -15,11 +15,11 @@ use crate::notify::dispatch::{AGENT_MAX, AGENT_WINDOW_MS};
 use crate::notify::pending;
 use crate::review::mark::Origin;
 
-/// When to call `notify`, as the fleet playbook's _Human in the loop_ says it. A macro so the
+/// When to call `notify`, as the clan playbook's _Human in the loop_ says it. A macro so the
 /// server instructions can `concat!` the same text.
 macro_rules! rules_text {
     () => {
-        "When to call notify (the fleet playbook's rules): \
+        "When to call notify (the clan playbook's rules): \
 (1) Blocked on Karl for something he must do: a permission, credential, passkey or 2FA, prod \
 approval. Severity warn, or urgent if work is stalled and can't wait; say what you need and \
 what it unblocks. A question you wait on him to answer goes through ask_karl instead. \
@@ -52,8 +52,8 @@ pub fn definitions() -> Vec<Value> {
         "name": "notify",
         "title": "Notify Karl",
         "description": format!(
-            "Sends Karl, the human who runs this fleet, a notification through Myrstack (his \
-             fleet dashboard): a macOS and/or in-app pop-up with a sound, as his settings say, \
+            "Sends Karl, the human who runs this clan, a notification through Myrstack (his \
+             clan dashboard): a macOS and/or in-app pop-up with a sound, as his settings say, \
              kept in his inbox and attributed to your terminal. Clicking it selects your node \
              and opens `url`. Works even when Myrstack isn't running: the notification is \
              queued and reaches his inbox when it starts. {RULES} Urgent gets through Karl's quiet mode. Put what and \

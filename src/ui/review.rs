@@ -1,11 +1,11 @@
-//! The review queue in the Queen panel ("Ready for review (N)") and its top-bar badge.
+//! The review queue in the King panel ("Ready for review (N)") and its top-bar badge.
 
 use eframe::egui::{self, Color32, RichText, Ui};
 
 use crate::model::NodeId;
 use crate::review::github::Ci;
 use crate::review::view::ReviewRow;
-use crate::ui::fleet_view::pr_color;
+use crate::ui::clan_view::pr_color;
 
 /// What the user did with the queue this frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,7 +27,7 @@ pub struct SectionState {
     pub scroll: bool,
 }
 
-/// Compact links for one agent, using exactly the rows behind the fleet's PR badge.
+/// Compact links for one agent, using exactly the rows behind the clan's PR badge.
 /// Excess links live in a menu so they cannot displace the header's other controls.
 pub fn agent_pr_buttons(ui: &mut Ui, node: &NodeId, rows: &[ReviewRow]) -> Option<ReviewAction> {
     let rows: Vec<_> = rows
@@ -115,7 +115,7 @@ pub fn review_section(
     let mut action = None;
     let title = RichText::new(format!("Ready for review ({})", rows.len())).strong();
     let response = egui::CollapsingHeader::new(title)
-        .id_salt("queen_review")
+        .id_salt("king_review")
         .default_open(!rows.is_empty())
         .open(state.open.then_some(true))
         .show(ui, |ui| {
@@ -139,7 +139,7 @@ pub fn review_section(
                 return;
             }
             egui::ScrollArea::vertical()
-                .id_salt("queen_review_rows")
+                .id_salt("king_review_rows")
                 .max_height(ui.ctx().content_rect().height() * 0.3)
                 .show(ui, |ui| {
                     for row in rows {
@@ -221,7 +221,7 @@ fn review_row(ui: &mut Ui, row: &ReviewRow, now_ms: i64) -> Option<ReviewAction>
                         }
                     }
                     None => {
-                        agent.on_hover_text("The marking terminal is not in the fleet");
+                        agent.on_hover_text("The marking terminal is not in the clan");
                     }
                 }
                 sep(ui);
@@ -295,7 +295,7 @@ fn review_row(ui: &mut Ui, row: &ReviewRow, now_ms: i64) -> Option<ReviewAction>
                     sep(ui);
                 }
                 ui.label(
-                    RichText::new(crate::ui::fleet_view::format_age(now_ms - row.marked_ms))
+                    RichText::new(crate::ui::clan_view::format_age(now_ms - row.marked_ms))
                         .small()
                         .weak(),
                 )
@@ -333,7 +333,7 @@ pub fn review_badge(ui: &mut Ui, count: usize) -> bool {
         .strong();
     ui.add(egui::Button::new(text).fill(pr_color(dark)))
         .on_hover_text(format!(
-            "{count} PR{} ready for review: open the review queue in the Queen panel",
+            "{count} PR{} ready for review: open the review queue in the King panel",
             if count == 1 { "" } else { "s" }
         ))
         .clicked()
@@ -527,28 +527,28 @@ mod tests {
 
     #[test]
     fn graph_marks_pr_nodes() {
-        use crate::fleet::FleetData;
-        use crate::model::FleetSnapshot;
+        use crate::clan::ClanData;
+        use crate::model::ClanSnapshot;
         use crate::orca::Terminal;
-        use crate::ui::fleet_view::FleetView;
-        let data = FleetData {
+        use crate::ui::clan_view::ClanView;
+        let data = ClanData {
             terminals: vec![Terminal {
                 handle: "term_a".into(),
                 ..Terminal::default()
             }],
-            ..FleetData::default()
+            ..ClanData::default()
         };
-        let snapshot = FleetSnapshot::build(&data, 0);
-        let mut fleet = FleetView::new();
-        fleet.sync(&snapshot);
+        let snapshot = ClanSnapshot::build(&data, 0);
+        let mut clan = ClanView::new();
+        clan.sync(&snapshot);
         let id = NodeId::terminal("term_a");
-        let pr = |g: &FleetView| g.pr_ready().contains(&id);
-        assert!(!pr(&fleet));
-        fleet.set_pr_ready([id.clone()].into());
-        assert!(pr(&fleet));
-        fleet.sync(&snapshot);
-        assert!(pr(&fleet), "kept across syncs");
-        fleet.set_pr_ready(Default::default());
-        assert!(!pr(&fleet));
+        let pr = |g: &ClanView| g.pr_ready().contains(&id);
+        assert!(!pr(&clan));
+        clan.set_pr_ready([id.clone()].into());
+        assert!(pr(&clan));
+        clan.sync(&snapshot);
+        assert!(pr(&clan), "kept across syncs");
+        clan.set_pr_ready(Default::default());
+        assert!(!pr(&clan));
     }
 }

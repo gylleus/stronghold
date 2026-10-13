@@ -1,4 +1,4 @@
-//! The Settings window: a section list on the left (Queen, Envoy, Whip, Notifications, Voice,
+//! The Settings window: a section list on the left (King, Envoy, Whip, Notifications, Voice,
 //! Art, General) and the
 //! chosen section's form. It owns the settings file: every save writes the whole file with the
 //! edited section replaced. Opened from the top bar's gear, the palette's "Settings…" and ⌘,;
@@ -7,8 +7,8 @@
 pub mod art;
 pub mod envoy;
 pub mod general;
+pub mod king;
 pub mod notifications;
-pub mod queen;
 pub mod voice;
 pub mod whip;
 
@@ -16,22 +16,22 @@ use std::path::PathBuf;
 
 use eframe::egui::{self, RichText};
 
-use crate::chat::settings::QueenSettings;
+use crate::chat::settings::KingSettings;
 use crate::notify::{NotifySettings, Severity, Sound};
-use crate::spawn::{AntSettings, SpawnSettings};
+use crate::spawn::{DwarfSettings, SpawnSettings};
 use crate::voice::settings::VoiceSettings;
 use crate::whip::{Settings, WhipSettings, WhipStatus};
 
 pub use general::GeneralInfo;
+pub use king::KingStatus;
 pub use notifications::NotifyStatus;
-pub use queen::QueenStatus;
 pub use voice::{ModelStatus, VoiceModel, VoiceStatus};
 
 /// A section of the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Section {
     #[default]
-    Queen,
+    King,
     Envoy,
     Whip,
     Notifications,
@@ -42,7 +42,7 @@ pub enum Section {
 
 impl Section {
     pub const ALL: [Section; 7] = [
-        Section::Queen,
+        Section::King,
         Section::Envoy,
         Section::Whip,
         Section::Notifications,
@@ -53,7 +53,7 @@ impl Section {
 
     pub fn title(self) -> &'static str {
         match self {
-            Section::Queen => "Queen",
+            Section::King => "King",
             Section::Envoy => "Envoy",
             Section::Whip => "Whip",
             Section::Notifications => "Notifications",
@@ -68,7 +68,7 @@ impl Section {
 pub struct PaneContext<'a> {
     pub whip_status: &'a WhipStatus,
     pub now_ms: i64,
-    pub queen: QueenStatus<'a>,
+    pub king: KingStatus<'a>,
     /// Paths and versions for the General section.
     pub general: &'a GeneralInfo,
     /// Voices and speech model states for the Voice section.
@@ -84,13 +84,13 @@ pub struct PaneOutput {
     pub envoy: Option<crate::envoy::settings::EnvoySettings>,
     /// Saved whip settings.
     pub whip: Option<WhipSettings>,
-    /// Saved Queen settings (the Queen restarts when her model or effort changed).
-    pub queen: Option<QueenSettings>,
-    /// Saved default model and effort of new ants (applies to the next spawn).
-    pub ants: Option<AntSettings>,
-    /// The Queen's auto mode switch was flipped (applies at once, like the chat header's).
+    /// Saved King settings (the King restarts when his model or effort changed).
+    pub king: Option<KingSettings>,
+    /// Saved default model and effort of new dwarves (applies to the next spawn).
+    pub dwarves: Option<DwarfSettings>,
+    /// The King's auto mode switch was flipped (applies at once, like the chat header's).
     pub auto_mode: Option<bool>,
-    /// Saved voice settings (from the Voice section, or the Queen's "Speak replies").
+    /// Saved voice settings (from the Voice section, or the King's "Speak replies").
     pub voice: Option<VoiceSettings>,
     /// "Test voice": speak a sample with these (unsaved) settings.
     pub test_voice: Option<VoiceSettings>,
@@ -116,8 +116,8 @@ pub struct SettingsPane {
     /// Result of the last load or save: `(is_error, text)`.
     message: Option<(bool, String)>,
     whip_draft: WhipSettings,
-    queen_draft: queen::QueenDraft,
-    ants_draft: queen::QueenDraft,
+    king_draft: king::KingDraft,
+    dwarves_draft: king::KingDraft,
     voice_draft: VoiceSettings,
     notify_draft: NotifySettings,
     envoy_draft: envoy::EnvoyDraft,
@@ -142,8 +142,8 @@ impl SettingsPane {
             open: false,
             section: Section::default(),
             whip_draft: applied.whip.clone(),
-            queen_draft: queen::QueenDraft::new(&applied.queen),
-            ants_draft: queen::QueenDraft::new(&applied.ants.as_queen()),
+            king_draft: king::KingDraft::new(&applied.king),
+            dwarves_draft: king::KingDraft::new(&applied.dwarves.as_king()),
             voice_draft: applied.voice.clone(),
             notify_draft: applied.notifications.clone(),
             envoy_draft: envoy::EnvoyDraft::new(&applied.envoy),
@@ -159,9 +159,9 @@ impl SettingsPane {
         &self.applied.whip
     }
 
-    /// The saved Queen settings.
-    pub fn queen(&self) -> &QueenSettings {
-        &self.applied.queen
+    /// The saved King settings.
+    pub fn king(&self) -> &KingSettings {
+        &self.applied.king
     }
 
     pub fn envoy(&self) -> &crate::envoy::settings::EnvoySettings {
@@ -176,12 +176,12 @@ impl SettingsPane {
         &self.applied.spawn
     }
 
-    /// The saved default model and effort of new ants.
-    pub fn ants(&self) -> &AntSettings {
-        &self.applied.ants
+    /// The saved default model and effort of new dwarves.
+    pub fn dwarves(&self) -> &DwarfSettings {
+        &self.applied.dwarves
     }
 
-    pub fn art(&self) -> &crate::ui::ant_farm::art::ArtSettings {
+    pub fn art(&self) -> &crate::ui::farm::art::ArtSettings {
         &self.applied.art
     }
 
@@ -192,8 +192,8 @@ impl SettingsPane {
     /// Opens the window on `section` with fresh drafts of the applied settings.
     pub fn open_section(&mut self, section: Section) {
         self.whip_draft = self.applied.whip.clone();
-        self.queen_draft = queen::QueenDraft::new(&self.applied.queen);
-        self.ants_draft = queen::QueenDraft::new(&self.applied.ants.as_queen());
+        self.king_draft = king::KingDraft::new(&self.applied.king);
+        self.dwarves_draft = king::KingDraft::new(&self.applied.dwarves.as_king());
         self.voice_draft = self.applied.voice.clone();
         self.notify_draft = self.applied.notifications.clone();
         self.envoy_draft = envoy::EnvoyDraft::new(&self.applied.envoy);
@@ -239,7 +239,7 @@ impl SettingsPane {
     pub fn gear_button(&mut self, ui: &mut egui::Ui) {
         if ui
             .button("⚙")
-            .on_hover_text("Settings: Queen model, whip, voice, paths (⌘,)")
+            .on_hover_text("Settings: King model, whip, voice, paths (⌘,)")
             .clicked()
         {
             self.open_settings();
@@ -291,7 +291,7 @@ impl SettingsPane {
         ui.heading(self.section.title());
         ui.add_space(4.0);
         match self.section {
-            Section::Queen => queen::section(self, ui, &cx.queen, out),
+            Section::King => king::section(self, ui, &cx.king, out),
             Section::Envoy => envoy::section(self, ui, out),
             Section::Whip => {
                 out.whip = whip::form(self, ui);
@@ -371,38 +371,38 @@ impl SettingsPane {
         Some(self.applied.whip.clone())
     }
 
-    /// Validates and writes the Queen draft, then makes it the applied settings.
-    fn save_queen(&mut self) -> Option<QueenSettings> {
-        let queen = self.queen_draft.settings.normalized();
-        if let Err(e) = queen.validate() {
+    /// Validates and writes the King draft, then makes it the applied settings.
+    fn save_king(&mut self) -> Option<KingSettings> {
+        let king = self.king_draft.settings.normalized();
+        if let Err(e) = king.validate() {
             self.message = Some((true, e));
             return None;
         }
         let mut next = self.applied.clone();
-        next.queen = queen;
+        next.king = king;
         self.commit(next);
-        self.queen_draft = queen::QueenDraft::new(&self.applied.queen);
-        Some(self.applied.queen.clone())
+        self.king_draft = king::KingDraft::new(&self.applied.king);
+        Some(self.applied.king.clone())
     }
 
-    /// Validates and writes the ants draft, then makes it the applied settings.
-    fn save_ants(&mut self) -> Option<AntSettings> {
-        let queen = self.ants_draft.settings.normalized();
-        if let Err(e) = queen.validate() {
+    /// Validates and writes the dwarves draft, then makes it the applied settings.
+    fn save_dwarves(&mut self) -> Option<DwarfSettings> {
+        let king = self.dwarves_draft.settings.normalized();
+        if let Err(e) = king.validate() {
             self.message = Some((true, e));
             return None;
         }
         let mut next = self.applied.clone();
-        next.ants = AntSettings {
-            model: queen.model,
-            effort: queen.effort,
+        next.dwarves = DwarfSettings {
+            model: king.model,
+            effort: king.effort,
         };
         self.commit(next);
-        self.ants_draft = queen::QueenDraft::new(&self.applied.ants.as_queen());
-        Some(self.applied.ants.clone())
+        self.dwarves_draft = king::KingDraft::new(&self.applied.dwarves.as_king());
+        Some(self.applied.dwarves.clone())
     }
 
-    /// Saves "Speak replies" at once (the Queen section's switch and the palette), keeping
+    /// Saves "Speak replies" at once (the King section's switch and the palette), keeping
     /// the rest of the voice draft.
     pub fn set_speak_replies(&mut self, on: bool) -> VoiceSettings {
         let mut next = self.applied.clone();
@@ -412,7 +412,7 @@ impl SettingsPane {
         self.applied.voice.clone()
     }
 
-    /// Saves "Focus new ants when they're spawned" at once.
+    /// Saves "Focus new dwarves when they're spawned" at once.
     pub fn set_focus_new(&mut self, on: bool) -> SpawnSettings {
         let mut next = self.applied.clone();
         next.spawn.focus_new = on;

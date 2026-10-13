@@ -1,20 +1,20 @@
-//! The queen: one hub node per snapshot, linked to every coordinator and loose terminal, whose
-//! state is the most urgent state in the fleet.
+//! The king: one hub node per snapshot, linked to every coordinator and loose terminal, whose
+//! state is the most urgent state in the clan.
 
 use super::{Node, NodeId, NodeKind, NodeState};
 
-/// The queen's stable node id.
-pub const QUEEN_ID: &str = "queen";
-pub const QUEEN_LABEL: &str = "Queen";
+/// The king's stable node id.
+pub const KING_ID: &str = "king";
+pub const KING_LABEL: &str = "King";
 
-/// The fleet's most urgent state: NeedsInput if any node needs input, else Stalled if any is
-/// stalled (escalated), else Working if any works, else Idle. Queen nodes and parked agents
+/// The clan's most urgent state: NeedsInput if any node needs input, else Stalled if any is
+/// stalled (escalated), else Working if any works, else Idle. King nodes and parked agents
 /// are ignored.
-pub fn fleet_state<'a>(nodes: impl IntoIterator<Item = &'a Node>) -> NodeState {
+pub fn clan_state<'a>(nodes: impl IntoIterator<Item = &'a Node>) -> NodeState {
     let mut best = NodeState::Idle;
     for node in nodes
         .into_iter()
-        .filter(|n| n.kind != NodeKind::Queen && !n.is_parked())
+        .filter(|n| n.kind != NodeKind::King && !n.is_parked())
     {
         let rank = |s: NodeState| match s {
             NodeState::NeedsInput => 3,
@@ -29,13 +29,13 @@ pub fn fleet_state<'a>(nodes: impl IntoIterator<Item = &'a Node>) -> NodeState {
     best
 }
 
-/// The queen for a snapshot with `nodes`; its preview is the "N coordinators · M ants" line,
+/// The king for a snapshot with `nodes`; its preview is the "N coordinators · M dwarves" line,
 /// with "· K parked" when some sleep.
-pub(super) fn queen_node(nodes: &[Node]) -> Node {
+pub(super) fn king_node(nodes: &[Node]) -> Node {
     let parked = nodes.iter().filter(|n| n.is_parked()).count();
     let agents = nodes
         .iter()
-        .filter(|n| n.kind != NodeKind::Queen && !n.is_parked());
+        .filter(|n| n.kind != NodeKind::King && !n.is_parked());
     let coordinators = agents
         .clone()
         .filter(|n| n.kind == NodeKind::Coordinator)
@@ -47,9 +47,9 @@ pub(super) fn queen_node(nodes: &[Node]) -> Node {
         String::new()
     };
     Node {
-        id: NodeId::queen(),
-        kind: NodeKind::Queen,
-        label: QUEEN_LABEL.to_string(),
+        id: NodeId::king(),
+        kind: NodeKind::King,
+        label: KING_LABEL.to_string(),
         terminal_handle: None,
         live: true,
         run_id: None,
@@ -60,11 +60,11 @@ pub(super) fn queen_node(nodes: &[Node]) -> Node {
         branch: None,
         last_output_ms: None,
         preview: Some(format!(
-            "{coordinators} coordinator{} · {total} ant{}{parked}",
+            "{coordinators} coordinator{} · {total} {}{parked}",
             plural(coordinators),
-            plural(total)
+            if total == 1 { "dwarf" } else { "dwarves" }
         )),
-        state: fleet_state(nodes),
+        state: clan_state(nodes),
         worker_state: None,
         dispatch_status: None,
         worker_terminal_state: None,

@@ -1,4 +1,4 @@
-//! Envoy lifecycle controls alongside the Queen's quick actions.
+//! Envoy lifecycle controls alongside the King's quick actions.
 
 use super::{MyrstackApp, repaint_once};
 use crate::envoy::{EnvoyIdentity, EnvoyStatus, SessionState};
@@ -47,7 +47,7 @@ impl MyrstackApp {
         if status.session == SessionState::Stopped {
             status.dry_run = self.whip_window.envoy().dry_run;
         }
-        if let Some(start) = crate::ui::queen::envoy_control(ui, status) {
+        if let Some(start) = crate::ui::king::envoy_control(ui, status) {
             if start {
                 if let Err(error) = self
                     .envoy_session

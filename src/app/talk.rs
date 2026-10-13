@@ -1,5 +1,5 @@
-//! The app side of talking to the Queen: the global hold-to-talk hotkey, sending transcripts
-//! to her chat as voice messages, speaking her replies, the pill and the background overlay,
+//! The app side of talking to the King: the global hold-to-talk hotkey, sending transcripts
+//! to his chat as voice messages, speaking his replies, the pill and the background overlay,
 //! and the two speech models (downloaded only when Karl clicks, prepared at start once there).
 
 use std::sync::Arc;
@@ -141,7 +141,7 @@ impl AppTalk {
             return;
         }
         let config = speaker_config();
-        log::info!("downloading the Queen's voice from {}", config.release.url);
+        log::info!("downloading the King's voice from {}", config.release.url);
         let repaint = self.repaint.clone();
         self.voice_download = Some(kokoro::Fetch::start(
             config.models_root,
@@ -187,7 +187,7 @@ impl AppTalk {
                     speech_ready = true;
                     let key = self.settings.talk_hotkey_label();
                     self.notify(Notice::Info(format!(
-                        "Speech model ready: hold {key} to talk to the Queen"
+                        "Speech model ready: hold {key} to talk to the King"
                     )));
                 }
                 DownloadStatus::Failed(error) => {
@@ -208,7 +208,7 @@ impl AppTalk {
                     self.voice_installed = true;
                     self.talk.set_voice_installed(true);
                     self.talk.speaker().prepare();
-                    self.notify(Notice::Info("The Queen's voice is ready".into()));
+                    self.notify(Notice::Info("The King's voice is ready".into()));
                 }
                 DownloadStatus::Failed(error) => {
                     self.voice_download = None;
@@ -345,14 +345,14 @@ impl MyrstackApp {
         self.talk.talk.stop_speaking();
     }
 
-    /// Flips "Speak replies", saving it like the Queen section's switch.
+    /// Flips "Speak replies", saving it like the King section's switch.
     pub(super) fn toggle_speak_replies(&mut self) {
         let on = !self.whip_window.voice().speak_replies;
         let saved = self.whip_window.set_speak_replies(on);
         self.apply_voice_settings(&saved);
     }
 
-    /// The palette's "Talk to the Queen": records until the hotkey or the pill's Send.
+    /// The palette's "Talk to the King": records until the hotkey or the pill's Send.
     pub(super) fn start_talk(&mut self) {
         let result = self.talk.talk.start_latched(self.dictation.machine_mut());
         if let Err(err) = result {
@@ -371,20 +371,20 @@ impl MyrstackApp {
             self.talk.notify(Notice::SpeechModelMissing);
             // The download needs a click: bring the window up if Karl is elsewhere.
             if !focused {
-                self.bring_forward_to_queen();
+                self.bring_forward_to_king();
             }
         } else {
             self.talk.notify(Notice::Error(err.to_string()));
         }
     }
 
-    /// Shows the window with the Queen's chat open.
-    fn bring_forward_to_queen(&mut self) {
-        self.select_queen();
+    /// Shows the window with the King's chat open.
+    fn bring_forward_to_king(&mut self) {
+        self.select_king();
         self.talk.bring_forward = true;
     }
 
-    /// Runs talking to the Queen for this frame: hotkey events, the talk machine, her reply
+    /// Runs talking to the King for this frame: hotkey events, the talk machine, his reply
     /// text into the speaker, downloads. Runs in `logic`, so also while the window is hidden.
     pub(super) fn talk_logic(&mut self, ctx: &egui::Context) {
         let focused = ctx.input(|i| i.viewport().focused == Some(true));
@@ -433,7 +433,7 @@ impl MyrstackApp {
             if self.talk.talk.on_speech(&speech) == Some(TalkEvent::VoiceMissing) {
                 self.talk.notify(Notice::VoiceMissing);
                 if voice_turn && !focused {
-                    self.bring_forward_to_queen();
+                    self.bring_forward_to_king();
                 }
             }
         }
@@ -471,16 +471,16 @@ impl MyrstackApp {
             TalkEvent::Sent(text) => {
                 log::info!("talk: sent a voice message ({} chars)", text.len());
                 self.talk.sent_at = Some(Instant::now());
-                self.traffic.push(super::chat::karl_to_queen());
-                // Her panel shows the conversation when Karl looks; no focus is taken.
-                if self.selected.as_ref() != Some(&crate::model::NodeId::queen()) {
-                    self.select_queen();
+                self.traffic.push(super::chat::karl_to_king());
+                // His panel shows the conversation when Karl looks; no focus is taken.
+                if self.selected.as_ref() != Some(&crate::model::NodeId::king()) {
+                    self.select_king();
                 }
             }
             TalkEvent::NoSpeech => self.talk.notify(Notice::Info("No speech heard".into())),
             TalkEvent::Failed(err) => self.talk_failed(&err, focused),
             TalkEvent::NotSent(text) => {
-                log::warn!("talk: the Queen's chat was not ready; message kept as a draft");
+                log::warn!("talk: the King's chat was not ready; message kept as a draft");
                 let draft = self.chat.draft_mut();
                 if !draft.is_empty() {
                     draft.push(' ');
@@ -488,14 +488,14 @@ impl MyrstackApp {
                 draft.push_str(&text);
                 self.open_chat();
                 self.talk.notify(Notice::Error(
-                    "The Queen was not ready; your message is in her chat box".into(),
+                    "The King was not ready; your message is in his chat box".into(),
                 ));
             }
             TalkEvent::VoiceMissing => self.talk.notify(Notice::VoiceMissing),
         }
     }
 
-    /// Draws the pill (window focused) or the overlay (in the background), and stops her
+    /// Draws the pill (window focused) or the overlay (in the background), and stops him
     /// speaking on any key or click in the app. Call early in `ui`.
     pub(super) fn talk_ui(&mut self, ctx: &egui::Context) {
         if self.talk.talk.is_speaking() {
@@ -510,7 +510,7 @@ impl MyrstackApp {
             if key || click {
                 self.talk.talk.stop_speaking();
                 if escape {
-                    // Esc only stops her; it does not also close panels.
+                    // Esc only stops him; it does not also close panels.
                     ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
                 }
             }

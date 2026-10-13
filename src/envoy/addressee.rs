@@ -108,7 +108,7 @@ fn names_karl(mention: &str) -> bool {
 
 /// Who `event` is for. `thread` holds the other inbox events in its thread (Karl's own posts
 /// never reach the inbox, so a thread he started is known only when its root mentioned him).
-/// `karls_thread` says the app knows Karl's side owns the thread: an ant's `reach_out` thread,
+/// `karls_thread` says the app knows Karl's side owns the thread: a dwarf's `reach_out` thread,
 /// a watched thread, or one the Envoy replied in.
 pub fn classify(
     event: &InboundEvent,

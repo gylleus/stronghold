@@ -8,7 +8,7 @@ fn node(handle: &str, kind: NodeKind, live: bool) -> Node {
     Node {
         id: NodeId::terminal(handle),
         kind,
-        label: format!("ant {handle}"),
+        label: format!("dwarf {handle}"),
         terminal_handle: Some(handle.into()),
         live,
         run_id: None,
@@ -28,8 +28,8 @@ fn node(handle: &str, kind: NodeKind, live: bool) -> Node {
     }
 }
 
-fn data(handles: &[&str]) -> FleetData {
-    FleetData {
+fn data(handles: &[&str]) -> ClanData {
+    ClanData {
         terminals: handles
             .iter()
             .map(|h| Terminal {
@@ -89,7 +89,7 @@ fn only_live_agent_terminals_can_be_parked() {
     for (n, ok) in [
         (node("t", NodeKind::Coordinator, true), true),
         (node("t", NodeKind::Subagent, true), false),
-        (node("t", NodeKind::Queen, true), false),
+        (node("t", NodeKind::King, true), false),
         (node("closed", NodeKind::Terminal, false), false),
     ] {
         assert_eq!(refusal(&n).is_none(), ok, "{:?}", n.kind);

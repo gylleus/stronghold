@@ -175,7 +175,7 @@ fn hovering_finds_the_tree() {
             "front row wins"
         );
     }
-    assert!(forest::hit(&forest, scene.queen_chamber.center()).is_none());
+    assert!(forest::hit(&forest, scene.throne_hall.center()).is_none());
 }
 
 /// A tree whose worktree closes falls; the saw fells its trees before the next poll; a gap

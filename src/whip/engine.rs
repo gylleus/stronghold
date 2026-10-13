@@ -1,6 +1,6 @@
 //! The whip loop: stall findings in, nudges and escalations out.
 //!
-//! [`WhipEngine::tick`] is a pure state machine over one poll's [`FleetData`]; it decides and
+//! [`WhipEngine::tick`] is a pure state machine over one poll's [`ClanData`]; it decides and
 //! sends nothing. [`WhipEngine::execute`] carries the decisions out through a
 //! [`WhipExecutor`] (or only logs them in dry-run, except event forwarding, which is always live;
 //! see [`WhipAction::live_in_dry_run`]) and records each one in the action log.
@@ -20,7 +20,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::fleet::FleetData;
+use crate::clan::ClanData;
 use crate::whip::actions::{
     NUDGE_PREFIX, NudgeVia, TaskRef, WhipAction, WhipExecutor, WhipLogEntry, coordinator_idle_text,
     missing_report_nudge_text, nudge_message, quiet_run_text, reason_label,
@@ -128,7 +128,7 @@ impl WhipEngine {
     /// action is carried out (dry-run included), so the ladder advances the same way.
     pub fn tick(
         &mut self,
-        data: &FleetData,
+        data: &ClanData,
         needs_input: &BTreeSet<String>,
         settings: &WhipSettings,
         now_ms: i64,
@@ -401,7 +401,7 @@ impl WhipEngine {
 
     fn track_needs_input(
         &mut self,
-        data: &FleetData,
+        data: &ClanData,
         needs_input: &BTreeSet<String>,
         settings: &WhipSettings,
         now_ms: i64,
@@ -431,7 +431,7 @@ impl WhipEngine {
     }
 }
 
-fn last_output_ms(data: &FleetData, handle: &str) -> Option<i64> {
+fn last_output_ms(data: &ClanData, handle: &str) -> Option<i64> {
     data.terminal(handle)?.last_output_at.as_ref()?.epoch_ms()
 }
 
@@ -485,7 +485,7 @@ fn any_failed_but_alive(group: &[&StallFinding], report: &ProgressReport) -> boo
     })
 }
 
-fn nudge_text(role: Role, group: &[&StallFinding], data: &FleetData, revoked: bool) -> String {
+fn nudge_text(role: Role, group: &[&StallFinding], data: &ClanData, revoked: bool) -> String {
     let idle = group.iter().map(|f| f.idle_for_ms).max().unwrap_or(0);
     match role {
         Role::Worker => {
@@ -534,7 +534,7 @@ fn coordinator_text(f: &StallFinding) -> String {
     }
 }
 
-fn task_ref(data: &FleetData, run_id: &str, task_id: &str) -> TaskRef {
+fn task_ref(data: &ClanData, run_id: &str, task_id: &str) -> TaskRef {
     let title = data
         .tasks
         .get(run_id)
@@ -739,8 +739,8 @@ mod tests {
     }
 
     /// One Run, a live coordinator, and a worker on dispatched task `t1` that went silent at T0.
-    fn fleet() -> FleetData {
-        FleetData {
+    fn clan() -> ClanData {
+        ClanData {
             polled_at_ms: T0,
             terminals: vec![terminal(COORD, T0), terminal(WORKER, T0)],
             runs: vec![
@@ -776,7 +776,7 @@ mod tests {
     /// `(minute, action)` for every action.
     fn run_minutes(
         engine: &mut WhipEngine,
-        data: &FleetData,
+        data: &ClanData,
         needs_input: &BTreeSet<String>,
         from: i64,
         to: i64,
@@ -798,7 +798,7 @@ mod tests {
     #[test]
     fn failed_but_alive_worker_is_nudged_by_terminal() {
         let mut engine = WhipEngine::new();
-        let mut data = fleet();
+        let mut data = clan();
         let task = &mut data.tasks.get_mut(RUN).unwrap()[0];
         task.status = crate::orca::TaskStatus::Failed;
         task.completed_at = Some(Timestamp::Millis(T0 - 30 * MIN));
@@ -824,7 +824,7 @@ mod tests {
     #[test]
     fn paused_worker_ladder() {
         let mut engine = WhipEngine::new();
-        let data = fleet();
+        let data = clan();
         let none = BTreeSet::new();
         let actions = run_minutes(&mut engine, &data, &none, 0, 60);
         // Stalled after 15 min → nudge at 16; 10-min cooldown → nudge #2 at 26 (the terminal has
@@ -873,7 +873,7 @@ mod tests {
     /// terminal printing `echo_after_ms` after every nudge sent to it.
     fn run_live_with_echo(
         engine: &mut WhipEngine,
-        data: &mut FleetData,
+        data: &mut ClanData,
         exec: &FakeExecutor,
         from: i64,
         to: i64,
@@ -899,7 +899,7 @@ mod tests {
     #[test]
     fn nudge_echo_does_not_reset_the_ladder() {
         let mut engine = WhipEngine::new();
-        let mut data = fleet();
+        let mut data = clan();
         let exec = FakeExecutor::default();
         // Every nudge prints into the worker's pane 3 s later; the worker does nothing else.
         let actions = run_live_with_echo(&mut engine, &mut data, &exec, 0, 40, 3_000);
@@ -916,7 +916,7 @@ mod tests {
     #[test]
     fn late_output_after_a_nudge_is_progress() {
         let mut engine = WhipEngine::new();
-        let mut data = fleet();
+        let mut data = clan();
         let exec = FakeExecutor::default();
         // The worker wakes up and prints 2 minutes after the nudge: real progress.
         let actions = run_live_with_echo(&mut engine, &mut data, &exec, 0, 30, 2 * MIN);
@@ -930,7 +930,7 @@ mod tests {
     #[test]
     fn dry_run_nudges_do_not_hide_output() {
         let mut engine = WhipEngine::new();
-        let mut data = fleet();
+        let mut data = clan();
         let s = WhipSettings::default();
         let exec = DryRunExecutor::new();
         for m in 0..=16 {
@@ -947,7 +947,7 @@ mod tests {
     #[test]
     fn recovery_resets_the_ladder() {
         let mut engine = WhipEngine::new();
-        let mut data = fleet();
+        let mut data = clan();
         let none = BTreeSet::new();
         let first = run_minutes(&mut engine, &data, &none, 0, 40);
         assert_eq!(first.len(), 3);
@@ -968,7 +968,7 @@ mod tests {
     #[test]
     fn folds_tasks_on_one_terminal() {
         let mut engine = WhipEngine::new();
-        let mut data = fleet();
+        let mut data = clan();
         data.workers.push(worker("t2", WORKER));
         data.tasks
             .get_mut(RUN)
@@ -1005,7 +1005,7 @@ mod tests {
     #[test]
     fn late_stall_on_same_terminal_waits_for_the_terminal_cooldown() {
         let mut engine = WhipEngine::new();
-        let mut data = fleet();
+        let mut data = clan();
         data.workers.push(worker("t2", WORKER));
         data.tasks
             .get_mut(RUN)
@@ -1029,7 +1029,7 @@ mod tests {
     #[test]
     fn coordinator_variants() {
         let mut engine = WhipEngine::new();
-        let mut data = fleet();
+        let mut data = clan();
         // t1 is done; a ready task t2 waits; the coordinator stopped at T0.
         data.workers.clear();
         data.tasks.insert(
@@ -1091,7 +1091,7 @@ mod tests {
             handle: COORD.into(),
             run_id: "run_2".into(),
         };
-        let folded = nudge_text(Role::Coordinator, &[&a, &b], &FleetData::default(), false);
+        let folded = nudge_text(Role::Coordinator, &[&a, &b], &ClanData::default(), false);
         assert_eq!(folded.matches(NUDGE_PREFIX).count(), 1, "{folded}");
         assert!(folded.contains("run run_2"));
     }
@@ -1099,7 +1099,7 @@ mod tests {
     #[test]
     fn needs_input_is_never_nudged_but_notified_once_per_wait() {
         let mut engine = WhipEngine::new();
-        let data = fleet();
+        let data = clan();
         let waiting = BTreeSet::from([WORKER.to_string()]);
         let actions = run_minutes(&mut engine, &data, &waiting, 0, 60);
         // Waiting since its last output at T0: notify once after the threshold.
@@ -1135,7 +1135,7 @@ mod tests {
         for m in 0..60 {
             assert!(
                 engine
-                    .tick(&fleet(), &BTreeSet::new(), &s, T0 + m * MIN)
+                    .tick(&clan(), &BTreeSet::new(), &s, T0 + m * MIN)
                     .is_empty()
             );
         }
@@ -1144,7 +1144,7 @@ mod tests {
     #[test]
     fn dry_run_sends_nothing_but_logs() {
         let mut engine = WhipEngine::new();
-        let data = fleet();
+        let data = clan();
         let exec = FakeExecutor::default();
         let s = WhipSettings::default();
         assert!(s.dry_run);
@@ -1179,7 +1179,7 @@ mod tests {
             fail_bus: true,
             ..Default::default()
         };
-        let data = fleet();
+        let data = clan();
         for m in 0..=40 {
             let now = T0 + m * MIN;
             let actions = engine.tick(&data, &BTreeSet::new(), &s, now);
@@ -1209,8 +1209,8 @@ mod tests {
     }
 
     /// A live Claude coordinator, no stalls, and a fresh `worker_done` on the bus.
-    fn fleet_with_report() -> FleetData {
-        let mut data = fleet();
+    fn clan_with_report() -> ClanData {
+        let mut data = clan();
         data.terminals[0].agent_identity = Some(crate::orca::AgentIdentity::Claude);
         data.terminals[0].preview = Some("⏺ Dispatched.\nnew task? /clear to save 120k".into());
         data.inbox.push(
@@ -1228,7 +1228,7 @@ mod tests {
     #[test]
     fn missing_report_nudges_the_worker_and_tells_the_coordinator_once() {
         let mut engine = WhipEngine::new();
-        let mut data = fleet();
+        let mut data = clan();
         for t in &mut data.terminals {
             t.agent_identity = Some(crate::orca::AgentIdentity::Claude);
             t.preview = Some("⏺ Done.\nnew task? /clear to save 80k tokens".into());
@@ -1277,7 +1277,7 @@ mod tests {
     #[test]
     fn dry_run_still_forwards_events() {
         let mut engine = WhipEngine::new();
-        let data = fleet_with_report();
+        let data = clan_with_report();
         let exec = FakeExecutor::default();
         let s = WhipSettings::default();
         assert!(s.dry_run);
@@ -1301,7 +1301,7 @@ mod tests {
     fn failed_forward_is_retried_until_it_lands() {
         use std::sync::atomic::Ordering;
         let mut engine = WhipEngine::new();
-        let data = fleet_with_report();
+        let data = clan_with_report();
         let exec = FakeExecutor::default();
         exec.fail_terminal.store(true, Ordering::Relaxed);
         let s = settings();
@@ -1369,7 +1369,7 @@ mod tests {
     }
 
     /// Sends the manual nudge at `minute`, with the worker's pane echoing it 3 s later.
-    fn manual_at(engine: &mut WhipEngine, data: &mut FleetData, exec: &FakeExecutor, minute: i64) {
+    fn manual_at(engine: &mut WhipEngine, data: &mut ClanData, exec: &FakeExecutor, minute: i64) {
         let now = T0 + minute * MIN;
         let entry = engine.execute_manual(&manual_worker_nudge(), exec, now);
         assert_eq!(entry.outcome, "sent");
@@ -1379,7 +1379,7 @@ mod tests {
     #[test]
     fn manual_nudge_bypasses_the_cooldown_and_climbs_the_ladder() {
         let mut engine = WhipEngine::new();
-        let mut data = fleet();
+        let mut data = clan();
         let exec = FakeExecutor::default();
         let auto = run_live_with_echo(&mut engine, &mut data, &exec, 0, 16, 3_000);
         assert_eq!(
@@ -1410,7 +1410,7 @@ mod tests {
     #[test]
     fn manual_nudge_echo_is_not_progress() {
         let mut engine = WhipEngine::new();
-        let mut data = fleet();
+        let mut data = clan();
         let exec = FakeExecutor::default();
         run_live_with_echo(&mut engine, &mut data, &exec, 0, 4, 3_000);
         manual_at(&mut engine, &mut data, &exec, 5);

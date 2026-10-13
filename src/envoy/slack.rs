@@ -571,7 +571,7 @@ impl<I: SlackIo> SlackChannel<I> {
         ))
     }
 
-    /// Caches the head branches of PRs new events name, a few per poll, so ants match by branch.
+    /// Caches the head branches of PRs new events name, a few per poll, so dwarves match by branch.
     fn resolve_prs(&mut self, events: &[InboundEvent]) {
         let refs: BTreeSet<String> = events
             .iter()

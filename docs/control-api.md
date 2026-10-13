@@ -1,6 +1,6 @@
 # Myrstack control API
 
-A local API for reading the fleet status and controlling the dashboard while Myrstack is
+A local API for reading the clan status and controlling the dashboard while Myrstack is
 running. It is meant for the MCP server (which proxies to it) and for debugging with
 `myrstack ctl`.
 
@@ -54,9 +54,9 @@ Error codes:
 | `unknown_method` | no such method |
 | `invalid_params` | a param is missing, mistyped or has an unknown value |
 | `not_found` | no agent (or no deliverable run) matches |
-| `refused` | the app will not do it (e.g. closing a subagent or the Queen) |
+| `refused` | the app will not do it (e.g. closing a subagent or the King) |
 | `not_supported` | a known method this build cannot do |
-| `unavailable` | no fleet data yet (before the first poll), or the app is shutting down |
+| `unavailable` | no clan data yet (before the first poll), or the app is shutting down |
 | `timeout` | the app did not reply in time (5 s for dashboard changes, 60 s for sends, 120 s for manual whips, 180 s for closes) |
 | `failed` | the action ran and failed (e.g. Orca refused the input) |
 
@@ -75,9 +75,9 @@ Methods that take an agent `id` accept any of these:
 
 Input matching is loose, so `NeedsInput` and `needs-input` also work.
 
-The **Queen** is drawn as the King in the farm and stands for the whole fleet. It is not an agent, so
-`agents` never lists it and `status` reports its state as `fleet.state`. `select` and `focus`
-accept `queen`.
+The **King** sits in the farm's throne hall and stands for the whole clan. It is not an agent, so
+`agents` never lists it and `status` reports its state as `clan.state`. `select` and `focus`
+accept `king`.
 
 ## Read methods
 
@@ -93,14 +93,14 @@ Returns the protocol version, whether the app has data, and the method list.
 
 ### `status`
 
-Returns a fleet summary, a short whip summary and the dashboard state. It works before the
+Returns a clan summary, a short whip summary and the dashboard state. It works before the
 first poll, with `ready: false`.
 
 ```json
 {"v":1,"method":"status"}
 → {"ok":true,"result":{
     "ready":true,"published_at_ms":1790344470150,"polled_at_ms":1790344466430,"errors":[],
-    "fleet":{
+    "clan":{
       "state":"working",
       "agents":116,"live":38,
       "by_kind":{"coordinator":7,"terminal":24,"worker":85},
@@ -115,7 +115,7 @@ first poll, with `ready: false`.
     "whip":{"enabled":true,"dry_run":true,"last_tick_ms":…,"findings":1,"escalated":[]},
     "alerts":0,
     "notifications":{"total":0,"unread":0,"latest_unread":[]},
-    "dashboard":{"selected":"queen","selection":["queen"],
+    "dashboard":{"selected":"king","selection":["king"],
                  "filter":{"repos":[],"states":[],"kinds":[],"text":"","show_loose":true,
                            "show_released":true,"hidden":0},
                  "whip_settings_open":false},
@@ -222,12 +222,12 @@ Returns the plan quotas from `orca account list`.
 
 Returns the health doctor's report, the list the top bar's health badge shows. The app checks
 whether the whip is live (or off, or in dry run), whether `orca` and `gh` are found from the
-app's `PATH` (with versions) and Orca's runtime is reachable, whether the Queen's chat
+app's `PATH` (with versions) and Orca's runtime is reachable, whether the King's chat
 process runs, whether the Claude `SessionStart` hook is installed, whether macOS allows
 notifications (only from `Myrstack.app`), and how old the Slack reply bridge's heartbeat is
 (`off` when `~/.claude/slack-subscriptions/` doesn't exist). The slow checks run at startup and
 every 3 minutes; `checked_at_ms` is `null` until their first run finished, and until then only
-the whip and the Queen are listed.
+the whip and the King are listed.
 
 `level` of each check is `ok`, `off` (not configured or not applicable), `warn` or `error`; the
 report's `level` is the worst of them, with `off` counting as `ok`. `fix` is a one-line fix, or
@@ -242,7 +242,7 @@ report's `level` is the worst of them, with `off` counting as `ok`. `fix` is a o
     "detail":"runtime ready, Orca 1.4.192 (/opt/homebrew/bin/orca)","fix":null},
    {"key":"gh","name":"gh","level":"ok",
     "detail":"gh version 2.92.0 (2026-04-28) (/opt/homebrew/bin/gh)","fix":null},
-   {"key":"queen","name":"Queen","level":"ok","detail":"chat process running","fix":null},
+   {"key":"king","name":"King","level":"ok","detail":"chat process running","fix":null},
    {"key":"hook","name":"Session hook","level":"ok","detail":"installed in Claude's settings",
     "fix":null},
    {"key":"notifications","name":"Notifications","level":"ok","detail":"allowed","fix":null},
@@ -254,7 +254,7 @@ report's `level` is the worst of them, with `off` counting as `ok`. `fix` is a o
 
 Returns the notification inbox, newest first: what agents sent with `notify` and what
 Myrstack raised itself. `node` is the node each alert is about, if that node is still in the
-fleet; `count` is how many identical notifications were collapsed into it. `status` carries
+clan; `count` is how many identical notifications were collapsed into it. `status` carries
 the unread count and the newest unread ones under `notifications`.
 
 ```json
@@ -264,7 +264,7 @@ the unread count and the newest unread ones under `notifications`.
    "agent":"realtime-255","node":"term:term_…","count":1,"read":false}]}}
 ```
 
-### `fleet_data`
+### `clan_data`
 
 The last poll's raw Orca data: `{polled_at_ms, terminals, runs, workers, tasks: {run_id: [...]},
 inbox}` in Orca's own field names, without terminal previews or message bodies. Filled playbook
@@ -310,7 +310,7 @@ subagents or on workers whose terminal is gone.
 | `id` | string (required) | |
 | `text` | string (required) | may be empty when `enter` is true |
 | `enter` | bool | true: press Enter after the text |
-| `from` | string | the sender, for the message animation; else `origin`'s terminal, else the Queen |
+| `from` | string | the sender, for the message animation; else `origin`'s terminal, else the King |
 | `origin` | object | the caller's Orca identity (`send_to_agent` passes it) |
 
 ```json
@@ -446,7 +446,7 @@ it with `dry_run: true` first and show the plan's warnings.
 
 When the close runs, the reply comes after every step has finished:
 `{"dry_run":false,"plan":{…},"ok":true,"steps":[{"command":"orca terminal close …","ok":true,"note":null}]}`.
-A plan that is refused (for a subagent, the Queen, or a node with nothing to close) returns a
+A plan that is refused (for a subagent, the King, or a node with nothing to close) returns a
 `refused` error.
 
 ### `park`
@@ -466,10 +466,10 @@ A message sent with `send` to a parked agent wakes it first (`"woke": true` in i
      "worktree":"/…/park-agent","ok":true,"changed":true}]}}
 ```
 
-A row is `ok: false` with an `error` for an agent that can't be parked (the Queen, a
+A row is `ok: false` with an `error` for an agent that can't be parked (the King, a
 subagent, a closed terminal); the call fails only when no agent resolves. `agents` takes a
 `parked` bool filter, every agent row has `parked` and `parked_at_ms`, and `status`'s
-`fleet.parked` lists the parked ids (they are left out of `by_state`, `needs_input` and
+`clan.parked` lists the parked ids (they are left out of `by_state`, `needs_input` and
 `stalled`).
 
 ### `whip` (action)
@@ -496,19 +496,19 @@ with the same texts and sender (`myrstack-whip`):
 Threshold and cooldown do not apply, and the nudges are **sent live even when the automatic
 whip is in dry-run** (an explicit request). They are logged with `manual: true` and recorded
 by the whip, so their echo is not taken for progress and a stalled target climbs the
-escalation ladder (and starts a new cooldown). The Queen, subagents, released workers and
+escalation ladder (and starts a new cooldown). The King, subagents, released workers and
 dead terminals are skipped with a reason. An agent waiting on Karl's input is nudged, with a
 `warning`. The API does not ask for confirmation; the app's "Whip" button does for
 NeedsInput targets and for 5 or more targets.
 
 ```json
-{"v":1,"method":"whip","params":{"ids":["term:term_12…","queen"]}}
+{"v":1,"method":"whip","params":{"ids":["term:term_12…","king"]}}
 → {"ok":true,"result":{"mode":"manual","sent":1,"failed":0,"automatic_dry_run":true,
    "nudges":[{"id":"term:term_12…","label":"Fix login","handle":"term_12…",
               "via":{"bus":"dispatch:ctx_…","run":"run_…"},"target":"worker term_12… task t1",
               "text":"Myrstack: no progress on task …","ok":true,"outcome":"sent",
               "warning":null,"seq":14}],
-   "skipped":[{"id":"queen","label":"Queen","reason":"the Queen is Myrstack itself"}]}}
+   "skipped":[{"id":"king","label":"King","reason":"the King is Myrstack itself"}]}}
 ```
 
 `via` is `{"bus": <to>, "run": <run id>}` or `{"terminal": <handle>}`. An unknown agent is a
@@ -610,7 +610,7 @@ the terminal after `closing_in_ms` with the `plan` returned.
 
 `{"from", "to", "kind"?}`. Draws a message between agents, which happened elsewhere, as an
 envelope flying from `from` to `to` in the farm; nothing is sent. Each end
-is a node id, a terminal handle, `run:<id>` (its coordinator), `dispatch:<id>`, `queen`,
+is a node id, a terminal handle, `run:<id>` (its coordinator), `dispatch:<id>`, `king`,
 `envoy` (the live Envoy session), `karl` or `slack` (the outside world: the landing mound
 in the farm). `kind` picks the look: `instruction`, `message` (default), `ask` (or `question`,
 `escalation`), `merge_ready`, `relay` (or `slack`, `envoy`), `nudge` or `status`. Unknown ends
@@ -627,10 +627,10 @@ In the app's own code, push a `traffic::AgentMessage` through `Traffic::sender()
 ### `tool_call`
 
 `{"tool", "kind", "targets"?, "origin"?}`. Draws an MCP tool call as a beam from its caller
-(`origin`'s agent; the Queen when empty) to the agents it acted on; nothing else happens. The
+(`origin`'s agent; the King when empty) to the agents it acted on; nothing else happens. The
 MCP server sends one after each call that touches agents, without waiting for the reply.
 `kind`: `read` (a thin blue line pulling from each target), `sweep` (a blue sweep over the
-targets, or the whole fleet when there are none), `write` (drawn as a message), `kill` (a red
+targets, or the whole clan when there are none), `write` (drawn as a message), `kill` (a red
 laser and a burst), `dry_kill` (a faint dashed red line) or `spawn` (a green burst on the new
 agent, drawn once it shows up). Targets are agent ids, terminal handles or labels; unknown ones
 are ignored.

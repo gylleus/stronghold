@@ -1,4 +1,4 @@
-//! Spoken turns in the chat: the notes that ask the Queen for a `<say>` line, and the reply
+//! Spoken turns in the chat: the notes that ask the King for a `<say>` line, and the reply
 //! text tapped off the stream for the speaker.
 
 use super::protocol::{Incoming, StreamEvent};
@@ -16,13 +16,13 @@ screen (markdown is fine there)."
     };
 }
 
-/// Put before a message Karl spoke (not shown in his bubble): her reply is read aloud.
+/// Put before a message Karl spoke (not shown in his bubble): the King's reply is read aloud.
 pub const VOICE_NOTE: &str = concat!(
     "[Myrstack] Karl said this by voice (hold-to-talk); this turn is spoken. ",
     say_rules!()
 );
 
-/// Put before a typed message while "Speak replies" is on: her reply is read aloud.
+/// Put before a typed message while "Speak replies" is on: his reply is read aloud.
 pub const SPEAK_NOTE: &str = concat!(
     "[Myrstack] Speak replies is on; this turn is spoken. ",
     say_rules!()
@@ -33,7 +33,7 @@ pub const SPEAK_NOTE: &str = concat!(
 pub enum SpeechEvent {
     /// Karl sent a message; `voice` when he spoke it.
     TurnStart { voice: bool },
-    /// A delta of the Queen's reply text (top-level text blocks only; tool calls and
+    /// A delta of the King's reply text (top-level text blocks only; tool calls and
     /// subagents are not spoken).
     Text(String),
     /// A content block ended: flush the sentence in progress.

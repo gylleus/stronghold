@@ -13,11 +13,11 @@ use crate::control::view::{StatusView, ViewInputs};
 use crate::control::{
     CommandHandler, ControlClient, ControlCommand, ControlError, ErrorCode, Request, SharedStatus,
 };
-use crate::model::FleetSnapshot;
+use crate::model::ClanSnapshot;
 use crate::orca::OrcaClient;
 use crate::poller::{PollState, PollerConfig};
 use crate::quota::{QuotaSource, Quotas};
-use crate::ui::sidebar::FleetFilter;
+use crate::ui::sidebar::ClanFilter;
 use crate::whip::{WhipSettings, WhipStatus};
 
 /// How long a headless poll is reused before Orca is polled again.
@@ -139,7 +139,7 @@ impl HeadlessControl {
                 ..Quotas::default()
             },
         };
-        let snapshot = FleetSnapshot::build(&data, now);
+        let snapshot = ClanSnapshot::build(&data, now);
         let view = StatusView::build(&ViewInputs {
             snapshot: Some(&snapshot),
             data: Some(&data),
@@ -151,7 +151,7 @@ impl HeadlessControl {
             alerts: &[],
             selected: None,
             selection: Vec::new(),
-            filter: &FleetFilter::default(),
+            filter: &ClanFilter::default(),
             whip_settings_open: false,
             now_ms: now,
         });

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 
 use super::{BridgeStatus, EnvoyStatus, SessionState, settings::EnvoySettings};
-use crate::fleet::FleetData;
+use crate::clan::ClanData;
 use crate::spawn::{Agent, Catalog, SpawnPlan, SpawnRequest, SpawnTarget, Step, shell_quote};
 
 pub const HOME: &str = "envoy-home";
@@ -447,7 +447,7 @@ impl Session {
         }
     }
 
-    pub fn reconcile(&mut self, data: &FleetData) -> bool {
+    pub fn reconcile(&mut self, data: &ClanData) -> bool {
         if self.receiver.is_some()
             || data
                 .terminals_polled_at_ms
@@ -741,7 +741,7 @@ mod tests {
                 .start(&EnvoySettings::default(), Box::new(|| {}))
                 .is_err()
         );
-        let mut data = FleetData {
+        let mut data = ClanData {
             terminals_polled_at_ms: Some(1),
             terminals: vec![Terminal {
                 handle: "envoy-terminal".into(),
@@ -812,7 +812,7 @@ mod tests {
         assert!(session.poll());
         assert_eq!(session.handle(), Some("partial"));
         assert!(session.created_at_ms > 0);
-        let stale = FleetData {
+        let stale = ClanData {
             terminals_polled_at_ms: Some(session.created_at_ms - 1),
             ..Default::default()
         };
@@ -930,7 +930,7 @@ mod tests {
         ] {
             std::fs::write(&path, value.to_string()).unwrap();
             let mut session = Session::load(path.clone(), &EnvoySettings::default());
-            session.reconcile(&FleetData {
+            session.reconcile(&ClanData {
                 terminals_polled_at_ms: Some(1),
                 terminals: vec![Terminal {
                     handle: "old".into(),

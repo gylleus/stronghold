@@ -1,4 +1,4 @@
-//! The fleet playbook: the Markdown rules coordinators, attendants, workers and the Envoy run
+//! The clan playbook: the Markdown rules coordinators, attendants, workers and the Envoy run
 //! by. Myrstack serves them (MCP prompts, resources and tools; `myrstack playbook`) straight from disk on
 //! every request, stamped with the git version they came from. See `playbook/README.md`.
 
@@ -83,7 +83,7 @@ impl Role {
     pub fn description(self) -> &'static str {
         match self {
             Role::Coordinator => {
-                "Standing rules for a fleet coordinator: the fleet playbook plus the worker \
+                "Standing rules for a clan coordinator: the clan playbook plus the worker \
                  protocol it enforces."
             }
             Role::Attendant => {

@@ -1,6 +1,6 @@
 //! Selecting a spawned session's node once the poller has seen its terminal.
 
-use crate::model::{FleetSnapshot, NodeId, NodeKind};
+use crate::model::{ClanSnapshot, NodeId, NodeKind};
 
 /// How long to look for the new node before giving up.
 pub const PENDING_SELECT_MS: i64 = 60_000;
@@ -25,14 +25,14 @@ impl PendingSelect {
     }
 
     /// The node showing this terminal in `snapshot`, if it is there yet.
-    pub fn find(&self, snapshot: &FleetSnapshot) -> Option<NodeId> {
+    pub fn find(&self, snapshot: &ClanSnapshot) -> Option<NodeId> {
         node_for_handle(snapshot, &self.handle)
     }
 }
 
 /// The node showing terminal `handle`, preferring a live one. Subagents share their parent's
 /// handle and never count.
-pub fn node_for_handle(snapshot: &FleetSnapshot, handle: &str) -> Option<NodeId> {
+pub fn node_for_handle(snapshot: &ClanSnapshot, handle: &str) -> Option<NodeId> {
     let mut candidates = snapshot
         .nodes
         .iter()
@@ -51,7 +51,7 @@ pub fn node_for_handle(snapshot: &FleetSnapshot, handle: &str) -> Option<NodeId>
 /// Takes the pending selection's node once it appears; clears it when it expired.
 pub fn take_ready(
     pending: &mut Option<PendingSelect>,
-    snapshot: &FleetSnapshot,
+    snapshot: &ClanSnapshot,
     now_ms: i64,
 ) -> Option<NodeId> {
     let current = pending.as_ref()?;
@@ -61,7 +61,7 @@ pub fn take_ready(
     }
     if current.expired(now_ms) {
         log::info!(
-            "spawn: {} did not appear in the fleet within {} s",
+            "spawn: {} did not appear in the clan within {} s",
             current.handle,
             PENDING_SELECT_MS / 1000
         );

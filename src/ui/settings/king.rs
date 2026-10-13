@@ -1,21 +1,21 @@
-//! The Queen section: her model and effort (saving restarts her `claude` process on the same
-//! conversation), auto mode, speaking her replies aloud, and the default model and effort of
-//! the ants she (or Karl) spawns.
+//! The King section: his model and effort (saving restarts his `claude` process on the same
+//! conversation), auto mode, speaking his replies aloud, and the default model and effort of
+//! the dwarves he (or Karl) spawns.
 
 use eframe::egui;
 
 use super::{PaneOutput, SettingsPane, save_row};
 use crate::chat::config::MODEL_ENV;
-use crate::chat::settings::{EFFORT_LEVELS, MODEL_ALIASES, MODEL_IDS, QueenSettings};
+use crate::chat::settings::{EFFORT_LEVELS, KingSettings, MODEL_ALIASES, MODEL_IDS};
 
 /// Label of the "no `--model`" / "no `--effort`" choice.
 pub const CLI_DEFAULT: &str = "Default (CLI default)";
 /// Label of the free-text model choice.
 pub const CUSTOM: &str = "Custom…";
 
-/// What the Queen section shows about the running chat.
+/// What the King section shows about the running chat.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct QueenStatus<'a> {
+pub struct KingStatus<'a> {
     pub auto_mode: bool,
     /// The model the chat header shows (from the CLI's `system/init`, or the one requested).
     pub running_model: Option<&'a str>,
@@ -23,17 +23,17 @@ pub struct QueenStatus<'a> {
     pub env_model: Option<&'a str>,
 }
 
-/// The edited Queen settings.
+/// The edited King settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct QueenDraft {
-    pub(super) settings: QueenSettings,
+pub(super) struct KingDraft {
+    pub(super) settings: KingSettings,
     /// "Custom…" is picked: the model comes from `custom_text`.
     pub(super) custom: bool,
     custom_text: String,
 }
 
-impl QueenDraft {
-    pub(super) fn new(saved: &QueenSettings) -> Self {
+impl KingDraft {
+    pub(super) fn new(saved: &KingSettings) -> Self {
         let model = saved.model.as_deref();
         let custom = model.is_some_and(|m| !is_listed(m));
         Self {
@@ -68,21 +68,21 @@ fn is_listed(model: &str) -> bool {
 pub(super) fn section(
     pane: &mut SettingsPane,
     ui: &mut egui::Ui,
-    status: &QueenStatus<'_>,
+    status: &KingStatus<'_>,
     out: &mut PaneOutput,
 ) {
-    ui.label("The Queen is the Claude Code session behind the chat.");
+    ui.label("The King is the Claude Code session behind the chat.");
     ui.add_space(4.0);
-    egui::Grid::new("queen_settings")
+    egui::Grid::new("king_settings")
         .num_columns(2)
         .spacing([12.0, 8.0])
         .show(ui, |ui| {
             ui.label("Model");
-            model_picker(ui, "queen", &mut pane.queen_draft);
+            model_picker(ui, "king", &mut pane.king_draft);
             ui.end_row();
 
             ui.label("Effort");
-            effort_picker(ui, "queen", &mut pane.queen_draft.settings.effort);
+            effort_picker(ui, "king", &mut pane.king_draft.settings.effort);
             ui.end_row();
 
             ui.label("Running");
@@ -94,29 +94,29 @@ pub(super) fn section(
         ui.colored_label(
             ui.visuals().warn_fg_color,
             format!(
-                "Overridden by env: {MODEL_ENV}={env}. The Queen runs {env}; the model above \
+                "Overridden by env: {MODEL_ENV}={env}. The King runs {env}; the model above \
                  applies once the variable is unset."
             ),
         );
     }
 
-    let changed = pane.queen_draft.settings.normalized() != pane.applied.queen;
-    let (save, revert) = save_row(ui, pane, changed, "Save and restart the Queen");
+    let changed = pane.king_draft.settings.normalized() != pane.applied.king;
+    let (save, revert) = save_row(ui, pane, changed, "Save and restart the King");
     if revert {
-        pane.queen_draft = QueenDraft::new(&pane.applied.queen);
+        pane.king_draft = KingDraft::new(&pane.applied.king);
     }
     if save {
-        out.queen = pane.save_queen();
+        out.king = pane.save_king();
     }
-    ui.weak("Saving restarts her claude process and resumes the same conversation.");
+    ui.weak("Saving restarts his claude process and resumes the same conversation.");
 
     ui.separator();
-    ants_section(pane, ui, out);
+    dwarves_section(pane, ui, out);
 
     ui.separator();
     let mut auto = status.auto_mode;
     if ui
-        .checkbox(&mut auto, "Auto mode: her actions run without asking")
+        .checkbox(&mut auto, "Auto mode: his actions run without asking")
         .on_hover_text("The same switch as Auto in the chat header; applies at once")
         .changed()
     {
@@ -125,7 +125,7 @@ pub(super) fn section(
     let mut speak = pane.voice().speak_replies;
     if ui
         .checkbox(&mut speak, "Speak replies")
-        .on_hover_text("Read every reply aloud with her voice; applies at once")
+        .on_hover_text("Read every reply aloud with his voice; applies at once")
         .changed()
     {
         out.voice = Some(pane.set_speak_replies(speak));
@@ -137,44 +137,44 @@ pub(super) fn section(
     ));
 }
 
-/// The ants' default model and effort: what every new Claude ant gets when its spawn names no
-/// model, from the "New ant…" dialog, `spawn_session` or a coordinator starting workers.
-fn ants_section(pane: &mut SettingsPane, ui: &mut egui::Ui, out: &mut PaneOutput) {
-    ui.strong("Ants");
+/// The dwarves' default model and effort: what every new Claude dwarf gets when its spawn names no
+/// model, from the "New dwarf…" dialog, `spawn_session` or a coordinator starting workers.
+fn dwarves_section(pane: &mut SettingsPane, ui: &mut egui::Ui, out: &mut PaneOutput) {
+    ui.strong("Dwarves");
     ui.label(
-        "The default model and effort of new ants: new sessions, workers, and the workers \
-         coordinators start. Switch the whole fleet here; an explicit model on a spawn still \
-         wins. Claude ants only; Codex keeps its own default.",
+        "The default model and effort of new dwarves: new sessions, workers, and the workers \
+         coordinators start. Switch the whole clan here; an explicit model on a spawn still \
+         wins. Claude dwarves only; Codex keeps its own default.",
     );
     ui.add_space(4.0);
-    egui::Grid::new("ants_settings")
+    egui::Grid::new("dwarves_settings")
         .num_columns(2)
         .spacing([12.0, 8.0])
         .show(ui, |ui| {
             ui.label("Model");
-            model_picker(ui, "ants", &mut pane.ants_draft);
+            model_picker(ui, "dwarves", &mut pane.dwarves_draft);
             ui.end_row();
 
             ui.label("Effort");
-            effort_picker(ui, "ants", &mut pane.ants_draft.settings.effort);
+            effort_picker(ui, "dwarves", &mut pane.dwarves_draft.settings.effort);
             ui.end_row();
         });
-    let changed = pane.ants_draft.settings.normalized() != pane.applied.ants.as_queen();
-    let (save, revert) = save_row(ui, pane, changed, "Save for new ants");
+    let changed = pane.dwarves_draft.settings.normalized() != pane.applied.dwarves.as_king();
+    let (save, revert) = save_row(ui, pane, changed, "Save for new dwarves");
     if revert {
-        pane.ants_draft = QueenDraft::new(&pane.applied.ants.as_queen());
+        pane.dwarves_draft = KingDraft::new(&pane.applied.dwarves.as_king());
     }
     if save {
-        out.ants = pane.save_ants();
+        out.dwarves = pane.save_dwarves();
     }
     ui.weak(format!(
-        "New ants get: {}. Running ants are not changed.",
-        pane.applied.ants.describe()
+        "New dwarves get: {}. Running dwarves are not changed.",
+        pane.applied.dwarves.describe()
     ));
 }
 
-/// `id` keeps the Queen's and the ants' combo boxes apart on one screen.
-pub(super) fn model_picker(ui: &mut egui::Ui, id: &str, draft: &mut QueenDraft) {
+/// `id` keeps the King's and the dwarves' combo boxes apart on one screen.
+pub(super) fn model_picker(ui: &mut egui::Ui, id: &str, draft: &mut KingDraft) {
     ui.vertical(|ui| {
         let selected = if draft.custom {
             CUSTOM.to_owned()

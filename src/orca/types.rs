@@ -705,11 +705,19 @@ const REVOKED_CODE: &str = "dispatch_capability_invalid";
 /// `docs/heartbeat-convention.md` "Myrstack senders".
 pub const WHIP_SENDER: &str = "myrstack-whip";
 /// `--from` of messages Karl broadcasts from Myrstack.
-pub const BROADCAST_SENDER: &str = "queen";
+pub const BROADCAST_SENDER: &str = "king";
+/// [`BROADCAST_SENDER`] before the dwarf theme. Orca keeps run history, so older broadcasts
+/// still carry it.
+const OLD_BROADCAST_SENDER: &str = "queen";
+
+/// Whether `from` is Karl's broadcast sender, now or before the dwarf theme.
+pub fn is_broadcast_sender(from: &str) -> bool {
+    from == BROADCAST_SENDER || from == OLD_BROADCAST_SENDER
+}
 
 /// Whether `from` is one of Myrstack's own senders ([`WHIP_SENDER`], [`BROADCAST_SENDER`]).
 pub fn is_myrstack_sender(from: &str) -> bool {
-    from == WHIP_SENDER || from == BROADCAST_SENDER
+    from == WHIP_SENDER || is_broadcast_sender(from)
 }
 
 /// A message for `orca orchestration send`. Only `subject` is required.

@@ -33,8 +33,8 @@ const ORCA: &str = "/Users/x/orca/workspaces";
 
 /// Run `alpha` in repo `shop` (coordinator, a live worker, a released dispatch without a
 /// worktree), run `beta` in repo `infra` and a loose terminal in `myrstack`.
-fn snapshot() -> FleetSnapshot {
-    let mut s = FleetSnapshot::default();
+fn snapshot() -> ClanSnapshot {
+    let mut s = ClanSnapshot::default();
     s.runs = vec![
         RunSummary {
             id: "alpha".into(),
@@ -82,7 +82,7 @@ fn snapshot() -> FleetSnapshot {
     s
 }
 
-fn visible(filter: &FleetFilter, s: &FleetSnapshot) -> Vec<String> {
+fn visible(filter: &ClanFilter, s: &ClanSnapshot) -> Vec<String> {
     s.nodes
         .iter()
         .filter(|n| filter.matches(n, s))
@@ -123,7 +123,7 @@ fn repo_of_falls_back_to_the_repo_dir() {
 #[test]
 fn default_filter_shows_everything() {
     let s = snapshot();
-    let filter = FleetFilter::default();
+    let filter = ClanFilter::default();
     assert!(!filter.is_active());
     assert_eq!(visible(&filter, &s).len(), s.nodes.len());
     assert!(filter.hidden(&s).is_empty());
@@ -141,9 +141,9 @@ fn worker_without_worktree_inherits_coordinator_repo() {
 #[test]
 fn repo_filter() {
     let s = snapshot();
-    let filter = FleetFilter {
+    let filter = ClanFilter {
         repos: ["infra".to_string()].into(),
-        ..FleetFilter::default()
+        ..ClanFilter::default()
     };
     assert_eq!(visible(&filter, &s), ["cb", "b1"]);
 }
@@ -151,15 +151,15 @@ fn repo_filter() {
 #[test]
 fn state_and_kind_filters() {
     let s = snapshot();
-    let filter = FleetFilter {
+    let filter = ClanFilter {
         states: [NodeState::Stalled, NodeState::NeedsInput].into(),
-        ..FleetFilter::default()
+        ..ClanFilter::default()
     };
     assert_eq!(visible(&filter, &s), ["a1", "loose"]);
 
-    let filter = FleetFilter {
+    let filter = ClanFilter {
         kinds: [NodeKind::Coordinator].into(),
-        ..FleetFilter::default()
+        ..ClanFilter::default()
     };
     assert_eq!(visible(&filter, &s), ["ca", "cb"]);
 }
@@ -167,10 +167,10 @@ fn state_and_kind_filters() {
 #[test]
 fn loose_and_released_toggles() {
     let s = snapshot();
-    let filter = FleetFilter {
+    let filter = ClanFilter {
         show_loose: false,
         show_released: false,
-        ..FleetFilter::default()
+        ..ClanFilter::default()
     };
     assert_eq!(visible(&filter, &s), ["ca", "a1", "cb", "b1"]);
     assert_eq!(filter.hidden(&s), [id("a2"), id("loose")].into());
@@ -180,9 +180,9 @@ fn loose_and_released_toggles() {
 fn text_matches_label_branch_and_objective_case_insensitively() {
     let s = snapshot();
     let by = |text: &str| {
-        let filter = FleetFilter {
+        let filter = ClanFilter {
             text: text.into(),
-            ..FleetFilter::default()
+            ..ClanFilter::default()
         };
         visible(&filter, &s)
     };
@@ -196,11 +196,11 @@ fn text_matches_label_branch_and_objective_case_insensitively() {
 #[test]
 fn filters_combine() {
     let s = snapshot();
-    let filter = FleetFilter {
+    let filter = ClanFilter {
         repos: ["shop".to_string()].into(),
         kinds: [NodeKind::Worker].into(),
         show_released: false,
-        ..FleetFilter::default()
+        ..ClanFilter::default()
     };
     assert_eq!(visible(&filter, &s), ["a1"]);
 }
@@ -264,7 +264,7 @@ fn task_summary_lists_non_zero_buckets() {
 fn sidebar_renders_headless() {
     let ctx = egui::Context::default();
     let s = snapshot();
-    let mut filter = FleetFilter::default();
+    let mut filter = ClanFilter::default();
     let mut response = SidebarResponse::default();
     ctx.run_ui(egui::RawInput::default(), |ui| {
         response = sidebar(ui, &s, &mut filter);
@@ -279,7 +279,7 @@ fn sidebar_renders_headless() {
 fn sidebar_panel_width_is_stable() {
     let ctx = egui::Context::default();
     let s = snapshot();
-    let mut filter = FleetFilter::default();
+    let mut filter = ClanFilter::default();
     let mut whip_log = crate::ui::whip_log::WhipLog::default();
     whip_log.extend((1..=40).map(long_whip_item));
     let whip_status = crate::whip::WhipStatus {
@@ -352,12 +352,12 @@ fn cache_derives_once_per_snapshot_and_recounts_hidden_per_filter() {
     assert_eq!(derived[0].runs[0].row, groups[0].runs[0]);
     assert_eq!(cache.derived(&s).repos, repo_counts(&s));
 
-    let workers = FleetFilter {
+    let workers = ClanFilter {
         kinds: [NodeKind::Worker].into(),
-        ..FleetFilter::default()
+        ..ClanFilter::default()
     };
     let hidden = workers.hidden(&s).len();
-    assert_eq!(cache.hidden_count(&s, &FleetFilter::default()), 0);
+    assert_eq!(cache.hidden_count(&s, &ClanFilter::default()), 0);
     assert_eq!(cache.hidden_count(&s, &workers), hidden);
 
     // Changes to the snapshot show once the cache is told.
@@ -373,36 +373,36 @@ fn snapshot_repo_counts() -> BTreeMap<String, usize> {
 }
 
 #[test]
-fn filters_never_hide_the_queen_and_counts_skip_it() {
+fn filters_never_hide_the_king_and_counts_skip_it() {
     let mut s = snapshot();
-    s.add_queen();
+    s.add_king();
     let filters = [
-        FleetFilter {
+        ClanFilter {
             show_loose: false,
             show_released: false,
-            ..FleetFilter::default()
+            ..ClanFilter::default()
         },
-        FleetFilter {
+        ClanFilter {
             states: [NodeState::Done].into(),
-            ..FleetFilter::default()
+            ..ClanFilter::default()
         },
-        FleetFilter {
+        ClanFilter {
             kinds: [NodeKind::Worker].into(),
-            ..FleetFilter::default()
+            ..ClanFilter::default()
         },
-        FleetFilter {
+        ClanFilter {
             repos: ["infra".to_string()].into(),
-            ..FleetFilter::default()
+            ..ClanFilter::default()
         },
-        FleetFilter {
+        ClanFilter {
             text: "no such node".into(),
-            ..FleetFilter::default()
+            ..ClanFilter::default()
         },
     ];
     for filter in filters {
-        assert!(!filter.hidden(&s).contains(&NodeId::queen()), "{filter:?}");
+        assert!(!filter.hidden(&s).contains(&NodeId::king()), "{filter:?}");
     }
-    assert_eq!(kind_counts(&s).get(&NodeKind::Queen), None);
+    assert_eq!(kind_counts(&s).get(&NodeKind::King), None);
     assert_eq!(state_counts(&s).values().sum::<usize>(), 6);
     assert_eq!(repo_counts(&s).values().sum::<usize>(), 6);
 }
@@ -445,7 +445,7 @@ fn runs_and_loose_terminals_group_by_repo() {
 #[test]
 fn clicking_a_repo_header_focuses_its_region() {
     let s = snapshot();
-    let mut filter = FleetFilter::default();
+    let mut filter = ClanFilter::default();
     let response = crate::ui::test_util::click_label("infra", |ui| sidebar(ui, &s, &mut filter));
     assert_eq!(response.focus_repo.as_deref(), Some("infra"));
     assert_eq!(response.select, None);
@@ -455,7 +455,7 @@ fn clicking_a_repo_header_focuses_its_region() {
 fn clicking_a_loose_terminal_selects_and_pans_to_it() {
     let mut s = snapshot();
     s.nodes[5].label = "karl's shell".into();
-    let mut filter = FleetFilter::default();
+    let mut filter = ClanFilter::default();
     let response =
         crate::ui::test_util::click_label("karl's shell", |ui| sidebar(ui, &s, &mut filter));
     assert_eq!(response.select, Some(id("loose")));
@@ -465,7 +465,7 @@ fn clicking_a_loose_terminal_selects_and_pans_to_it() {
 #[test]
 fn repo_plus_button_asks_for_a_new_session_in_that_repo() {
     let s = snapshot();
-    let mut filter = FleetFilter::default();
+    let mut filter = ClanFilter::default();
     let response = crate::ui::test_util::click_label("+", |ui| sidebar(ui, &s, &mut filter));
     let repo = response.new_session_repo.expect("a repo");
     assert_ne!(repo, NO_REPO);

@@ -15,8 +15,8 @@ fn event(ts: &str, thread: Option<&str>, text: &str) -> InboundEvent {
     }
 }
 
-fn ant(id: &str, label: &str, repo: &str, branch: &str) -> Ant {
-    Ant {
+fn dwarf(id: &str, label: &str, repo: &str, branch: &str) -> Dwarf {
+    Dwarf {
         id: id.into(),
         label: label.into(),
         repo: Some(repo.into()),
@@ -25,8 +25,8 @@ fn ant(id: &str, label: &str, repo: &str, branch: &str) -> Ant {
     }
 }
 
-fn fleet() -> Vec<Ant> {
-    let mut redis = ant(
+fn clan() -> Vec<Dwarf> {
+    let mut redis = dwarf(
         "term:redis",
         "Fable Redis review",
         "realtime",
@@ -34,7 +34,7 @@ fn fleet() -> Vec<Ant> {
     );
     redis.prs = vec!["realtime#649".into()];
     redis.context = vec!["VROOM-1716: realtime reads Redis from the replica".into()];
-    let mut wheat = ant(
+    let mut wheat = dwarf(
         "term:wheat",
         "Finish search kickoff and PR",
         "depict",
@@ -44,7 +44,7 @@ fn fleet() -> Vec<Ant> {
     vec![
         redis,
         wheat,
-        ant(
+        dwarf(
             "term:recs",
             "Recs v2 config scoping",
             "realtime",
@@ -72,7 +72,7 @@ fn refs_cover_tickets_repo_numbers_and_pr_links() {
 #[test]
 fn thread_owner_wins_over_everything() {
     let e = event("100.000500", Some("100.000001"), "VROOM-1716 too");
-    let c = candidates(&e, &[], &fleet(), &BTreeMap::new());
+    let c = candidates(&e, &[], &clan(), &BTreeMap::new());
     assert_eq!(ids(&c), ["term:wheat", "term:redis"]);
     assert_eq!(c[0].why, "its thread");
 }
@@ -81,13 +81,13 @@ fn thread_owner_wins_over_everything() {
 fn pr_and_ticket_refs_match_including_from_the_thread() {
     let e = event("200.1", None, "realtime#649 is merged");
     assert_eq!(
-        ids(&candidates(&e, &[], &fleet(), &BTreeMap::new())),
+        ids(&candidates(&e, &[], &clan(), &BTreeMap::new())),
         ["term:redis"]
     );
 
     let root = event("300.1", None, "Heads up on vroom-1716");
     let reply = event("300.2", Some("300.1"), "done, deploying now");
-    let c = candidates(&reply, &[&root], &fleet(), &BTreeMap::new());
+    let c = candidates(&reply, &[&root], &clan(), &BTreeMap::new());
     assert_eq!(ids(&c), ["term:redis"]);
     assert_eq!(c[0].why, "vroom-1716");
 }
@@ -96,30 +96,30 @@ fn pr_and_ticket_refs_match_including_from_the_thread() {
 fn keywords_need_two_distinctive_hits() {
     let e = event("400.1", None, "the wheat search preload is slow");
     assert_eq!(
-        ids(&candidates(&e, &[], &fleet(), &BTreeMap::new())),
+        ids(&candidates(&e, &[], &clan(), &BTreeMap::new())),
         ["term:wheat"]
     );
     let e = event("400.2", None, "can someone review this config?");
-    assert!(candidates(&e, &[], &fleet(), &BTreeMap::new()).is_empty());
+    assert!(candidates(&e, &[], &clan(), &BTreeMap::new()).is_empty());
     let e = event("400.3", None, "realtime redis is flapping");
     assert!(
-        candidates(&e, &[], &fleet(), &BTreeMap::new()).is_empty(),
+        candidates(&e, &[], &clan(), &BTreeMap::new()).is_empty(),
         "the repo name adds nothing"
     );
     let e = event("400.4", None, "redis replicas are lagging");
     assert_eq!(
-        ids(&candidates(&e, &[], &fleet(), &BTreeMap::new())),
+        ids(&candidates(&e, &[], &clan(), &BTreeMap::new())),
         ["term:redis"]
     );
     let e = event("400.5", None, "search is slow on the first page");
     assert!(
-        candidates(&e, &[], &fleet(), &BTreeMap::new()).is_empty(),
+        candidates(&e, &[], &clan(), &BTreeMap::new()).is_empty(),
         "generic words don't count"
     );
 }
 
 #[test]
-fn a_pr_ref_matches_the_ant_on_its_head_branch() {
+fn a_pr_ref_matches_the_dwarf_on_its_head_branch() {
     let heads = BTreeMap::from([(
         "depict#8765".to_owned(),
         "gylleus/wheat-search-preload".to_owned(),
@@ -129,17 +129,17 @@ fn a_pr_ref_matches_the_ant_on_its_head_branch() {
         None,
         "depict#8765 is NOT APPROVED yet, one blocker",
     );
-    let c = candidates(&e, &[], &fleet(), &heads);
+    let c = candidates(&e, &[], &clan(), &heads);
     assert_eq!(ids(&c), ["term:wheat"]);
     assert_eq!(c[0].why, "depict#8765 is its branch");
 }
 
 #[test]
 fn annotation_lists_candidates_or_says_none() {
-    assert_eq!(annotation(&[]), " — no ant match");
+    assert_eq!(annotation(&[]), " — no dwarf match");
     let e = event("200.1", None, "realtime#649");
     assert_eq!(
-        annotation(&candidates(&e, &[], &fleet(), &BTreeMap::new())),
-        " — ants: Fable Redis review (term:redis, realtime#649)"
+        annotation(&candidates(&e, &[], &clan(), &BTreeMap::new())),
+        " — dwarves: Fable Redis review (term:redis, realtime#649)"
     );
 }

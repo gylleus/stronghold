@@ -75,7 +75,7 @@ pub struct Figure<'a> {
     pub key: &'a str,
     pub look: Look,
     pub action: Action,
-    /// Head down (falling out of the fleet).
+    /// Head down (falling out of the clan).
     pub upside_down: bool,
     pub facing_right: bool,
     pub alpha: f32,
@@ -128,7 +128,7 @@ impl DwarfArt {
         self.mappers.get_mut(i)
     }
 
-    /// Draws `figure` standing on the bottom of `cell` (an ant's cell), `farm_px` points per
+    /// Draws `figure` standing on the bottom of `cell` (a dwarf's cell), `farm_px` points per
     /// farm texel, at `now_s`.
     pub fn paint(
         &mut self,

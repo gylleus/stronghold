@@ -1,11 +1,11 @@
-//! "New ant…" dialog: pick where (a worktree, a new worktree, or a run as its worker), the
+//! "New dwarf…" dialog: pick where (a worktree, a new worktree, or a run as its worker), the
 //! agent and an initial prompt; see the planned `orca` commands; launch and watch each step.
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 use eframe::egui::{self, Color32, RichText};
 
-use crate::fleet::FleetData;
+use crate::clan::ClanData;
 use crate::orca::spawn::WorkerPlacement;
 use crate::spawn::exec::JobId;
 use crate::spawn::{
@@ -58,17 +58,17 @@ pub struct TerminalChoice {
     pub worktree_path: Option<String>,
 }
 
-/// The fleet facts the dialog needs besides Orca's repo and worktree lists.
+/// The clan facts the dialog needs besides Orca's repo and worktree lists.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SpawnFleet {
+pub struct SpawnClan {
     pub runs: Vec<RunChoice>,
     pub terminals: Vec<TerminalChoice>,
     /// Live agents, named when a new worktree's name is taken.
     pub agents: Vec<LiveAgent>,
 }
 
-impl SpawnFleet {
-    pub fn from_data(data: Option<&FleetData>) -> Self {
+impl SpawnClan {
+    pub fn from_data(data: Option<&ClanData>) -> Self {
         let Some(data) = data else {
             return Self::default();
         };
@@ -109,7 +109,7 @@ impl SpawnFleet {
     }
 
     /// Adds the snapshot's live agents.
-    pub fn with_agents(mut self, snapshot: Option<&crate::model::FleetSnapshot>) -> Self {
+    pub fn with_agents(mut self, snapshot: Option<&crate::model::ClanSnapshot>) -> Self {
         self.agents = snapshot.map(LiveAgent::from_snapshot).unwrap_or_default();
         self
     }
@@ -140,13 +140,13 @@ pub struct SpawnForm {
     pub prompt: String,
     /// Let Orca suffix a taken new worktree name instead of refusing it.
     pub allow_suffix: bool,
-    /// The saved default model and effort of new ants, used when `model` is blank.
-    pub ants: crate::spawn::AntSettings,
+    /// The saved default model and effort of new dwarves, used when `model` is blank.
+    pub dwarves: crate::spawn::DwarfSettings,
 }
 
 impl SpawnForm {
     /// The request the form describes, or what is missing.
-    pub fn request(&self, catalog: &Catalog, fleet: &SpawnFleet) -> Result<SpawnRequest, String> {
+    pub fn request(&self, catalog: &Catalog, clan: &SpawnClan) -> Result<SpawnRequest, String> {
         let worktree = || {
             let id = self.worktree_id.as_deref().ok_or("pick a worktree")?;
             catalog
@@ -175,7 +175,7 @@ impl SpawnForm {
             },
             ModeName::Worker => {
                 let run_id = self.run_id.as_deref().ok_or("pick a run")?;
-                let run = fleet
+                let run = clan
                     .runs
                     .iter()
                     .find(|r| r.id == run_id)
@@ -199,7 +199,7 @@ impl SpawnForm {
                     }
                     WorkerPlace::Terminal => {
                         let handle = self.terminal.as_deref().ok_or("pick a terminal")?;
-                        let t = fleet
+                        let t = clan
                             .terminals
                             .iter()
                             .find(|t| t.handle == handle)
@@ -224,7 +224,7 @@ impl SpawnForm {
         };
         let mut model = Some(self.model.clone()).filter(|m| !m.trim().is_empty());
         let mut effort = None;
-        self.ants.fill(self.agent, &mut model, &mut effort);
+        self.dwarves.fill(self.agent, &mut model, &mut effort);
         Ok(SpawnRequest {
             target,
             agent: self.agent,
@@ -236,14 +236,14 @@ impl SpawnForm {
     }
 
     /// The plan the form describes, or what is missing.
-    pub fn plan(&self, catalog: &Catalog, fleet: &SpawnFleet) -> Result<SpawnPlan, String> {
-        let request = self.request(catalog, fleet)?;
+    pub fn plan(&self, catalog: &Catalog, clan: &SpawnClan) -> Result<SpawnPlan, String> {
+        let request = self.request(catalog, clan)?;
         let plan = build_plan(&request).map_err(|e| e.0)?;
         if !self.allow_suffix
             && let Some((repo_id, name)) = new_worktree_of(&plan.request)
             && let Some(conflict) = name_conflict(catalog, repo_id, name, &[])
         {
-            return Err(conflict.message(&fleet.agents));
+            return Err(conflict.message(&clan.agents));
         }
         Ok(plan)
     }
@@ -396,23 +396,23 @@ impl SpawnDialog {
     pub fn show(
         &mut self,
         ctx: &egui::Context,
-        fleet: &SpawnFleet,
-        ants: &crate::spawn::AntSettings,
+        clan: &SpawnClan,
+        dwarves: &crate::spawn::DwarfSettings,
     ) -> Option<SpawnPlan> {
         if !self.open {
             return None;
         }
-        self.form.ants = ants.clone();
+        self.form.dwarves = dwarves.clone();
         self.poll_catalog(ctx);
         let mut open = true;
         let mut launch = None;
         let form_height = (ctx.content_rect().height() * 0.55).max(240.0);
-        egui::Window::new("New ant")
+        egui::Window::new("New dwarf")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .default_width(620.0)
-            .show(ctx, |ui| launch = self.contents(ui, fleet, form_height));
+            .show(ctx, |ui| launch = self.contents(ui, clan, form_height));
         if !open {
             self.open = false;
         }
@@ -424,7 +424,7 @@ impl SpawnDialog {
     fn contents(
         &mut self,
         ui: &mut egui::Ui,
-        fleet: &SpawnFleet,
+        clan: &SpawnClan,
         form_height: f32,
     ) -> Option<SpawnPlan> {
         let catalog = match &self.catalog {
@@ -452,10 +452,10 @@ impl SpawnDialog {
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 ui.add_enabled_ui(!running, |ui| {
-                    self.form_fields(ui, &catalog, fleet);
+                    self.form_fields(ui, &catalog, clan);
                     launch = prompt_field(ui, &mut self.form.prompt);
                 });
-                plan = self.form.plan(&catalog, fleet);
+                plan = self.form.plan(&catalog, clan);
                 ui.add_space(4.0);
                 planned_commands(ui, &plan);
             });
@@ -482,7 +482,7 @@ impl SpawnDialog {
         if launch { plan.ok() } else { None }
     }
 
-    fn form_fields(&mut self, ui: &mut egui::Ui, catalog: &Catalog, fleet: &SpawnFleet) {
+    fn form_fields(&mut self, ui: &mut egui::Ui, catalog: &Catalog, clan: &SpawnClan) {
         let form = &mut self.form;
         ui.horizontal(|ui| {
             ui.label("Mode");
@@ -505,7 +505,7 @@ impl SpawnDialog {
                     }
                     ModeName::Worker => {
                         ui.label("Run");
-                        run_picker(ui, fleet, form);
+                        run_picker(ui, clan, form);
                         ui.end_row();
                         ui.label("Worker in");
                         ui.horizontal(|ui| {
@@ -536,7 +536,7 @@ impl SpawnDialog {
                             }
                             WorkerPlace::Terminal => {
                                 ui.label("Terminal");
-                                terminal_picker(ui, fleet, form);
+                                terminal_picker(ui, clan, form);
                                 ui.end_row();
                             }
                         }
@@ -557,7 +557,7 @@ impl SpawnDialog {
                     let model_locked =
                         form.mode == ModeName::Worker && form.place == WorkerPlace::Terminal;
                     let hint = if form.agent == Agent::Claude {
-                        form.ants.describe()
+                        form.dwarves.describe()
                     } else {
                         "default".into()
                     };
@@ -567,7 +567,7 @@ impl SpawnDialog {
                             .hint_text(hint)
                             .desired_width(140.0),
                     )
-                    .on_hover_text("Blank: the Ants default from Settings (Claude only)");
+                    .on_hover_text("Blank: the Dwarves default from Settings (Claude only)");
                 });
                 ui.end_row();
             });
@@ -695,20 +695,20 @@ fn worktree_picker(ui: &mut egui::Ui, catalog: &Catalog, form: &mut SpawnForm) {
         });
 }
 
-fn run_picker(ui: &mut egui::Ui, fleet: &SpawnFleet, form: &mut SpawnForm) {
+fn run_picker(ui: &mut egui::Ui, clan: &SpawnClan, form: &mut SpawnForm) {
     let selected = form
         .run_id
         .as_deref()
-        .and_then(|id| fleet.runs.iter().find(|r| r.id == id))
+        .and_then(|id| clan.runs.iter().find(|r| r.id == id))
         .map_or("pick a run", |r| r.label.as_str());
     egui::ComboBox::from_id_salt("spawn_run")
         .selected_text(selected)
         .width(420.0)
         .show_ui(ui, |ui| {
-            if fleet.runs.is_empty() {
+            if clan.runs.is_empty() {
                 ui.label(RichText::new("no runs").weak());
             }
-            for run in &fleet.runs {
+            for run in &clan.runs {
                 if ui
                     .selectable_label(form.run_id.as_ref() == Some(&run.id), &run.label)
                     .clicked()
@@ -719,17 +719,17 @@ fn run_picker(ui: &mut egui::Ui, fleet: &SpawnFleet, form: &mut SpawnForm) {
         });
 }
 
-fn terminal_picker(ui: &mut egui::Ui, fleet: &SpawnFleet, form: &mut SpawnForm) {
+fn terminal_picker(ui: &mut egui::Ui, clan: &SpawnClan, form: &mut SpawnForm) {
     let selected = form
         .terminal
         .as_deref()
-        .and_then(|h| fleet.terminals.iter().find(|t| t.handle == h))
+        .and_then(|h| clan.terminals.iter().find(|t| t.handle == h))
         .map_or("pick an agent terminal", |t| t.label.as_str());
     egui::ComboBox::from_id_salt("spawn_terminal")
         .selected_text(selected)
         .width(420.0)
         .show_ui(ui, |ui| {
-            for t in &fleet.terminals {
+            for t in &clan.terminals {
                 if ui
                     .selectable_label(form.terminal.as_ref() == Some(&t.handle), &t.label)
                     .on_hover_text(&t.handle)
@@ -753,7 +753,7 @@ fn prompt_field(ui: &mut egui::Ui, prompt: &mut String) -> bool {
             .id(id)
             .desired_rows(6)
             .desired_width(f32::INFINITY)
-            .hint_text("What should the ant do? (⌘↩ to launch)"),
+            .hint_text("What should the dwarf do? (⌘↩ to launch)"),
     );
     crate::ui::widgets::focus_ring(ui, &response);
     submit
@@ -844,8 +844,8 @@ mod tests {
         }
     }
 
-    fn fleet() -> SpawnFleet {
-        SpawnFleet {
+    fn clan() -> SpawnClan {
+        SpawnClan {
             runs: vec![RunChoice {
                 id: "run_1".into(),
                 label: "run_1 · ship it".into(),
@@ -877,11 +877,11 @@ mod tests {
 
     #[test]
     fn form_builds_requests_per_mode() {
-        let (catalog, fleet) = (catalog(), fleet());
+        let (catalog, clan) = (catalog(), clan());
         let mut f = form(ModeName::Worktree);
-        assert_eq!(f.request(&catalog, &fleet).unwrap_err(), "pick a worktree");
+        assert_eq!(f.request(&catalog, &clan).unwrap_err(), "pick a worktree");
         f.worktree_id = Some(WT_ID.into());
-        let req = f.request(&catalog, &fleet).unwrap();
+        let req = f.request(&catalog, &clan).unwrap();
         assert!(
             matches!(req.target, SpawnTarget::Worktree { ref worktree_id, .. } if worktree_id == WT_ID)
         );
@@ -890,24 +890,24 @@ mod tests {
         f.repo_id = Some(REPO_ID.into());
         f.name = "fix-flake".into();
         f.model = " ".into();
-        let req = f.request(&catalog, &fleet).unwrap();
+        let req = f.request(&catalog, &clan).unwrap();
         assert_eq!(req.model, None);
-        // A blank model takes the saved Ants default (Claude only); a typed one wins.
-        f.ants = crate::spawn::AntSettings {
+        // A blank model takes the saved Dwarves default (Claude only); a typed one wins.
+        f.dwarves = crate::spawn::DwarfSettings {
             model: Some("fable".into()),
             effort: Some("high".into()),
         };
-        let req = f.request(&catalog, &fleet).unwrap();
+        let req = f.request(&catalog, &clan).unwrap();
         assert_eq!(req.model.as_deref(), Some("fable"));
         assert_eq!(req.effort.as_deref(), Some("high"));
         f.model = "opus".into();
-        let req = f.request(&catalog, &fleet).unwrap();
+        let req = f.request(&catalog, &clan).unwrap();
         assert_eq!((req.model.as_deref(), req.effort), (Some("opus"), None));
         f.agent = Agent::Codex;
         f.model = String::new();
-        assert_eq!(f.request(&catalog, &fleet).unwrap().model, None);
+        assert_eq!(f.request(&catalog, &clan).unwrap().model, None);
         f.agent = Agent::Claude;
-        f.ants = Default::default();
+        f.dwarves = Default::default();
         assert_eq!(
             req.target,
             SpawnTarget::NewWorktree {
@@ -918,11 +918,11 @@ mod tests {
         );
 
         let mut f = form(ModeName::Worker);
-        assert_eq!(f.request(&catalog, &fleet).unwrap_err(), "pick a run");
+        assert_eq!(f.request(&catalog, &clan).unwrap_err(), "pick a run");
         f.run_id = Some("run_1".into());
         f.place = WorkerPlace::Terminal;
         f.terminal = Some("term_w".into());
-        let plan = f.plan(&catalog, &fleet).unwrap();
+        let plan = f.plan(&catalog, &clan).unwrap();
         assert!(matches!(
             &plan.request.target,
             SpawnTarget::Worker { coordinator, placement: WorkerPlacement::Terminal { handle, .. }, .. }
@@ -930,7 +930,7 @@ mod tests {
         ));
         f.model = "opus".into();
         assert!(
-            f.plan(&catalog, &fleet)
+            f.plan(&catalog, &clan)
                 .unwrap_err()
                 .contains("existing terminal")
         );
@@ -938,21 +938,21 @@ mod tests {
 
     #[test]
     fn form_refuses_a_taken_name_unless_a_suffix_is_allowed() {
-        let (catalog, fleet) = (catalog(), fleet());
+        let (catalog, clan) = (catalog(), clan());
         let mut f = form(ModeName::NewWorktree);
         f.repo_id = Some(REPO_ID.into());
         f.name = "hack-77-admin-speed".into();
-        let e = f.plan(&catalog, &fleet).unwrap_err();
+        let e = f.plan(&catalog, &clan).unwrap_err();
         assert!(e.contains("term:term_w (working)"), "{e}");
         f.allow_suffix = true;
-        assert!(f.plan(&catalog, &fleet).is_ok());
+        assert!(f.plan(&catalog, &clan).is_ok());
 
         let mut f = form(ModeName::Worker);
         f.run_id = Some("run_1".into());
         f.repo_id = Some(REPO_ID.into());
         f.name = "hack-77-admin-speed".into();
         assert!(
-            f.plan(&catalog, &fleet)
+            f.plan(&catalog, &clan)
                 .unwrap_err()
                 .contains("already exists")
         );
@@ -963,7 +963,7 @@ mod tests {
         let mut f = form(ModeName::NewWorktree);
         f.repo_id = Some(REPO_ID.into());
         f.name = "fresh".into();
-        let plan = f.plan(&catalog(), &fleet()).unwrap();
+        let plan = f.plan(&catalog(), &clan()).unwrap();
         assert_eq!(plan.steps.last(), Some(&Step::CloseStartupShell));
         assert!(plan.display_lines().last().unwrap().contains("--tab"));
     }
@@ -997,7 +997,7 @@ mod tests {
             };
             let mut output = ctx.run_ui(input, |ui| {
                 out = dialog
-                    .show(ui.ctx(), &fleet(), &Default::default())
+                    .show(ui.ctx(), &clan(), &Default::default())
                     .or(out.take());
             });
             output.textures_delta.clear();
@@ -1030,7 +1030,7 @@ mod tests {
         dialog.form.prompt = "Fix the flaky test".into();
         let (launched, texts) = draw(&mut dialog, 3);
         assert!(launched.is_none());
-        assert!(texts.iter().any(|t| t == "New ant"), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "New dwarf"), "{texts:?}");
         assert!(texts.iter().any(|t| t == "Planned commands"));
         assert!(
             texts.iter().any(|t| t.contains("orca terminal create")
@@ -1039,7 +1039,7 @@ mod tests {
         );
 
         let plan = crate::ui::test_util::click_label("Launch", |ui| {
-            dialog.show(ui.ctx(), &fleet(), &Default::default())
+            dialog.show(ui.ctx(), &clan(), &Default::default())
         })
         .expect("Launch returns the plan");
         assert!(matches!(plan.steps[0], Step::CreateTerminal { .. }));
@@ -1051,7 +1051,7 @@ mod tests {
         dialog.open(None);
         dialog.set_catalog(catalog());
         dialog.form.worktree_id = Some(WT_ID.into());
-        let plan = dialog.form.plan(&catalog(), &fleet()).unwrap();
+        let plan = dialog.form.plan(&catalog(), &clan()).unwrap();
         dialog.started(4, plan);
         dialog.on_event(&SpawnEvent::Step {
             job: 4,

@@ -1,4 +1,4 @@
-//! The Queen's spoken line: a reply that is read aloud starts with one `<say>…</say>` line in
+//! The King's spoken line: a reply that is read aloud starts with one `<say>…</say>` line in
 //! plain words, and only that line is spoken; the rest of the reply is for the screen.
 //!
 //! [`SayFilter`] picks the say-line out of the streamed reply text for the speaker;
@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn preamble_blocks_are_held_and_a_later_say_line_wins() {
         let mut f = SayFilter::new();
-        assert_eq!(f.push("Let me check the fleet."), Spoken::default());
+        assert_eq!(f.push("Let me check the clan."), Spoken::default());
         assert_eq!(f.block_end(), Spoken::default());
         assert_eq!(f.push("<say>All quiet.</say> details").text, "All quiet.");
         assert!(!f.is_fallback());

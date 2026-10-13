@@ -1,4 +1,4 @@
-//! The fleet playbook over MCP: prompts per role, a resource per file, and the `get_playbook` /
+//! The clan playbook over MCP: prompts per role, a resource per file, and the `get_playbook` /
 //! `list_playbook` tools. Read from disk on every request; the app need not be running.
 
 use std::path::Path;
@@ -74,12 +74,12 @@ fn template_title(t: Template) -> &'static str {
 fn template_description(t: Template) -> &'static str {
     match t {
         Template::AttendantBrief => {
-            "The attendant brief template filled from live fleet data for a run: objective, \
+            "The attendant brief template filled from live clan data for a run: objective, \
              coordinator terminal, scratchpad when known; dispatches and bus event types in the \
              header. Unknown placeholders are marked FILL IN."
         }
         Template::Kickoff => {
-            "The kickoff template filled from live fleet data for a task: title, spec, repo, \
+            "The kickoff template filled from live clan data for a task: title, spec, repo, \
              ticket, blockers from deps; run, worktree and branch in the header. Unknown \
              placeholders are marked FILL IN."
         }
@@ -172,9 +172,9 @@ fn resource_description(file: &str) -> String {
         .map(|r| r.name())
         .collect();
     if roles.is_empty() {
-        "Fleet playbook file.".to_owned()
+        "Clan playbook file.".to_owned()
     } else {
-        format!("Fleet playbook file, served to: {}.", roles.join(", "))
+        format!("Clan playbook file, served to: {}.", roles.join(", "))
     }
 }
 
@@ -285,7 +285,7 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "get_playbook",
             "title": "Get playbook",
-            "description": "The fleet playbook rules for a role (coordinator: playbook + worker \
+            "description": "The clan playbook rules for a role (coordinator: playbook + worker \
                 protocol; attendant: attendant brief + Coordinator duties and Token economy; \
                 worker: agent protocol; envoy: Envoy playbook) or one playbook file, optionally \
                 just one `## ` section. Starts with a version line (git commit, dirty flag, \
@@ -311,7 +311,7 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "attendant_brief",
             "title": "Attendant brief for a run",
-            "description": "The attendant brief template pre-filled for a run from live fleet \
+            "description": "The attendant brief template pre-filled for a run from live clan \
                 data (the running app, else one direct Orca poll): campaign and objective, the \
                 effective coordinator's terminal handle, its scratchpad when known, the run id. \
                 A header lists what was filled from where, what is left (marked FILL IN), the \
@@ -328,7 +328,7 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({
             "name": "kickoff",
             "title": "Kickoff for a task",
-            "description": "The kickoff template pre-filled for a task from live fleet data: \
+            "description": "The kickoff template pre-filled for a task from live clan data: \
                 track name and title, scope from the task spec, repo, ticket key, blocked-by \
                 from its deps and what it blocks. A header lists what was filled from where, \
                 what is left (marked FILL IN), and the task's run, dispatch, worktree and \

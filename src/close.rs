@@ -13,12 +13,12 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::actions::Action;
-use crate::model::{FleetSnapshot, Node, NodeId, NodeKind};
+use crate::model::{ClanSnapshot, Node, NodeId, NodeKind};
 use crate::orca::{DispatchStatus, Terminal, WorkerState};
 
 pub const SUBAGENT_REFUSAL: &str =
     "subagents run inside their parent session; close the parent instead";
-pub const QUEEN_REFUSAL: &str = "the Queen isn't a session; it stands for the whole fleet";
+pub const KING_REFUSAL: &str = "the King isn't a session; it stands for the whole clan";
 
 /// Choices in the confirmation dialog.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -130,13 +130,13 @@ pub fn has_active_dispatch(node: &Node) -> bool {
 /// Plans closing one node's session. `terminals` is the poll's `terminal list` (for tabs).
 pub fn plan_close(
     node: &Node,
-    snapshot: &FleetSnapshot,
+    snapshot: &ClanSnapshot,
     terminals: &[Terminal],
     opts: CloseOptions,
 ) -> ClosePlan {
     match node.kind {
         NodeKind::Subagent => return ClosePlan::refuse(node, SUBAGENT_REFUSAL),
-        NodeKind::Queen => return ClosePlan::refuse(node, QUEEN_REFUSAL),
+        NodeKind::King => return ClosePlan::refuse(node, KING_REFUSAL),
         NodeKind::Coordinator
         | NodeKind::Attendant
         | NodeKind::Worker
@@ -210,7 +210,7 @@ pub fn plan_close(
 /// with worker-stops first, and a terminal or tab is closed once.
 pub fn plan_bulk_close<'a>(
     nodes: impl IntoIterator<Item = &'a Node>,
-    snapshot: &FleetSnapshot,
+    snapshot: &ClanSnapshot,
     terminals: &[Terminal],
     opts: CloseOptions,
 ) -> ClosePlan {
@@ -302,7 +302,7 @@ fn dedupe_closes(closes: Vec<CloseStep>, tab_of: &HashMap<&str, &str>) -> Vec<Cl
 /// asked) that have something to close. Parked agents are left out: they are closed only by
 /// name.
 pub fn bulk_candidates<'a>(
-    snapshot: &'a FleetSnapshot,
+    snapshot: &'a ClanSnapshot,
     hidden: &BTreeSet<NodeId>,
     include_coordinators: bool,
 ) -> Vec<&'a Node> {
@@ -313,7 +313,7 @@ pub fn bulk_candidates<'a>(
         .filter(|n| match n.kind {
             NodeKind::Terminal | NodeKind::Worker => true,
             NodeKind::Coordinator | NodeKind::Attendant => include_coordinators,
-            NodeKind::Subagent | NodeKind::Queen | NodeKind::Envoy => false,
+            NodeKind::Subagent | NodeKind::King | NodeKind::Envoy => false,
         })
         .filter(|n| {
             (n.live && n.terminal_handle.is_some())
@@ -326,7 +326,7 @@ pub fn bulk_candidates<'a>(
 /// excluding the targets themselves.
 pub fn tab_companions(
     targets: &[CloseTarget],
-    snapshot: &FleetSnapshot,
+    snapshot: &ClanSnapshot,
     terminals: &[Terminal],
 ) -> Vec<String> {
     let handles: Vec<&str> = targets
@@ -363,7 +363,7 @@ fn tab_siblings<'a>(handle: &str, terminals: &'a [Terminal]) -> Vec<&'a Terminal
         .collect()
 }
 
-fn sibling_warning(label: &str, siblings: &[&Terminal], snapshot: &FleetSnapshot) -> String {
+fn sibling_warning(label: &str, siblings: &[&Terminal], snapshot: &ClanSnapshot) -> String {
     let names: Vec<String> = siblings
         .iter()
         .map(|t| {
@@ -382,7 +382,7 @@ fn sibling_warning(label: &str, siblings: &[&Terminal], snapshot: &FleetSnapshot
     )
 }
 
-fn coordinator_warnings(node: &Node, snapshot: &FleetSnapshot) -> Vec<String> {
+fn coordinator_warnings(node: &Node, snapshot: &ClanSnapshot) -> Vec<String> {
     let runs = snapshot.runs.iter().filter(|r| {
         r.coordinator.as_ref() == Some(&node.id) || node.run_id.as_deref() == Some(&r.id)
     });
@@ -410,7 +410,7 @@ fn coordinator_warnings(node: &Node, snapshot: &FleetSnapshot) -> Vec<String> {
     warnings
 }
 
-fn attendant_warnings(node: &Node, snapshot: &FleetSnapshot) -> Vec<String> {
+fn attendant_warnings(node: &Node, snapshot: &ClanSnapshot) -> Vec<String> {
     let run = node.run_id.as_deref().and_then(|r| snapshot.run(r));
     let objective = run.map_or(node.label.as_str(), |r| {
         r.objective.as_deref().unwrap_or(&r.id)

@@ -20,9 +20,9 @@ pub enum Pane {
     Sidebar,
     /// The farm.
     Farm,
-    /// The selected node's attributes and actions, or the Queen's review queue and summary.
+    /// The selected node's attributes and actions, or the King's review queue and summary.
     Details,
-    /// The Queen's chat, the selected agent's screen and input, a subagent's transcript or the
+    /// The King's chat, the selected agent's screen and input, a subagent's transcript or the
     /// multi-selection.
     Conversation,
     /// The notification history, newest first.
@@ -323,7 +323,7 @@ fn valid(dock: &DockState<Pane>) -> bool {
         && count(Pane::Envoy) <= 1
 }
 
-/// Where the top bar's Queen quick actions line up: the conversation pane's left edge when it
+/// Where the top bar's King quick actions line up: the conversation pane's left edge when it
 /// sits in the bar's right half (else they would crowd out the bar's own controls).
 pub fn quick_actions_anchor(conversation_left: Option<f32>, bar: egui::Rect) -> Option<f32> {
     conversation_left.filter(|x| *x >= bar.center().x)

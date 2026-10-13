@@ -1,7 +1,7 @@
-//! The ant farm: a side view of the fleet where an ant's place shows its state. An
-//! drawn from the fleet snapshot, filters and selection.
+//! The farm: a side view of the clan where a dwarf's place shows its state. An
+//! drawn from the clan snapshot, filters and selection.
 //!
-//! [`layout`] decides where everything goes, [`motion`] walks ants to new places and
+//! [`layout`] decides where everything goes, [`motion`] walks dwarves to new places and
 //! [`sprites`] draws them; this module ties them to egui and handles input.
 
 pub mod art;
@@ -35,11 +35,11 @@ use std::time::Duration;
 
 use eframe::egui::{self, Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, vec2};
 
-use crate::model::{FleetSnapshot, NodeId};
-use crate::ui::ant_farm::nav::{ScrollAction, ScrollSource, route_scroll};
+use crate::model::{ClanSnapshot, NodeId};
+use crate::ui::clan_view::ClanView;
 use crate::ui::daylight;
 use crate::ui::dwarf::{self, Action, Look, Role};
-use crate::ui::fleet_view::FleetView;
+use crate::ui::farm::nav::{ScrollAction, ScrollSource, route_scroll};
 use art::{ArtSettings, DwarfArt, Figure};
 use death::{Body, Fall};
 use layout::{FarmInput, Pose, Scene, Spot, TunnelKey, layout_in};
@@ -47,41 +47,41 @@ use motion::{Walk, route};
 use sprites::{Coat, Palette, Sprites};
 use zoom::Camera;
 
-/// Redraw interval while an ant walks.
+/// Redraw interval while a dwarf walks.
 const WALK_FRAME: Duration = Duration::from_millis(33);
 /// Redraw interval for mining chips, fire, snores, scrying and the pebble bonk:
-/// stepped like pixel art, and slow enough that a farm full of working ants stays cheap.
+/// stepped like pixel art, and slow enough that a farm full of working dwarves stays cheap.
 const STEP_FRAME: Duration = Duration::from_millis(150);
 /// Walk frames per second.
 /// Dig and wave steps per second; matches [`STEP_FRAME`].
 const STEP_FPS: f64 = 4.0;
-/// The busy Queen's hop, in texels per step.
-const QUEEN_HOP: [f32; 4] = [0.0, 2.0, 4.0, 2.0];
-/// How long a Queen's call takes to ripple across the farm.
+/// The busy King's hop, in texels per step.
+const KING_HOP: [f32; 4] = [0.0, 2.0, 4.0, 2.0];
+/// How long a King's call takes to ripple across the farm.
 const RIPPLE_S: f64 = 1.8;
 /// Delay of a ripple's second ring.
 const ECHO_S: f64 = 0.3;
-/// How long the Queen glows after an inward call's last ring reaches her.
+/// How long the King glows after an inward call's last ring reaches him.
 const ARRIVAL_S: f64 = 0.5;
-/// How long the Queen glows after an ant emerges from her chamber.
+/// How long the King glows after a dwarf emerges from the throne hall.
 const BIRTH_GLOW_S: f64 = 1.2;
-/// A gap between frames longer than this means the farm was not on screen: ants that
+/// A gap between frames longer than this means the farm was not on screen: dwarves that
 /// appeared meanwhile are placed, not born.
 const AWAY_S: f64 = 2.5;
-/// How long rooms and their ants take to glide to where a rearranged or grown plan put them.
+/// How long rooms and their dwarves take to glide to where a rearranged or grown plan put them.
 pub const GLIDE_S: f64 = 0.8;
 
-/// A call of the Queen that ripples across the farm.
+/// A call of the King that ripples across the farm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pulse {
     /// A broadcast to the coordinators: a golden ring.
     Broadcast,
-    /// Karl asked for a status report: a cyan ring gathering in to the Queen.
+    /// Karl asked for a status report: a cyan ring gathering in to the King.
     StatusReport,
 }
 
 impl Pulse {
-    /// Whether the call's rings close in on the Queen instead of spreading from her.
+    /// Whether the call's rings close in on the King instead of spreading from him.
     fn inward(self) -> bool {
         self == Pulse::StatusReport
     }
@@ -102,8 +102,8 @@ struct Ripple {
 }
 
 /// The radius a ripple of `pulse` has reached `elapsed_s` after it started, with an
-/// ease-out: growing from the Queen to `max_r`, or for an inward call shrinking from `max_r`
-/// to her; `None` once it has passed.
+/// ease-out: growing from the King to `max_r`, or for an inward call shrinking from `max_r`
+/// to him; `None` once it has passed.
 pub fn ripple_radius(pulse: Pulse, elapsed_s: f64, max_r: f32) -> Option<f32> {
     if !(0.0..RIPPLE_S).contains(&elapsed_s) {
         return None;
@@ -113,8 +113,8 @@ pub fn ripple_radius(pulse: Pulse, elapsed_s: f64, max_r: f32) -> Option<f32> {
     Some(max_r * if pulse.inward() { 1.0 - out } else { out })
 }
 
-/// How brightly the Queen glows `elapsed_s` into an inward call: rising as the first ring
-/// closes in, peaking when it reaches her and fading over [`ECHO_S`] + [`ARRIVAL_S`].
+/// How brightly the King glows `elapsed_s` into an inward call: rising as the first ring
+/// closes in, peaking when it reaches him and fading over [`ECHO_S`] + [`ARRIVAL_S`].
 fn arrival_glow(elapsed_s: f64) -> f32 {
     let since = elapsed_s - RIPPLE_S;
     let glow = if since < 0.0 {
@@ -125,7 +125,7 @@ fn arrival_glow(elapsed_s: f64) -> f32 {
     glow.clamp(0.0, 1.0) as f32
 }
 
-/// How far an ant `dist` from the Queen hops while a ripple of `radius` passes it: a jump of
+/// How far a dwarf `dist` from the King hops while a ripple of `radius` passes it: a jump of
 /// up to `height` when the ring is on it, tapering within `width`.
 pub fn hop(dist: f32, radius: f32, width: f32, height: f32) -> f32 {
     let off = (dist - radius).abs();
@@ -137,37 +137,37 @@ pub fn hop(dist: f32, radius: f32, width: f32, height: f32) -> f32 {
 
 /// What happened in the farm this frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AntFarmResponse {
-    /// The ant clicked this frame.
+pub struct FarmResponse {
+    /// The dwarf clicked this frame.
     pub clicked: Option<NodeId>,
-    /// Empty ground was clicked (clears the selection, as in the fleet).
+    /// Empty ground was clicked (clears the selection, as in the clan).
     pub clicked_empty: bool,
     pub open_envoy: bool,
     pub hovered: Option<NodeId>,
-    /// Ants inside a selection box dragged from empty ground, when it was released this
+    /// Dwarves inside a selection box dragged from empty ground, when it was released this
     /// frame, and whether Shift/Cmd was held (add to the selection rather than replace it).
     pub boxed: Option<(Vec<NodeId>, bool)>,
-    /// Nodes to close or whip, picked in an ant's context menu.
+    /// Nodes to close or whip, picked in a dwarf's context menu.
     pub close_requested: Vec<NodeId>,
     pub whip_requested: Vec<NodeId>,
-    /// Nodes to park or wake, picked in an ant's context menu.
+    /// Nodes to park or wake, picked in a dwarf's context menu.
     pub park_requested: Vec<NodeId>,
     pub wake_requested: Vec<NodeId>,
 }
 
-/// An ant's place and its walk there, if it is still walking.
+/// A dwarf's place and its walk there, if it is still walking.
 #[derive(Debug, Clone)]
 struct Track {
     spot: Spot,
     /// Where the spot was last frame, relative to the farm's rect (see [`motion::to_unit`]).
     at: Pos2,
     walk: Option<Walk>,
-    /// How the ant was last drawn, for its fall should it leave the fleet; `None` for the
-    /// Queen and subagents, which never fall.
+    /// How the dwarf was last drawn, for its fall should it leave the clan; `None` for the
+    /// King and subagents, which never fall.
     body: Option<Body>,
 }
 
-/// Where an ant is drawn this frame.
+/// Where a dwarf is drawn this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Placed {
     pub pos: Pos2,
@@ -176,38 +176,38 @@ pub struct Placed {
 }
 
 #[derive(Default)]
-pub struct AntFarmView {
+pub struct FarmView {
     sprites: Option<Sprites>,
     tracks: HashMap<NodeId, Track>,
-    /// Ant whose context menu is open (the one right-clicked last).
+    /// Dwarf whose context menu is open (the one right-clicked last).
     context_node: Option<NodeId>,
     /// Where a selection box being dragged started, in screen points.
     box_origin: Option<Pos2>,
-    /// Every ant drawn so far: a new one walks out of the Queen's chamber.
+    /// Every dwarf drawn so far: a new one walks out of the throne hall.
     seen: HashSet<NodeId>,
     /// Time of the last frame drawn; see [`AWAY_S`].
     last_frame_s: Option<f64>,
     /// This frame follows a gap: the farm was not on screen.
     away: bool,
-    /// When ants last emerged from the Queen, for her glow.
+    /// When dwarves last emerged from the King, for his glow.
     births: Vec<f64>,
-    /// Calls asked for since the last frame; see [`AntFarmView::pulse`].
+    /// Calls asked for since the last frame; see [`FarmView::pulse`].
     pending: Vec<Pulse>,
     ripples: Vec<Ripple>,
-    /// Ants that left the fleet, falling to the bottom.
+    /// Dwarves that left the clan, falling to the bottom.
     falls: Vec<Fall>,
-    /// The Queen is working on something (her chat turn runs): she hops about.
-    queen_busy: bool,
-    /// Her chat is the conversation shown: she gets the selection ring.
-    queen_focused: bool,
+    /// The King is working on something (his chat turn runs): he hops about.
+    king_busy: bool,
+    /// His chat is the conversation shown: he gets the selection ring.
+    king_focused: bool,
     envoy_health: Option<crate::envoy::EnvoyHealth>,
     envoy_pending: usize,
     envoy_receipt: crate::ui::envoy_receipt::ReceiptCue,
-    /// Messages carried between ants; see [`mail`].
+    /// Messages carried between dwarves; see [`mail`].
     mail: crate::ui::envelope::Flights,
     /// Tool calls beaming from their callers; see [`beams`].
     beams: crate::ui::beam::Beams,
-    /// Ants that just changed state; see [`pops`].
+    /// Dwarves that just changed state; see [`pops`].
     pops: crate::ui::state_pop::Pops,
     /// The part of the farm on screen; see [`zoom`].
     camera: Camera,
@@ -221,7 +221,7 @@ pub struct AntFarmView {
     /// The scale and the rooms of the surface band last frame, and their glide to new ones.
     frame_shape: Option<FrameShape>,
     frame_glide: Option<FrameGlide>,
-    /// The rect of the last frame drawn and of the last ants placed: a move in an unchanged
+    /// The rect of the last frame drawn and of the last dwarves placed: a move in an unchanged
     /// rect glides, a resize does not.
     shown_rect: Option<Rect>,
     advanced_rect: Option<Rect>,
@@ -304,7 +304,7 @@ struct FrameShape {
     surface_y: f32,
     gallery: Rect,
     landing: Rect,
-    queen_chamber: Rect,
+    throne_hall: Rect,
     storage: Rect,
     comms: Option<layout::CommsRoom>,
 }
@@ -316,7 +316,7 @@ impl FrameShape {
             surface_y: scene.surface_y,
             gallery: scene.gallery,
             landing: scene.landing,
-            queen_chamber: scene.queen_chamber,
+            throne_hall: scene.throne_hall,
             storage: scene.storage,
             comms: scene.comms,
         }
@@ -331,7 +331,7 @@ impl FrameShape {
             surface_y: num(self.surface_y, to.surface_y),
             gallery: rect(self.gallery, to.gallery),
             landing: rect(self.landing, to.landing),
-            queen_chamber: rect(self.queen_chamber, to.queen_chamber),
+            throne_hall: rect(self.throne_hall, to.throne_hall),
             storage: rect(self.storage, to.storage),
             comms: match (self.comms, to.comms) {
                 (Some(a), Some(b)) => Some(layout::CommsRoom {
@@ -345,17 +345,17 @@ impl FrameShape {
         }
     }
 
-    /// Draws `scene` with this scale and band, its ants resized to the scale.
+    /// Draws `scene` with this scale and band, its dwarves resized to the scale.
     fn apply(self, scene: &mut Scene) {
         let ratio = self.px / scene.px;
-        for ant in &mut scene.ants {
-            ant.size *= ratio;
+        for dwarf in &mut scene.dwarves {
+            dwarf.size *= ratio;
         }
         scene.px = self.px;
         scene.surface_y = self.surface_y;
         scene.gallery = self.gallery;
         scene.landing = self.landing;
-        scene.queen_chamber = self.queen_chamber;
+        scene.throne_hall = self.throne_hall;
         scene.storage = self.storage;
         scene.comms = self.comms;
     }
@@ -376,12 +376,12 @@ impl FrameGlide {
     }
 }
 
-impl AntFarmView {
+impl FarmView {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Ripples a call of the Queen across the farm, from the next frame it is drawn. Calls
+    /// Ripples a call of the King across the farm, from the next frame it is drawn. Calls
     /// made while the farm is not shown are dropped then.
     /// How the farm's figures are drawn (the Settings window's Art section).
     pub fn set_art(&mut self, art: &ArtSettings) {
@@ -390,14 +390,14 @@ impl AntFarmView {
         }
     }
 
-    /// Whether the Queen is busy (thinking on a chat turn). Otherwise she sits still.
-    pub fn set_queen_busy(&mut self, busy: bool) {
-        self.queen_busy = busy;
+    /// Whether the King is busy (thinking on a chat turn). Otherwise he sits still.
+    pub fn set_king_busy(&mut self, busy: bool) {
+        self.king_busy = busy;
     }
 
-    /// Whether the Queen's chat is the conversation shown; she is ringed then.
-    pub fn set_queen_focused(&mut self, focused: bool) {
-        self.queen_focused = focused;
+    /// Whether the King's chat is the conversation shown; he is ringed then.
+    pub fn set_king_focused(&mut self, focused: bool) {
+        self.king_focused = focused;
     }
 
     pub fn set_envoy_health(&mut self, health: crate::envoy::EnvoyHealth) {
@@ -449,17 +449,17 @@ impl AntFarmView {
         &mut self,
         scene: &Scene,
         placed: &[Placed],
-        fleet: &FleetView,
-        focus: crate::ui::fleet_view::Focus,
+        clan: &ClanView,
+        focus: crate::ui::clan_view::Focus,
     ) {
-        use crate::ui::fleet_view::Focus;
+        use crate::ui::clan_view::Focus;
         let mut bounds = Rect::NOTHING;
         for room in &scene.tunnels {
             let matches = match (&focus, &room.key) {
                 (Focus::Run(run), TunnelKey::Run(key)) => run == key,
                 (Focus::Repo(repo), TunnelKey::Repo(key)) => repo == key,
                 (Focus::Repo(repo), TunnelKey::Run(run)) => {
-                    fleet.run_repo(run) == Some(repo.as_str())
+                    clan.run_repo(run) == Some(repo.as_str())
                 }
                 (Focus::Repo(repo), TunnelKey::RestingArea) => repo == crate::park::RESTING_AREA,
                 _ => false,
@@ -470,15 +470,17 @@ impl AntFarmView {
         }
         // Runs with everyone above ground may have no chamber yet. Focus their figures.
         if !bounds.is_finite() {
-            for (ant, at) in scene.ants.iter().zip(placed) {
+            for (dwarf, at) in scene.dwarves.iter().zip(placed) {
                 let matches = match &focus {
-                    Focus::Nodes(ids) => ids.contains(&ant.id),
-                    Focus::Run(run) => fleet.node_run(&ant.id) == Some(run.as_str()),
-                    Focus::Repo(repo) => fleet.node_repo(&ant.id) == Some(repo.as_str()),
+                    Focus::Nodes(ids) => ids.contains(&dwarf.id),
+                    Focus::Run(run) => clan.node_run(&dwarf.id) == Some(run.as_str()),
+                    Focus::Repo(repo) => clan.node_repo(&dwarf.id) == Some(repo.as_str()),
                 };
                 if matches {
-                    bounds =
-                        bounds.union(Rect::from_center_size(at.pos, Vec2::splat(ant.size * 2.0)));
+                    bounds = bounds.union(Rect::from_center_size(
+                        at.pos,
+                        Vec2::splat(dwarf.size * 2.0),
+                    ));
                 }
             }
         }
@@ -487,7 +489,7 @@ impl AntFarmView {
         }
     }
 
-    /// Carries a message between ants, asked for at `now_s` (egui time); `still` for Reduce
+    /// Carries a message between dwarves, asked for at `now_s` (egui time); `still` for Reduce
     /// motion.
     pub fn message(&mut self, flight: crate::traffic::Flight, now_s: f64, still: bool) {
         self.mail.push(flight, now_s, still);
@@ -498,28 +500,28 @@ impl AntFarmView {
         self.beams.push(beam, now_s, still);
     }
 
-    /// Pops an ant that just changed state, asked for at `now_s` (egui time); `still` for
+    /// Pops a dwarf that just changed state, asked for at `now_s` (egui time); `still` for
     /// Reduce motion.
     pub fn pop(&mut self, node: NodeId, cue: crate::ui::state_pop::Cue, now_s: f64, still: bool) {
         self.pops.push(node, cue, now_s, still);
     }
 
     /// Draws the farm filling the available space and handles clicks, hover and the context
-    /// menu. `fleet` supplies the shared selection, filters, badges, tooltips and actions.
+    /// menu. `clan` supplies the shared selection, filters, badges, tooltips and actions.
     pub fn show(
         &mut self,
         ui: &mut Ui,
-        snapshot: &FleetSnapshot,
-        fleet: &mut FleetView,
-    ) -> AntFarmResponse {
+        snapshot: &ClanSnapshot,
+        clan: &mut ClanView,
+    ) -> FarmResponse {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.navigate(ui, &response);
         let now_s = ui.input(|i| i.time);
         let input = FarmInput {
             snapshot,
-            hidden: fleet.hidden(),
-            pr_ready: fleet.pr_ready(),
-            building: fleet.building(),
+            hidden: clan.hidden(),
+            pr_ready: clan.pr_ready(),
+            building: clan.building(),
             now_ms: now_ms(),
         };
         let mut scene = layout_in(&input, rect, &mut self.rooms);
@@ -543,15 +545,15 @@ impl AntFarmView {
         let placed = self.advance(&scene, now_s);
         let still = self.still();
         let trees = self.forest.layout(&scene, now_s, away, still);
-        if let Some(focus) = fleet.take_focus() {
-            self.focus(&scene, &placed, fleet, focus);
+        if let Some(focus) = clan.take_focus() {
+            self.focus(&scene, &placed, clan, focus);
         }
         let pops = self.pops.frames(now_s);
         let effects = Effects {
             ripples: &self.ripples,
             births: &self.births,
-            queen_busy: self.queen_busy,
-            queen_focused: self.queen_focused,
+            king_busy: self.king_busy,
+            king_focused: self.king_focused,
             envoy_receipt: self.envoy_receipt,
             pops: &pops,
         };
@@ -564,7 +566,7 @@ impl AntFarmView {
             .unwrap_or(egui::layers::ShapeIdx(0));
         let daylight = daylight::daylight();
         let palette = Palette::new(daylight);
-        let selection = fleet.selection();
+        let selection = clan.selection();
 
         let pointer = response.hover_pos().map(|p| self.camera.to_farm(rect, p));
         let tray_hovered = pointer.is_some_and(|p| tray_hit(&scene, p));
@@ -609,7 +611,7 @@ impl AntFarmView {
             art: &self.art,
             dwarves: &mut self.dwarf_art,
         };
-        paint_ants(
+        paint_dwarves(
             &painter,
             sprites,
             &mut figures,
@@ -621,10 +623,10 @@ impl AntFarmView {
             &effects,
             ui,
         );
-        for (ant, at) in scene.ants.iter().zip(&placed) {
-            if let Some(badge) = fleet.unread(&ant.id) {
-                let center = at.pos + vec2(ant.size * 0.45, -ant.size * 0.45);
-                let radius = (ant.size * 0.2).max(5.0);
+        for (dwarf, at) in scene.dwarves.iter().zip(&placed) {
+            if let Some(badge) = clan.unread(&dwarf.id) {
+                let center = at.pos + vec2(dwarf.size * 0.45, -dwarf.size * 0.45);
+                let radius = (dwarf.size * 0.2).max(5.0);
                 painter.circle_filled(
                     center,
                     radius,
@@ -701,9 +703,9 @@ impl AntFarmView {
             || !self.room_glides.is_empty()
             || self.frame_glide.is_some()
             || (self.forest.animating() && !still);
-        let stepping = scene.ants.iter().any(|a| {
+        let stepping = scene.dwarves.iter().any(|a| {
             matches!(a.pose, Pose::Dig | Pose::Build | Pose::Wait | Pose::Sleep)
-                || (a.pose == Pose::Queen && self.queen_busy)
+                || (a.pose == Pose::King && self.king_busy)
                 || a.mark == Some(layout::Mark::Stalled)
         });
         if walking {
@@ -725,7 +727,7 @@ impl AntFarmView {
         if let Some(id) = &hovered {
             response
                 .clone()
-                .on_hover_ui_at_pointer(|ui| fleet.node_tooltip_ui(ui, id));
+                .on_hover_ui_at_pointer(|ui| clan.node_tooltip_ui(ui, id));
         }
         if let Some(tree) = &tree_hovered {
             response
@@ -740,10 +742,10 @@ impl AntFarmView {
         }
         let boxed = self.box_select(ui, &response, &scene, &placed);
         let menu = match &self.context_node {
-            Some(id) => fleet.node_menu(&response, id),
+            Some(id) => clan.node_menu(&response, id),
             None => Default::default(),
         };
-        AntFarmResponse {
+        FarmResponse {
             clicked: response.clicked().then(|| hovered.clone()).flatten(),
             clicked_empty: response.clicked()
                 && hovered.is_none()
@@ -760,7 +762,7 @@ impl AntFarmView {
     }
 
     /// Starts, draws and finishes a selection box dragged with the primary button from empty
-    /// ground, as in the fleet. Returns the ants it covers once released.
+    /// ground, as in the clan. Returns the dwarves it covers once released.
     fn box_select(
         &mut self,
         ui: &Ui,
@@ -783,12 +785,12 @@ impl AntFarmView {
             || !ui.input(|i| i.pointer.primary_down());
         if released {
             self.box_origin = None;
-            let additive = ui.input(|i| crate::ui::fleet_view::is_additive(i.modifiers));
+            let additive = ui.input(|i| crate::ui::clan_view::is_additive(i.modifiers));
             let farm = Rect::from_two_pos(
                 self.camera.to_farm(scene.rect, rect.min),
                 self.camera.to_farm(scene.rect, rect.max),
             );
-            return Some((boxed_ants(scene, placed, farm), additive));
+            return Some((boxed_dwarves(scene, placed, farm), additive));
         }
         let stroke = ui.visuals().selection.stroke;
         let fill = ui.visuals().selection.bg_fill.gamma_multiply(0.2);
@@ -918,13 +920,13 @@ impl AntFarmView {
         self.room_shapes = shapes;
     }
 
-    /// Starts a fall for every ant drawn last frame that has left the fleet: gone from
+    /// Starts a fall for every dwarf drawn last frame that has left the clan: gone from
     /// `snapshot` too, not just filtered out, however it was removed. `reduce_motion` is asked
     /// only when one falls.
     pub fn bury(
         &mut self,
         scene: &Scene,
-        snapshot: &FleetSnapshot,
+        snapshot: &ClanSnapshot,
         now_s: f64,
         reduce_motion: impl Fn() -> bool,
     ) {
@@ -934,7 +936,7 @@ impl AntFarmView {
         let mut still = None;
         for (id, track) in &self.tracks {
             if let Some(body) = track.body
-                && scene.ant(id).is_none()
+                && scene.dwarf(id).is_none()
                 && !snapshot.nodes.iter().any(|n| &n.id == id)
             {
                 let still = *still.get_or_insert_with(&reduce_motion);
@@ -947,11 +949,11 @@ impl AntFarmView {
         }
     }
 
-    /// Starts a walk for every ant whose spot changed, drops finished walks and gone ants,
-    /// and returns where each of `scene.ants` is at `now_s`.
+    /// Starts a walk for every dwarf whose spot changed, drops finished walks and gone dwarves,
+    /// and returns where each of `scene.dwarves` is at `now_s`.
     ///
-    /// An ant never drawn before walks out of the Queen's chamber, unless the farm was just
-    /// opened (everyone is placed then). An ant whose spot moved while the view kept its size,
+    /// A dwarf never drawn before walks out of the throne hall, unless the farm was just
+    /// opened (everyone is placed then). A dwarf whose spot moved while the view kept its size,
     /// as when its room was dug afresh, glides there with it, or with Reduce motion is placed.
     pub fn advance(&mut self, scene: &Scene, now_s: f64) -> Vec<Placed> {
         let fresh = self.seen.is_empty() || self.away;
@@ -959,67 +961,70 @@ impl AntFarmView {
         self.advanced_rect = Some(scene.rect);
         let mut still = None;
         self.tracks
-            .retain(|id, _| scene.ants.iter().any(|a| &a.id == id));
+            .retain(|id, _| scene.dwarves.iter().any(|a| &a.id == id));
         let mut current: HashMap<&NodeId, Placed> = HashMap::new();
-        let mut placed = Vec::with_capacity(scene.ants.len());
-        for ant in &scene.ants {
+        let mut placed = Vec::with_capacity(scene.dwarves.len());
+        for dwarf in &scene.dwarves {
             // Subagents keep their place behind their parent wherever it walks.
-            if let Spot::Trail(parent, _) = &ant.spot
-                && let (Some(p), Some(parent_ant)) = (current.get(parent), scene.ant(parent))
+            if let Spot::Trail(parent, _) = &dwarf.spot
+                && let (Some(p), Some(parent_dwarf)) = (current.get(parent), scene.dwarf(parent))
             {
                 let at = Placed {
-                    pos: p.pos + (ant.pos - parent_ant.pos),
+                    pos: p.pos + (dwarf.pos - parent_dwarf.pos),
                     heading: p.heading,
                 };
                 self.tracks.insert(
-                    ant.id.clone(),
+                    dwarf.id.clone(),
                     Track {
-                        spot: ant.spot.clone(),
-                        at: motion::to_unit(ant.pos, scene.rect),
+                        spot: dwarf.spot.clone(),
+                        at: motion::to_unit(dwarf.pos, scene.rect),
                         walk: None,
                         body: None,
                     },
                 );
-                self.seen.insert(ant.id.clone());
-                current.insert(&ant.id, at);
+                self.seen.insert(dwarf.id.clone());
+                current.insert(&dwarf.id, at);
                 placed.push(at);
                 continue;
             }
-            let born = !fresh && ant.spot != Spot::Queen && self.seen.insert(ant.id.clone());
-            self.seen.insert(ant.id.clone());
-            let track = self.tracks.entry(ant.id.clone()).or_insert_with(|| Track {
-                spot: ant.spot.clone(),
-                at: motion::to_unit(ant.pos, scene.rect),
-                walk: None,
-                body: None,
-            });
+            let born = !fresh && dwarf.spot != Spot::King && self.seen.insert(dwarf.id.clone());
+            self.seen.insert(dwarf.id.clone());
+            let track = self
+                .tracks
+                .entry(dwarf.id.clone())
+                .or_insert_with(|| Track {
+                    spot: dwarf.spot.clone(),
+                    at: motion::to_unit(dwarf.pos, scene.rect),
+                    walk: None,
+                    body: None,
+                });
             if born {
-                let from = scene.queen_chamber.center() + vec2(0.0, 0.3 * scene.cell());
-                let path = route(from, ant.pos, &Spot::Queen, &ant.spot, scene);
+                let from = scene.throne_hall.center() + vec2(0.0, 0.3 * scene.cell());
+                let path = route(from, dwarf.pos, &Spot::King, &dwarf.spot, scene);
                 track.walk = Some(Walk::new(&path, scene.rect, now_s));
                 self.births.push(now_s);
             }
-            if track.spot != ant.spot {
+            if track.spot != dwarf.spot {
                 let from = match &track.walk {
                     Some(walk) => walk.sample(scene.rect, now_s).0,
                     None => motion::from_unit(track.at, scene.rect),
                 };
-                let path = route(from, ant.pos, &track.spot, &ant.spot, scene);
+                let path = route(from, dwarf.pos, &track.spot, &dwarf.spot, scene);
                 track.walk = Some(Walk::new(&path, scene.rect, now_s));
-                track.spot = ant.spot.clone();
+                track.spot = dwarf.spot.clone();
             } else if steady && track.walk.is_none() {
                 let from = motion::from_unit(track.at, scene.rect);
-                if (from - ant.pos).length() > 0.5
+                if (from - dwarf.pos).length() > 0.5
                     && !*still.get_or_insert_with(|| {
                         self.reduce_motion.unwrap_or_else(death::reduce_motion)
                     })
                 {
-                    track.walk = Some(Walk::glide(from, ant.pos, scene.rect, now_s, GLIDE_S));
+                    track.walk = Some(Walk::glide(from, dwarf.pos, scene.rect, now_s, GLIDE_S));
                 }
             }
-            track.at = motion::to_unit(ant.pos, scene.rect);
+            track.at = motion::to_unit(dwarf.pos, scene.rect);
             if let Some(walk) = &mut track.walk {
-                walk.retarget(ant.pos, scene.rect);
+                walk.retarget(dwarf.pos, scene.rect);
                 if walk.done(now_s) {
                     track.walk = None;
                 }
@@ -1033,38 +1038,40 @@ impl AntFarmView {
                     }
                 }
                 None => Placed {
-                    pos: ant.pos,
+                    pos: dwarf.pos,
                     heading: None,
                 },
             };
-            let falls = ant.pose != Pose::Queen && ant.kind != crate::model::NodeKind::Subagent;
+            let falls = dwarf.pose != Pose::King && dwarf.kind != crate::model::NodeKind::Subagent;
             track.body = falls.then(|| Body {
-                kind: ant.kind,
+                kind: dwarf.kind,
                 at: motion::to_unit(at.pos, scene.rect),
-                size: ant.size,
+                size: dwarf.size,
                 facing_right: match at.heading {
                     Some(h) if h.x.abs() > 0.1 => h.x > 0.0,
-                    _ => ant.facing_right,
+                    _ => dwarf.facing_right,
                 },
-                coat: Coat::new(ant.agent.as_ref()),
-                alpha: ant.alpha,
-                seed: dwarf::seed_of(ant.id.as_str()),
+                coat: Coat::new(dwarf.agent.as_ref()),
+                alpha: dwarf.alpha,
+                seed: dwarf::seed_of(dwarf.id.as_str()),
             });
-            current.insert(&ant.id, at);
+            current.insert(&dwarf.id, at);
             placed.push(at);
         }
         placed
     }
 }
 
-/// The ants whose cell overlaps `rect`, in draw order.
-pub fn boxed_ants(scene: &Scene, placed: &[Placed], rect: Rect) -> Vec<NodeId> {
+/// The dwarves whose cell overlaps `rect`, in draw order.
+pub fn boxed_dwarves(scene: &Scene, placed: &[Placed], rect: Rect) -> Vec<NodeId> {
     scene
-        .ants
+        .dwarves
         .iter()
         .zip(placed)
-        .filter(|(ant, at)| Rect::from_center_size(at.pos, Vec2::splat(ant.size)).intersects(rect))
-        .map(|(ant, _)| ant.id.clone())
+        .filter(|(dwarf, at)| {
+            Rect::from_center_size(at.pos, Vec2::splat(dwarf.size)).intersects(rect)
+        })
+        .map(|(dwarf, _)| dwarf.id.clone())
         .collect()
 }
 
@@ -1074,15 +1081,17 @@ fn tray_hit(scene: &Scene, pointer: Pos2) -> bool {
         .is_some_and(|room| room.tray_rect().contains(pointer))
 }
 
-/// The ant under `pointer`, topmost first.
+/// The dwarf under `pointer`, topmost first.
 fn hit(scene: &Scene, placed: &[Placed], pointer: Pos2) -> Option<NodeId> {
     scene
-        .ants
+        .dwarves
         .iter()
         .zip(placed)
         .rev()
-        .find(|(ant, at)| Rect::from_center_size(at.pos, Vec2::splat(ant.size)).contains(pointer))
-        .map(|(ant, _)| ant.id.clone())
+        .find(|(dwarf, at)| {
+            Rect::from_center_size(at.pos, Vec2::splat(dwarf.size)).contains(pointer)
+        })
+        .map(|(dwarf, _)| dwarf.id.clone())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1128,7 +1137,7 @@ fn paint_ground(
         }
     }
     forest_view.paint_roots(painter, sprites, trees);
-    // Shafts up from the gallery to the landing, the Queen's chamber and storage.
+    // Shafts up from the gallery to the landing, the throne hall and storage.
     let gy = scene.gallery.center().y;
     let up = |x: f32, top: f32| {
         Rect::from_min_max(egui::pos2(x - 0.6 * a, top), egui::pos2(x + 0.6 * a, gy))
@@ -1136,8 +1145,8 @@ fn paint_ground(
     for shaft in [
         up(scene.entrance_x(), scene.surface_y - px),
         up(
-            scene.queen_chamber.center().x,
-            scene.queen_chamber.bottom() - px,
+            scene.throne_hall.center().x,
+            scene.throne_hall.bottom() - px,
         ),
         up(scene.storage.center().x, scene.storage.bottom() - px),
     ] {
@@ -1170,16 +1179,16 @@ fn paint_ground(
     for plant in &plants {
         sprites.deco(painter, plant.deco, plant.foot, px, 1.0);
     }
-    sprites.masonry(painter, scene.queen_chamber);
-    sprites.throne_hall(painter, scene.queen_chamber, px);
+    sprites.masonry(painter, scene.throne_hall);
+    sprites.throne_hall(painter, scene.throne_hall, px);
     sprites.masonry(painter, scene.storage);
     for tunnel in &scene.tunnels {
         let seed = dwarf::seed_of(&tunnel.label) as u8;
         sprites.cave(painter, tunnel.chamber, seed);
         let mut rows = Vec::new();
-        for ant in &scene.ants {
-            if matches!(&ant.spot, Spot::Chamber(key,_) if key == &tunnel.key) {
-                let y = ant.pos.y + ant.size / 2.0;
+        for dwarf in &scene.dwarves {
+            if matches!(&dwarf.spot, Spot::Chamber(key,_) if key == &tunnel.key) {
+                let y = dwarf.pos.y + dwarf.size / 2.0;
                 if !rows.iter().any(|row: &f32| (row - y).abs() < px) {
                     rows.push(y);
                 }
@@ -1196,8 +1205,8 @@ fn paint_ground(
                 vec2(size[0], size[1]),
             );
             // Fill an unused part of the working face, leaving bodies and tags readable.
-            let occupied = scene.ants.iter().any(|ant| {
-                Rect::from_center_size(ant.pos, Vec2::splat(ant.size))
+            let occupied = scene.dwarves.iter().any(|dwarf| {
+                Rect::from_center_size(dwarf.pos, Vec2::splat(dwarf.size))
                     .expand(10.0 * px)
                     .intersects(dressing)
             });
@@ -1277,7 +1286,7 @@ fn paint_ground(
     );
     // Each PR adds gold and one cut gem to the treasury.
     for (i, dwarf) in scene
-        .ants
+        .dwarves
         .iter()
         .filter(|a| {
             matches!(a.spot, layout::Spot::Storage(_)) && a.mark == Some(layout::Mark::PrReady)
@@ -1296,7 +1305,7 @@ fn paint_ground(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn paint_ants(
+fn paint_dwarves(
     painter: &egui::Painter,
     sprites: &Sprites,
     figures: &mut Figures,
@@ -1309,41 +1318,41 @@ fn paint_ants(
     ui: &Ui,
 ) {
     let px = scene.px;
-    let origin = queen_center(scene);
+    let origin = king_center(scene);
     let max_r = farthest(scene, origin);
     let step = (now_s * STEP_FPS) as usize;
     let accent = ui.visuals().selection.bg_fill;
     let palette = Palette::new(daylight::daylight());
     let hover = ui.visuals().widgets.hovered.fg_stroke.color;
-    for (ant, at) in scene.ants.iter().zip(placed) {
+    for (dwarf, at) in scene.dwarves.iter().zip(placed) {
         let walking = at.heading.is_some();
-        let mut cell = Rect::from_center_size(at.pos, Vec2::splat(ant.size));
-        if ant.kind == crate::model::NodeKind::Envoy {
+        let mut cell = Rect::from_center_size(at.pos, Vec2::splat(dwarf.size));
+        if dwarf.kind == crate::model::NodeKind::Envoy {
             cell = cell.translate(vec2(effects.envoy_receipt.offset, 0.0));
         }
-        let tpx = ant.size / layout::CELL;
+        let tpx = dwarf.size / layout::CELL;
         let facing_right = match at.heading {
             Some(h) if h.x.abs() > 0.1 => h.x > 0.0,
-            _ => ant.facing_right,
+            _ => dwarf.facing_right,
         };
         if !walking {
-            match ant.pose {
+            match dwarf.pose {
                 Pose::Dig | Pose::Build => {
                     cell = cell.translate(vec2(0.0, -((step % 2) as f32) * tpx))
                 }
                 // Resting figures sit lower on the floor.
-                Pose::Sleep | Pose::Failed if ant.state != crate::model::NodeState::Stalled => {
+                Pose::Sleep | Pose::Failed if dwarf.state != crate::model::NodeState::Stalled => {
                     cell = cell.translate(vec2(0.0, 2.0 * tpx))
                 }
-                // A busy Queen hops about; otherwise she sits still.
-                Pose::Queen if effects.queen_busy => {
-                    cell = cell.translate(vec2(0.0, -QUEEN_HOP[step % QUEEN_HOP.len()] * tpx))
+                // A busy King hops about; otherwise he sits still.
+                Pose::King if effects.king_busy => {
+                    cell = cell.translate(vec2(0.0, -KING_HOP[step % KING_HOP.len()] * tpx))
                 }
                 _ => {}
             }
         }
-        // Ants hop as a call's ring passes them.
-        if ant.pose != Pose::Queen {
+        // Dwarves hop as a call's ring passes them.
+        if dwarf.pose != Pose::King {
             let dist = (at.pos - origin).length();
             let lift: f32 = effects
                 .ripples
@@ -1353,27 +1362,27 @@ fn paint_ants(
                 .fold(0.0, f32::max);
             cell = cell.translate(vec2(0.0, -(lift / tpx).round() * tpx));
         }
-        // An ant hops as it pops.
+        // A dwarf hops as it pops.
         cell = cell.translate(vec2(
             0.0,
-            -pops::lift(pops::of(effects.pops, &ant.id), ant.size),
+            -pops::lift(pops::of(effects.pops, &dwarf.id), dwarf.size),
         ));
         // The name tag stays on the floor; a sleeper in bed lies on its mattress.
         let tag_at = cell.center_bottom();
         let bed = scene
             .beds
             .iter()
-            .find(|b| b.sleeper.as_ref() == Some(&ant.id))
-            .filter(|_| !walking && ant.pose == Pose::Sleep);
+            .find(|b| b.sleeper.as_ref() == Some(&dwarf.id))
+            .filter(|_| !walking && dwarf.pose == Pose::Sleep);
         if bed.is_some() {
             cell = cell.translate(vec2(0.0, -layout::SLEEPER_LIFT * tpx));
         }
         let carrying =
-            ant.pose == Pose::Carry || (walking && ant.state == crate::model::NodeState::Done);
+            dwarf.pose == Pose::Carry || (walking && dwarf.state == crate::model::NodeState::Done);
         let riding = walking
             && !matches!(
-                ant.kind,
-                crate::model::NodeKind::Queen | crate::model::NodeKind::Envoy
+                dwarf.kind,
+                crate::model::NodeKind::King | crate::model::NodeKind::Envoy
             );
         let hoisted = riding && at.heading.is_some_and(|h| h.y.abs() > h.x.abs());
         if hoisted {
@@ -1382,24 +1391,24 @@ fn paint_ants(
                 cell,
                 motion::hoist_ceiling(scene, at.pos),
                 tpx,
-                ant.alpha,
+                dwarf.alpha,
             );
         }
         let figure = Figure {
-            key: ant.id.as_str(),
-            look: dwarf_look(ant),
-            action: dwarf_action(ant, walking, carrying, effects.queen_busy),
+            key: dwarf.id.as_str(),
+            look: dwarf_look(dwarf),
+            action: dwarf_action(dwarf, walking, carrying, effects.king_busy),
             upside_down: false,
             facing_right,
-            alpha: ant.alpha,
+            alpha: dwarf.alpha,
         };
-        if ant.pose == Pose::Queen {
+        if dwarf.pose == Pose::King {
             figures.body(painter, &figure, cell, px, now_s);
-            // Ringed while selected or while her chat is the conversation shown.
-            if selection.contains(&ant.id) || effects.queen_focused {
+            // Ringed while selected or while his chat is the conversation shown.
+            if selection.contains(&dwarf.id) || effects.king_focused {
                 let ring = cell.expand(px);
                 painter.rect_stroke(ring, 0.0, Stroke::new(px, accent), StrokeKind::Outside);
-            } else if hovered == Some(&ant.id) {
+            } else if hovered == Some(&dwarf.id) {
                 painter.rect_stroke(
                     cell.expand(px),
                     0.0,
@@ -1416,28 +1425,28 @@ fn paint_ants(
         };
         figures.body(painter, &figure, rider_cell, px, now_s);
         if riding {
-            sprites.cart(painter, cell, tpx, carrying, hoisted, now_s, ant.alpha);
+            sprites.cart(painter, cell, tpx, carrying, hoisted, now_s, dwarf.alpha);
         }
         if let Some(bed) = bed {
-            sprites.blanket(painter, bed.rect, cell, tpx, ant.alpha);
+            sprites.blanket(painter, bed.rect, cell, tpx, dwarf.alpha);
         }
-        if !walking && ant.pose == Pose::Dig {
-            let seed = (ant.pos.x * 0.37 + ant.pos.y * 0.11).rem_euclid(1.0);
+        if !walking && dwarf.pose == Pose::Dig {
+            let seed = (dwarf.pos.x * 0.37 + dwarf.pos.y * 0.11).rem_euclid(1.0);
             let t = (now_s * 6.0).floor() / 6.0;
             sprites.dirt(painter, cell, facing_right, tpx, t, seed);
         }
-        if !walking && ant.mark == Some(layout::Mark::Stalled) {
+        if !walking && dwarf.mark == Some(layout::Mark::Stalled) {
             sprites.bonk(painter, cell, tpx, step);
         }
-        if let Some(mark) = ant.mark
+        if let Some(mark) = dwarf.mark
             && !walking
         {
             let size = (16.0 * px).max(layout::CELL * (tpx - 1.0).max(1.0));
-            let mut anchor = cell.center() + vec2(0.25 * ant.size, -tpx);
+            let mut anchor = cell.center() + vec2(0.25 * dwarf.size, -tpx);
             if mark == layout::Mark::Sleep {
                 // The bubble floats, and z's drift up from it and fade.
                 anchor.y -= SLEEP_BOB[step % SLEEP_BOB.len()] * tpx;
-                let offset = (ant.pos.x * 0.37 + ant.pos.y * 0.11).rem_euclid(1.0) as f64;
+                let offset = (dwarf.pos.x * 0.37 + dwarf.pos.y * 0.11).rem_euclid(1.0) as f64;
                 for i in 0..2 {
                     let t = ((step as f64 / 10.0) + offset + i as f64 * 0.5).fract() as f32;
                     let pos = anchor
@@ -1446,13 +1455,13 @@ fn paint_ants(
                             -size - t * 1.2 * size,
                         );
                     let snapped = egui::pos2((pos.x / px).round() * px, (pos.y / px).round() * px);
-                    sprites.snore(painter, snapped, tpx, (1.0 - t) * ant.alpha, palette);
+                    sprites.snore(painter, snapped, tpx, (1.0 - t) * dwarf.alpha, palette);
                 }
             }
-            sprites.bubble(painter, anchor, size, mark, ant.alpha);
+            sprites.bubble(painter, anchor, size, mark, dwarf.alpha);
         }
-        if let Some(name) = &ant.tag {
-            let selected = selection.contains(&ant.id);
+        if let Some(name) = &dwarf.tag {
+            let selected = selection.contains(&dwarf.id);
             let width = 2.0 * scene.cell() - 2.0 * px;
             tag(
                 painter,
@@ -1465,9 +1474,9 @@ fn paint_ants(
             );
         }
         let ring = cell.expand(px);
-        if selection.contains(&ant.id) {
+        if selection.contains(&dwarf.id) {
             painter.rect_stroke(ring, 0.0, Stroke::new(px, accent), StrokeKind::Outside);
-        } else if hovered == Some(&ant.id) {
+        } else if hovered == Some(&dwarf.id) {
             painter.rect_stroke(ring, 0.0, Stroke::new(1.0, hover), StrokeKind::Outside);
         }
     }
@@ -1486,53 +1495,53 @@ impl Figures<'_> {
     }
 }
 
-/// The dwarf standing in for `ant`: the King for the Queen, otherwise one in the role of its
+/// How `dwarf` looks: the King role for the King node, otherwise one in the role of its
 /// kind picked by its id, dressed in its agent's livery.
-fn dwarf_look(ant: &layout::Ant) -> Look {
+fn dwarf_look(dwarf: &layout::Dwarf) -> Look {
     use crate::model::NodeKind;
-    let role = match ant.kind {
-        NodeKind::Queen => return Look::king(),
+    let role = match dwarf.kind {
+        NodeKind::King => return Look::king(),
         NodeKind::Coordinator | NodeKind::Attendant => Role::Foreman,
         NodeKind::Subagent => Role::Apprentice,
         NodeKind::Envoy => Role::RunePriest,
         NodeKind::Worker | NodeKind::Terminal => Role::Miner,
     };
-    let mut look = Look::for_role(role, dwarf::seed_of(ant.id.as_str()));
-    let coat = Coat::new(ant.agent.as_ref());
+    let mut look = Look::for_role(role, dwarf::seed_of(dwarf.id.as_str()));
+    let coat = Coat::new(dwarf.agent.as_ref());
     art::dress(&mut look, coat);
-    if ant.state == crate::model::NodeState::Stalled && role != Role::RunePriest {
+    if dwarf.state == crate::model::NodeState::Stalled && role != Role::RunePriest {
         look.hat = dwarf::Hat::Helmet;
     }
     look
 }
 
-/// What `ant`'s dwarf is doing. Only work moves: waiting, sleeping and failed dwarves hold
+/// What `dwarf` is doing. Only work moves: waiting, sleeping and failed dwarves hold
 /// a pose.
-fn dwarf_action(ant: &layout::Ant, walking: bool, carrying: bool, queen_busy: bool) -> Action {
+fn dwarf_action(dwarf: &layout::Dwarf, walking: bool, carrying: bool, king_busy: bool) -> Action {
     use crate::model::NodeState;
-    if ant.kind == crate::model::NodeKind::Envoy {
-        return if ant.state == NodeState::Working {
+    if dwarf.kind == crate::model::NodeKind::Envoy {
+        return if dwarf.state == NodeState::Working {
             Action::Scry
         } else {
             Action::Still
         };
     }
-    match ant.pose {
+    match dwarf.pose {
         _ if walking => Action::Ride,
         _ if carrying => Action::Hold,
-        _ if ant.state == NodeState::Stalled => Action::Wait,
+        _ if dwarf.state == NodeState::Stalled => Action::Wait,
         Pose::Dig => Action::Mine,
         Pose::Build => Action::Build,
         Pose::Wait => Action::Wait,
         Pose::Sleep => Action::Sleep,
         Pose::Failed => Action::KnockedOut,
-        Pose::Queen if queen_busy => Action::Study,
-        Pose::Stand if ant.state == NodeState::Working => Action::Study,
+        Pose::King if king_busy => Action::Study,
+        Pose::Stand if dwarf.state == NodeState::Working => Action::Study,
         _ => Action::Still,
     }
 }
 
-/// Ants that left the fleet, falling legs up.
+/// Dwarves that left the clan, falling legs up.
 fn paint_falls(
     painter: &egui::Painter,
     figures: &mut Figures,
@@ -1576,23 +1585,23 @@ const LABEL_PLATE_ALPHA: f32 = 0.78;
 /// The sleep bubble's float, in texels per step.
 const SLEEP_BOB: [f32; 4] = [0.0, 1.0, 2.0, 1.0];
 
-/// The effects running this frame, from [`AntFarmView`].
+/// The effects running this frame, from [`FarmView`].
 struct Effects<'a> {
     ripples: &'a [Ripple],
     births: &'a [f64],
-    queen_busy: bool,
-    queen_focused: bool,
+    king_busy: bool,
+    king_focused: bool,
     envoy_receipt: crate::ui::envoy_receipt::ReceiptCue,
     pops: &'a [(NodeId, crate::ui::state_pop::PopFrame)],
 }
 
-/// Where the Queen sits.
-fn queen_center(scene: &Scene) -> Pos2 {
+/// Where the King sits.
+fn king_center(scene: &Scene) -> Pos2 {
     scene
-        .ants
+        .dwarves
         .iter()
-        .find(|a| a.pose == Pose::Queen)
-        .map_or(scene.queen_chamber.center(), |q| q.pos)
+        .find(|a| a.pose == Pose::King)
+        .map_or(scene.throne_hall.center(), |q| q.pos)
 }
 
 /// Distance from `origin` to the farm's farthest corner.
@@ -1609,7 +1618,7 @@ fn farthest(scene: &Scene, origin: Pos2) -> f32 {
     .fold(0.0, f32::max)
 }
 
-/// The Queen's calls: her glow and the rings behind the ants (`behind`), then the sparkles
+/// The King's calls: his glow and the rings behind the dwarves (`behind`), then the sparkles
 /// riding the rings and those of a birth over them.
 fn paint_calls(
     painter: &egui::Painter,
@@ -1621,13 +1630,13 @@ fn paint_calls(
 ) {
     let px = scene.px;
     let a = scene.cell();
-    let origin = queen_center(scene);
+    let origin = king_center(scene);
     let max_r = farthest(scene, origin);
     let step = (now_s * 12.0) as usize;
     for ripple in effects.ripples {
         let color = ripple.pulse.color();
         let elapsed = now_s - ripple.start_s;
-        // An outward call fades as it spreads; an inward one holds until it reaches the Queen,
+        // An outward call fades as it spreads; an inward one holds until it reaches the King,
         // who glows and sparkles as it arrives.
         let (fade, glow) = if ripple.pulse.inward() {
             (1.0, arrival_glow(elapsed))
@@ -1675,7 +1684,7 @@ fn paint_calls(
             }
         }
     }
-    // A birth: the Queen glows warm and sparkles.
+    // A birth: the King glows warm and sparkles.
     for &born in effects.births {
         let t = ((now_s - born) / BIRTH_GLOW_S).clamp(0.0, 1.0) as f32;
         let warm = egui::Color32::from_rgb(0xff, 0xe0, 0x8a);
@@ -1726,7 +1735,7 @@ fn label(
     rect
 }
 
-/// An ant's name tag under `top`: light text on a dark chip, or on `highlight` when the ant is
+/// A dwarf's name tag under `top`: light text on a dark chip, or on `highlight` when the dwarf is
 /// selected.
 fn tag(
     painter: &egui::Painter,

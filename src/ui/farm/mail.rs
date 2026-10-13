@@ -17,12 +17,12 @@ use crate::ui::envelope::{InFlight, Phase};
 /// How long the portal flares as a scroll materialises.
 const PORTAL_S: f64 = 0.7;
 
-/// Whether `flight` leaves from Karl's portal: Karl's own, or the Queen instructing an ant (her
-/// whip's nudges stay with her).
+/// Whether `flight` leaves from Karl's portal: Karl's own, or the King instructing a dwarf (his
+/// whip's nudges stay with him).
 pub fn from_portal(flight: &Flight) -> bool {
     match &flight.from {
         Endpoint::Karl => true,
-        Endpoint::Node(id) => *id == NodeId::queen() && flight.kind == MessageKind::Instruction,
+        Endpoint::Node(id) => *id == NodeId::king() && flight.kind == MessageKind::Instruction,
         Endpoint::Outside => false,
     }
 }
@@ -53,16 +53,16 @@ pub fn portal_flare(air: &[InFlight], now_s: f64) -> u8 {
         .unwrap_or(0)
 }
 
-/// Where `end` is this frame and whether it is on the surface; `None` when its ant is not
+/// Where `end` is this frame and whether it is on the surface; `None` when its dwarf is not
 /// drawn (filtered out or gone).
 pub(super) fn locate(scene: &Scene, placed: &[Placed], end: &Endpoint) -> Option<(Pos2, bool)> {
     let a = scene.cell();
     match end {
         Endpoint::Node(id) => scene
-            .ants
+            .dwarves
             .iter()
             .zip(placed)
-            .find(|(ant, _)| &ant.id == id)
+            .find(|(dwarf, _)| &dwarf.id == id)
             .map(|(_, at)| (at.pos, false)),
         Endpoint::Karl => Some((above_portal(scene), true)),
         Endpoint::Outside => Some((pos2(scene.entrance_x(), scene.surface_y - 0.5 * a), true)),
@@ -112,7 +112,7 @@ fn flight_path(scene: &Scene, placed: &[Placed], flight: &Flight) -> Option<Vec<
     let from_at = locate(scene, placed, from)?;
     let envoy = |end: &Endpoint| match end {
         Endpoint::Node(id) => scene
-            .ant(id)
+            .dwarf(id)
             .is_some_and(|a| a.kind == crate::model::NodeKind::Envoy),
         _ => false,
     };
@@ -217,7 +217,7 @@ pub fn paint(
 mod tests {
     use super::*;
     use crate::model::NodeKind;
-    use crate::ui::ant_farm::layout_tests::{id, scene, snapshot};
+    use crate::ui::farm::layout_tests::{id, scene, snapshot};
 
     fn message(from: &Endpoint, to: &Endpoint) -> Flight {
         Flight {
@@ -238,7 +238,7 @@ mod tests {
         envoy.kind = NodeKind::Envoy;
         let scene = scene(&snapshot);
         let placed: Vec<_> = scene
-            .ants
+            .dwarves
             .iter()
             .map(|a| Placed {
                 pos: a.pos,
@@ -251,7 +251,10 @@ mod tests {
         assert_eq!(incoming.first(), Some(&room.feed()));
         assert!(incoming.contains(&room.receiver));
         assert!(incoming.contains(&room.rune_port()));
-        assert_eq!(incoming.last(), Some(&scene.ant(&id("loose")).unwrap().pos));
+        assert_eq!(
+            incoming.last(),
+            Some(&scene.dwarf(&id("loose")).unwrap().pos)
+        );
         let mut outgoing =
             flight_path(&scene, &placed, &message(&envoy, &Endpoint::Outside)).unwrap();
         outgoing.reverse();
@@ -276,10 +279,10 @@ mod tests {
     }
 
     #[test]
-    fn karl_and_queen_instructions_emerge_from_the_portal() {
+    fn karl_and_king_instructions_emerge_from_the_portal() {
         let scene = scene(&snapshot());
         let placed: Vec<_> = scene
-            .ants
+            .dwarves
             .iter()
             .map(|a| Placed {
                 pos: a.pos,
@@ -287,15 +290,15 @@ mod tests {
             })
             .collect();
         let worker = Endpoint::Node(id("working"));
-        let at_worker = scene.ant(&id("working")).unwrap().pos;
+        let at_worker = scene.dwarf(&id("working")).unwrap().pos;
         let focus = scene.karl_portal_focus();
-        let queen = Endpoint::Node(NodeId::queen());
+        let king = Endpoint::Node(NodeId::king());
         let flight = |from: &Endpoint, to: &Endpoint, kind| Flight {
             from: from.clone(),
             to: to.clone(),
             kind,
         };
-        for from in [&Endpoint::Karl, &queen] {
+        for from in [&Endpoint::Karl, &king] {
             let f = flight(from, &worker, MessageKind::Instruction);
             assert!(from_portal(&f));
             let route = flight_path(&scene, &placed, &f).unwrap();
@@ -303,14 +306,14 @@ mod tests {
             assert!(route[1].y < focus.y, "clears the arch first");
             assert_eq!(route.last(), Some(&at_worker));
         }
-        // The whip's nudges come from the Queen herself.
-        let nudge = flight(&queen, &worker, MessageKind::Nudge);
+        // The whip's nudges come from the King himself.
+        let nudge = flight(&king, &worker, MessageKind::Nudge);
         assert!(!from_portal(&nudge));
         assert_ne!(flight_path(&scene, &placed, &nudge).unwrap()[0], focus);
-        // Karl's chat message reaches the Queen; an ask for Karl disappears into the portal.
-        let chat = flight(&Endpoint::Karl, &queen, MessageKind::Instruction);
-        let to_queen = flight_path(&scene, &placed, &chat).unwrap();
-        assert_eq!(to_queen[0], focus);
+        // Karl's chat message reaches the King; an ask for Karl disappears into the portal.
+        let chat = flight(&Endpoint::Karl, &king, MessageKind::Instruction);
+        let to_king = flight_path(&scene, &placed, &chat).unwrap();
+        assert_eq!(to_king[0], focus);
         let ask = flight(&worker, &Endpoint::Karl, MessageKind::Ask);
         assert_eq!(
             flight_path(&scene, &placed, &ask).unwrap().last(),

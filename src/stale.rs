@@ -1,4 +1,4 @@
-//! How fresh the fleet data is. A failed Orca call keeps the previous data, so the UI must
+//! How fresh the clan data is. A failed Orca call keeps the previous data, so the UI must
 //! say when what it shows is old: "updated 12s ago" once it is a couple of polls late, and a
 //! banner and a dimmed canvas once Orca has failed several times in a row.
 
@@ -46,7 +46,7 @@ pub fn freshness(
 
 /// The top bar's age label: `None` while fresh.
 pub fn age_label(freshness: Freshness) -> Option<String> {
-    let age = |ms: i64| format!("updated {} ago", crate::ui::fleet_view::format_age(ms));
+    let age = |ms: i64| format!("updated {} ago", crate::ui::clan_view::format_age(ms));
     match freshness {
         Freshness::Fresh => None,
         Freshness::Stale { age_ms } => Some(age(age_ms)),

@@ -1,6 +1,6 @@
 //! `clean_worktrees`: the worktree cleanup as an MCP tool. It runs in the MCP process (Orca, git
 //! and `gh` are all it needs), and a real run shows the saw in the app (cutting the removed
-//! worktrees' trees in the ant farm) through the sweep marker file.
+//! worktrees' trees in the farm) through the sweep marker file.
 //!
 //! A dry run (the default) returns the plan. A real run takes the ids of the worktrees to
 //! remove, as the dry run listed them: a fresh evaluation must still find each removable, and

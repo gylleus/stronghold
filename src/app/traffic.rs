@@ -4,15 +4,15 @@
 use eframe::egui;
 
 use super::MyrstackApp;
-use crate::model::{FleetSnapshot, NodeId, NodeKind};
+use crate::model::{ClanSnapshot, NodeId, NodeKind};
 use crate::review::mark::Origin;
 use crate::traffic::beam::{Beam, BeamKind, ToolCall};
 use crate::traffic::{AgentMessage, Endpoint, MessageKind};
 use crate::ui::state_pop::Cue;
 
-/// How long a spawn's beam waits for its new agent to show up in the fleet.
+/// How long a spawn's beam waits for its new agent to show up in the clan.
 const SPAWN_WAIT_S: f64 = 20.0;
-/// How long other tool calls wait for their ends (the first fleet data, say).
+/// How long other tool calls wait for their ends (the first clan data, say).
 const CALL_WAIT_S: f64 = 3.0;
 
 impl MyrstackApp {
@@ -40,7 +40,7 @@ impl MyrstackApp {
             .filter_map(|m| {
                 let flight = m.resolve(snapshot);
                 if flight.is_none() {
-                    log::debug!("traffic: {} → {} not in the fleet", m.from, m.to);
+                    log::debug!("traffic: {} → {} not in the clan", m.from, m.to);
                 }
                 flight
             })
@@ -49,10 +49,10 @@ impl MyrstackApp {
             return;
         }
         let now_s = ctx.input(|i| i.time);
-        let still = crate::ui::ant_farm::death::reduce_motion();
+        let still = crate::ui::farm::death::reduce_motion();
         for flight in flights {
             log::debug!("traffic: {:?}", flight);
-            self.ant_farm.message(flight, now_s, still);
+            self.farm.message(flight, now_s, still);
         }
         ctx.request_repaint();
     }
@@ -74,10 +74,10 @@ impl MyrstackApp {
             return;
         }
         let now_s = ctx.input(|i| i.time);
-        let still = crate::ui::ant_farm::death::reduce_motion();
+        let still = crate::ui::farm::death::reduce_motion();
         for (id, cue) in &cues {
             log::debug!("pop: {id:?} {cue:?}");
-            self.ant_farm.pop(id.clone(), *cue, now_s, still);
+            self.farm.pop(id.clone(), *cue, now_s, still);
         }
         self.pop_sound(cues.iter().map(|(_, cue)| *cue));
         ctx.request_repaint();
@@ -106,7 +106,7 @@ impl MyrstackApp {
         }
     }
 
-    /// Hands the tool calls whose ends are in the fleet to both views as beams; keystrokes go
+    /// Hands the tool calls whose ends are in the clan to both views as beams; keystrokes go
     /// out as messages. A spawn waits for its new agent; calls that never resolve are dropped.
     fn poll_tool_calls(&mut self, ctx: &egui::Context) {
         if self.traffic.calls.is_empty() {
@@ -127,29 +127,29 @@ impl MyrstackApp {
                 None if now_s - queued_s < wait => {
                     self.traffic.calls.push((call, Some(queued_s)));
                 }
-                None => log::debug!("beam: {} {:?} not in the fleet", call.tool, call.targets),
+                None => log::debug!("beam: {} {:?} not in the clan", call.tool, call.targets),
             }
         }
         if beams.is_empty() {
             return;
         }
-        let still = crate::ui::ant_farm::death::reduce_motion();
+        let still = crate::ui::farm::death::reduce_motion();
         for beam in beams {
             log::debug!("beam: {:?}", beam);
-            self.ant_farm.beam(beam, now_s, still);
+            self.farm.beam(beam, now_s, still);
         }
         ctx.request_repaint();
     }
 
     /// `call`'s beam, or for a keystroke the message it stands for; `None` until its caller
-    /// and at least one target are in the fleet.
+    /// and at least one target are in the clan.
     fn resolve_call(&self, call: &ToolCall) -> Option<Result<Beam, AgentMessage>> {
         let snapshot = self.snapshot.as_ref()?;
         let from = self.call_origin(&call.origin)?;
         let from_end = crate::traffic::resolve(snapshot, &from)?;
         let mut targets: Vec<Endpoint> = Vec::new();
         if call.kind == BeamKind::Sweep && call.targets.is_empty() {
-            targets.extend(fleet(snapshot).map(Endpoint::Node));
+            targets.extend(clan(snapshot).map(Endpoint::Node));
         }
         for key in &call.targets {
             let end = crate::traffic::resolve(snapshot, key).or_else(|| {
@@ -165,7 +165,7 @@ impl MyrstackApp {
                 return None;
             };
             let kind = match from.as_str() {
-                "queen" => MessageKind::Instruction,
+                "king" => MessageKind::Instruction,
                 _ => MessageKind::Message,
             };
             return Some(Err(AgentMessage::new(from, to.0.clone(), kind)));
@@ -177,26 +177,26 @@ impl MyrstackApp {
         }))
     }
 
-    /// Who made a call from `origin`: its agent's id, else its terminal handle; the Queen when
-    /// it has no Orca identity (her chat runs outside Orca's terminals).
+    /// Who made a call from `origin`: its agent's id, else its terminal handle; the King when
+    /// it has no Orca identity (his chat runs outside Orca's terminals).
     fn call_origin(&self, origin: &Origin) -> Option<String> {
         if let Some(node) = self.caller(origin) {
             return Some(node.id.0.clone());
         }
         match (&origin.terminal_handle, &origin.pane_key) {
             (Some(handle), _) => Some(handle.clone()),
-            (None, None) => Some("queen".to_owned()),
+            (None, None) => Some("king".to_owned()),
             (None, Some(_)) => None,
         }
     }
 }
 
-/// The agents a fleet-wide sweep covers: live, awake ones (not the Queen, not subagents).
-fn fleet(snapshot: &FleetSnapshot) -> impl Iterator<Item = NodeId> + '_ {
+/// The agents a clan-wide sweep covers: live, awake ones (not the King, not subagents).
+fn clan(snapshot: &ClanSnapshot) -> impl Iterator<Item = NodeId> + '_ {
     snapshot
         .nodes
         .iter()
         .filter(|n| n.live && n.parked_at_ms.is_none())
-        .filter(|n| !matches!(n.kind, NodeKind::Queen | NodeKind::Subagent))
+        .filter(|n| !matches!(n.kind, NodeKind::King | NodeKind::Subagent))
         .map(|n| n.id.clone())
 }

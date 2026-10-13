@@ -24,21 +24,23 @@ fn limits_duplicates_ownership_and_followups_survive_reload() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(REQUESTS_FILE);
     let mut store = Requests::load(&path).unwrap();
-    let first = store.submit(who("ant"), ask("first"), "UKARL", 0).unwrap();
+    let first = store
+        .submit(who("dwarf"), ask("first"), "UKARL", 0)
+        .unwrap();
     assert!(
         store
-            .submit(who("ant"), ask("first"), "UKARL", 1)
+            .submit(who("dwarf"), ask("first"), "UKARL", 1)
             .unwrap()
             .merged
     );
     for i in 1..6 {
         store
-            .submit(who("ant"), ask(&format!("new {i}")), "UKARL", i)
+            .submit(who("dwarf"), ask(&format!("new {i}")), "UKARL", i)
             .unwrap();
     }
     assert!(
         store
-            .submit(who("ant"), ask("seventh"), "UKARL", 100)
+            .submit(who("dwarf"), ask("seventh"), "UKARL", 100)
             .is_err()
     );
     for i in 0..30 {
@@ -46,14 +48,14 @@ fn limits_duplicates_ownership_and_followups_survive_reload() {
         args.request_id = Some(first.request_id.clone());
         assert!(
             store
-                .submit(who("ant"), args, "UKARL", 100)
+                .submit(who("dwarf"), args, "UKARL", 100)
                 .unwrap()
                 .follow_up
         );
     }
     let mut args = ask("extra");
     args.request_id = Some(first.request_id.clone());
-    assert!(store.submit(who("ant"), args, "UKARL", 100).is_err());
+    assert!(store.submit(who("dwarf"), args, "UKARL", 100).is_err());
     let mut foreign = ask("steal");
     foreign.request_id = Some(first.request_id.clone());
     assert!(store.submit(who("other"), foreign, "UKARL", 100).is_err());
@@ -67,12 +69,12 @@ fn limits_duplicates_ownership_and_followups_survive_reload() {
     );
     assert!(
         loaded
-            .submit(who("ant"), ask("seventh"), "UKARL", 100)
+            .submit(who("dwarf"), ask("seventh"), "UKARL", 100)
             .is_err()
     );
     assert!(
         loaded
-            .submit(who("ant"), ask("after hour"), "UKARL", HOUR + 10)
+            .submit(who("dwarf"), ask("after hour"), "UKARL", HOUR + 10)
             .is_ok()
     );
 }
@@ -93,12 +95,16 @@ fn karl_thread_validation_and_failed_save_do_not_charge() {
     let path = dir.path().join(REQUESTS_FILE);
     let mut store = Requests::load(&path).unwrap();
     std::fs::create_dir(&path).unwrap();
-    assert!(store.submit(who("ant"), ask("retry"), "UKARL", 0).is_err());
+    assert!(
+        store
+            .submit(who("dwarf"), ask("retry"), "UKARL", 0)
+            .is_err()
+    );
     assert!(store.all().is_empty());
     std::fs::remove_dir(path).unwrap();
     assert_eq!(
         store
-            .submit(who("ant"), ask("retry"), "UKARL", 0)
+            .submit(who("dwarf"), ask("retry"), "UKARL", 0)
             .unwrap()
             .request_id,
         "envoy-request-1"
@@ -112,14 +118,14 @@ fn thread_followup_and_adoption_are_idempotent() {
     let mut first = ask("thread");
     first.thread = Some("https://team.slack.com/archives/C123/p1234567000001".into());
     let id = store
-        .submit(who("ant"), first, "UKARL", 0)
+        .submit(who("dwarf"), first, "UKARL", 0)
         .unwrap()
         .request_id;
     let mut next = ask("more");
     next.thread = Some("https://team.slack.com/archives/C123/p1234567000001".into());
     assert_eq!(
         store
-            .submit(who("ant"), next, "UKARL", 0)
+            .submit(who("dwarf"), next, "UKARL", 0)
             .unwrap()
             .request_id,
         id
@@ -155,7 +161,7 @@ fn declined_exact_retry_in_open_request_is_a_new_routable_turn() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = Requests::load(dir.path().join(REQUESTS_FILE)).unwrap();
     let id = store
-        .submit(who("ant"), ask("retry"), "UKARL", 0)
+        .submit(who("dwarf"), ask("retry"), "UKARL", 0)
         .unwrap()
         .request_id;
     store
@@ -168,7 +174,7 @@ fn declined_exact_retry_in_open_request_is_a_new_routable_turn() {
         .unwrap();
     let mut args = ask("retry");
     args.request_id = Some(id.clone());
-    let retry = store.submit(who("ant"), args, "UKARL", 1).unwrap();
+    let retry = store.submit(who("dwarf"), args, "UKARL", 1).unwrap();
     assert!(!retry.merged);
     assert_eq!(retry.turn_id, 2);
     assert!(store.get(&id).unwrap().next_turn(Some(2)).is_ok());

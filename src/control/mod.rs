@@ -1,4 +1,4 @@
-//! Local control API: a Unix socket in the data dir that serves the fleet status and accepts
+//! Local control API: a Unix socket in the data dir that serves the clan status and accepts
 //! dashboard and agent actions. Protocol and methods: `docs/control-api.md`.
 
 pub mod client;

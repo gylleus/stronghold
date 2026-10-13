@@ -8,7 +8,7 @@ use crate::control::view::kind_name;
 use crate::model::NodeId;
 
 impl MyrstackApp {
-    /// Parks `park` and wakes `wake`, as picked in a fleet or ant farm context menu.
+    /// Parks `park` and wakes `wake`, as picked in a clan or farm context menu.
     pub(super) fn park_from_menu(&mut self, park: Vec<NodeId>, wake: Vec<NodeId>) {
         for id in &park {
             if let Err(e) = self.set_parked(id, true) {

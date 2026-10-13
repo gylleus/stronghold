@@ -1,13 +1,13 @@
-//! Where everything in the ant farm goes: a function of the snapshot, the view's rect and the
+//! Where everything in the farm goes: a function of the snapshot, the view's rect and the
 //! room plan ([`super::rooms`]), so the state → position mapping is testable without drawing.
 //!
 //! The farm is a side view: sky above the surface, the "Karl" landing on the surface at the
-//! left, the Queen's chamber under the surface in the middle, the storage chamber at the
+//! left, the throne hall under the surface in the middle, the storage chamber at the
 //! right, a gallery running under them and one tunnel per run (or per repo for loose
 //! terminals) dropping from the gallery. A coordinator stands at its tunnel's mouth, its
 //! workers in the chamber at the tunnel's end. The room plan fits a grid of chambers under the
-//! gallery to the view, as big as their ants allow, and keeps each chamber in its cell while
-//! its ants come and go; when the ants can be drawn bigger that way, the grid has more levels:
+//! gallery to the view, as big as their dwarves allow, and keeps each chamber in its cell while
+//! its dwarves come and go; when the dwarves can be drawn bigger that way, the grid has more levels:
 //! chambers stacked in a column, the lower ones' shafts passing beside the upper chambers. Parked agents sleep in beds in the resting area's
 //! chamber, there only while someone is parked (and for the grace an emptied room gets).
 
@@ -18,7 +18,7 @@ use eframe::egui::{Pos2, Rect, Vec2, pos2, vec2};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    EdgeKind, FleetSnapshot, Node, NodeId, NodeKind, NodeState, RepoIndex, dispatch_ended,
+    ClanSnapshot, EdgeKind, Node, NodeId, NodeKind, NodeState, RepoIndex, dispatch_ended,
 };
 use crate::orca::AgentIdentity;
 
@@ -35,12 +35,12 @@ const LABEL_CHARS: usize = 28;
 const UNKNOWN_PROGRESS_DEPTH: f32 = 0.6;
 /// Shallowest tunnel, as a share of the room below the gallery (a run with nothing done).
 const MIN_DEPTH: f32 = 0.35;
-/// Distance between rows of ants, in cells: room for a row's bubbles above and name tags
+/// Distance between rows of dwarves, in cells: room for a row's bubbles above and name tags
 /// below.
 const ROW: f32 = 2.5;
-/// Width of an ant's slot in a row, in cells: room for its name tag.
+/// Width of a dwarf's slot in a row, in cells: room for its name tag.
 pub(super) const SLOT: f32 = 2.4;
-/// Room under an ant for its name tag, in cells.
+/// Room under a dwarf for its name tag, in cells.
 const TAG: f32 = 0.85;
 /// Width beside an upper chamber for the shaft down to the chamber under it, in cells.
 pub(super) const SHAFT_GAP: f32 = 1.8;
@@ -61,11 +61,11 @@ pub enum TunnelKey {
     RestingArea,
 }
 
-/// A logical place an ant occupies. An ant walks when its spot changes; a spot keeping its
+/// A logical place a dwarf occupies. A dwarf walks when its spot changes; a spot keeping its
 /// place while the view resizes does not.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Spot {
-    Queen,
+    King,
     Comms,
     /// On the surface waiting for Karl, the nth in line.
     Landing(usize),
@@ -79,10 +79,10 @@ pub enum Spot {
     Trail(NodeId, usize),
 }
 
-/// The area a spot is in; ants walk along the gallery between areas and straight within one.
+/// The area a spot is in; dwarves walk along the gallery between areas and straight within one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Area {
-    Queen,
+    King,
     Comms,
     Landing,
     Storage,
@@ -93,7 +93,7 @@ pub enum Area {
 impl Spot {
     pub fn area(&self) -> Area {
         match self {
-            Spot::Queen => Area::Queen,
+            Spot::King => Area::King,
             Spot::Comms => Area::Comms,
             Spot::Landing(_) => Area::Landing,
             Spot::Storage(_) => Area::Storage,
@@ -103,7 +103,7 @@ impl Spot {
     }
 }
 
-/// What an ant is doing, which picks its animation.
+/// What a dwarf is doing, which picks its animation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pose {
     /// Standing at its post (a coordinator at work).
@@ -120,10 +120,10 @@ pub enum Pose {
     Carry,
     /// Red and still.
     Failed,
-    Queen,
+    King,
 }
 
-/// The bubble over an ant, so its state does not rely on pose or color alone.
+/// The bubble over a dwarf, so its state does not rely on pose or color alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mark {
     /// Waiting on Karl.
@@ -137,16 +137,16 @@ pub enum Mark {
     PrReady,
 }
 
-/// One ant to draw.
+/// One dwarf to draw.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Ant {
+pub struct Dwarf {
     pub id: NodeId,
     pub kind: NodeKind,
     pub state: NodeState,
     pub spot: Spot,
-    /// Center of the ant's cell, in screen points.
+    /// Center of the dwarf's cell, in screen points.
     pub pos: Pos2,
-    /// Side of the ant's cell in points.
+    /// Side of the dwarf's cell in points.
     pub size: f32,
     pub pose: Pose,
     pub mark: Option<Mark>,
@@ -154,8 +154,8 @@ pub struct Ant {
     pub facing_right: bool,
     /// Opacity, for released workers and finished subagents.
     pub alpha: f32,
-    /// Name shown under the ant (its node label, or a coordinator's run away from its
-    /// tunnel); `None` for the Queen, coordinators at their tunnel's mouth (the tunnel is
+    /// Name shown under the dwarf (its node label, or a coordinator's run away from its
+    /// tunnel); `None` for the King, coordinators at their tunnel's mouth (the tunnel is
     /// labelled) and subagents.
     pub tag: Option<String>,
     /// The coding agent it runs, when known.
@@ -178,7 +178,7 @@ pub struct Tunnel {
     pub label_top: Pos2,
 }
 
-/// A bed in the resting area, with the parked ant lying on it, if any.
+/// A bed in the resting area, with the parked dwarf lying on it, if any.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bed {
     pub rect: Rect,
@@ -195,7 +195,7 @@ pub struct CommsRoom {
 }
 
 impl CommsRoom {
-    pub fn ant_position(&self) -> Pos2 {
+    pub fn dwarf_position(&self) -> Pos2 {
         self.chamber.min + vec2(28.0, 31.0) * self.px
     }
 
@@ -245,21 +245,21 @@ pub struct Scene {
     pub surface_y: f32,
     /// The passage under the surface linking the chambers and tunnel mouths.
     pub gallery: Rect,
-    /// Where ants waiting on Karl stand, on the surface.
+    /// Where dwarves waiting on Karl stand, on the surface.
     pub landing: Rect,
-    pub queen_chamber: Rect,
+    pub throne_hall: Rect,
     pub comms: Option<CommsRoom>,
     pub storage: Rect,
     pub tunnels: Vec<Tunnel>,
     pub beds: Vec<Bed>,
     /// In draw order: parents before the subagents trailing them.
-    pub ants: Vec<Ant>,
-    /// Ants with a PR ready for review: one coin each on the storage pile.
+    pub dwarves: Vec<Dwarf>,
+    /// Dwarves with a PR ready for review: one coin each on the storage pile.
     pub pr_ready: usize,
 }
 
 impl Scene {
-    /// Side of a normal ant's cell in points.
+    /// Side of a normal dwarf's cell in points.
     pub fn cell(&self) -> f32 {
         CELL * self.px
     }
@@ -284,14 +284,14 @@ impl Scene {
         self.karl_portal() - vec2(0.0, PORTAL_H * 0.525 * self.px)
     }
 
-    pub fn ant(&self, id: &NodeId) -> Option<&Ant> {
-        self.ants.iter().find(|a| &a.id == id)
+    pub fn dwarf(&self, id: &NodeId) -> Option<&Dwarf> {
+        self.dwarves.iter().find(|a| &a.id == id)
     }
 }
 
-/// What the farm is drawn from: the fleet's snapshot and its filters.
+/// What the farm is drawn from: the clan's snapshot and its filters.
 pub struct FarmInput<'a> {
-    pub snapshot: &'a FleetSnapshot,
+    pub snapshot: &'a ClanSnapshot,
     /// Nodes filtered out; they are not drawn.
     pub hidden: &'a BTreeSet<NodeId>,
     pub pr_ready: &'a HashSet<NodeId>,
@@ -300,7 +300,7 @@ pub struct FarmInput<'a> {
     pub now_ms: i64,
 }
 
-/// How many ants the surface band holds, which decides its height.
+/// How many dwarves the surface band holds, which decides its height.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Crowd {
     pub landing: usize,
@@ -318,21 +318,21 @@ pub(super) struct Band {
     storage_h: f32,
     comms_px: f32,
     comms_h: f32,
-    queen_offset: f32,
+    king_offset: f32,
 }
 
 impl Band {
     pub(super) fn gallery_top(&self, a: f32) -> f32 {
         self.surface
             + 0.4 * a
-            + (2.4 * a + self.queen_offset)
+            + (2.4 * a + self.king_offset)
                 .max(self.storage_h)
                 .max(self.comms_h)
             + 0.6 * a
     }
 }
 
-// Fitting and placement share the same reservations for the rune stone, room and waiting ants.
+// Fitting and placement share the same reservations for the rune stone, room and waiting dwarves.
 pub(super) fn band(size: Vec2, a: f32, crowd: Crowd) -> Band {
     let rows = |n: usize, per_row: usize| n.div_ceil(per_row).max(1) as f32;
     let comms_px = if crowd.envoy {
@@ -356,7 +356,7 @@ pub(super) fn band(size: Vec2, a: f32, crowd: Crowd) -> Band {
     let landing_per_row = (((landing_right - landing_left) / (SLOT * a)).floor() as usize).max(1);
     let landing_h = (rows(crowd.landing, landing_per_row) - 1.0) * ROW * a + 1.4 * a;
     let surface = (2.4 * a).max(landing_h + 0.8 * a).max(58.0 * comms_px);
-    // Storage widens towards the Queen's chamber to keep its pile low.
+    // Storage widens towards the throne hall to keep its pile low.
     let pile = crowd.storage as f32 * SLOT * a + a;
     let storage_w = (size.x * 0.26)
         .max(pile.min(size.x * 0.5 - 3.5 * a))
@@ -365,8 +365,8 @@ pub(super) fn band(size: Vec2, a: f32, crowd: Crowd) -> Band {
     let storage_h =
         ((rows(crowd.storage, storage_per_row) - 1.0) * ROW * a + (2.2 + TAG) * a).max(2.4 * a);
     let comms_h = 3.0 * b;
-    // Narrow panes stack the Queen below the comms room instead of squeezing either room.
-    let queen_offset = if crowd.envoy && size.x * 0.5 - 2.0 * a < 5.5 * b + 0.5 * a {
+    // Narrow panes stack the King below the comms room instead of squeezing either room.
+    let king_offset = if crowd.envoy && size.x * 0.5 - 2.0 * a < 5.5 * b + 0.5 * a {
         comms_h + 0.6 * a
     } else {
         0.0
@@ -381,11 +381,11 @@ pub(super) fn band(size: Vec2, a: f32, crowd: Crowd) -> Band {
         storage_h,
         comms_px,
         comms_h,
-        queen_offset,
+        king_offset,
     }
 }
 
-/// Ants that fit side by side in a chamber `width` wide: slots need their gap only between
+/// Dwarves that fit side by side in a chamber `width` wide: slots need their gap only between
 /// them.
 pub(super) fn chamber_per_row(width: f32, a: f32) -> usize {
     (((width + (SLOT - 2.0) * a) / (SLOT * a)).floor() as usize).max(1)
@@ -395,7 +395,7 @@ pub(super) fn rows_height(rows: usize, a: f32) -> f32 {
     (rows.max(1) as f32 - 1.0) * ROW * a + (1.4 + TAG) * a
 }
 
-/// Chamber slots an ant takes with `trail` subagents behind it, each `sub` cells wide: its
+/// Chamber slots a dwarf takes with `trail` subagents behind it, each `sub` cells wide: its
 /// own, and enough empty ones behind it to hold the trail.
 fn footprint(trail: usize, sub: f32) -> usize {
     1 + (trail as f32 * sub / SLOT).ceil() as usize
@@ -420,10 +420,10 @@ pub(super) fn pack(footprints: &[usize], per_row: usize) -> (Vec<(usize, usize)>
     (places, row + 1)
 }
 
-/// Where an ant of `kind` in `state` belongs, before slots are assigned.
+/// Where a dwarf of `kind` in `state` belongs, before slots are assigned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Home {
-    Queen,
+    King,
     Comms,
     Landing,
     Storage,
@@ -438,7 +438,7 @@ pub enum Home {
 /// whatever their state.
 pub fn home(kind: NodeKind, state: NodeState, pr_ready: bool) -> Home {
     match kind {
-        NodeKind::Queen => return Home::Queen,
+        NodeKind::King => return Home::King,
         NodeKind::Envoy => return Home::Comms,
         NodeKind::Subagent => return Home::Trail,
         NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {}
@@ -461,8 +461,8 @@ pub fn pose(kind: NodeKind, state: NodeState, home: Home) -> Pose {
     if kind == NodeKind::Envoy {
         return Pose::Stand;
     }
-    if kind == NodeKind::Queen {
-        return Pose::Queen;
+    if kind == NodeKind::King {
+        return Pose::King;
     }
     match state {
         NodeState::NeedsInput => Pose::Wait,
@@ -506,7 +506,7 @@ fn chamber_rank(state: NodeState) -> u8 {
     }
 }
 
-/// A dispatch record that is no ant: its terminal is gone and its dispatch ended, so it is a
+/// A dispatch record that is no dwarf: its terminal is gone and its dispatch ended, so it is a
 /// past attempt (often superseded by a re-dispatch of the same task). Released workers keep
 /// fading out instead, and a dispatch still open without its terminal stays, as failed.
 fn is_history(node: &Node) -> bool {
@@ -518,7 +518,7 @@ fn is_history(node: &Node) -> bool {
 
 /// Runs whose tasks have all completed or failed and that have no worker left in `nodes`:
 /// their coordinator may be at other work, so the run gets no tunnel.
-fn finished_runs<'a>(snapshot: &'a FleetSnapshot, nodes: &[&Node]) -> HashSet<&'a str> {
+fn finished_runs<'a>(snapshot: &'a ClanSnapshot, nodes: &[&Node]) -> HashSet<&'a str> {
     snapshot
         .runs
         .iter()
@@ -550,7 +550,7 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
 }
 
 /// Lays the farm out in `rect`, keeping the rooms where `plan` has them and bringing it up
-/// to the fleet (see [`super::rooms`]).
+/// to the clan (see [`super::rooms`]).
 pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     let snapshot = input.snapshot;
     let present: Vec<&Node> = snapshot
@@ -589,7 +589,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         .iter()
         .map(|n| {
             let mut home = home(n.kind, n.state, input.pr_ready.contains(&n.id));
-            if n.is_parked() && !matches!(home, Home::Queen | Home::Comms | Home::Trail) {
+            if n.is_parked() && !matches!(home, Home::King | Home::Comms | Home::Trail) {
                 home = Home::Chamber;
             }
             if home == Home::Trail && !parents.get(&n.id).is_some_and(|p| shown.contains(p)) {
@@ -603,7 +603,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     // the resting area.
     let mut keys: Vec<TunnelKey> = Vec::new();
     for n in &visible {
-        if matches!(homes[&n.id], Home::Queen | Home::Comms | Home::Trail) {
+        if matches!(homes[&n.id], Home::King | Home::Comms | Home::Trail) {
             continue;
         }
         let key = tunnel_key(n, &repos);
@@ -627,7 +627,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     keys.sort_by_key(run_order);
     let tunnel_of: HashMap<&TunnelKey, usize> =
         keys.iter().enumerate().map(|(i, k)| (k, i)).collect();
-    // The ant each subagent trails: its nearest ancestor not itself trailing.
+    // The dwarf each subagent trails: its nearest ancestor not itself trailing.
     let root_of = |id: &NodeId| -> NodeId {
         let mut at = id;
         while homes.get(at) == Some(&Home::Trail) {
@@ -642,8 +642,8 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         }
     }
     let trail_of = |id: &NodeId| trails.get(id).copied().unwrap_or(0);
-    // Each room's ants in rank order, with their footprints sized for subagents as big as
-    // their parents: the plan digs for those, so the ants fit at any scale.
+    // Each room's dwarves in rank order, with their footprints sized for subagents as big as
+    // their parents: the plan digs for those, so the dwarves fit at any scale.
     let mut chamber_nodes: Vec<Vec<&Node>> = vec![Vec::new(); keys.len()];
     for node in &visible {
         if homes[&node.id] == Home::Chamber {
@@ -678,7 +678,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     let sub = (CELL * (px - 1.0).max(1.0)).min(a);
 
     // Surface band: sky, the landing on the surface, chambers just under it. The landing
-    // and storage grow a row per row-full of ants.
+    // and storage grow a row per row-full of dwarves.
     let band = band(rect.size(), a, crowd);
     let Band {
         surface,
@@ -696,10 +696,10 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         pos2(landing_right, surface_y),
     );
     let chamber_h = 2.4 * a;
-    let queen_chamber = Rect::from_center_size(
+    let throne_hall = Rect::from_center_size(
         pos2(
             rect.center().x,
-            surface_y + 0.4 * a + band.queen_offset + chamber_h / 2.0,
+            surface_y + 0.4 * a + band.king_offset + chamber_h / 2.0,
         ),
         vec2(4.0 * a, chamber_h),
     );
@@ -739,7 +739,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     // The plan's rooms, emptied ones too while they wait out their grace. A room's chamber
     // fills its cell; a lower room's shaft comes down at the right of its column, beside the
     // chambers over it.
-    let ants_of: HashMap<&TunnelKey, &Vec<&Node>> = keys.iter().zip(&chamber_nodes).collect();
+    let dwarves_of: HashMap<&TunnelKey, &Vec<&Node>> = keys.iter().zip(&chamber_nodes).collect();
     let none = Vec::new();
     let band_top = |level: usize| {
         rect.top() + ground.below_top + level as f32 * (ground.band_h + LABEL_GAP * a)
@@ -753,7 +753,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         .iter()
         .map(|room| {
             let key = &room.key;
-            let nodes = ants_of.get(key).copied().unwrap_or(&none);
+            let nodes = dwarves_of.get(key).copied().unwrap_or(&none);
             let chamber_w = ground.chamber_w(room.level, room.col);
             let per_row = ground.per_row(room.level, room.col);
             let footprints: Vec<usize> = nodes
@@ -832,7 +832,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     let mut landing_n = 0;
     let mut storage_n = 0;
     let mut mouth_n = vec![0usize; tunnels.len()];
-    let mut ants: Vec<Ant> = Vec::new();
+    let mut dwarves: Vec<Dwarf> = Vec::new();
     let mut pr_ready = 0;
     let mut trailing: Vec<&Node> = Vec::new();
     for node in &visible {
@@ -844,11 +844,11 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
                 continue;
             }
             Home::Chamber => continue,
-            Home::Comms => (Spot::Comms, comms.expect("Envoy has a room").ant_position()),
-            Home::Queen => (
-                Spot::Queen,
-                queen_chamber.center_bottom() - vec2(0.0, 0.6 * a),
+            Home::Comms => (
+                Spot::Comms,
+                comms.expect("Envoy has a room").dwarf_position(),
             ),
+            Home::King => (Spot::King, throne_hall.center_bottom() - vec2(0.0, 0.6 * a)),
             Home::Landing => {
                 let k = landing_n;
                 landing_n += 1;
@@ -886,7 +886,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         } else {
             a
         };
-        let mut placed = ant(node, spot, pos, size, home, is_pr, input.now_ms);
+        let mut placed = dwarf(node, spot, pos, size, home, is_pr, input.now_ms);
         // A coordinator away from its tunnel's mouth is named by its run.
         if matches!(node.kind, NodeKind::Coordinator | NodeKind::Attendant)
             && matches!(home, Home::Landing | Home::Storage)
@@ -898,7 +898,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
                 .and_then(|r| r.objective.as_deref());
             placed.tag = Some(objective.unwrap_or(&node.label).to_string());
         }
-        ants.push(placed);
+        dwarves.push(placed);
     }
     let mut beds = Vec::new();
     for (t, nodes) in room_nodes.iter().enumerate() {
@@ -933,7 +933,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         for (k, (node, &(row, col))) in nodes.iter().zip(&packed[t].0).enumerate() {
             let pos = slot(row, col);
             let is_pr = input.pr_ready.contains(&node.id);
-            ants.push(ant(
+            dwarves.push(dwarf(
                 node,
                 Spot::Chamber(tunnels[t].key.clone(), k),
                 pos,
@@ -949,20 +949,20 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         .filter(|n| n.is_parked())
         .map(|n| &n.id)
         .collect();
-    for ant in &mut ants {
-        if parked.contains(&ant.id) {
-            ant.pose = Pose::Sleep;
-            ant.mark = Some(Mark::Sleep);
-            ant.facing_right = false;
-        } else if ant.pose == Pose::Dig && input.building.contains(&ant.id) {
-            ant.pose = Pose::Build;
+    for dwarf in &mut dwarves {
+        if parked.contains(&dwarf.id) {
+            dwarf.pose = Pose::Sleep;
+            dwarf.mark = Some(Mark::Sleep);
+            dwarf.facing_right = false;
+        } else if dwarf.pose == Pose::Dig && input.building.contains(&dwarf.id) {
+            dwarf.pose = Pose::Build;
         }
     }
-    // Subagents, nested ones too, trail the ant they belong to in a line, nearest first.
+    // Subagents, nested ones too, trail the dwarf they belong to in a line, nearest first.
     let mut behind: HashMap<NodeId, usize> = HashMap::new();
     for node in trailing {
         let root = root_of(&node.id);
-        let Some(at) = ants.iter().find(|x| x.id == root) else {
+        let Some(at) = dwarves.iter().find(|x| x.id == root) else {
             continue;
         };
         let k = behind.entry(root.clone()).or_default();
@@ -970,7 +970,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         let step = (at.size + sub) / 2.0 + *k as f32 * sub;
         let pos = pos2(at.pos.x + dir * step, at.pos.y + (at.size - sub) / 2.0);
         let facing_right = at.facing_right;
-        let mut trail = ant(
+        let mut trail = dwarf(
             node,
             Spot::Trail(root, *k),
             pos,
@@ -981,7 +981,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         );
         trail.facing_right = facing_right;
         *k += 1;
-        ants.push(trail);
+        dwarves.push(trail);
     }
 
     Scene {
@@ -990,12 +990,12 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         surface_y,
         gallery,
         landing,
-        queen_chamber,
+        throne_hall,
         comms,
         storage,
         tunnels,
         beds,
-        ants,
+        dwarves,
         pr_ready,
     }
 }
@@ -1010,9 +1010,17 @@ fn bed_rect(pos: Pos2, a: f32, px: f32) -> Rect {
     )
 }
 
-fn ant(node: &Node, spot: Spot, pos: Pos2, size: f32, home: Home, pr: bool, now_ms: i64) -> Ant {
+fn dwarf(
+    node: &Node,
+    spot: Spot,
+    pos: Pos2,
+    size: f32,
+    home: Home,
+    pr: bool,
+    now_ms: i64,
+) -> Dwarf {
     let pose = pose(node.kind, node.state, home);
-    Ant {
+    Dwarf {
         id: node.id.clone(),
         kind: node.kind,
         state: node.state,
@@ -1020,7 +1028,7 @@ fn ant(node: &Node, spot: Spot, pos: Pos2, size: f32, home: Home, pr: bool, now_
         pos,
         size,
         pose,
-        mark: if matches!(node.kind, NodeKind::Queen | NodeKind::Envoy) {
+        mark: if matches!(node.kind, NodeKind::King | NodeKind::Envoy) {
             None
         } else {
             mark(node.state, pr)
@@ -1029,11 +1037,11 @@ fn ant(node: &Node, spot: Spot, pos: Pos2, size: f32, home: Home, pr: bool, now_
         tag: match node.kind {
             NodeKind::Envoy => Some("Envoy".into()),
             NodeKind::Worker | NodeKind::Terminal => Some(node.label.clone()),
-            NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Subagent | NodeKind::Queen => {
+            NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Subagent | NodeKind::King => {
                 None
             }
         },
-        alpha: crate::ui::fleet_view::fade_alpha(node.released_at_ms, now_ms),
+        alpha: crate::ui::clan_view::fade_alpha(node.released_at_ms, now_ms),
         agent: node.agent.clone(),
     }
 }

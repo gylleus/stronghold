@@ -7,17 +7,17 @@ use serde_json::{Value, json};
 use super::backend::HeadlessControl;
 use super::server::{INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR};
 use super::*;
+use crate::clan::ClanData;
 use crate::control::server::{Backend, ScreenRead, ScreenReader};
 use crate::control::view::{StatusView, ViewInputs};
 use crate::control::{
     CommandHandler, ControlCommand, ControlError, ControlServer, ErrorCode, SharedStatus,
 };
 use crate::detect::PromptKind;
-use crate::fleet::FleetData;
-use crate::model::FleetSnapshot;
+use crate::model::ClanSnapshot;
 use crate::orca::commands::{parse_run_list, parse_terminal_list, parse_worker_list};
 use crate::quota::Quotas;
-use crate::ui::sidebar::FleetFilter;
+use crate::ui::sidebar::ClanFilter;
 use crate::whip::{WhipSettings, WhipStatus};
 
 const COORDINATOR: &str = "term_70c8df0b-cf78-4b43-a6f8-aefab63bca21";
@@ -90,7 +90,7 @@ impl CommandHandler for Refuse {
     }
 }
 
-fn fleet() -> FleetData {
+fn clan() -> ClanData {
     let terminals = parse_terminal_list(include_bytes!(
         "../../tests/fixtures/orca/terminal_list.json"
     ))
@@ -108,7 +108,7 @@ fn fleet() -> FleetData {
             .unwrap();
     worker.run_id = Some(RUN.into());
     worker.agent_terminal_handle = Some(CODEX.into());
-    FleetData {
+    ClanData {
         polled_at_ms: NOW,
         terminals,
         runs,
@@ -119,13 +119,13 @@ fn fleet() -> FleetData {
                 options: vec!["1. Yes".into(), "2. No".into()],
             }),
         )]),
-        ..FleetData::default()
+        ..ClanData::default()
     }
 }
 
 fn status_view() -> StatusView {
-    let data = fleet();
-    let snapshot = FleetSnapshot::build(&data, NOW);
+    let data = clan();
+    let snapshot = ClanSnapshot::build(&data, NOW);
     StatusView::build(&ViewInputs {
         snapshot: Some(&snapshot),
         data: Some(&data),
@@ -145,7 +145,7 @@ fn status_view() -> StatusView {
 
         selected: None,
         selection: Vec::new(),
-        filter: &FleetFilter::default(),
+        filter: &ClanFilter::default(),
         whip_settings_open: false,
         now_ms: NOW,
     })
@@ -203,13 +203,13 @@ fn initialize_echoes_a_supported_version() {
     assert!(result["capabilities"]["tools"].is_object());
     let instructions = result["instructions"].as_str().unwrap();
     for word in [
-        "Queen",
+        "King",
         "coordinator",
         "worker",
         "subagent",
         "needs_input",
         "list_agents",
-        "An ant is one dedicated agent session",
+        "A dwarf is one dedicated agent session",
     ] {
         assert!(instructions.contains(word), "instructions mention {word}");
     }
@@ -522,18 +522,18 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         }
     }
     let spawn = tools.iter().find(|t| t["name"] == "spawn_session").unwrap();
-    assert_eq!(spawn["annotations"]["title"], "Start a new ant");
+    assert_eq!(spawn["annotations"]["title"], "Start a new dwarf");
     assert!(
         spawn["description"]
             .as_str()
             .unwrap()
-            .contains("make a new ant for X")
+            .contains("make a new dwarf for X")
     );
     assert!(
         spawn["description"]
             .as_str()
             .unwrap()
-            .contains("Ants default model"),
+            .contains("Dwarves default model"),
         "coordinators learn where the default model comes from"
     );
     assert_eq!(
@@ -656,8 +656,8 @@ fn each_tool_maps_to_its_control_request() {
         ),
         (
             "focus_agent",
-            json!({"id": "queen", "raise_window": true}),
-            vec![("focus", json!({"id": "queen", "raise": true}))],
+            json!({"id": "king", "raise_window": true}),
+            vec![("focus", json!({"id": "king", "raise": true}))],
         ),
         (
             "set_filter",
@@ -857,12 +857,12 @@ fn control_errors_map_to_readable_tool_errors() {
 
 #[test]
 fn health_lists_checks_with_fixes() {
-    use crate::health::{AppFacts, QueenFact, evaluate};
+    use crate::health::{AppFacts, KingFact, evaluate};
     let mut view = status_view();
     let facts = AppFacts {
         whip_enabled: true,
         whip_dry_run: true,
-        queen: QueenFact::Running,
+        king: KingFact::Running,
     };
     view.health = evaluate(&facts, None, NOW);
     let mut server = McpServer::new(HeadlessControl::from_view(view, Arc::new(Screens)));
@@ -875,18 +875,18 @@ fn health_lists_checks_with_fixes() {
     );
     assert!(t.contains("- [warn] Whip: dry run"), "{t}");
     assert!(t.contains("— fix: Settings › Whip"), "{t}");
-    assert!(t.contains("- [ok] Queen: chat process running"), "{t}");
+    assert!(t.contains("- [ok] King: chat process running"), "{t}");
     assert_eq!(r["structuredContent"]["level"], "warn");
     assert_eq!(r["structuredContent"]["checks"][0]["key"], "whip");
 }
 
 #[test]
-fn fleet_status_summarises_the_fleet() {
+fn fleet_status_summarises_the_clan() {
     let mut server = McpServer::new(app());
     let r = call(&mut server, "fleet_status", json!({}));
     assert!(!is_error(&r), "{}", text(&r));
     let t = text(&r);
-    assert!(t.starts_with("Fleet: needs input · "), "{t}");
+    assert!(t.starts_with("Clan: needs input · "), "{t}");
     assert!(t.contains("Needs input (1):"), "{t}");
     assert!(t.contains(&format!("`term:{CODEX}`")), "{t}");
     assert!(t.contains("choice: 1. Yes | 2. No"), "{t}");
@@ -898,7 +898,7 @@ fn fleet_status_summarises_the_fleet() {
     let s = &r["structuredContent"];
     assert_eq!(s["fallback"], false);
     assert_eq!(s["needs_input"][0]["id"], format!("term:{CODEX}"));
-    assert!(s["fleet"]["runs"].is_array());
+    assert!(s["clan"]["runs"].is_array());
 }
 
 #[test]
@@ -999,7 +999,7 @@ fn socket_control_talks_to_the_control_server() {
     let mut mcp = McpServer::new(SocketControl::new(path.clone()));
     let r = call(&mut mcp, "fleet_status", json!({}));
     assert!(!is_error(&r), "{}", text(&r));
-    assert!(text(&r).starts_with("Fleet: "));
+    assert!(text(&r).starts_with("Clan: "));
     let r = call(&mut mcp, "open_whip_settings", json!({}));
     assert_eq!(text(&r), "Opened the Whip settings window.");
     let r = call(&mut mcp, "focus_agent", json!({"id": "missing"}));
@@ -1124,7 +1124,7 @@ fn prompts_get_returns_the_roles_rules_as_a_user_message() {
     assert!(text.contains("## Coordinator duties\n\nWatch."), "{text}");
     assert!(!text.contains("Poll."));
 
-    let r = rpc(&mut server, "prompts/get", json!({"name": "queen"}));
+    let r = rpc(&mut server, "prompts/get", json!({"name": "king"}));
     assert_eq!(r["error"]["code"], INVALID_PARAMS);
     let message = r["error"]["message"].as_str().unwrap();
     assert!(
@@ -1249,7 +1249,7 @@ fn playbook_tools_work_without_the_app() {
         json!({"role": "worker", "file": "x"}),
     );
     assert!(is_error(&r));
-    let r = call(&mut server, "get_playbook", json!({"role": "queen"}));
+    let r = call(&mut server, "get_playbook", json!({"role": "king"}));
     assert!(is_error(&r));
     let r = call(&mut server, "get_playbook", json!({"section": "zzz"}));
     assert!(is_error(&r) && text(&r).contains("Coordinator duties"));
@@ -1269,19 +1269,19 @@ fn whip_agents_reports_nudges_skips_and_the_pass() {
         "nudges": [{"id": "term:w", "label": "Worker W", "handle": "w",
                     "via": {"bus": "dispatch:ctx_1", "run": "run_1"}, "ok": true,
                     "outcome": "sent", "warning": "waiting on your input; a nudge won't answer it"}],
-        "skipped": [{"id": "queen", "label": "Queen", "reason": "the Queen is Myrstack itself"}],
+        "skipped": [{"id": "king", "label": "King", "reason": "the King is Myrstack itself"}],
     });
     let mut server = McpServer::new(FakeControl::default().reply("whip", Ok(manual)));
     let r = call(
         &mut server,
         "whip_agents",
-        json!({"ids": ["term:w", "queen"]}),
+        json!({"ids": ["term:w", "king"]}),
     );
     let t = text(&r);
     assert!(t.starts_with("Sent 1 Myrstack nudge (0 failed)."), "{t}");
     assert!(t.contains("- Worker W `term:w` via bus to dispatch:ctx_1: sent"));
     assert!(t.contains("Warning: waiting on your input"));
-    assert!(t.contains("- Queen `queen`: the Queen is Myrstack itself"));
+    assert!(t.contains("- King `king`: the King is Myrstack itself"));
     assert!(t.contains("live even though the automatic whip is in dry-run"));
 
     let pass = json!({"mode": "stalled", "ran": true, "dry_run": true, "actions": [
@@ -1313,11 +1313,10 @@ fn template_server() -> (tempfile::TempDir, McpServer<FakeControl>) {
         "# KICKOFF — <track name>\n- Blocked by: <task/PR, or \"none\">\n- <fact>\n",
     )
     .unwrap();
-    let facts = crate::playbook::fill::FleetFacts::from_fleet(
-        &crate::playbook::fill::tests::fixture_fleet(),
-    );
+    let facts =
+        crate::playbook::fill::ClanFacts::from_clan(&crate::playbook::fill::tests::fixture_clan());
     let control =
-        FakeControl::default().reply("fleet_data", Ok(serde_json::to_value(facts).unwrap()));
+        FakeControl::default().reply("clan_data", Ok(serde_json::to_value(facts).unwrap()));
     let server = McpServer::new(control)
         .with_playbook_dir(dir.path())
         .with_fetch_log(dir.path().join("fetches.jsonl"));
@@ -1342,7 +1341,7 @@ fn attendant_brief_tool_fills_from_the_app() {
         r["structuredContent"]["missing"],
         json!(["coordinator scratchpad path"])
     );
-    assert_eq!(server.control().calls[0].0, "fleet_data");
+    assert_eq!(server.control().calls[0].0, "clan_data");
     let log = logged(&dir);
     assert_eq!(log.len(), 1);
     assert_eq!(log[0].via, "tool:attendant_brief");
@@ -1409,7 +1408,7 @@ fn template_tools_fall_back_to_a_poll_when_the_app_is_down() {
         fallback: Some(app()),
         ..FakeControl::default()
     }
-    .reply("fleet_data", Err(CallError::NotRunning));
+    .reply("clan_data", Err(CallError::NotRunning));
     let mut server = McpServer::new(control).with_playbook_dir(dir.path());
     let r = call(&mut server, "attendant_brief", json!({"run_id": RUN}));
     assert!(!is_error(&r), "{}", text(&r));
@@ -1454,18 +1453,18 @@ fn playbook_prompts_tools_and_resources_log_their_fetches() {
 }
 
 #[test]
-fn fleet_status_reports_queen_auto_and_no_tool_sets_it() {
+fn fleet_status_reports_king_auto_and_no_tool_sets_it() {
     let mut server = McpServer::new(app());
     let r = call(&mut server, "fleet_status", json!({}));
-    assert_eq!(r["structuredContent"]["queen_auto"], false);
-    assert!(text(&r).contains("Queen auto mode: off"), "{}", text(&r));
+    assert_eq!(r["structuredContent"]["king_auto"], false);
+    assert!(text(&r).contains("King auto mode: off"), "{}", text(&r));
 
     let mut view = status_view();
-    view.queen_auto = true;
+    view.king_auto = true;
     let mut server = McpServer::new(HeadlessControl::from_view(view, Arc::new(Screens)));
     let r = call(&mut server, "fleet_status", json!({}));
-    assert_eq!(r["structuredContent"]["queen_auto"], true);
-    assert!(text(&r).contains("Queen auto mode: on"), "{}", text(&r));
+    assert_eq!(r["structuredContent"]["king_auto"], true);
+    assert!(text(&r).contains("King auto mode: on"), "{}", text(&r));
 
     let r = rpc(&mut server, "tools/list", json!({}));
     for tool in r["result"]["tools"].as_array().unwrap() {
@@ -1473,7 +1472,7 @@ fn fleet_status_reports_queen_auto_and_no_tool_sets_it() {
         assert!(!name.contains("auto"), "{name}");
         let schema = tool["inputSchema"].to_string();
         assert!(
-            !schema.contains("queen_auto") && !schema.contains("auto_mode"),
+            !schema.contains("king_auto") && !schema.contains("auto_mode"),
             "{name}: {schema}"
         );
     }
@@ -1515,10 +1514,10 @@ fn spawn_session_reports_the_new_session() {
     assert_eq!(
         server.control().calls[0].1["effort"],
         Value::Null,
-        "no effort passed: the app fills the Ants default"
+        "no effort passed: the app fills the Dwarves default"
     );
 
-    // No model in the result: the ant runs the CLI default and the text says so.
+    // No model in the result: the dwarf runs the CLI default and the text says so.
     let mut bare = reply.clone();
     bare["model"] = Value::Null;
     bare["effort"] = Value::Null;
@@ -1532,7 +1531,7 @@ fn spawn_session_reports_the_new_session() {
     assert!(text(&r).contains("Model: the CLI default"), "{}", text(&r));
     assert_eq!(server.control().calls[0].1["effort"], "max");
 
-    // Codex ants are outside the setting; nothing about a model is said.
+    // Codex dwarves are outside the setting; nothing about a model is said.
     let mut server = McpServer::new(FakeControl::default().reply("spawn", Ok(reply)));
     let r = call(
         &mut server,
@@ -2438,34 +2437,34 @@ fn clean_worktrees_refuses_a_real_run_without_ids() {
 #[test]
 fn park_agents_parks_or_wakes_and_reports_each() {
     let reply = json!({"parked": true, "parked_now": 1, "results": [
-        {"agent": "term:a", "id": "term:a", "label": "Ant A", "ok": true, "changed": true},
-        {"agent": "queen", "id": "queen", "label": "Queen", "ok": false,
-         "error": "the Queen isn't a session"},
+        {"agent": "term:a", "id": "term:a", "label": "Dwarf A", "ok": true, "changed": true},
+        {"agent": "king", "id": "king", "label": "King", "ok": false,
+         "error": "the King isn't a session"},
     ]});
     let mut server = McpServer::new(FakeControl::default().reply("park", Ok(reply)));
     let r = call(
         &mut server,
         "park_agents",
-        json!({"ids": ["term:a", "queen"]}),
+        json!({"ids": ["term:a", "king"]}),
     );
     assert!(!is_error(&r));
     assert_eq!(
         server.control().calls,
         vec![(
             "park".to_string(),
-            json!({"ids": ["term:a", "queen"], "park": true})
+            json!({"ids": ["term:a", "king"], "park": true})
         )]
     );
     let t = text(&r);
     assert!(
-        t.contains("Ant A `term:a`: parked in the resting area"),
+        t.contains("Dwarf A `term:a`: parked in the resting area"),
         "{t}"
     );
-    assert!(t.contains("Queen `queen`: not parked: the Queen"), "{t}");
+    assert!(t.contains("King `king`: not parked: the King"), "{t}");
     assert!(t.ends_with("1 parked in all."), "{t}");
 
     let reply = json!({"parked": false, "parked_now": 0, "results": [
-        {"agent": "term:a", "id": "term:a", "label": "Ant A", "ok": true, "changed": true}]});
+        {"agent": "term:a", "id": "term:a", "label": "Dwarf A", "ok": true, "changed": true}]});
     let mut server = McpServer::new(FakeControl::default().reply("park", Ok(reply)));
     let r = call(
         &mut server,
@@ -2474,7 +2473,7 @@ fn park_agents_parks_or_wakes_and_reports_each() {
     );
     assert_eq!(server.control().calls[0].1["park"], json!(false));
     assert!(
-        text(&r).contains("woke, back in the live fleet"),
+        text(&r).contains("woke, back in the live clan"),
         "{}",
         text(&r)
     );

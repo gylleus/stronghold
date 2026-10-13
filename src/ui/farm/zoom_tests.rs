@@ -89,7 +89,7 @@ fn zoomed_text_is_laid_out_at_the_zoomed_size() {
         painter.text(
             pos2(200.0, 100.0),
             egui::Align2::LEFT_TOP,
-            "ant",
+            "dwarf",
             FontId::monospace(10.0),
             Color32::WHITE,
         );
@@ -120,30 +120,30 @@ struct Harness {
     ctx: egui::Context,
     time: f64,
     output: Option<egui::FullOutput>,
-    snapshot: crate::model::FleetSnapshot,
-    fleet: crate::ui::fleet_view::FleetView,
-    farm: super::AntFarmView,
+    snapshot: crate::model::ClanSnapshot,
+    clan: crate::ui::clan_view::ClanView,
+    farm: super::FarmView,
 }
 
 impl Harness {
     fn new() -> Self {
         let snapshot = super::layout_tests::snapshot();
-        let mut fleet = crate::ui::fleet_view::FleetView::new();
-        fleet.sync(&snapshot);
+        let mut clan = crate::ui::clan_view::ClanView::new();
+        clan.sync(&snapshot);
         let mut harness = Self {
             ctx: egui::Context::default(),
             time: 0.0,
             output: None,
             snapshot,
-            fleet,
-            farm: super::AntFarmView::new(),
+            clan,
+            farm: super::FarmView::new(),
         };
         let rect = harness.frame(vec![]).0;
         assert_eq!(rect, FULL, "the farm fills the window");
         harness
     }
 
-    fn frame(&mut self, events: Vec<egui::Event>) -> (Rect, super::AntFarmResponse) {
+    fn frame(&mut self, events: Vec<egui::Event>) -> (Rect, super::FarmResponse) {
         self.time += 1.0 / 60.0;
         let input = egui::RawInput {
             screen_rect: Some(FULL),
@@ -152,10 +152,10 @@ impl Harness {
             ..Default::default()
         };
         let mut out = None;
-        let (farm, snapshot, fleet) = (&mut self.farm, &self.snapshot, &mut self.fleet);
+        let (farm, snapshot, clan) = (&mut self.farm, &self.snapshot, &mut self.clan);
         let mut output = self.ctx.run_ui(input, |ui| {
             let rect = ui.available_rect_before_wrap();
-            out = Some((rect, farm.show(ui, snapshot, fleet)));
+            out = Some((rect, farm.show(ui, snapshot, clan)));
         });
         output.textures_delta.clear();
         self.output = Some(output);
@@ -163,7 +163,7 @@ impl Harness {
     }
 
     /// Runs frames until egui's smoothed scroll has played out.
-    fn settle(&mut self) -> super::AntFarmResponse {
+    fn settle(&mut self) -> super::FarmResponse {
         let mut last = self.frame(vec![]).1;
         for _ in 0..120 {
             last = self.frame(vec![]).1;
@@ -171,13 +171,13 @@ impl Harness {
         last
     }
 
-    /// Where the ant `name` is drawn on screen.
+    /// Where the dwarf `name` is drawn on screen.
     fn on_screen(&self, name: &str) -> Pos2 {
-        let at = super::layout_tests::ant(&super::layout_tests::scene(&self.snapshot), name).pos;
+        let at = super::layout_tests::dwarf(&super::layout_tests::scene(&self.snapshot), name).pos;
         self.farm.camera.transform(FULL) * at
     }
 
-    fn click(&mut self, at: Pos2) -> super::AntFarmResponse {
+    fn click(&mut self, at: Pos2) -> super::FarmResponse {
         let button = |pressed| egui::Event::PointerButton {
             pos: at,
             button: egui::PointerButton::Primary,
@@ -202,8 +202,8 @@ fn wheel(unit: egui::MouseWheelUnit, delta: egui::Vec2) -> egui::Event {
     }
 }
 
-/// A mouse wheel zooms around the pointer: the ant under it stays under it and is still the
-/// one hovered, and clicks land on the ants where they are now drawn.
+/// A mouse wheel zooms around the pointer: the dwarf under it stays under it and is still the
+/// one hovered, and clicks land on the dwarves where they are now drawn.
 #[test]
 fn the_wheel_zooms_around_the_pointer() {
     let mut h = Harness::new();
@@ -220,7 +220,7 @@ fn the_wheel_zooms_around_the_pointer() {
     let other = ["idle", "stalled", "failed", "r1-coord", "loose"]
         .into_iter()
         .find(|name| FULL.shrink(20.0).contains(h.on_screen(name)))
-        .expect("another ant is on screen");
+        .expect("another dwarf is on screen");
     let response = h.click(h.on_screen(other));
     assert_eq!(response.clicked, Some(super::layout_tests::id(other)));
 
@@ -291,7 +291,7 @@ impl Harness {
         envoy.id = super::layout_tests::id("envoy");
         envoy.kind = crate::model::NodeKind::Envoy;
         h.snapshot.nodes.push(envoy);
-        h.fleet.sync(&h.snapshot);
+        h.clan.sync(&h.snapshot);
         h.frame(vec![]);
         h
     }
@@ -351,7 +351,7 @@ fn tray_click_opens_without_selecting_or_clearing_at_fit_and_zoomed() {
 }
 
 #[test]
-fn tray_has_priority_over_a_walking_ant_and_cannot_start_a_selection_box() {
+fn tray_has_priority_over_a_walking_dwarf_and_cannot_start_a_selection_box() {
     let mut h = Harness::with_envoy();
     let at = h.tray_center();
     let id = super::layout_tests::id("working");
@@ -422,7 +422,7 @@ fn badge_counts_pending_replies_and_tasks_only() {
 fn focus_requests_reach_the_camera_and_keep_hit_testing_correct() {
     let mut h = Harness::new();
     let id = super::layout_tests::id("working");
-    h.fleet.center_on(&id);
+    h.clan.center_on(&id);
     h.frame(vec![]);
     assert!(h.farm.camera.zoom > 1.0);
     assert!(FULL.contains(h.on_screen("working")));
@@ -433,9 +433,9 @@ fn focus_requests_reach_the_camera_and_keep_hit_testing_correct() {
     // Run/repo focus zooms onto the room, even with members elsewhere in the farm.
     for repo in [false, true] {
         if repo {
-            h.fleet.focus_repo("repo-r1-coord");
+            h.clan.focus_repo("repo-r1-coord");
         } else {
-            h.fleet.focus_run("r1");
+            h.clan.focus_run("r1");
         }
         h.frame(vec![]);
         let room = super::layout_tests::scene(&h.snapshot)
@@ -448,10 +448,10 @@ fn focus_requests_reach_the_camera_and_keep_hit_testing_correct() {
         assert!(FULL.contains_rect(transform * room.chamber));
     }
 
-    h.fleet.set_hidden(&[id.clone()].into());
+    h.clan.set_hidden(&[id.clone()].into());
     h.frame(vec![]);
     let before = h.farm.camera;
-    h.fleet.focus_nodes(&[id]);
+    h.clan.focus_nodes(&[id]);
     h.frame(vec![]);
     assert_eq!(
         h.farm.camera, before,

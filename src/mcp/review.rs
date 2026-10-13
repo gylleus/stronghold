@@ -1,5 +1,5 @@
 //! The review queue's MCP tools: `mark_pr_ready` for agents that finished a PR, and
-//! `review_queue` for Karl (through the Queen) to see what is waiting.
+//! `review_queue` for Karl (through the King) to see what is waiting.
 
 use std::path::PathBuf;
 
@@ -46,7 +46,7 @@ pub fn definitions() -> Vec<Value> {
         json!({
             "name": "mark_pr_ready",
             "title": "Mark PR ready for review",
-            "description": "Tells Myrstack (Karl's fleet dashboard) that a pull request is ready \
+            "description": "Tells Myrstack (Karl's clan dashboard) that a pull request is ready \
                 for Karl's review, so it shows in his review queue attributed to your terminal. \
                 Call it right after sending merge_ready for a gate-ready PR, or when setting the \
                 ✅ ready marker. It only records locally: nothing is posted to GitHub or sent to \

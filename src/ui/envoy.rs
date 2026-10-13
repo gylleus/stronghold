@@ -148,7 +148,7 @@ impl DraftsPanel {
         if dry_run {
             ui.label(DRY_RUN_BANNER);
         } else {
-            ui.label("Approved replies are posted to Slack. Accepted tasks go to the Queen.");
+            ui.label("Approved replies are posted to Slack. Accepted tasks go to the King.");
         }
         if let Some(error) = error {
             ui.colored_label(ui.visuals().error_fg_color, error);
@@ -208,7 +208,7 @@ impl DraftsPanel {
                             }
                             for reply in &request.deliveries {
                                 if reply.inbox {
-                                    ui.strong("Reply for a finished or unknown ant");
+                                    ui.strong("Reply for a finished or unknown dwarf");
                                 }
                                 ui.label(&reply.text);
                                 if reply.dry_run {
@@ -388,9 +388,9 @@ impl DraftsPanel {
         }
         if draft.kind == DraftKind::TaskProposal {
             ui.label(if dry_run {
-                "Dry run: accepting records this task; it is not sent to the Queen."
+                "Dry run: accepting records this task; it is not sent to the King."
             } else {
-                "The Queen will start the ant for this task."
+                "The King will start the dwarf for this task."
             });
         }
         if let Some(error) = self.errors.get(&draft.id) {
@@ -439,7 +439,7 @@ fn decided_card(ui: &mut Ui, draft: &Draft, inbox: &Inbox) {
     destination(ui, draft, inbox);
     ui.label(&draft.text);
     if draft.kind == DraftKind::TaskProposal && draft.status == DraftStatus::DryRunSent {
-        ui.label("Task recorded in dry run; not sent to the Queen.");
+        ui.label("Task recorded in dry run; not sent to the King.");
     }
     if let Some(error) = &draft.error {
         ui.colored_label(ui.visuals().error_fg_color, error);
@@ -552,7 +552,7 @@ fn destination(ui: &mut Ui, draft: &Draft, inbox: &Inbox) {
             slack_link(ui, draft.slack_link.as_deref());
         }
     } else {
-        ui.strong("Task for the Queen");
+        ui.strong("Task for the King");
         if let Some(repo) = &draft.repo {
             ui.label(format!("Repository: {repo}"));
         }
@@ -681,7 +681,7 @@ mod tests {
             "https://example.slack.com/message".into(),
             0,
         )];
-        click_label("The Queen will start the ant for this task.", |ui| {
+        click_label("The King will start the dwarf for this task.", |ui| {
             DraftsPanel::default().show(ui, &drafts, &Inbox::default(), false, None)
         });
         let action = click_label("Accept task", |ui| {
@@ -829,7 +829,7 @@ mod tests {
             id: "request-1".into(),
             turn_id: 1,
             original_ask: "Review abc012def at 12:34".into(),
-            requester: "Build ant".into(),
+            requester: "Build dwarf".into(),
             why: "Unblock review".into(),
             agent: true,
         };
@@ -845,7 +845,7 @@ mod tests {
         draft.automatic = true;
         draft.auto_at_ms = Some(crate::control::server::now_ms() + 120_000);
         let mut h = Harness::new(vec![draft]);
-        assert!(h.visible("Asked by Build ant"));
+        assert!(h.visible("Asked by Build dwarf"));
         assert!(h.visible("Thread 1.000001"));
         assert!(h.visible("Original ask"));
         assert!(h.visible("Review abc012def at 12:34"));
@@ -1011,7 +1011,7 @@ mod tests {
     #[test]
     fn accepting_a_dry_run_task_shows_confirmation_on_the_card() {
         let mut task = Draft::proposal(
-            "Start a fixture ant".into(),
+            "Start a fixture dwarf".into(),
             None,
             "Requested".into(),
             String::new(),
@@ -1019,22 +1019,22 @@ mod tests {
         );
         task.id = "task-1".into();
         let mut h = Harness::new(vec![task]);
-        assert!(h.visible("Dry run: accepting records this task; it is not sent to the Queen."));
+        assert!(h.visible("Dry run: accepting records this task; it is not sent to the King."));
         assert!(matches!(
             h.click("Accept task"),
             Some(DraftAction::Approve { .. })
         ));
         h.drafts[0].status = DraftStatus::DryRunSent;
         h.panel.result("task-1", Ok(()));
-        assert!(h.visible("Task recorded in dry run; not sent to the Queen."));
+        assert!(h.visible("Task recorded in dry run; not sent to the King."));
         assert_eq!(
             h.click("Dismiss"),
             Some(DraftAction::DismissDraft("task-1".into()))
         );
         h.panel.set_cleanup(&BTreeSet::from(["task-1".into()]));
-        assert!(!h.visible("Task recorded in dry run; not sent to the Queen."));
+        assert!(!h.visible("Task recorded in dry run; not sent to the King."));
         h.click("Outbox");
-        assert!(h.visible("Task recorded in dry run; not sent to the Queen."));
+        assert!(h.visible("Task recorded in dry run; not sent to the King."));
     }
 
     #[test]

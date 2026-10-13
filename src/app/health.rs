@@ -3,7 +3,7 @@
 use eframe::egui;
 
 use super::{MyrstackApp, now_ms, repaint_once};
-use crate::health::{AppFacts, HealthReport, HealthWorker, Probes, QueenFact, evaluate};
+use crate::health::{AppFacts, HealthReport, HealthWorker, KingFact, Probes, evaluate};
 use crate::ui::health::HealthAction;
 
 pub(super) struct AppHealth {
@@ -34,7 +34,7 @@ impl MyrstackApp {
         AppFacts {
             whip_enabled: whip.enabled,
             whip_dry_run: whip.dry_run,
-            queen: QueenFact::from(self.chat.state()),
+            king: KingFact::from(self.chat.state()),
         }
     }
 

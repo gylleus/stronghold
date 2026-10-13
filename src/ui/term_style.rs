@@ -9,7 +9,7 @@ use eframe::egui::{Color32, Visuals};
 
 use crate::model::NodeState;
 use crate::orca::AgentIdentity;
-use crate::ui::fleet_view::state_color;
+use crate::ui::clan_view::state_color;
 
 /// Which TUI produced the lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

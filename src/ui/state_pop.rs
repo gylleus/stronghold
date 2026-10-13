@@ -88,7 +88,7 @@ impl Cue {
 
 /// Finds the state changes worth a pop between polls: a node's new state must hold for
 /// [`SETTLE_MS`] first. Nodes seen for the first time (all of them on the first poll), the
-/// Queen, subagents, parked agents and released ones never pop.
+/// King, subagents, parked agents and released ones never pop.
 #[derive(Debug, Default)]
 pub struct Transitions {
     /// Each tracked node's last settled state.
@@ -107,7 +107,7 @@ impl Transitions {
         let mut seen = HashSet::with_capacity(self.settled.len());
         let mut cues = Vec::new();
         for node in nodes {
-            let tracked = !matches!(node.kind, NodeKind::Queen | NodeKind::Subagent)
+            let tracked = !matches!(node.kind, NodeKind::King | NodeKind::Subagent)
                 && !node.is_parked()
                 && node.released_at_ms.is_none();
             if !tracked {
@@ -359,20 +359,20 @@ mod tests {
     }
 
     #[test]
-    fn subagents_the_queen_and_parked_agents_never_pop() {
+    fn subagents_the_king_and_parked_agents_never_pop() {
         let mut t = Transitions::default();
-        let fleet = |state| {
+        let clan = |state| {
             let mut parked = node("p", NodeKind::Terminal, state);
             parked.parked_at_ms = Some(T0);
             vec![
                 node("s", NodeKind::Subagent, state),
-                node("q", NodeKind::Queen, state),
+                node("q", NodeKind::King, state),
                 parked,
             ]
         };
-        cues(&mut t, &fleet(NodeState::Working), T0);
-        cues(&mut t, &fleet(NodeState::Done), T0 + 1_000);
-        assert!(cues(&mut t, &fleet(NodeState::Done), T0 + 5_000).is_empty());
+        cues(&mut t, &clan(NodeState::Working), T0);
+        cues(&mut t, &clan(NodeState::Done), T0 + 1_000);
+        assert!(cues(&mut t, &clan(NodeState::Done), T0 + 5_000).is_empty());
         assert_eq!(t.next_due(T0 + 5_000), None);
     }
 

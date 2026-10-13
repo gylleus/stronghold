@@ -5,7 +5,7 @@ and the draft follows Karl's destination approval policy. Replies arrive at the 
 terminal when its agent is idle at an empty prompt; `reach_out_status` also retains them.
 Karl remains on `ask_karl` / `notify`.
 
-## Tools available to every ant
+## Tools available to every dwarf
 
 Origin comes from the MCP process, not a tool argument. A nonblank terminal Origin is required.
 
@@ -52,12 +52,12 @@ name (including full name and @karl), id, labeled mention and resolved DM recipi
 draft. A bound conversation cannot be silently rerouted. Decline cannot cancel an already
 dispatched send. To reconcile an ambiguous failed send, link a retained event in its known
 thread; that records an explicit reconciliation, without sending again or granting reply-watch permission. An adopted request's
-`requester` accepts a live fleet agent id or terminal; a known owner cannot be reassigned.
+`requester` accepts a live clan agent id or terminal; a known owner cannot be reassigned.
 For borrowed or unknown-owner threads, it creates a proposal with the root message's first
 line, Slack link, recipient and Envoy reason in the Inbox. Only Karl's deliberate Accept
 click grants reply delivery and caller access; before acceptance and after Reject, replies
-stay in the Inbox. Proposals persist across restart. Linking an ant's own `reach_out`
-request to that same ant needs no approval. Missing/invalid reason, unavailable root preview,
+stay in the Inbox. Proposals persist across restart. Linking a dwarf's own `reach_out`
+request to that same dwarf needs no approval. Missing/invalid reason, unavailable root preview,
 closed request or a changed proposal produce errors. A separate configured people list is
 not implemented; verified human-DM checks enforce the current rewrite restriction.
 
@@ -87,7 +87,7 @@ to confirmed using that timestamp as the cutoff; an explicit false confirmation 
 Authorized threads outside channel feeds get subscriptions and catch-up reads. Replies have a durable
 handoff independent of bounded Inbox display history, and do not spend unsolicited relay
 limits. A gone/reused asker falls back to its captured live coordinator; otherwise its reply
-stays in the Inbox. Delivery checks fleet freshness, run/dispatch identity and available
+stays in the Inbox. Delivery checks clan freshness, run/dispatch identity and available
 terminal incarnation ids. Dry-run records would-be terminal delivery instead of sending it.
 Relayed reply text is capped at 2,000 Unicode characters plus a truncation notice; status keeps the full event text. Terminal delivery is acknowledged after Orca succeeds; a crash between terminal execution
 and saving that acknowledgment may replay a reply.
@@ -103,7 +103,7 @@ and draft decisions. `envoy_inbox` lists open events; `envoy_event` can still re
 thread context. `envoy_drafts` lists open drafts by default; an explicit `status` includes
 handled drafts. Adopt open threads reads `slack-sub list`, skips channel feeds
 and expired subscriptions, `envoy:` labels and threads already owned through confirmed requests, and creates unknown/sent requests idempotently. Adopted subscriptions are borrowed: watches start subscribed and never add, relabel or
-remove their registry entries, even when an ant request already references that thread.
+remove their registry entries, even when a dwarf request already references that thread.
 Keep retains an orphan; Close only settles its app request. For a thread the Envoy owns,
 Close removes its subscription only after a real send and after all active requests finish;
 dry-run records that removal intent. Threadless simulations settle locally. The one-week direct-post
@@ -115,7 +115,7 @@ Events and request turns are typed only when the Envoy node is idle, nothing is 
 its terminal, and its composer is empty. The composer verdict comes from the rendered screen:
 the background prompt sampler (idle agents, every ten seconds, five per round) and the
 selected terminal's screen watch both record [`composer_state`] beside the needs-input
-verdict in `FleetData.composers`, pruned when the terminal produces output. Orca's terminal
+verdict in `ClanData.composers`, pruned when the terminal produces output. Orca's terminal
 `preview` is the stale startup banner plus the last redrawn fragment, so it often lacks the
 composer line; it is read only while no screen sample exists, and errs towards not typing.
 
@@ -158,7 +158,7 @@ apply on the next Start.
 Every typed event line also carries an addressee verdict, ` — addressee: Karl | not Karl |
 unclear (<why>)`, computed from the message's mentions (`src/envoy/addressee.rs`): a DM or a
 `<@KARL>` mention is for Karl; another person, agent or group tagged without Karl is not for
-Karl, unless the thread is Karl's (an ant's `reach_out` thread, a watched thread, one the Envoy
+Karl, unless the thread is Karl's (a dwarf's `reach_out` thread, a watched thread, one the Envoy
 posted in, or one whose earlier messages mention Karl), which leaves it unclear for the Envoy
 to judge; no mention is unclear. Karl's id is the `envoy.karl_user_id` setting until the
 worker's `auth.test` call (what `slackmsg whoami` prints) answers, on every configure; the

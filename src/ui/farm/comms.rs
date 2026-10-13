@@ -12,7 +12,7 @@ use eframe::egui::{Align2, FontId, Painter, Rect, vec2};
 
 pub fn working(scene: &Scene) -> bool {
     scene
-        .ants
+        .dwarves
         .iter()
         .any(|a| a.kind == NodeKind::Envoy && a.state == NodeState::Working)
 }

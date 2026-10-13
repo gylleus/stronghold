@@ -1,12 +1,12 @@
-//! Who talks to whom: one [`AgentMessage`] per message between agents, the Queen, Karl and the
+//! Who talks to whom: one [`AgentMessage`] per message between agents, the King, Karl and the
 //! outside world, which the farm draw as an envelope flying from sender to
 //! receiver.
 //!
 //! Sources, all streams the app already has (no tool exists just for the animation):
 //! - the Orca bus inbox the poller reads ([`InboxWatch`]): dispatch, question, escalation,
-//!   merge_ready, status and worker_done between workers, coordinators and the Queen's
+//!   merge_ready, status and worker_done between workers, coordinators and the King's
 //!   broadcasts;
-//! - control API commands: `send` (`send_to_agent`, from its caller or the Queen), `notify` and
+//! - control API commands: `send` (`send_to_agent`, from its caller or the King), `notify` and
 //!   `ask` (an agent to Karl), and the generic `agent_message {from, to, kind}`;
 //! - Karl typing into a terminal from Myrstack, and the whip's nudges ([`from_whip`]).
 //! - `orca terminal send`s Claude terminals run, read from their transcripts
@@ -24,8 +24,8 @@ use crossbeam_channel::{Receiver, Sender};
 use serde_json::Value;
 
 use crate::control::protocol::{ControlError, Params};
-use crate::model::{FleetSnapshot, NodeId, NodeKind};
-use crate::orca::{BROADCAST_SENDER, InboxMessage, MessageType, WHIP_SENDER};
+use crate::model::{ClanSnapshot, NodeId, NodeKind};
+use crate::orca::{InboxMessage, MessageType, WHIP_SENDER, is_broadcast_sender};
 use crate::whip::runner::WhipLogItem;
 
 /// Bus messages older than this when first seen are not drawn: they are history the inbox's
@@ -35,7 +35,7 @@ pub const FRESH_MS: i64 = 2 * 60_000;
 /// What a message is, which picks its look.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MessageKind {
-    /// Karl or the Queen telling an agent what to do, a broadcast or a dispatch.
+    /// Karl or the King telling an agent what to do, a broadcast or a dispatch.
     Instruction,
     /// One agent writing to another.
     Message,
@@ -79,7 +79,7 @@ impl MessageKind {
 }
 
 /// A message from `from` to `to`, named as the sender knows them: a node id, a terminal handle,
-/// Orca's `run:<id>` (its coordinator) or `dispatch:<id>`, or `queen`, `envoy`, `karl` or `slack`; see
+/// Orca's `run:<id>` (its coordinator) or `dispatch:<id>`, or `king`, `envoy`, `karl` or `slack`; see
 /// [`resolve`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentMessage {
@@ -114,7 +114,7 @@ impl AgentMessage {
     }
 
     /// Both ends in `snapshot`; `None` when either is unknown or they are the same.
-    pub fn resolve(&self, snapshot: &FleetSnapshot) -> Option<Flight> {
+    pub fn resolve(&self, snapshot: &ClanSnapshot) -> Option<Flight> {
         let from = resolve(snapshot, &self.from)?;
         let to = resolve(snapshot, &self.to)?;
         (from != to).then_some(Flight {
@@ -129,9 +129,9 @@ impl AgentMessage {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Endpoint {
     Node(NodeId),
-    /// Karl himself; the farm draws him as the Queen.
+    /// Karl himself; the farm draws him as the King.
     Karl,
-    /// The world outside the fleet (Slack); the farm draws it as the Queen too.
+    /// The world outside the clan (Slack); the farm draws it as the King too.
     Outside,
 }
 
@@ -144,7 +144,7 @@ pub struct Flight {
 }
 
 /// The endpoint `key` names in `snapshot`; see [`AgentMessage`].
-pub fn resolve(snapshot: &FleetSnapshot, key: &str) -> Option<Endpoint> {
+pub fn resolve(snapshot: &ClanSnapshot, key: &str) -> Option<Endpoint> {
     let key = key.trim();
     // Snapshots assembled by hand (demos) have no index.
     let node = |id: NodeId| {
@@ -156,7 +156,7 @@ pub fn resolve(snapshot: &FleetSnapshot, key: &str) -> Option<Endpoint> {
     match key.to_ascii_lowercase().as_str() {
         "karl" | "human" => return Some(Endpoint::Karl),
         "slack" | "outside" => return Some(Endpoint::Outside),
-        "queen" | WHIP_SENDER => return node(NodeId::queen()),
+        "king" | "queen" | WHIP_SENDER => return node(NodeId::king()),
         "envoy" => {
             return snapshot
                 .nodes
@@ -206,18 +206,18 @@ pub fn from_inbox(m: &InboxMessage) -> Option<AgentMessage> {
         Some(MessageType::MergeReady) => MessageKind::MergeReady,
         Some(MessageType::Dispatch) => MessageKind::Instruction,
         Some(MessageType::Status | MessageType::WorkerDone) => MessageKind::Status,
-        _ if from == BROADCAST_SENDER => MessageKind::Instruction,
+        _ if is_broadcast_sender(from) => MessageKind::Instruction,
         _ => MessageKind::Message,
     };
     Some(AgentMessage::new(from, to, kind))
 }
 
-/// A nudge the whip sent: the Queen prodding the terminal.
+/// A nudge the whip sent: the King prodding the terminal.
 pub fn from_whip(item: &WhipLogItem) -> Option<AgentMessage> {
     let entry = &item.entry;
     let to = item.handle.as_deref()?;
     (entry.action.starts_with("nudge") && entry.outcome == "sent" && !entry.dry_run)
-        .then(|| AgentMessage::new("queen", to, MessageKind::Nudge))
+        .then(|| AgentMessage::new("king", to, MessageKind::Nudge))
 }
 
 /// Picks the bus messages that are new since the last poll.
@@ -265,7 +265,7 @@ pub struct Traffic {
     tx: Sender<AgentMessage>,
     rx: Receiver<AgentMessage>,
     pub inbox: InboxWatch,
-    /// Tool calls waiting for their ends to show up in the fleet, with when they came (egui
+    /// Tool calls waiting for their ends to show up in the clan, with when they came (egui
     /// time); see [`beam`].
     pub calls: Vec<(beam::ToolCall, Option<f64>)>,
 }

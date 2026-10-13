@@ -1,5 +1,5 @@
 //! Pre-filled playbook templates: the attendant brief for a run and the kickoff for a task, with
-//! every `<…>` placeholder Myrstack can answer from live fleet data filled in. The rest stay
+//! every `<…>` placeholder Myrstack can answer from live clan data filled in. The rest stay
 //! visibly marked (`<…: FILL IN>`), and the output starts with a header saying what was filled
 //! from where and what is left.
 
@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::fleet::{FleetData, Forward};
+use crate::clan::{ClanData, Forward};
 use crate::orca::{DispatchStatus, InboxMessage, Run, Task, Terminal, Worker, WorkerState};
 use crate::playbook::{ATTENDANT_BRIEF, KICKOFF, Version};
 use crate::ui::sidebar::repo_of;
@@ -175,12 +175,12 @@ fn push_unique(list: &mut Vec<String>, name: String) {
 }
 
 // ---------------------------------------------------------------------------
-// Fleet data on the wire
+// Clan data on the wire
 
-/// The part of one poll's [`FleetData`] templates are filled from, as the control API's
-/// `fleet_data` method serves it. Terminal previews and message bodies are dropped.
+/// The part of one poll's [`ClanData`] templates are filled from, as the control API's
+/// `clan_data` method serves it. Terminal previews and message bodies are dropped.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct FleetFacts {
+pub struct ClanFacts {
     pub polled_at_ms: i64,
     pub terminals: Vec<Terminal>,
     pub runs: Vec<Run>,
@@ -188,13 +188,13 @@ pub struct FleetFacts {
     pub tasks: BTreeMap<String, Vec<Task>>,
     pub inbox: Vec<InboxMessage>,
     /// Forward targets read from declared coordinators' transcripts, so the attendant and the
-    /// real coordinator resolve as in the app (see [`FleetData::run_roles`]).
+    /// real coordinator resolve as in the app (see [`ClanData::run_roles`]).
     #[serde(default)]
     pub forwards: BTreeMap<String, Vec<Forward>>,
 }
 
-impl FleetFacts {
-    pub fn from_fleet(data: &FleetData) -> Self {
+impl ClanFacts {
+    pub fn from_clan(data: &ClanData) -> Self {
         Self {
             polled_at_ms: data.polled_at_ms,
             terminals: data
@@ -221,8 +221,8 @@ impl FleetFacts {
         }
     }
 
-    pub fn into_fleet(self) -> FleetData {
-        FleetData {
+    pub fn into_clan(self) -> ClanData {
+        ClanData {
             polled_at_ms: self.polled_at_ms,
             terminals: self.terminals,
             runs: self.runs,
@@ -230,7 +230,7 @@ impl FleetFacts {
             tasks: self.tasks,
             inbox: self.inbox,
             forwards: self.forwards,
-            ..FleetData::default()
+            ..ClanData::default()
         }
     }
 }
@@ -333,7 +333,7 @@ impl Filled {
 /// could be found.
 pub fn attendant_brief(
     template: &str,
-    data: &FleetData,
+    data: &ClanData,
     run_id: &str,
     scratchpad: Option<&str>,
     context: FillContext,
@@ -466,7 +466,7 @@ pub fn attendant_brief(
 /// The kickoff for `task_id`.
 pub fn kickoff(
     template: &str,
-    data: &FleetData,
+    data: &ClanData,
     task_id: &str,
     context: FillContext,
 ) -> Result<Filled, String> {
@@ -725,8 +725,8 @@ pub(crate) mod tests {
 
     /// A run whose declared coordinator is gone (the live one created its tasks), one live
     /// dispatch, one finished dispatch, a dependency chain and some bus traffic.
-    pub(crate) fn fixture_fleet() -> FleetData {
-        let facts: FleetFacts = serde_json::from_value(json!({
+    pub(crate) fn fixture_clan() -> ClanData {
+        let facts: ClanFacts = serde_json::from_value(json!({
             "polled_at_ms": NOW,
             "terminals": [
                 {"handle": COORD, "worktreePath": "/u/orca/workspaces/depict/coord",
@@ -765,7 +765,7 @@ pub(crate) mod tests {
             ],
         }))
         .unwrap();
-        facts.into_fleet()
+        facts.into_clan()
     }
 
     fn context() -> FillContext {
@@ -873,7 +873,7 @@ pub(crate) mod tests {
 
     #[test]
     fn attendant_brief_fills_from_the_run_and_marks_the_rest() {
-        let data = fixture_fleet();
+        let data = fixture_clan();
         let t = template(ATTENDANT_BRIEF);
         let f = attendant_brief(&t, &data, RUN, None, context()).unwrap();
         let body = &f.result.text;
@@ -928,7 +928,7 @@ pub(crate) mod tests {
 
     #[test]
     fn attendant_brief_names_the_real_coordinator_not_the_attendant() {
-        let mut data = fixture_fleet();
+        let mut data = fixture_clan();
         data.terminals.push(Terminal {
             handle: "term_att".into(),
             title: Some("✳ wave-ATTENDANT brief".into()),
@@ -938,15 +938,15 @@ pub(crate) mod tests {
         // Round-trips through the wire format with the transcript forwards.
         data.forwards.insert(
             "term_att".into(),
-            vec![crate::fleet::Forward {
+            vec![crate::clan::Forward {
                 target: COORD.into(),
                 at_ms: Some(NOW),
             }],
         );
-        let wire = serde_json::to_value(FleetFacts::from_fleet(&data)).unwrap();
-        let data = serde_json::from_value::<FleetFacts>(wire)
+        let wire = serde_json::to_value(ClanFacts::from_clan(&data)).unwrap();
+        let data = serde_json::from_value::<ClanFacts>(wire)
             .unwrap()
-            .into_fleet();
+            .into_clan();
         assert_eq!(data.run_roles(RUN).attendant.as_deref(), Some("term_att"));
 
         let f = attendant_brief(&template(ATTENDANT_BRIEF), &data, RUN, None, context()).unwrap();
@@ -966,7 +966,7 @@ pub(crate) mod tests {
 
     #[test]
     fn attendant_brief_with_a_scratchpad_leaves_nothing_to_fill() {
-        let data = fixture_fleet();
+        let data = fixture_clan();
         let t = template(ATTENDANT_BRIEF);
         let f = attendant_brief(&t, &data, RUN, Some("/tmp/s"), context()).unwrap();
         assert!(f.result.missing.is_empty());
@@ -976,13 +976,13 @@ pub(crate) mod tests {
 
     #[test]
     fn attendant_brief_for_an_unknown_run_is_an_error() {
-        let e = attendant_brief("x", &fixture_fleet(), "run_x", None, context()).unwrap_err();
+        let e = attendant_brief("x", &fixture_clan(), "run_x", None, context()).unwrap_err();
         assert!(e.contains("run_x"), "{e}");
     }
 
     #[test]
     fn kickoff_fills_from_the_task_its_dispatch_and_deps() {
-        let data = fixture_fleet();
+        let data = fixture_clan();
         let t = template(KICKOFF);
         let f = kickoff(&t, &data, "t_a", context()).unwrap();
         let body = &f.result.text;
@@ -1028,15 +1028,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn fleet_facts_round_trip_through_json_without_previews_or_bodies() {
-        let mut data = fixture_fleet();
+    fn clan_facts_round_trip_through_json_without_previews_or_bodies() {
+        let mut data = fixture_clan();
         data.terminals[0].preview = Some("secret screen".into());
         data.inbox[0].body = Some("long body".into());
-        let facts = FleetFacts::from_fleet(&data);
+        let facts = ClanFacts::from_clan(&data);
         let json = serde_json::to_value(&facts).unwrap();
         assert!(!json.to_string().contains("secret screen"));
         assert!(!json.to_string().contains("long body"));
-        let back: FleetFacts = serde_json::from_value(json).unwrap();
+        let back: ClanFacts = serde_json::from_value(json).unwrap();
         assert_eq!(back, facts);
         assert_eq!(back.tasks[RUN][1].deps, ["t_a"]);
     }

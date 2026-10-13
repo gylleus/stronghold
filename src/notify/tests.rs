@@ -167,21 +167,21 @@ fn node(id: &str, handle: Option<&str>, live: bool, state: NodeState) -> Node {
     }
 }
 
-fn snapshot(nodes: Vec<Node>) -> FleetSnapshot {
-    let mut snapshot = FleetSnapshot::default();
+fn snapshot(nodes: Vec<Node>) -> ClanSnapshot {
+    let mut snapshot = ClanSnapshot::default();
     snapshot.nodes = nodes;
     snapshot
 }
 
 #[test]
-fn detector_ignores_the_queen() {
+fn detector_ignores_the_king() {
     let mut d = NeedsInputDetector::new();
     let mut calm = snapshot(vec![node("a", Some("h"), true, NodeState::Working)]);
-    calm.add_queen();
+    calm.add_king();
     assert!(d.update(&calm).is_empty());
     let mut waiting = snapshot(vec![node("a", Some("h"), true, NodeState::NeedsInput)]);
-    waiting.add_queen();
-    assert_eq!(waiting.queen().unwrap().state, NodeState::NeedsInput);
+    waiting.add_king();
+    assert_eq!(waiting.king().unwrap().state, NodeState::NeedsInput);
     let requests = d.update(&waiting);
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].target.as_deref(), Some("h"));

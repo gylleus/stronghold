@@ -1,4 +1,4 @@
-//! Where filled templates get their fleet data: the running app's control API (`fleet_data`),
+//! Where filled templates get their clan data: the running app's control API (`clan_data`),
 //! else one read-only Orca poll. Also finds the coordinator's Claude scratchpad dir.
 
 use std::path::{Path, PathBuf};
@@ -11,7 +11,7 @@ use crate::claude::{SessionLocator, SessionMatch};
 use crate::control::server::now_ms;
 use crate::mcp::backend::Control;
 use crate::orca::Terminal;
-use crate::playbook::fill::{self, FillContext, Filled, FleetFacts};
+use crate::playbook::fill::{self, ClanFacts, FillContext, Filled};
 use crate::playbook::{ATTENDANT_BRIEF, KICKOFF, Playbook, Target};
 
 pub const FROM_APP: &str = "the running Myrstack app";
@@ -68,18 +68,18 @@ impl Template {
     }
 }
 
-/// The fleet data from the app, else from a one-off poll; with the source's description.
-pub fn fetch_facts(control: &mut dyn Control) -> Result<(FleetFacts, &'static str), String> {
+/// The clan data from the app, else from a one-off poll; with the source's description.
+pub fn fetch_facts(control: &mut dyn Control) -> Result<(ClanFacts, &'static str), String> {
     let parse = |v: Value| {
-        serde_json::from_value::<FleetFacts>(v).map_err(|e| format!("unexpected fleet data: {e}"))
+        serde_json::from_value::<ClanFacts>(v).map_err(|e| format!("unexpected clan data: {e}"))
     };
-    match control.call("fleet_data", Value::Null) {
+    match control.call("clan_data", Value::Null) {
         Ok(v) => return parse(v).map(|f| (f, FROM_APP)),
-        Err(e) => log::info!("fleet data from the app: {e}; polling Orca instead"),
+        Err(e) => log::info!("clan data from the app: {e}; polling Orca instead"),
     }
     let fallback = control.fallback()?;
     let v = fallback
-        .call("fleet_data", Value::Null)
+        .call("clan_data", Value::Null)
         .map_err(|e| e.to_string())?;
     parse(v).map(|f| (f, FROM_POLL))
 }
@@ -99,7 +99,7 @@ pub fn render(
         .get(&Target::File(template.file().to_owned()), None)
         .map_err(|e| format!("{e:#}"))?;
     let (facts, source) = fetch_facts(control)?;
-    let data = facts.into_fleet();
+    let data = facts.into_clan();
     let context = FillContext {
         version: served.version,
         source: source.to_owned(),
@@ -172,9 +172,9 @@ mod tests {
     use super::*;
     use crate::control::{ControlError, ErrorCode};
     use crate::mcp::CallError;
-    use crate::playbook::fill::tests::{RUN, fixture_fleet};
+    use crate::playbook::fill::tests::{RUN, fixture_clan};
 
-    /// Answers `fleet_data` with `reply`; its fallback (if any) answers with the fixture.
+    /// Answers `clan_data` with `reply`; its fallback (if any) answers with the fixture.
     struct Fake {
         reply: Result<Value, CallError>,
         fallback: Option<Box<Fake>>,
@@ -183,7 +183,7 @@ mod tests {
 
     impl Control for Fake {
         fn call(&mut self, method: &str, _: Value) -> Result<Value, CallError> {
-            assert_eq!(method, "fleet_data");
+            assert_eq!(method, "clan_data");
             self.calls += 1;
             self.reply.clone()
         }
@@ -197,7 +197,7 @@ mod tests {
     }
 
     fn facts_json() -> Value {
-        serde_json::to_value(FleetFacts::from_fleet(&fixture_fleet())).unwrap()
+        serde_json::to_value(ClanFacts::from_clan(&fixture_clan())).unwrap()
     }
 
     fn fake(reply: Result<Value, CallError>) -> Fake {

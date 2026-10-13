@@ -5,7 +5,7 @@ drop it in the worktree as `KICKOFF.md` and point the spec at it.
 
 ---
 
-**Read `/Users/gylleus/Documents/agents/_AGENT_PROTOCOL.md` first.** It is the shared fleet
+**Read `/Users/gylleus/Documents/agents/_AGENT_PROTOCOL.md` first.** It is the shared clan
 protocol: lifecycle, reporting, hard rules, complexity and measurement discipline. Everything
 below is only what is specific to this track.
 

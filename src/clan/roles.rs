@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use super::{FleetData, ts_ms};
+use super::{ClanData, ts_ms};
 use crate::orca::{InboxMessage, MessageType};
 
 /// One terminal a Claude terminal sent input to with `orca terminal send --terminal <target>`.
@@ -45,7 +45,7 @@ pub struct RunRoles {
 
 /// Bus senders that are never a coordinator terminal.
 fn is_service_sender(handle: &str) -> bool {
-    handle == "queen"
+    crate::orca::is_broadcast_sender(handle)
         || handle.starts_with("myrstack-")
         || handle.starts_with("run:")
         || handle.starts_with("dispatch:")
@@ -66,7 +66,7 @@ fn is_worker_message(m: &InboxMessage) -> bool {
     )
 }
 
-impl FleetData {
+impl ClanData {
     /// Live terminals Orca records as some Run's coordinator: the ones that may be attendants,
     /// whose transcripts the Claude worker reads for forwards.
     pub fn declared_coordinators(&self) -> BTreeSet<String> {

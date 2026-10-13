@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{FleetSnapshot, NodeId, NodeKind};
+use crate::model::{ClanSnapshot, NodeId, NodeKind};
 use crate::playbook::{Playbook, Target, Version};
 
 pub const FILE: &str = "playbook-fetches.jsonl";
@@ -271,7 +271,7 @@ pub struct PlaybookStatus {
 }
 
 impl PlaybookStatus {
-    pub fn map(summary: &FetchSummary, snapshot: &FleetSnapshot) -> Self {
+    pub fn map(summary: &FetchSummary, snapshot: &ClanSnapshot) -> Self {
         let mut nodes: Vec<NodeFetch> = summary
             .terminals
             .iter()
@@ -313,7 +313,7 @@ impl PlaybookStatus {
         let stale = self.nodes.len() - current.len();
         let mut out = format!("Playbook {version}");
         if self.nodes.is_empty() {
-            out.push_str(" · no fetches from fleet agents yet");
+            out.push_str(" · no fetches from clan agents yet");
             return out;
         }
         let noun = if current.iter().all(|n| n.kind == NodeKind::Coordinator) {
@@ -394,8 +394,8 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
-    use crate::model::FleetSnapshot;
-    use crate::playbook::fill::tests::{COORD, W1, W2, fixture_fleet};
+    use crate::model::ClanSnapshot;
+    use crate::playbook::fill::tests::{COORD, W1, W2, fixture_clan};
 
     fn version(commit: &str, hash: &str) -> Version {
         Version {
@@ -535,8 +535,8 @@ mod tests {
 
     #[test]
     fn status_maps_fetches_to_nodes_and_counts_the_stale_ones() {
-        let data = fixture_fleet();
-        let snapshot = FleetSnapshot::build(&data, data.polled_at_ms);
+        let data = fixture_clan();
+        let snapshot = ClanSnapshot::build(&data, data.polled_at_ms);
         let summary = FetchSummary {
             current: Some(version("1b0b685", "all")),
             terminals: vec![
@@ -580,7 +580,7 @@ mod tests {
         let empty = PlaybookStatus::map(&FetchSummary::default(), &snapshot);
         assert_eq!(
             empty.line(),
-            "Playbook unavailable · no fetches from fleet agents yet"
+            "Playbook unavailable · no fetches from clan agents yet"
         );
         let both_current = PlaybookStatus {
             nodes: status

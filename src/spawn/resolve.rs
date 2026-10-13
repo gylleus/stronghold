@@ -1,11 +1,11 @@
-//! Spawn requests from the control API and the Queen's `spawn_session` tool: argument parsing
+//! Spawn requests from the control API and the King's `spawn_session` tool: argument parsing
 //! and resolving names (repo, worktree, run, terminal) to Orca ids.
 
 use serde_json::{Value, json};
 
 use super::{Agent, SpawnRequest, SpawnTarget, catalog::Catalog, validate_name};
 use crate::control::protocol::{ControlError, Params};
-use crate::model::{FleetSnapshot, NodeKind};
+use crate::model::{ClanSnapshot, NodeKind};
 use crate::orca::spawn::{WorkerPlacement, Worktree};
 use crate::orca::{Run, Terminal};
 
@@ -188,7 +188,7 @@ impl SpawnArgs {
         Ok(())
     }
 
-    /// Resolves names against Orca's lists and the fleet's runs and terminals.
+    /// Resolves names against Orca's lists and the clan's runs and terminals.
     pub fn resolve(
         &self,
         catalog: &Catalog,
@@ -282,8 +282,8 @@ pub struct LiveAgent {
 }
 
 impl LiveAgent {
-    /// The snapshot's live agents (no subagents, no Queen).
-    pub fn from_snapshot(snapshot: &FleetSnapshot) -> Vec<Self> {
+    /// The snapshot's live agents (no subagents, no King).
+    pub fn from_snapshot(snapshot: &ClanSnapshot) -> Vec<Self> {
         snapshot
             .agent_nodes()
             .filter(|n| n.live && n.kind != NodeKind::Subagent)

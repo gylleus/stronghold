@@ -14,7 +14,7 @@ fixed heights affect only dwarves. World art always uses one image pixel per far
 rendered pixel grid, independent of camera zoom. The setting is persisted as `art.outline`.
 `dwarf/cutout.rs::Outline` supplies both renderers and the dwarf lab.
 
-- `src/ui/ant_farm/world.rs` contains the shared prop renderer and texture cache. `Prop`
+- `src/ui/farm/world.rs` contains the shared prop renderer and texture cache. `Prop`
   picks the drawing, `size()` its native texel bounds. The cache key includes prop, rendered
   size, palette, outline width and animation frame. `Canvas` calls the dwarf's `Piece::cut`/`paint`,
   `blob`, `capsule`, `ellipse`, `Xf` and `Finish::INK`. Adjust the material constants here
@@ -77,10 +77,10 @@ Both examples accept `--outline fine|regular|bold` for comparing ink weights.
 Visual checks (each farm command also writes a `-walk` screenshot):
 
 ```sh
-cargo run --release --example ant_farm -- --parked --shot /tmp/farm.png
-cargo run --release --example ant_farm -- --parked --palette endesga-32 --shot /tmp/farm-endesga.png
-cargo run --release --example ant_farm -- --parked --palette oil-6 --shot /tmp/farm-oil.png
-MYRSTACK_HOUR=22 cargo run --release --example ant_farm -- --parked --shot /tmp/farm-night.png
+cargo run --release --example farm -- --parked --shot /tmp/farm.png
+cargo run --release --example farm -- --parked --palette endesga-32 --shot /tmp/farm-endesga.png
+cargo run --release --example farm -- --parked --palette oil-6 --shot /tmp/farm-oil.png
+MYRSTACK_HOUR=22 cargo run --release --example farm -- --parked --shot /tmp/farm-night.png
 cargo run --release --example dwarf_lab -- --pixel 48 --shot /tmp/dwarf-lab.png
 ```
 
@@ -175,7 +175,7 @@ lighter backdrop, or an outline colour picked per palette.
 - **Palette:** own colours, or any of the 16 bundled palettes. A palette also works on
   smooth dwarves: their flat shapes are recoloured directly.
 
-How the farm maps onto dwarves (`src/ui/ant_farm/art.rs`):
+How the farm maps onto dwarves (`src/ui/farm/art.rs`):
 - The Queen is the King: crown, white braids, red robe, ruby scepter. While her chat turn
   runs he studies.
 - Each agent gets a dwarf picked by its id. The tunic is its livery: Claude amber, Codex
@@ -186,7 +186,7 @@ How the farm maps onto dwarves (`src/ui/ant_farm/art.rs`):
   overlays (crown item, headphones, builder's hat) are skipped for dwarves.
 
 Pixel dwarves re-render at 12 frames per second and cache one texture per agent.
-`cargo run --release --example ant_farm -- --dwarves [--pixels farm|HEIGHT] [--palette NAME]`
+`cargo run --release --example farm -- --dwarves [--pixels farm|HEIGHT] [--palette NAME]`
 shows the demo fleet.
 
 ![The farm with dwarves](tests/farm-dwarves.png)
@@ -262,7 +262,7 @@ Next, if Karl likes the direction:
 | `art/queen.svg` | 64×64 vector, rasterized up to 256 px | The Queen's avatar: graph hub node, top bar, Queen button, details header, chat header and chat empty state (`src/ui/art.rs`) | Ant and crown from Microsoft Fluent Emoji (Flat), on a honey hexagon drawn for Myrstack | MIT (Fluent parts); hexagon is Myrstack's own |
 | `art/ant_cell.svg` | vector, shown 28–96 pt | "Connecting to Orca" empty state (`src/app/panes.rs`) and the empty review queue (`src/ui/review.rs`) | Fluent Emoji ant on a comb cell drawn for Myrstack | MIT (Fluent parts); cell is Myrstack's own |
 | `art/anthill.svg` | vector | Sidebar empty state, "The colony is quiet" (`src/ui/sidebar.rs`) | Fluent Emoji ants on a mound drawn for Myrstack | MIT (Fluent parts); mound is Myrstack's own |
-| `art/farm/ant_grey.png` | 16×32 PNG, two stacked 16×16 walk frames | Every ant in the ant farm. Recolored in code to Claude (amber), Codex (slate/teal) and plain (grey) coats (`src/ui/ant_farm/sprites.rs`) | "16x16 Ant Enemies" by ARoachIFoundOnMyPillow, OpenGameArt | CC0 |
+| `art/farm/ant_grey.png` | 16×32 PNG, two stacked 16×16 walk frames | Every ant in the ant farm. Recolored in code to Claude (amber), Codex (slate/teal) and plain (grey) coats (`src/ui/farm/sprites.rs`) | "16x16 Ant Enemies" by ARoachIFoundOnMyPillow, OpenGameArt | CC0 |
 | `art/farm/ant_red.png` | 16×32 PNG, two frames | Failed ants (drawn belly up) | same sheet set | CC0 |
 | `art/farm/crown.png` | 16×16 PNG | The Queen's crown, carried item | "Gold treasure icons 16x16" by Bonsaiheldin, icon 9 | CC0 |
 | `art/farm/coin.png` | 16×16 PNG | A crumb (one PR) carried to storage | same set, icon 2 | CC0 |

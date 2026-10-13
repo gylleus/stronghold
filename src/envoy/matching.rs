@@ -1,13 +1,13 @@
-//! Which of Karl's ants an inbound event concerns: thread ownership first, then shared refs
+//! Which of Karl's dwarves an inbound event concerns: thread ownership first, then shared refs
 //! (`VROOM-123`, `repo#45`, PR links, branch names), then distinctive label keywords.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::channel::InboundEvent;
 
-/// A live ant as the matcher sees it.
+/// A live dwarf as the matcher sees it.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Ant {
+pub struct Dwarf {
     /// Node id, e.g. `term:term_…`; what `envoy_relay` takes as `to`.
     pub id: String,
     pub label: String,
@@ -31,7 +31,7 @@ pub struct Candidate {
 
 const MAX_CANDIDATES: usize = 3;
 
-/// Words too common in this fleet's labels and Slack to identify an ant on their own.
+/// Words too common in this clan's labels and Slack to identify a dwarf on their own.
 const COMMON: &[&str] = &[
     "about",
     "after",
@@ -101,13 +101,13 @@ const COMMON: &[&str] = &[
     "write",
 ];
 
-/// Ants `event` likely concerns, best first. `thread` holds the other inbox events in its
+/// Dwarves `event` likely concerns, best first. `thread` holds the other inbox events in its
 /// thread, whose refs count too (a reply rarely repeats the PR number). `heads` maps `repo#N`
 /// to the PR's head branch.
 pub fn candidates(
     event: &InboundEvent,
     thread: &[&InboundEvent],
-    ants: &[Ant],
+    dwarves: &[Dwarf],
     heads: &BTreeMap<String, String>,
 ) -> Vec<Candidate> {
     let root = format!(
@@ -123,13 +123,13 @@ pub fn candidates(
     }
     let refs = refs(&text);
     let words = words(&own);
-    let mut out: Vec<Candidate> = ants
+    let mut out: Vec<Candidate> = dwarves
         .iter()
-        .filter_map(|ant| {
-            let (score, why) = score(ant, &root, &refs, &words, &text, heads)?;
+        .filter_map(|dwarf| {
+            let (score, why) = score(dwarf, &root, &refs, &words, &text, heads)?;
             Some(Candidate {
-                id: ant.id.clone(),
-                label: ant.label.clone(),
+                id: dwarf.id.clone(),
+                label: dwarf.label.clone(),
                 why,
                 score,
             })
@@ -141,21 +141,21 @@ pub fn candidates(
 }
 
 fn score(
-    ant: &Ant,
+    dwarf: &Dwarf,
     root: &str,
     refs: &BTreeSet<String>,
     words: &BTreeSet<String>,
     text: &str,
     heads: &BTreeMap<String, String>,
 ) -> Option<(u32, String)> {
-    if ant.threads.iter().any(|t| t == root) {
+    if dwarf.threads.iter().any(|t| t == root) {
         return Some((100, "its thread".into()));
     }
     let mut own = BTreeSet::new();
-    for s in std::iter::once(&ant.label)
-        .chain(ant.branch.iter())
-        .chain(&ant.context)
-        .chain(&ant.prs)
+    for s in std::iter::once(&dwarf.label)
+        .chain(dwarf.branch.iter())
+        .chain(&dwarf.context)
+        .chain(&dwarf.prs)
     {
         own.extend(self::refs(&s.to_lowercase()));
     }
@@ -166,7 +166,7 @@ fn score(
     if let Some(r) = refs.iter().find(|r| own.contains(*r)) {
         return Some((50, r.clone()));
     }
-    if let Some(branch) = ant.branch.as_deref()
+    if let Some(branch) = dwarf.branch.as_deref()
         && let Some(r) = refs
             .iter()
             .find(|r| heads.get(*r).is_some_and(|h| h == branch))
@@ -179,15 +179,15 @@ fn score(
     {
         return Some((30, r.clone()));
     }
-    if let Some(branch) = ant.branch.as_deref().filter(|b| b.len() >= 8)
+    if let Some(branch) = dwarf.branch.as_deref().filter(|b| b.len() >= 8)
         && text.contains(&branch.to_lowercase())
     {
         return Some((50, branch.into()));
     }
-    let keys: BTreeSet<String> = words_of(&ant.label)
+    let keys: BTreeSet<String> = words_of(&dwarf.label)
         .into_iter()
-        .chain(ant.branch.as_deref().map(words_of).unwrap_or_default())
-        .filter(|w| ant.repo.as_deref() != Some(w))
+        .chain(dwarf.branch.as_deref().map(words_of).unwrap_or_default())
+        .filter(|w| dwarf.repo.as_deref() != Some(w))
         .collect();
     let hits: Vec<&String> = keys.intersection(words).collect();
     if hits.len() >= 2 {
@@ -274,10 +274,10 @@ fn words_of(s: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// ` — ants: Label (id, why); …` or ` — no ant match`, appended to an event line.
+/// ` — dwarves: Label (id, why); …` or ` — no dwarf match`, appended to an event line.
 pub fn annotation(candidates: &[Candidate]) -> String {
     if candidates.is_empty() {
-        return " — no ant match".into();
+        return " — no dwarf match".into();
     }
     let list: Vec<String> = candidates
         .iter()
@@ -286,7 +286,7 @@ pub fn annotation(candidates: &[Candidate]) -> String {
             format!("{label} ({}, {})", c.id, c.why)
         })
         .collect();
-    format!(" — ants: {}", list.join("; "))
+    format!(" — dwarves: {}", list.join("; "))
 }
 
 #[cfg(test)]

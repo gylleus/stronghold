@@ -142,7 +142,7 @@ fn wait(core: &mut AppEnvoy, ready: impl Fn(&AppEnvoy) -> bool) {
 fn submit(core: &mut AppEnvoy, ask: &str) -> String {
     let result = crate::mcp::envoy::call(
         &mut Control(core),
-        &origin("ant"),
+        &origin("dwarf"),
         "reach_out",
         &json!({"to":"Avery agent","ask":ask,"why":"Fixture review"}),
     )
@@ -206,7 +206,7 @@ fn gateway_mcp_to_event_route_approval_fast_reply_and_safe_terminal_delivery() {
     let id = submit(&mut core, ask);
     let (action, record) = core.request_event("envoy").unwrap();
     assert!(
-        matches!(&action,Action::Send{input,..} if input.text.as_ref().unwrap().contains("Envoy event: request from ant"))
+        matches!(&action,Action::Send{input,..} if input.text.as_ref().unwrap().contains("Envoy event: request from dwarf"))
     );
     core.gateway_actions.insert(1, record);
     core.gateway_done(
@@ -220,7 +220,7 @@ fn gateway_mcp_to_event_route_approval_fast_reply_and_safe_terminal_delivery() {
     );
     assert!(core.request_event("envoy").is_none());
     let draft = route(&mut core, &id);
-    assert_eq!(draft.text, format!("Request from ant:\n\n{ask}"));
+    assert_eq!(draft.text, format!("Request from dwarf:\n\n{ask}"));
     assert!(
         core.queue()
             .unwrap()
@@ -245,7 +245,7 @@ fn gateway_mcp_to_event_route_approval_fast_reply_and_safe_terminal_delivery() {
     assert_eq!(
         sent.lock().unwrap()[0].text,
         format!(
-            "Request from ant:\n\n{ask}\n\n{}",
+            "Request from dwarf:\n\n{ask}\n\n{}",
             crate::envoy::drafts::ATTRIBUTION
         )
     );
@@ -258,9 +258,9 @@ fn gateway_mcp_to_event_route_approval_fast_reply_and_safe_terminal_delivery() {
     };
     assert!(!can_forward(&terminal, false, false, None));
     assert!(can_forward(&terminal, true, false, None));
-    let (action, record) = core.reply_action(&id, &delivery, "ant").unwrap();
+    let (action, record) = core.reply_action(&id, &delivery, "dwarf").unwrap();
     assert!(
-        matches!(&action,Action::Send{handle,input} if handle=="ant" && input.text.as_ref().unwrap().contains("not Karl's instruction") && input.text.as_ref().unwrap().contains(fake.event.permalink.as_ref().unwrap()))
+        matches!(&action,Action::Send{handle,input} if handle=="dwarf" && input.text.as_ref().unwrap().contains("not Karl's instruction") && input.text.as_ref().unwrap().contains(fake.event.permalink.as_ref().unwrap()))
     );
     core.gateway_actions.insert(2, record);
     let mut traffic = Vec::new();
@@ -280,7 +280,7 @@ fn gateway_mcp_to_event_route_approval_fast_reply_and_safe_terminal_delivery() {
     assert!(reloaded.all()[0].deliveries[0].delivered);
     let status = core
         .request(&command(
-            "ant",
+            "dwarf",
             "reach_out_status",
             json!({"request_id":id}),
         ))
@@ -298,7 +298,7 @@ fn gateway_mcp_to_event_route_approval_fast_reply_and_safe_terminal_delivery() {
         .is_err()
     );
     assert!(
-        core.request(&command("ant", "envoy_request", json!({"id":id})))
+        core.request(&command("dwarf", "envoy_request", json!({"id":id})))
             .is_err()
     );
 }
@@ -390,7 +390,7 @@ fn followups_wait_for_root_and_cannot_upgrade_simulated_root_to_live() {
     core.handle = Some("envoy".into());
     let id = submit(&mut core, "first");
     core.request(&command(
-        "ant",
+        "dwarf",
         "reach_out",
         json!({"to":"Avery agent","ask":"follow","why":"review","request_id":id}),
     ))
@@ -447,11 +447,11 @@ fn failed_watch_save_retries_and_failed_policy_application_blocks_dispatch() {
 #[test]
 fn reply_fallback_rejects_reused_requester_and_coordinator_incarnations() {
     use crate::orca::Terminal;
-    let mut data = crate::fleet::FleetData {
+    let mut data = crate::clan::ClanData {
         terminals: vec![
             Terminal {
-                handle: "ant".into(),
-                incarnation_id: Some("ant-1".into()),
+                handle: "dwarf".into(),
+                incarnation_id: Some("dwarf-1".into()),
                 connected: true,
                 writable: true,
                 ..Default::default()
@@ -466,16 +466,16 @@ fn reply_fallback_rejects_reused_requester_and_coordinator_incarnations() {
         ],
         ..Default::default()
     };
-    let snapshot = crate::model::FleetSnapshot::build(&data, 0);
-    let mut who = Requester::from_origin(origin("ant")).unwrap();
-    who.incarnation_id = Some("ant-1".into());
+    let snapshot = crate::model::ClanSnapshot::build(&data, 0);
+    let mut who = Requester::from_origin(origin("dwarf")).unwrap();
+    who.incarnation_id = Some("dwarf-1".into());
     who.coordinator = Some("coordinator".into());
     who.coordinator_incarnation_id = Some("coord-1".into());
     assert_eq!(
         gateway::reply_target(&snapshot, Some(&data), &who).as_deref(),
-        Some("ant")
+        Some("dwarf")
     );
-    data.terminals[0].incarnation_id = Some("ant-2".into());
+    data.terminals[0].incarnation_id = Some("dwarf-2".into());
     assert_eq!(
         gateway::reply_target(&snapshot, Some(&data), &who).as_deref(),
         Some("coordinator")
@@ -554,7 +554,7 @@ fn failed_root_can_be_resolved_or_declined_without_stranding_followups() {
             .unwrap();
         core.reconcile_requests().unwrap();
         core.request(&command(
-            "ant",
+            "dwarf",
             "reach_out",
             json!({"to":"Avery agent","ask":"follow","why":"review","request_id":id}),
         ))
@@ -587,23 +587,23 @@ fn failed_root_can_be_resolved_or_declined_without_stranding_followups() {
 fn request_status_and_followups_reject_a_reused_terminal() {
     let dir = tempfile::tempdir().unwrap();
     let mut core = AppEnvoy::load(dir.path().into());
-    let mut owner = Requester::from_origin(origin("ant")).unwrap();
+    let mut owner = Requester::from_origin(origin("dwarf")).unwrap();
     owner.incarnation_id = Some("first".into());
     let ask = command(
-        "ant",
+        "dwarf",
         "reach_out",
         json!({"to":"Avery","ask":"first","why":"review"}),
     );
     let accepted = core.gateway_request(&ask, owner.clone()).unwrap();
     let id = accepted["request_id"].as_str().unwrap();
-    let status = command("ant", "reach_out_status", json!({"request_id":id}));
+    let status = command("dwarf", "reach_out_status", json!({"request_id":id}));
     assert!(core.gateway_request(&status, owner.clone()).is_ok());
     owner.incarnation_id = Some("replacement".into());
     assert!(core.gateway_request(&status, owner.clone()).is_err());
     assert!(
         core.gateway_request(
             &command(
-                "ant",
+                "dwarf",
                 "reach_out",
                 json!({"to":"Avery","ask":"follow","why":"review","request_id":id})
             ),
@@ -634,7 +634,7 @@ fn pending_drafts_cannot_send_to_a_different_canonical_thread() {
                 .unwrap();
             core.reconcile_requests().unwrap();
             core.request(&command(
-                "ant",
+                "dwarf",
                 "reach_out",
                 json!({"to":"Avery agent","ask":"follow","why":"review","request_id":id}),
             ))
@@ -666,14 +666,14 @@ fn no_reply_root_does_not_settle_an_accepted_followup() {
     core.handle = Some("envoy".into());
     let accepted = core
         .request(&command(
-            "ant",
+            "dwarf",
             "reach_out",
             json!({"to":"Avery agent","ask":"first","why":"review","expect_reply":false}),
         ))
         .unwrap();
     let id = accepted["request_id"].as_str().unwrap();
     core.request(&command(
-        "ant",
+        "dwarf",
         "reach_out",
         json!({"to":"Avery agent","ask":"follow","why":"review","request_id":id}),
     ))
@@ -803,7 +803,7 @@ fn invalid_adoption_reply_does_not_bind_owner_before_retry() {
         )
         .unwrap();
     let id = core.requests()[0].id.clone();
-    let who = Requester::from_origin(origin("ant")).unwrap();
+    let who = Requester::from_origin(origin("dwarf")).unwrap();
     assert!(
         core.binding_thread(
             &json!({"request_id":id,"event_id":"missing","reason":"review"}),
@@ -856,7 +856,7 @@ fn foreign_thread_hint_cannot_watch_or_disclose_history_before_real_send() {
         },
     )
     .unwrap();
-    let accepted = core.request(&command("ant","reach_out",json!({"to":"Avery","ask":"A private thread hint","why":"review","thread":"https://example.slack.com/archives/C123/p1000001"}))).unwrap();
+    let accepted = core.request(&command("dwarf","reach_out",json!({"to":"Avery","ask":"A private thread hint","why":"review","thread":"https://example.slack.com/archives/C123/p1000001"}))).unwrap();
     let id = accepted["request_id"].as_str().unwrap().to_owned();
     core.reconcile_requests().unwrap();
     wait(&mut core, |c| {
@@ -1052,7 +1052,7 @@ fn rejected_root_is_not_reapplied_when_routing_identical_retry() {
     ))
     .unwrap();
     let refused = core.request(&command(
-        "ant",
+        "dwarf",
         "reach_out",
         json!({"to":"Avery agent","ask":"retry after review","why":"Review again","request_id":id}),
     ));
@@ -1075,7 +1075,7 @@ fn adoption_collision_keeps_hint_unauthorized_and_borrows_the_shared_subscriptio
     core.worker = Some(worker);
     core.handle = Some("envoy".into());
     core.settings.dry_run = false;
-    let accepted=core.request(&command("ant","reach_out",json!({"to":"Avery","ask":"hint","why":"review","thread":"https://example.slack.com/archives/C123/p1000001"}))).unwrap();
+    let accepted=core.request(&command("dwarf","reach_out",json!({"to":"Avery","ask":"hint","why":"review","thread":"https://example.slack.com/archives/C123/p1000001"}))).unwrap();
     let id = accepted["request_id"].as_str().unwrap().to_owned();
     let thread = crate::envoy::requests::Thread {
         conversation: "C123".into(),
@@ -1143,7 +1143,7 @@ fn declined_unsent_thread_hint_cannot_remove_a_subscription() {
     core.worker = Some(worker);
     core.handle = Some("envoy".into());
     core.settings.dry_run = false;
-    let accepted=core.request(&command("ant","reach_out",json!({"to":"Avery","ask":"hint","why":"review","thread":"https://example.slack.com/archives/C123/p1000001"}))).unwrap();
+    let accepted=core.request(&command("dwarf","reach_out",json!({"to":"Avery","ask":"hint","why":"review","thread":"https://example.slack.com/archives/C123/p1000001"}))).unwrap();
     let id = accepted["request_id"].as_str().unwrap().to_owned();
     core.request(&command(
         "envoy",
@@ -1185,7 +1185,7 @@ fn closed_sent_request_cannot_reopen_after_last_turn_declined() {
         .unwrap();
     core.reconcile_requests().unwrap();
     core.request(&command(
-        "ant",
+        "dwarf",
         "reach_out",
         json!({"to":"Avery agent","ask":"follow","why":"test","request_id":id}),
     ))
@@ -1206,7 +1206,7 @@ fn closed_sent_request_cannot_reopen_after_last_turn_declined() {
     commands.try_iter().for_each(drop);
     assert!(
         core.request(&command(
-            "ant",
+            "dwarf",
             "reach_out",
             json!({"to":"Avery agent","ask":"reopen","why":"test","request_id":id})
         ))
@@ -1270,8 +1270,9 @@ fn binding_proposal_requires_acceptance_and_reject_never_routes() {
             .adopt(thread.clone(), "Borrowed".into(), 0)
             .unwrap();
         let id = core.requests()[0].id.clone();
-        let who = Requester::from_origin(origin("ant")).unwrap();
-        let args = json!({"request_id":id,"requester":"ant","reason":"This ant owns the review"});
+        let who = Requester::from_origin(origin("dwarf")).unwrap();
+        let args =
+            json!({"request_id":id,"requester":"dwarf","reason":"This dwarf owns the review"});
         let preview = crate::envoy::requests::BindingPreview {
             thread,
             first_line: "Review discussion".into(),
@@ -1283,7 +1284,7 @@ fn binding_proposal_requires_acceptance_and_reject_never_routes() {
             .unwrap()
             .reply(&id, &fake.event)
             .unwrap();
-        assert!(core.reply_action(&id, &fake.event.id(), "ant").is_none());
+        assert!(core.reply_action(&id, &fake.event.id(), "dwarf").is_none());
         assert!(!core.requests()[0].owned_by(&who));
         let previous = core.requests()[0].binding_proposal.as_ref().unwrap().id;
         core.propose_binding(&args, who.clone(), preview).unwrap();
@@ -1293,7 +1294,7 @@ fn binding_proposal_requires_acceptance_and_reject_never_routes() {
         reloaded.settings.dry_run = false;
         assert!(
             reloaded
-                .reply_action(&id, &fake.event.id(), "ant")
+                .reply_action(&id, &fake.event.id(), "dwarf")
                 .is_none()
         );
         reloaded
@@ -1310,7 +1311,7 @@ fn binding_proposal_requires_acceptance_and_reject_never_routes() {
             .unwrap();
         assert_eq!(
             reloaded
-                .reply_action(&id, &fake.event.id(), "ant")
+                .reply_action(&id, &fake.event.id(), "dwarf")
                 .is_some(),
             accept
         );
@@ -1319,7 +1320,7 @@ fn binding_proposal_requires_acceptance_and_reject_never_routes() {
         later.ts = format!("{}.000003", now_ms() / 1000 + 2);
         reloaded.requests_mut().unwrap().reply(&id, &later).unwrap();
         assert_eq!(
-            reloaded.reply_action(&id, &later.id(), "ant").is_some(),
+            reloaded.reply_action(&id, &later.id(), "dwarf").is_some(),
             accept
         );
     }
@@ -1330,9 +1331,9 @@ fn own_request_binding_is_noop_and_legacy_unapproved_adoption_is_blocked() {
     let dir = tempfile::tempdir().unwrap();
     let mut core = AppEnvoy::load(dir.path().into());
     let id = submit(&mut core, "mine");
-    let who = Requester::from_origin(origin("ant")).unwrap();
+    let who = Requester::from_origin(origin("dwarf")).unwrap();
     assert!(
-        core.binding_thread(&json!({"request_id":id,"requester":"ant"}), &who)
+        core.binding_thread(&json!({"request_id":id,"requester":"dwarf"}), &who)
             .unwrap()
             .is_none()
     );
@@ -1353,7 +1354,7 @@ fn own_request_binding_is_noop_and_legacy_unapproved_adoption_is_blocked() {
         .reply(&id, &fake.event)
         .unwrap();
     core.settings.dry_run = false;
-    assert!(core.reply_action(&id, &fake.event.id(), "ant").is_none());
+    assert!(core.reply_action(&id, &fake.event.id(), "dwarf").is_none());
     assert!(!core.requests()[0].owned_by(&who));
 }
 
@@ -1441,9 +1442,9 @@ fn binding_worker_preview_persists_proposal_and_notifies_without_assigning_owner
     let command = command(
         "envoy",
         "envoy_link_reply",
-        json!({"request_id":id,"requester":"ant","reason":"Build context"}),
+        json!({"request_id":id,"requester":"dwarf","reason":"Build context"}),
     );
-    let requester = Requester::from_origin(origin("ant")).unwrap();
+    let requester = Requester::from_origin(origin("dwarf")).unwrap();
     assert_eq!(
         core.binding_thread(&command.args, &requester).unwrap(),
         Some(thread.clone())
@@ -1625,7 +1626,10 @@ fn request_lines_and_envoy_request_carry_the_bound_threads_note() {
         panic!("typed line")
     };
     let line = input.text.as_ref().unwrap();
-    assert!(line.starts_with("Envoy event: request from ant:"), "{line}");
+    assert!(
+        line.starts_with("Envoy event: request from dwarf:"),
+        "{line}"
+    );
     assert!(
         line.ends_with("— note: Avery's agent owns this thread; it promised a date by Friday"),
         "{line}"

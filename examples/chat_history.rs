@@ -1,9 +1,9 @@
-//! A live agent's conversation pane (or the Queen's chat) as the app draws it, loaded from the
+//! A live agent's conversation pane (or the King's chat) as the app draws it, loaded from the
 //! real session, for checking history loading and scrolling.
 //!
-//! `cargo run --example chat_history -- (--terminal <handle> | --queen) [--screen] [--light]
+//! `cargo run --example chat_history -- (--terminal <handle> | --king) [--screen] [--light]
 //! [--scroll-up <points>] [--shot out.png]`: `--terminal` shows that Orca terminal's agent with
-//! its session transcript (`--screen`: its live screen), `--queen` the Queen's chat with her
+//! its session transcript (`--screen`: its live screen), `--king` the King's chat with his
 //! resumed session. `--scroll-up` scrolls the list up once drawn. With `--shot`, it saves a
 //! screenshot once settled and exits.
 
@@ -36,8 +36,8 @@ fn main() -> eframe::Result {
     let scroll_up = arg("--scroll-up").and_then(|s| s.parse::<f32>().ok());
     let content = match arg("--terminal") {
         Some(handle) => agent(&handle, flag("--screen")),
-        None if flag("--queen") => queen(),
-        None => panic!("--terminal <handle> or --queen"),
+        None if flag("--king") => king(),
+        None => panic!("--terminal <handle> or --king"),
     };
     eframe::run_native(
         "chat history",
@@ -72,7 +72,7 @@ enum Content {
         view: Box<Option<TranscriptView>>,
         show_screen: bool,
     },
-    Queen(Box<Transcript>),
+    King(Box<Transcript>),
 }
 
 /// The agent in Orca terminal `handle`, its screen and its session's conversation.
@@ -143,20 +143,20 @@ fn agent(handle: &str, show_screen: bool) -> Content {
     }
 }
 
-/// The Queen's resumed conversation, as the chat loads it at start.
-fn queen() -> Content {
+/// The King's resumed conversation, as the chat loads it at start.
+fn king() -> Content {
     let dir = myrstack::claude::hook::data_dir().join("chat");
-    let record = myrstack::chat::session::SessionStore::saved(&dir).expect("no Queen session");
+    let record = myrstack::chat::session::SessionStore::saved(&dir).expect("no King session");
     let info = SessionLocator::default()
         .find_session(&record.session_id, Some(&dir))
-        .expect("no Queen transcript");
+        .expect("no King transcript");
     let transcript = myrstack::chat::history::load(&info.transcript_path).expect("read");
     eprintln!(
         "{}: {} items",
         info.transcript_path.display(),
         transcript.items.len()
     );
-    Content::Queen(Box::new(transcript))
+    Content::King(Box::new(transcript))
 }
 
 struct Pane {
@@ -203,7 +203,7 @@ impl eframe::App for Pane {
                 };
                 ui::terminal::terminal_panel(ui, node, Some(screen), input, 0);
             }
-            Content::Queen(transcript) => {
+            Content::King(transcript) => {
                 let view = ui::chat::ChatView {
                     transcript,
                     state: &SessionState::Ready,

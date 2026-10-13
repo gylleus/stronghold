@@ -183,7 +183,7 @@ fn nothing_to_whip_text(skips: &[&ManualSkip]) -> String {
 }
 
 /// "Whip all stalled now": an immediate whip pass with the normal rules (threshold, cooldown,
-/// dry-run). Shared by the Queen panel and the whip settings window.
+/// dry-run). Shared by the King panel and the whip settings window.
 pub fn whip_stalled_button(ui: &mut egui::Ui) -> bool {
     ui.button("Whip all stalled now")
         .on_hover_text(
@@ -226,7 +226,7 @@ pub fn manual_result_text(report: &WhipNowReport, skips: &[ManualSkip]) -> (Stri
 /// Toast text for a finished "Whip all stalled now" pass.
 pub fn stalled_result_text(report: &WhipNowReport) -> String {
     if !report.ran {
-        return "Whip pass not run: no fleet data yet.".into();
+        return "Whip pass not run: no clan data yet.".into();
     }
     let mode = if report.dry_run { " (dry-run)" } else { "" };
     match report.items.len() {
@@ -263,9 +263,9 @@ mod tests {
 
     fn skip(label: &str) -> ManualSkip {
         ManualSkip {
-            node: NodeId::queen(),
+            node: NodeId::king(),
             label: label.into(),
-            reason: "the Queen is Myrstack itself".into(),
+            reason: "the King is Myrstack itself".into(),
         }
     }
 
@@ -312,13 +312,13 @@ mod tests {
     #[test]
     fn nothing_to_send_shows_why() {
         let mut ui = WhipNowUi::default();
-        assert_eq!(ui.request(vec![ManualPlan::Skip(skip("Queen"))], 5), None);
+        assert_eq!(ui.request(vec![ManualPlan::Skip(skip("King"))], 5), None);
         assert!(!ui.is_confirming());
         let toast = ui.toast().unwrap();
         assert!(toast.error);
         assert_eq!(
             toast.text,
-            "Nothing to whip: Queen (the Queen is Myrstack itself)"
+            "Nothing to whip: King (the King is Myrstack itself)"
         );
     }
 
@@ -329,11 +329,11 @@ mod tests {
             items: vec![item("a", "sent"), item("b", "failed: boom")],
             dry_run: true,
         };
-        let (text, failed) = manual_result_text(&report, &[skip("Queen")]);
+        let (text, failed) = manual_result_text(&report, &[skip("King")]);
         assert!(failed);
         assert_eq!(
             text,
-            "Whipped 1 agent; 1 failed: b failed: boom; skipped Queen (the Queen is Myrstack \
+            "Whipped 1 agent; 1 failed: b failed: boom; skipped King (the King is Myrstack \
              itself)."
         );
         assert_eq!(
@@ -345,17 +345,17 @@ mod tests {
             ..WhipNowReport::default()
         };
         assert!(stalled_result_text(&idle).starts_with("Whip pass: nothing to do"));
-        assert!(stalled_result_text(&WhipNowReport::default()).contains("no fleet data"));
+        assert!(stalled_result_text(&WhipNowReport::default()).contains("no clan data"));
     }
 
     #[test]
     fn confirming_the_popover_sends_the_nudges() {
         let mut state = WhipNowUi::default();
-        state.request(vec![nudge("a", true), ManualPlan::Skip(skip("Queen"))], 0);
+        state.request(vec![nudge("a", true), ManualPlan::Skip(skip("King"))], 0);
         let sent = crate::ui::test_util::click_label("Whip 1", |ui| state.show(ui.ctx(), 0));
         let (send, skips) = sent.expect("confirmed");
         assert_eq!(send[0].handle, "a");
-        assert_eq!(skips[0].label, "Queen");
+        assert_eq!(skips[0].label, "King");
         assert!(!state.is_confirming());
 
         let mut state = WhipNowUi::default();
@@ -368,7 +368,7 @@ mod tests {
     #[test]
     fn popover_and_toast_draw_headless() {
         let mut ui = WhipNowUi::default();
-        ui.request(vec![nudge("a", true), ManualPlan::Skip(skip("Queen"))], 0);
+        ui.request(vec![nudge("a", true), ManualPlan::Skip(skip("King"))], 0);
         ui.set_toast("Whipped 1 agent.".into(), false, 0);
         let ctx = egui::Context::default();
         for _ in 0..3 {

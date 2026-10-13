@@ -233,7 +233,7 @@ impl Draft {
         })
     }
 
-    pub fn queen_request(&self) -> String {
+    pub fn king_request(&self) -> String {
         format!(
             "Karl approved this task proposed by the Envoy:\n{}\nRepository: {}\nWhy: {}\nSlack: {}",
             self.text,
@@ -642,7 +642,7 @@ mod tests {
                     id: "r".into(),
                     turn_id: 1,
                     original_ask: ask,
-                    requester: "ant".into(),
+                    requester: "dwarf".into(),
                     why: "test".into(),
                     agent: true,
                 };

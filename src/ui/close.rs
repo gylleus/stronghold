@@ -11,9 +11,9 @@ use eframe::egui::{self, RichText};
 
 use crate::actions::{ActionId, ActionResult};
 use crate::close::{self, CloseOptions, ClosePlan, CloseStep};
-use crate::model::{FleetSnapshot, NodeId};
+use crate::model::{ClanSnapshot, NodeId};
 use crate::orca::Terminal;
-use crate::ui::fleet_view::kind_label;
+use crate::ui::clan_view::kind_label;
 
 /// How many finished closes the log keeps.
 const MAX_LOG: usize = 20;
@@ -206,7 +206,7 @@ impl CloseDialog {
     pub fn show(
         &mut self,
         ctx: &egui::Context,
-        snapshot: Option<&FleetSnapshot>,
+        snapshot: Option<&ClanSnapshot>,
         terminals: &[Terminal],
         hidden: &BTreeSet<NodeId>,
     ) -> Option<(ClosePlan, Vec<String>)> {
@@ -232,7 +232,7 @@ impl CloseDialog {
                 dialog.include_coordinators,
             )),
             (None, None) => Some(ClosePlan {
-                refused: Some("no fleet data yet".into()),
+                refused: Some("no clan data yet".into()),
                 ..ClosePlan::default()
             }),
         };
@@ -291,7 +291,7 @@ impl CloseDialog {
         let mut clear = false;
         ui.menu_button(title, |ui| {
             for entry in self.log.iter().rev() {
-                let age = crate::ui::fleet_view::format_age(now_ms - entry.at_ms);
+                let age = crate::ui::clan_view::format_age(now_ms - entry.at_ms);
                 let text = format!("{} ({age} ago)", entry.summary);
                 let text = if entry.ok {
                     RichText::new(text)
@@ -312,7 +312,7 @@ impl CloseDialog {
 /// The plan for `request` against the current snapshot.
 pub fn plan_request(
     request: &CloseRequest,
-    snapshot: &FleetSnapshot,
+    snapshot: &ClanSnapshot,
     terminals: &[Terminal],
     hidden: &BTreeSet<NodeId>,
     options: CloseOptions,
@@ -340,7 +340,7 @@ pub fn plan_request(
 }
 
 /// Human descriptions of each step, naming the node behind a handle.
-pub fn step_labels(plan: &ClosePlan, snapshot: Option<&FleetSnapshot>) -> Vec<String> {
+pub fn step_labels(plan: &ClosePlan, snapshot: Option<&ClanSnapshot>) -> Vec<String> {
     let name = |handle: &str| {
         snapshot
             .and_then(|s| s.node(&NodeId::terminal(handle)))

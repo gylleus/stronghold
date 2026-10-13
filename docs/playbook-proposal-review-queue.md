@@ -1,7 +1,7 @@
 # Playbook proposal: the review queue
 
-Proposed insertions to Karl's fleet docs so that ready PRs reach Myrstack's review queue
-(the "Ready for review" section of the Queen panel, `docs/control-api.md` *Review queue*).
+Proposed insertions to Karl's clan docs so that ready PRs reach Myrstack's review queue
+(the "Ready for review" section of the King panel, `docs/control-api.md` *Review queue*).
 Nothing here has been applied. Karl approves and applies them.
 
 - **`_AGENT_PROTOCOL.md`**: 1 block (insert A).
@@ -74,14 +74,14 @@ Add after the bullet `- Read the current body first and edit with gh pr edit …
 Replace the Myrstack line:
 
 ```
- └─ Myrstack: Karl's desktop view of the whole fleet (graph, terminals, alerts). Its whip
+ └─ Myrstack: Karl's desktop view of the whole clan (graph, terminals, alerts). Its whip
     nudges stalled tasks (`Myrstack:` messages from `myrstack-whip`).
 ```
 
 with:
 
 ```
- └─ Myrstack: Karl's desktop view of the whole fleet (graph, terminals, alerts, the review
+ └─ Myrstack: Karl's desktop view of the whole clan (graph, terminals, alerts, the review
     queue of ready PRs). Its whip nudges stalled tasks (`Myrstack:` messages from
     `myrstack-whip`).
 ```

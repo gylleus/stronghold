@@ -1,4 +1,4 @@
-//! Myrstack: a live farm view of the Orca agent fleet.
+//! Myrstack: a live farm view of the Orca agent clan.
 
 // Stub modules are filled in by later milestones.
 #![allow(dead_code)]
@@ -8,6 +8,7 @@ pub mod app;
 pub mod ask;
 pub mod broadcast;
 pub mod chat;
+pub mod clan;
 pub mod claude;
 pub mod close;
 pub mod codex;
@@ -15,7 +16,6 @@ pub mod control;
 pub mod detect;
 pub mod envoy;
 pub mod finish;
-pub mod fleet;
 pub mod health;
 pub mod hotkey;
 pub mod logfile;

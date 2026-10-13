@@ -1,11 +1,11 @@
 //! Message flight timing and coalescing. The mine draws these as sealed scrolls in
-//! `ant_farm::mail`; reduced motion lights the route in place and fades.
+//! `farm::mail`; reduced motion lights the route in place and fades.
 //!
 //! Bursts stay calm: a repeat of a message still in the air adds to its count (`×3`) rather
 //! than flying again, starts are staggered, and at most [`MAX_FLIGHTS`] fly at once.
 
 use crate::traffic::Flight;
-use crate::ui::ant_farm::motion;
+use crate::ui::farm::motion;
 
 /// From leaving the sender to reaching the receiver.
 pub const TRAVEL_S: f64 = 1.2;
@@ -134,7 +134,7 @@ mod tests {
 
     fn flight(to: &str, kind: MessageKind) -> Flight {
         Flight {
-            from: Endpoint::Node(NodeId::queen()),
+            from: Endpoint::Node(NodeId::king()),
             to: Endpoint::Node(NodeId::terminal(to)),
             kind,
         }

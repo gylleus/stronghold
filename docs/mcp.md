@@ -1,9 +1,9 @@
 # Myrstack MCP server
 
 `myrstack mcp` is an [MCP](https://modelcontextprotocol.io) server. It lets a chat client such
-as Claude Code ask for the fleet status (every coordinator and agent, and its state) and
-control the Myrstack dashboard. It proxies each fleet tool call to the running app's
-[control API](control-api.md). It also serves the fleet [playbook](#playbook) straight from
+as Claude Code ask for the clan status (every coordinator and agent, and its state) and
+control the Myrstack dashboard. It proxies each clan tool call to the running app's
+[control API](control-api.md). It also serves the clan [playbook](#playbook) straight from
 disk, which works without the app.
 
 ## Register it
@@ -13,7 +13,7 @@ cargo build --release
 claude mcp add --scope user myrstack -- /path/to/myrstack/target/release/myrstack mcp
 ```
 
-Start Myrstack (`myrstack`) as usual, then ask the chat things like "what's the fleet
+Start Myrstack (`myrstack`) as usual, then ask the chat things like "what's the clan
 status?", "who needs my input?", "show me the screen of the AI agent playbook coordinator" or
 "focus the farm on it".
 
@@ -56,7 +56,7 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `whip_status` | `limit` (log entries, default 10) | `whip` | read-only |
 | `set_whip` | `enabled`, `dry_run`, `notify` (at least one) | `whip_settings` | destructive, idempotent |
 | `whip_agents` | `ids`, or `stalled: true` | `whip` (action) | destructive |
-| `focus_agent` | `id` (or `queen`), `raise_window` | `focus` | idempotent |
+| `focus_agent` | `id` (or `king`), `raise_window` | `focus` | idempotent |
 | `set_filter` | `clear`, `repos`, `states`, `kinds`, `text`, `show_loose`, `show_released` | `filter` | idempotent |
 | `open_whip_settings` | – | `open_whip_settings` | idempotent |
 | `alerts` | `limit` (default 20), `unread_only` | `alerts` | read-only |
@@ -64,8 +64,8 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `health` | – | `health` | read-only |
 | `get_playbook` | `role` (default `coordinator`) or `file`, `section` | – (reads the playbook) | read-only |
 | `list_playbook` | – | – (reads the playbook) | read-only |
-| `attendant_brief` | `run_id` | `fleet_data` (headless fallback) | read-only |
-| `kickoff` | `task_id` | `fleet_data` (headless fallback) | read-only |
+| `attendant_brief` | `run_id` | `clan_data` (headless fallback) | read-only |
+| `kickoff` | `task_id` | `clan_data` (headless fallback) | read-only |
 | `mark_pr_ready` | `pr_url`, `title`, `summary` | `pr_ready` (queued in `pr-ready.jsonl` when the app is down) | not destructive, idempotent |
 | `review_queue` | – | `review_queue` (the saved queue when the app is down) | read-only |
 | `notify` | `title`, `message`, `severity` (`info` \| `warn` \| `urgent`), `url`, `agent` | `notify` (queued in `pending-notifications.jsonl` when the app is down) | not destructive |
@@ -73,17 +73,17 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `finish_session` | `summary`, `approval` (`karl` \| `trivial`), `outcome` (`done` \| `handed_over` \| `abandoned`), `pr_url`, `force` | `finish` (a `dry_run` check, then the real one) | destructive |
 | `clean_worktrees` | `dry_run` (**default true**), `ids` (needed with `dry_run: false`) | – (runs `orca`, `git`, `gh` itself) | destructive |
 
-`mark_pr_ready` is for fleet agents: the server is registered at user scope, so every Claude
-session (fleet agents in Orca terminals included) has it. It sends the caller's Orca identity
+`mark_pr_ready` is for clan agents: the server is registered at user scope, so every Claude
+session (clan agents in Orca terminals included) has it. It sends the caller's Orca identity
 (`ORCA_TERMINAL_HANDLE`, `ORCA_PANE_KEY`, `ORCA_TAB_ID` from the `myrstack mcp` process's
 environment, which it inherits from the agent's terminal) so the PR shows under the agent's
 node. Agents without MCP (Codex) run `myrstack pr-ready <url> [--title …] [--summary …]`,
 which does the same. See the control API's [Review queue](control-api.md#review-queue).
 
-`notify` is how any agent reaches Karl without going through the Queen: a macOS and/or
+`notify` is how any agent reaches Karl without going through the King: a macOS and/or
 in-app pop-up with a sound (per his Notifications settings), kept in his inbox (the bell in
 the top bar, `alerts`, `fleet_status`) and attributed to the caller's terminal like
-`mark_pr_ready`. When to call it is the fleet playbook's _Human in the loop_ rule, repeated in
+`mark_pr_ready`. When to call it is the clan playbook's _Human in the loop_ rule, repeated in
 the tool description and the server instructions (`src/mcp/notify.rs`, `rules_text!`): blocked
 on Karl (warn, or urgent), handovers (info, with the url and the next step), never progress;
 workers go through their coordinator. Identical
@@ -110,7 +110,7 @@ has follow-ups, so an agent that thinks it's done asks him first (`ask_karl`, in
 … Anything else, or can I close?") and stays; `approval` (required) is `karl` once he said go,
 or `trivial` for a tiny one-shot task with nothing to follow up. Without it the call is
 refused before reaching the app. The server then
-asks the app (`finish` with `dry_run`) who the caller is and what the fleet says: workers are
+asks the app (`finish` with `dry_run`) who the caller is and what the clan says: workers are
 refused (their coordinator reuses or releases them), and a coordinator with open tasks or an
 agent with a PR still in the review queue gets a problem. It then checks the caller's git
 worktree (the node's, else its own working directory): uncommitted changes (the `.beads/`
@@ -125,7 +125,7 @@ call both is in the tool descriptions and the server instructions (`src/mcp/life
 `rules_text!`), and in the playbook's _Human in the loop_.
 
 `clean_worktrees` is the top bar's worktree cleanup (`src/worktrees.rs`) as a tool, so the
-Queen can run it on request. A worktree is removable only when no Orca terminal, process
+King can run it on request. A worktree is removable only when no Orca terminal, process
 (by working directory, not by a command line that mentions the path) or live dispatch is in
 it, it has no uncommitted changes (the beads export aside), no untracked files other than
 agent notes (`*.md`) and logs (`*.log`), and no open PR, it is older than two hours and not
@@ -142,7 +142,7 @@ right before removal, copies its notes to `~/Documents/agents/notes/<repo>/<work
 (checked, never overwriting) and deletes its logs, then runs `orca worktree rm` (no
 `--force`), and logs every attempt to `worktree-cleanup.jsonl` in the data dir. While it runs,
 `worktree-sweep.json` there makes the app show its chainsaw, cutting down the removed
-worktrees' trees in the ant farm (one tree grows on its surface per open worktree). Folders under `~/orca/workspaces`
+worktrees' trees in the farm (one tree grows on its surface per open worktree). Folders under `~/orca/workspaces`
 that Orca doesn't list are reported, never touched.
 
 All tools set `openWorldHint: false`. Agent ids are node ids from `list_agents` or
@@ -153,7 +153,7 @@ works.
 
 Karl parks an agent he is done with for now but wants to keep (`park_agents`, or Park in a
 dwarf's context menu). A parked agent sleeps in the resting area's chamber in the farm. Its terminal, session and worktree are kept. It
-is out of the Queen's state, `by_state`, `needs_input` and `stalled` (`fleet.parked` lists
+is out of the King's state, `by_state`, `needs_input` and `stalled` (`clan.parked` lists
 it), the whip never nudges, escalates or notifies about it, "Close shown…" skips it and the
 worktree cleanup keeps its worktree. `close_agents` closes it only when it is named, with a
 warning in the plan. `send_to_agent` wakes it before typing (`woke: true` in the result);
@@ -171,10 +171,10 @@ the agent's output says): a parked agent keeps whatever state Orca reports.
 - `clean_worktrees` is a **dry run unless the chat passes `dry_run: false` with the `ids`
   Karl approved** from a dry run's plan.
 - `send_to_agent`, `press_key`, `broadcast_to_coordinators` and `set_whip` act on real
-  agents or on saved settings. Their descriptions tell the model to confirm with Karl first; the Queen in auto mode
-  skips that (Karl approved her actions up front).
+  agents or on saved settings. Their descriptions tell the model to confirm with Karl first; the King in auto mode
+  skips that (Karl approved the King's actions up front).
 - `whip_agents` sends Myrstack nudges now. With `ids` they are live even when the automatic
-  whip is in dry-run, and threshold and cooldown are ignored; the Queen, subagents, released
+  whip is in dry-run, and threshold and cooldown are ignored; the King, subagents, released
   workers and dead terminals are skipped with a reason, and agents waiting on Karl's input
   get a warning. With `stalled: true` it runs an immediate whip pass under the normal rules
   (dry-run included).
@@ -202,7 +202,7 @@ returns the "isn't running" error.
 
 ## Playbook
 
-Myrstack owns the fleet playbook: the Markdown rules in the repo's `playbook/` dir
+Myrstack owns the clan playbook: the Markdown rules in the repo's `playbook/` dir
 (`AGENT-FLEET-PLAYBOOK.md`, `_AGENT_PROTOCOL.md`, `ATTENDANT-BRIEF-TEMPLATE.md`,
 `KICKOFF-TEMPLATE.md`, `README.md`). A coordinator starting up fetches its rules from
 Myrstack instead of reading a file path. The files are read from disk on every request, so
@@ -276,7 +276,7 @@ myrstack playbook kickoff task_509f138460a0
 `attendant_brief {run_id}` and `kickoff {task_id}` (tools; also the prompts `attendant-brief` and
 `kickoff`, and the CLI above) return `ATTENDANT-BRIEF-TEMPLATE.md` / `KICKOFF-TEMPLATE.md` with
 every `<…>` placeholder Myrstack can answer from live data filled in. The data comes from the
-running app's `fleet_data` control method, else from one read-only Orca poll.
+running app's `clan_data` control method, else from one read-only Orca poll.
 
 - Attendant brief: campaign (the objective up to its first colon), objective, the run's effective
   coordinator terminal, the coordinator's Claude scratchpad when its session is known
@@ -299,7 +299,7 @@ Every playbook fetch (prompt, `get_playbook`, resource, filled template, CLI) is
 `via`, target (role or file), section, commit, dirty flag, hash, and the caller's
 `ORCA_TERMINAL_HANDLE` / `ORCA_PANE_KEY` / `ORCA_TAB_ID` when set. The app re-reads it every
 30 s off the UI thread, takes each terminal's newest fetch, and calls it stale when the same
-target now serves different text. The Queen panel shows `Playbook 1b0b685 · 3 coordinators
+target now serves different text. The King panel shows `Playbook 1b0b685 · 3 coordinators
 current · 1 on an older version` (hover lists everyone; stale nodes are listed and clicking one
 selects it), and the control API's `status` carries it as `playbook`.
 
@@ -309,7 +309,7 @@ Trimmed from a live session:
 
 ```
 → {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fleet_status","arguments":{}}}
-Fleet: working · 116 agents, 37 live (coordinator 7, worker 85, terminal 24)
+Clan: working · 116 agents, 37 live (coordinator 7, worker 85, terminal 24)
 States: working 3, idle 31, done 47, failed 35
 
 Needs input: nobody
@@ -332,7 +332,7 @@ Steps:
 - `orca terminal close --terminal=term_2bf8…`
 Warnings:
 - run depict-xyx: … loses its coordinator; its workers keep running (0 open tasks)
-To really close, confirm with Karl (the Queen in auto mode needn't), then call
+To really close, confirm with Karl (the King in auto mode needn't), then call
 close_agents again with dry_run=false.
 ```
 

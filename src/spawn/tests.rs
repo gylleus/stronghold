@@ -11,8 +11,8 @@ use super::pending::{PENDING_SELECT_MS, PendingSelect, node_for_handle, take_rea
 use super::resolve::LiveAgent;
 use super::*;
 use crate::actions::Key;
-use crate::fleet::FleetData;
-use crate::model::{FleetSnapshot, NodeId};
+use crate::clan::ClanData;
+use crate::model::{ClanSnapshot, NodeId};
 use crate::orca::client::parse_envelope;
 use crate::orca::spawn::{
     WorkerPlacement, parse_repo_list, parse_task_create, parse_terminal_create,
@@ -1025,7 +1025,7 @@ fn existing_worktree_run_accepts_bypass_and_submits_the_parked_prompt() {
     let handle = "term_9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
     assert_eq!(outcome.context.handle.as_deref(), Some(handle));
     assert!(outcome.verified);
-    // The outcome reports what the ant was launched with, for the spawn_session result.
+    // The outcome reports what the dwarf was launched with, for the spawn_session result.
     assert_eq!(outcome.model.as_deref(), Some("fable"));
     assert_eq!(outcome.effort.as_deref(), Some("high"));
     assert_eq!(
@@ -1491,12 +1491,12 @@ fn control_spawn_method_parses_into_a_command() {
 // ---------------------------------------------------------------------------
 // Selecting the new node
 
-fn snapshot() -> (FleetSnapshot, String) {
-    let data = FleetData {
+fn snapshot() -> (ClanSnapshot, String) {
+    let data = ClanData {
         terminals: terminals(),
-        ..FleetData::default()
+        ..ClanData::default()
     };
-    let snapshot = FleetSnapshot::build(&data, 0);
+    let snapshot = ClanSnapshot::build(&data, 0);
     let handle = snapshot
         .nodes
         .iter()
@@ -1519,7 +1519,7 @@ fn pending_select_waits_for_the_node_then_expires() {
     assert_eq!(take_ready(&mut pending, &snap, 1_000), Some(id));
     assert!(pending.is_none());
 
-    let empty = FleetSnapshot::default();
+    let empty = ClanSnapshot::default();
     let mut pending = Some(PendingSelect::new("term_new", 1_000));
     assert_eq!(take_ready(&mut pending, &empty, 2_000), None);
     assert!(pending.is_some(), "still waiting");
@@ -1945,17 +1945,17 @@ fn envoy_preflight_refuses_a_live_home_agent_without_a_saved_identity() {
 }
 
 // ---------------------------------------------------------------------------
-// The ants' default model and effort (Settings → `ants`)
+// The dwarves' default model and effort (Settings → `dwarves`)
 
 #[test]
-fn ants_default_fills_a_claude_ant_without_a_model() {
-    let ants = AntSettings {
+fn dwarves_default_fills_a_claude_dwarf_without_a_model() {
+    let dwarves = DwarfSettings {
         model: Some(" fable ".into()),
         effort: Some("high".into()),
     };
     let fill = |agent, model: Option<&str>, effort: Option<&str>| {
         let (mut m, mut e) = (model.map(str::to_owned), effort.map(str::to_owned));
-        ants.fill(agent, &mut m, &mut e);
+        dwarves.fill(agent, &mut m, &mut e);
         (m, e)
     };
     assert_eq!(
@@ -1971,26 +1971,26 @@ fn ants_default_fills_a_claude_ant_without_a_model() {
         fill(Agent::Claude, Some("opus"), Some("low")),
         (Some("opus".into()), Some("low".into()))
     );
-    // The setting is for Claude ants; Codex keeps its own default.
+    // The setting is for Claude dwarves; Codex keeps its own default.
     assert_eq!(fill(Agent::Codex, None, None), (None, None));
     // Nothing saved: nothing filled.
     let (mut m, mut e) = (None, None);
-    AntSettings::default().fill(Agent::Claude, &mut m, &mut e);
+    DwarfSettings::default().fill(Agent::Claude, &mut m, &mut e);
     assert_eq!((m, e), (None, None));
 
-    assert_eq!(ants.describe(), "fable (effort high)");
+    assert_eq!(dwarves.describe(), "fable (effort high)");
     assert_eq!(
-        AntSettings {
+        DwarfSettings {
             model: Some("opus".into()),
             effort: None
         }
         .describe(),
         "opus"
     );
-    assert_eq!(AntSettings::default().describe(), "CLI default");
-    assert!(ants.normalized().validate().is_ok());
+    assert_eq!(DwarfSettings::default().describe(), "CLI default");
+    assert!(dwarves.normalized().validate().is_ok());
     assert!(
-        AntSettings {
+        DwarfSettings {
             model: None,
             effort: Some("turbo".into())
         }

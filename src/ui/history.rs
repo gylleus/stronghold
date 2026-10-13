@@ -150,17 +150,17 @@ mod tests {
 
     #[test]
     fn back_and_forward_move_without_recording() {
-        let mut h = history(&["a", "queen"]);
-        assert!(h.can_back(Some(&id("queen"))));
+        let mut h = history(&["a", "king"]);
+        assert!(h.can_back(Some(&id("king"))));
         assert!(!h.can_forward());
-        assert_eq!(h.back(Some(&id("queen"))), Some(id("a")));
+        assert_eq!(h.back(Some(&id("king"))), Some(id("a")));
         // The app then records the node it selected, which is the current entry.
         h.record(Some(&id("a")));
-        assert_eq!(entries(&h), ["a", "queen"]);
+        assert_eq!(entries(&h), ["a", "king"]);
         assert!(!h.can_back(Some(&id("a"))));
         assert_eq!(h.back(Some(&id("a"))), None);
         assert!(h.can_forward());
-        assert_eq!(h.forward(), Some(id("queen")));
+        assert_eq!(h.forward(), Some(id("king")));
         assert_eq!(h.forward(), None);
     }
 

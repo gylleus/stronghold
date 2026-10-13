@@ -1,4 +1,4 @@
-//! The Queen's chat: a Claude Code session Myrstack spawns and owns (`claude -p` in
+//! The King's chat: a Claude Code session Myrstack spawns and owns (`claude -p` in
 //! stream-json mode), with the myrstack MCP tools, shown in the app's conversation column. It is not an
 //! Orca terminal, so it never appears in the farm.
 
@@ -35,7 +35,7 @@ pub struct ChatSession {
     /// Where auto mode is saved (the chat directory).
     dir: std::path::PathBuf,
     auto_mode: bool,
-    /// The auto mode the Queen was last told about in this conversation.
+    /// The auto mode the King was last told about in this conversation.
     told_auto: Option<bool>,
     /// `--model` / `--effort` the process runs with.
     model: Option<String>,
@@ -107,7 +107,7 @@ impl ChatSession {
             return false;
         }
         let mut notice = format!(
-            "Restarting the Queen with model {}",
+            "Restarting the King with model {}",
             model.as_deref().unwrap_or("CLI default")
         );
         if let Some(effort) = &effort {
@@ -128,13 +128,13 @@ impl ChatSession {
         true
     }
 
-    /// Whether the Queen's tool calls run without asking.
+    /// Whether the King's tool calls run without asking.
     pub fn auto_mode(&self) -> bool {
         self.auto_mode
     }
 
     /// Karl's auto mode toggle: saves it, applies it to the running session (same process and
-    /// conversation), shows a notice, and tells the Queen with the next message.
+    /// conversation), shows a notice, and tells the King with the next message.
     pub fn set_auto_mode(&mut self, on: bool) {
         if on == self.auto_mode {
             return;
@@ -147,8 +147,8 @@ impl ChatSession {
         self.transcript.push_system(auto_mode::notice(on));
     }
 
-    /// The text the CLI gets for Karl's `text`: prefixed with a Myrstack note when the Queen
-    /// has not been told the current auto mode (nothing to tell while it is off and she was
+    /// The text the CLI gets for Karl's `text`: prefixed with a Myrstack note when the King
+    /// has not been told the current auto mode (nothing to tell while it is off and he was
     /// never told it was on).
     fn outgoing(&mut self, text: &str) -> String {
         let tell = match self.told_auto {
@@ -254,7 +254,7 @@ impl ChatSession {
         }
     }
 
-    /// Whether the Queen is working on a turn.
+    /// Whether the King is working on a turn.
     pub fn is_thinking(&self) -> bool {
         self.transcript.running
     }
@@ -273,7 +273,7 @@ impl ChatSession {
         self.send_as(text, false)
     }
 
-    /// Sends a message Karl spoke: his bubble gets the voice marker and the Queen gets
+    /// Sends a message Karl spoke: his bubble gets the voice marker and the King gets
     /// [`voice::VOICE_NOTE`] with it (not shown), asking for a `<say>` line to speak.
     pub fn send_voice(&mut self, text: &str) -> bool {
         self.send_as(text, true)
@@ -361,7 +361,7 @@ impl ChatSession {
     }
 }
 
-/// Reads the earlier messages of the Queen's session `session_id` (run in `dir`) on a thread.
+/// Reads the earlier messages of the King's session `session_id` (run in `dir`) on a thread.
 fn load_history(
     locator: crate::claude::SessionLocator,
     dir: std::path::PathBuf,

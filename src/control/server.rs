@@ -45,7 +45,7 @@ pub const READ_METHODS: &[&str] = &[
     "quotas",
     "health",
     "alerts",
-    "fleet_data",
+    "clan_data",
     "review_queue",
 ];
 /// Action methods, in the order `ping` lists them.
@@ -141,7 +141,7 @@ fn dispatch(backend: &Backend, method: &str, params: &Value) -> Result<Value, Co
         "quotas" => to_value(&view.quotas),
         "health" => to_value(&view.health),
         "alerts" => Ok(json!({ "alerts": view.alerts })),
-        "fleet_data" => fleet_data(&view),
+        "clan_data" => clan_data(&view),
         other => Err(ControlError::new(
             ErrorCode::UnknownMethod,
             format!("unknown method {other:?}; call \"ping\" for the list"),
@@ -169,7 +169,7 @@ fn status(view: &StatusView) -> Value {
         "published_at_ms": view.published_at_ms,
         "polled_at_ms": view.polled_at_ms,
         "errors": view.errors,
-        "fleet": view.fleet,
+        "clan": view.clan,
         "whip": {
             "enabled": view.whip.enabled,
             "dry_run": view.whip.dry_run,
@@ -181,7 +181,7 @@ fn status(view: &StatusView) -> Value {
         "notifications": notifications_summary(view),
         "dashboard": view.dashboard,
         "playbook": view.playbook,
-        "queen_auto": view.queen_auto,
+        "king_auto": view.king_auto,
     })
 }
 
@@ -199,9 +199,9 @@ fn notifications_summary(view: &StatusView) -> Value {
 const UNREAD_IN_STATUS: usize = 5;
 
 /// The last poll's raw runs, workers, tasks, terminals and inbox (no previews or bodies).
-fn fleet_data(view: &StatusView) -> Result<Value, ControlError> {
+fn clan_data(view: &StatusView) -> Result<Value, ControlError> {
     require_data(view)?;
-    match &view.fleet_data {
+    match &view.clan_data {
         Some(facts) => to_value(&**facts),
         None => Err(ControlError::new(
             ErrorCode::Unavailable,

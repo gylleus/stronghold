@@ -9,7 +9,7 @@ use serde_json::Value;
 use super::protocol::{
     self, HostRequest, Incoming, PermissionAnswer, PermissionRequest, parse_line,
 };
-use super::settings::{EFFORT_LEVELS, QueenSettings};
+use super::settings::{EFFORT_LEVELS, KingSettings};
 use super::transcript::{ChatItem, Decision, Transcript};
 use super::*;
 
@@ -643,7 +643,7 @@ fn auto_mode_toggles_mid_session_without_a_restart() {
             .contains(&ChatItem::System(auto_mode::notice(true).into()))
     );
 
-    // No card now; the Queen is told with Karl's next message, which shows unprefixed.
+    // No card now; the King is told with Karl's next message, which shows unprefixed.
     assert!(chat.send("permit again"));
     wait_until(&mut chat, "no card", |c| !c.transcript.running);
     assert_eq!(last_result(&chat).as_deref(), Some("allowed"));
@@ -676,7 +676,7 @@ fn auto_mode_toggles_mid_session_without_a_restart() {
     wait_until(&mut chat, "reply", |c| !c.transcript.running);
     assert!(!fake.user_log().last().unwrap().contains("[Myrstack]"));
 
-    // Off again: cards come back and the Queen hears about it.
+    // Off again: cards come back and the King hears about it.
     chat.set_auto_mode(false);
     assert!(chat.send("permit once more"));
     wait_until(&mut chat, "card", |c| {
@@ -733,7 +733,7 @@ fn saved_auto_mode_applies_after_a_restart() {
     assert!(chat.transcript.pending_permission().is_none());
     assert!(
         fake.user_log()[0].contains("[Myrstack] Auto mode is now ON"),
-        "a resumed Queen is reminded"
+        "a resumed King is reminded"
     );
     assert!(chat.send("fetch it"));
     wait_until(&mut chat, "reply", |c| !c.transcript.running);
@@ -993,35 +993,35 @@ fn fake_claude_resumed_session_shows_its_history() {
     assert!(fake.args_log()[0].contains(&format!("--resume {id}")));
 }
 
-/// The ants' default model and effort follow the Queen's rules: same lists, same checks.
+/// The dwarves' default model and effort follow the King's rules: same lists, same checks.
 #[test]
-fn ants_default_shares_the_queens_model_rules() {
-    use crate::spawn::AntSettings;
-    let ants = AntSettings {
+fn dwarves_default_shares_the_kings_model_rules() {
+    use crate::spawn::DwarfSettings;
+    let dwarves = DwarfSettings {
         model: Some("  fable ".into()),
         effort: Some("high".into()),
     };
     assert_eq!(
-        ants.as_queen().normalized(),
-        QueenSettings {
+        dwarves.as_king().normalized(),
+        KingSettings {
             model: Some("fable".into()),
             effort: Some("high".into()),
         }
     );
     for level in EFFORT_LEVELS {
-        let ants = AntSettings {
+        let dwarves = DwarfSettings {
             model: None,
             effort: Some((*level).into()),
         };
-        assert!(ants.validate().is_ok(), "{level}");
+        assert!(dwarves.validate().is_ok(), "{level}");
     }
     assert_eq!(
-        AntSettings {
+        DwarfSettings {
             model: Some("claude fable".into()),
             effort: None
         }
         .validate(),
-        QueenSettings {
+        KingSettings {
             model: Some("claude fable".into()),
             effort: None
         }

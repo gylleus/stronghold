@@ -1,4 +1,4 @@
-//! `StatusView`: the serde read model of the fleet that the control API serves.
+//! `StatusView`: the serde read model of the clan that the control API serves.
 //!
 //! The app builds one after each change ([`StatusView::build`]) and publishes it into a
 //! [`SharedStatus`]; the server threads only ever read a published `Arc`.
@@ -8,16 +8,16 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
+use crate::clan::ClanData;
 use crate::claude::ClaudeData;
 use crate::claude::usage::TokenCounts;
 use crate::detect::PromptKind;
-use crate::fleet::FleetData;
-use crate::model::{EdgeKind, FleetSnapshot, Node, NodeKind, NodeState, TaskCounts, fleet_state};
+use crate::model::{ClanSnapshot, EdgeKind, Node, NodeKind, NodeState, TaskCounts, clan_state};
 use crate::notify::{self, history::Entry};
 use crate::playbook::fetches::PlaybookView;
-use crate::playbook::fill::FleetFacts;
+use crate::playbook::fill::ClanFacts;
 use crate::quota::{self, Quotas, Severity};
-use crate::ui::sidebar::{FleetFilter, node_repo};
+use crate::ui::sidebar::{ClanFilter, node_repo};
 use crate::whip::{WhipLogItem, WhipSettings, WhipStatus};
 
 /// Whip log entries a published view keeps (newest).
@@ -34,7 +34,7 @@ pub struct StatusView {
     pub polled_at_ms: Option<i64>,
     /// Errors of the last poll.
     pub errors: Vec<String>,
-    pub fleet: FleetSummary,
+    pub clan: ClanSummary,
     pub agents: Vec<AgentView>,
     pub whip: WhipView,
     pub quotas: QuotasView,
@@ -44,24 +44,24 @@ pub struct StatusView {
     /// Current playbook version and who fetched which; set by the app after [`StatusView::build`].
     #[serde(default)]
     pub playbook: PlaybookView,
-    /// The Queen's chat is in auto mode (her actions run without Karl's confirmation).
+    /// The King's chat is in auto mode (its actions run without Karl's confirmation).
     /// Set by the app after [`StatusView::build`]; read-only for API clients.
     #[serde(default)]
-    pub queen_auto: bool,
+    pub king_auto: bool,
     /// The health doctor's checks; set by the app after [`StatusView::build`].
     #[serde(default)]
     pub health: crate::health::HealthReport,
-    /// The raw poll data the `fleet_data` method serves (for filled playbook templates).
+    /// The raw poll data the `clan_data` method serves (for filled playbook templates).
     #[serde(skip)]
-    pub fleet_data: Option<Arc<FleetFacts>>,
+    pub clan_data: Option<Arc<ClanFacts>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct FleetSummary {
-    /// The Queen's state: the fleet's most urgent one (`needs_input` > `stalled` > `working` >
+pub struct ClanSummary {
+    /// The King's state: the clan's most urgent one (`needs_input` > `stalled` > `working` >
     /// `idle`).
     pub state: String,
-    /// Agent nodes of every kind (the Queen is not one).
+    /// Agent nodes of every kind (the King is not one).
     pub agents: usize,
     /// Nodes with a live terminal.
     pub live: usize,
@@ -331,7 +331,7 @@ pub struct AlertView {
     /// The agent's name when it was raised.
     #[serde(default)]
     pub agent: Option<String>,
-    /// Node the alert is about, if still in the fleet.
+    /// Node the alert is about, if still in the clan.
     pub node: Option<String>,
     /// Identical notifications collapsed into this one.
     #[serde(default)]
@@ -341,7 +341,7 @@ pub struct AlertView {
 }
 
 impl AlertView {
-    pub fn build(entry: &Entry, snapshot: &FleetSnapshot) -> Self {
+    pub fn build(entry: &Entry, snapshot: &ClanSnapshot) -> Self {
         Self {
             id: entry.id,
             at_ms: entry.at_ms,
@@ -422,7 +422,7 @@ pub fn kind_name(kind: NodeKind) -> &'static str {
         NodeKind::Terminal => "terminal",
         NodeKind::Envoy => "envoy",
         NodeKind::Subagent => "subagent",
-        NodeKind::Queen => "queen",
+        NodeKind::King => "king",
     }
 }
 
@@ -434,7 +434,7 @@ pub fn parse_kind(s: &str) -> Option<NodeKind> {
         NodeKind::Worker,
         NodeKind::Terminal,
         NodeKind::Subagent,
-        NodeKind::Queen,
+        NodeKind::King,
     ];
     ALL.into_iter().find(|k| squash(kind_name(*k)) == squash(s))
 }
@@ -459,8 +459,8 @@ fn severity_name(s: Severity) -> &'static str {
 
 /// The app state a view is built from.
 pub struct ViewInputs<'a> {
-    pub snapshot: Option<&'a FleetSnapshot>,
-    pub data: Option<&'a FleetData>,
+    pub snapshot: Option<&'a ClanSnapshot>,
+    pub data: Option<&'a ClanData>,
     pub claude: Option<&'a ClaudeData>,
     pub whip_status: &'a WhipStatus,
     pub whip_settings: &'a WhipSettings,
@@ -472,25 +472,25 @@ pub struct ViewInputs<'a> {
 
     pub selected: Option<&'a str>,
     pub selection: Vec<&'a str>,
-    pub filter: &'a FleetFilter,
+    pub filter: &'a ClanFilter,
     pub whip_settings_open: bool,
     pub now_ms: i64,
 }
 
 impl StatusView {
     pub fn build(inputs: &ViewInputs<'_>) -> Self {
-        let empty = FleetSnapshot::default();
+        let empty = ClanSnapshot::default();
         let snapshot = inputs.snapshot.unwrap_or(&empty);
         let agents: Vec<AgentView> = snapshot
             .agent_nodes()
             .map(|n| agent_view(n, snapshot, inputs))
             .collect();
-        let fleet = fleet_summary(snapshot, &agents);
+        let clan = clan_summary(snapshot, &agents);
         Self {
             published_at_ms: inputs.now_ms,
             polled_at_ms: inputs.data.map(|d| d.polled_at_ms),
             errors: inputs.data.map(|d| d.errors.clone()).unwrap_or_default(),
-            fleet,
+            clan,
             agents,
             whip: whip_view(inputs),
             quotas: quotas_view(inputs.quotas),
@@ -507,9 +507,9 @@ impl StatusView {
                 whip_settings_open: inputs.whip_settings_open,
             },
             playbook: PlaybookView::default(),
-            queen_auto: false,
+            king_auto: false,
             health: Default::default(),
-            fleet_data: inputs.data.map(|d| Arc::new(FleetFacts::from_fleet(d))),
+            clan_data: inputs.data.map(|d| Arc::new(ClanFacts::from_clan(d))),
         }
     }
 
@@ -546,7 +546,7 @@ impl AgentView {
     }
 }
 
-fn agent_view(node: &Node, snapshot: &FleetSnapshot, inputs: &ViewInputs<'_>) -> AgentView {
+fn agent_view(node: &Node, snapshot: &ClanSnapshot, inputs: &ViewInputs<'_>) -> AgentView {
     let handle = node.terminal_handle.as_deref();
     let prompt = handle
         .and_then(|h| inputs.data?.needs_input.get(h))
@@ -622,7 +622,7 @@ fn agent_view(node: &Node, snapshot: &FleetSnapshot, inputs: &ViewInputs<'_>) ->
     }
 }
 
-fn fleet_summary(snapshot: &FleetSnapshot, agents: &[AgentView]) -> FleetSummary {
+fn clan_summary(snapshot: &ClanSnapshot, agents: &[AgentView]) -> ClanSummary {
     let mut by_kind = BTreeMap::new();
     let mut by_state = BTreeMap::new();
     for a in agents {
@@ -673,8 +673,8 @@ fn fleet_summary(snapshot: &FleetSnapshot, agents: &[AgentView]) -> FleetSummary
             }
         })
         .collect();
-    FleetSummary {
-        state: state_name(fleet_state(snapshot.agent_nodes())).into(),
+    ClanSummary {
+        state: state_name(clan_state(snapshot.agent_nodes())).into(),
         agents: agents.len(),
         live: agents.iter().filter(|a| a.live).count(),
         by_kind,
@@ -746,7 +746,7 @@ fn quotas_view(quotas: &Quotas) -> QuotasView {
     }
 }
 
-pub fn filter_view(filter: &FleetFilter, snapshot: &FleetSnapshot) -> FilterView {
+pub fn filter_view(filter: &ClanFilter, snapshot: &ClanSnapshot) -> FilterView {
     FilterView {
         repos: filter.repos.iter().cloned().collect(),
         states: filter

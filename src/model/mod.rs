@@ -1,7 +1,7 @@
-//! `FleetSnapshot`: runs, nodes and edges built from Orca and Claude data.
+//! `ClanSnapshot`: runs, nodes and edges built from Orca and Claude data.
 
+mod king;
 mod label;
-mod queen;
 mod repo;
 mod state;
 mod subagent;
@@ -11,15 +11,15 @@ mod tests;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
+use crate::clan::{ClanData, RunRoles};
 use crate::claude::ClaudeData;
-use crate::fleet::{FleetData, RunRoles};
 use crate::orca::{
     AgentIdentity, DispatchStatus, Task, TaskStatus, Terminal, Worker, WorkerState,
     WorkerTerminalState,
 };
 
+pub use king::{KING_ID, KING_LABEL, clan_state};
 pub use label::{MAX_LABEL_CHARS, strip_spinner, truncate_label};
-pub use queen::{QUEEN_ID, QUEEN_LABEL, fleet_state};
 pub use repo::{NO_REPO, RepoIndex, node_repo, repo_of, run_repo};
 pub use state::{StateInputs, WORKING_WINDOW_MS, derive_state, dispatch_ended};
 
@@ -30,7 +30,7 @@ pub const RELEASED_FADE_MS: i64 = 10 * 60 * 1_000;
 ///
 /// Live terminals use `term:<handle>`; worker nodes without a live terminal use
 /// `dispatch:<run id>:<dispatch id>`; Claude subagents use `sub:<session id>:<agent id>`; the
-/// queen is `queen`.
+/// king is `king`.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -45,9 +45,9 @@ impl NodeId {
         Self(format!("dispatch:{run_id}:{dispatch_id}"))
     }
 
-    /// The id of the snapshot's one [`NodeKind::Queen`] node.
-    pub fn queen() -> Self {
-        Self(QUEEN_ID.to_string())
+    /// The id of the snapshot's one [`NodeKind::King`] node.
+    pub fn king() -> Self {
+        Self(KING_ID.to_string())
     }
 
     pub fn subagent(session_id: &str, agent_id: &str) -> Self {
@@ -77,7 +77,7 @@ pub enum NodeKind {
     /// A run's coordinator terminal.
     Coordinator,
     /// The terminal that created a run and forwards its bus events to the coordinator (Orca
-    /// records it as the run's coordinator); see [`crate::fleet::RunRoles`].
+    /// records it as the run's coordinator); see [`crate::clan::RunRoles`].
     Attendant,
     /// A terminal (live or not) dispatched to a run's task.
     Worker,
@@ -87,9 +87,11 @@ pub enum NodeKind {
     Envoy,
     /// A Claude subagent under a terminal (M3).
     Subagent,
-    /// The fleet's hub, linked to every coordinator and loose terminal; broadcasts start here.
-    /// Exactly one per snapshot, with no terminal.
-    Queen,
+    /// The clan's hub, linked to every coordinator and loose terminal; broadcasts start here.
+    /// Exactly one per snapshot, with no terminal. Saved filters say `Queen` from before the
+    /// dwarf theme.
+    #[serde(alias = "Queen")]
+    King,
 }
 
 #[derive(
@@ -130,7 +132,7 @@ pub struct Node {
     /// these out.
     pub released_at_ms: Option<i64>,
     /// When Karl parked the agent ([`crate::park`]): its terminal and worktree are kept, but
-    /// it sleeps out of the live fleet until woken.
+    /// it sleeps out of the live clan until woken.
     pub parked_at_ms: Option<i64>,
 }
 
@@ -145,8 +147,8 @@ pub enum EdgeKind {
     CoordinatorWorker,
     /// Terminal → subagent, or parent subagent → nested subagent.
     Subagent,
-    /// Queen → coordinator or loose terminal, or → attendant when its run has no coordinator.
-    Queen,
+    /// King → coordinator or loose terminal, or → attendant when its run has no coordinator.
+    King,
     /// Coordinator → its run's attendant.
     Attendant,
 }
@@ -209,9 +211,9 @@ pub struct RunSummary {
     pub task_counts: Option<TaskCounts>,
 }
 
-/// A point-in-time view of the whole fleet.
+/// A point-in-time view of the whole clan.
 #[derive(Debug, Clone, Default)]
-pub struct FleetSnapshot {
+pub struct ClanSnapshot {
     pub built_at_ms: i64,
     /// Runs with at least one live terminal, in `run-list` order.
     pub runs: Vec<RunSummary>,
@@ -219,26 +221,26 @@ pub struct FleetSnapshot {
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
     /// Attendant node per run id, for runs whose recorded coordinator is an attendant
-    /// forwarding to the real one; see [`crate::fleet::RunRoles`].
+    /// forwarding to the real one; see [`crate::clan::RunRoles`].
     pub attendants: BTreeMap<String, NodeId>,
     index: HashMap<NodeId, usize>,
 }
 
-impl FleetSnapshot {
+impl ClanSnapshot {
     /// Builds the snapshot from one poll's data. Pure: the same input gives the same output.
-    pub fn build(data: &FleetData, now_ms: i64) -> Self {
+    pub fn build(data: &ClanData, now_ms: i64) -> Self {
         Self::build_with_claude(data, None, now_ms)
     }
 
-    /// Like [`FleetSnapshot::build`], plus subagent nodes and edges from `claude`.
-    pub fn build_with_claude(data: &FleetData, claude: Option<&ClaudeData>, now_ms: i64) -> Self {
+    /// Like [`ClanSnapshot::build`], plus subagent nodes and edges from `claude`.
+    pub fn build_with_claude(data: &ClanData, claude: Option<&ClaudeData>, now_ms: i64) -> Self {
         Self::build_with_stalled(data, claude, &BTreeSet::new(), now_ms)
     }
 
-    /// Like [`FleetSnapshot::build_with_claude`], with the terminals in `stalled` (the whip's
+    /// Like [`ClanSnapshot::build_with_claude`], with the terminals in `stalled` (the whip's
     /// escalated handles) marked stalled, see [`StateInputs::stalled`].
     pub fn build_with_stalled(
-        data: &FleetData,
+        data: &ClanData,
         claude: Option<&ClaudeData>,
         stalled: &BTreeSet<String>,
         now_ms: i64,
@@ -373,17 +375,17 @@ impl FleetSnapshot {
             attendants: run_attendants,
             index,
         };
-        snapshot.add_queen();
+        snapshot.add_king();
         snapshot
     }
 
-    /// Adds the queen node and its edges to every coordinator and loose terminal, and to
-    /// attendants whose run has no coordinator, replacing any earlier queen, and reindexes. [`FleetSnapshot::build`] calls it; tests that assemble
+    /// Adds the king node and its edges to every coordinator and loose terminal, and to
+    /// attendants whose run has no coordinator, replacing any earlier king, and reindexes. [`ClanSnapshot::build`] calls it; tests that assemble
     /// snapshots by hand can too.
-    pub fn add_queen(&mut self) {
-        self.nodes.retain(|n| n.kind != NodeKind::Queen);
-        self.edges.retain(|e| e.kind != EdgeKind::Queen);
-        let queen = queen::queen_node(&self.nodes);
+    pub fn add_king(&mut self) {
+        self.nodes.retain(|n| n.kind != NodeKind::King);
+        self.edges.retain(|e| e.kind != EdgeKind::King);
+        let king = king::king_node(&self.nodes);
         let spokes: Vec<Edge> = self
             .nodes
             .iter()
@@ -395,13 +397,13 @@ impl FleetSnapshot {
                     ) || self.coordinator_gone(n))
             })
             .map(|n| Edge {
-                from: queen.id.clone(),
+                from: king.id.clone(),
                 to: n.id.clone(),
-                kind: EdgeKind::Queen,
+                kind: EdgeKind::King,
             })
             .collect();
         self.edges.extend(spokes);
-        self.nodes.push(queen);
+        self.nodes.push(king);
         self.index = self
             .nodes
             .iter()
@@ -412,7 +414,7 @@ impl FleetSnapshot {
 
     /// Marks the live agent terminals in `waiting` (by handle: the question they wait on Karl
     /// to answer) as NeedsInput, with the question as their preview. Done, failed and
-    /// non-live nodes keep their state. Updates the queen.
+    /// non-live nodes keep their state. Updates the king.
     pub fn mark_waiting(&mut self, waiting: &BTreeMap<String, String>) {
         if waiting.is_empty() {
             return;
@@ -434,7 +436,7 @@ impl FleetSnapshot {
                 node.preview = Some(format!("Asks: {question}"));
             }
         }
-        self.add_queen();
+        self.add_king();
     }
 
     /// Identity follows the handle even when the agent rewrites its terminal title.
@@ -451,12 +453,12 @@ impl FleetSnapshot {
                 node.label = format!("Envoy · {}", status.health().label());
             }
         }
-        self.add_queen();
+        self.add_king();
     }
 
     /// Shows sessions that finished themselves ([`crate::finish`]) as done: a node still in
     /// the snapshot (its terminal not yet closed) turns Done; a closed one comes back as a
-    /// fading Done terminal. Workers keep their run's own node. Updates the queen.
+    /// fading Done terminal. Workers keep their run's own node. Updates the king.
     pub fn add_finished<'a>(
         &mut self,
         finished: impl IntoIterator<Item = &'a crate::finish::FinishedSession>,
@@ -502,12 +504,12 @@ impl FleetSnapshot {
             changed = true;
         }
         if changed {
-            self.add_queen();
+            self.add_king();
         }
     }
 
-    /// Marks the nodes Karl parked ([`crate::park`]) and takes them off the Queen's spokes and
-    /// out of her state. Entries without a node here are skipped. Updates the queen.
+    /// Marks the nodes Karl parked ([`crate::park`]) and takes them off the King's spokes and
+    /// out of his state. Entries without a node here are skipped. Updates the king.
     pub fn mark_parked<'a>(
         &mut self,
         parked: impl IntoIterator<Item = &'a crate::park::ParkedAgent>,
@@ -520,7 +522,7 @@ impl FleetSnapshot {
             }
         }
         if changed {
-            self.add_queen();
+            self.add_king();
         }
     }
 
@@ -529,14 +531,14 @@ impl FleetSnapshot {
         self.nodes.iter().filter(|n| n.is_parked())
     }
 
-    /// The queen node, present in every built snapshot.
-    pub fn queen(&self) -> Option<&Node> {
-        self.node(&NodeId::queen())
+    /// The king node, present in every built snapshot.
+    pub fn king(&self) -> Option<&Node> {
+        self.node(&NodeId::king())
     }
 
-    /// Nodes that are agents or terminals: every node but the queen.
+    /// Nodes that are agents or terminals: every node but the king.
     pub fn agent_nodes(&self) -> impl Iterator<Item = &Node> {
-        self.nodes.iter().filter(|n| n.kind != NodeKind::Queen)
+        self.nodes.iter().filter(|n| n.kind != NodeKind::King)
     }
 
     pub fn node(&self, id: &NodeId) -> Option<&Node> {
@@ -579,7 +581,7 @@ impl FleetSnapshot {
 /// run the poller fetched tasks for beats one it did not, then the most recently updated run,
 /// then the earlier `run-list` row. Every run still gets edges from its coordinator.
 fn pick_run_per_coordinator<'a>(
-    data: &'a FleetData,
+    data: &'a ClanData,
     coordinators: &HashMap<&str, String>,
 ) -> HashMap<String, &'a str> {
     let mut best: HashMap<String, (RunRank, &str)> = HashMap::new();
@@ -615,7 +617,7 @@ struct RunRank {
 
 /// For each terminal handle, the worker it currently serves: an active dispatch beats a
 /// finished one, then the most recently created task, then the later `worker-list` row.
-fn pick_worker_per_terminal(data: &FleetData) -> HashMap<&str, &Worker> {
+fn pick_worker_per_terminal(data: &ClanData) -> HashMap<&str, &Worker> {
     let mut best: HashMap<&str, (WorkerRank, &Worker)> = HashMap::new();
     for (position, worker) in data.workers.iter().enumerate() {
         let Some(handle) = worker.agent_terminal_handle.as_deref() else {
@@ -650,7 +652,7 @@ fn is_active_dispatch(worker: &Worker) -> bool {
         || worker.terminal_state == Some(WorkerTerminalState::Active)
 }
 
-fn find_task<'a>(data: &'a FleetData, worker: &Worker) -> Option<&'a Task> {
+fn find_task<'a>(data: &'a ClanData, worker: &Worker) -> Option<&'a Task> {
     let task_id = worker.task_id.as_deref()?;
     let tasks = data.tasks.get(worker.run_id.as_deref()?)?;
     tasks.iter().find(|t| t.id == task_id)
@@ -669,7 +671,7 @@ fn terminal_node(
     terminal: &Terminal,
     kind: NodeKind,
     now_ms: i64,
-    data: &FleetData,
+    data: &ClanData,
     stalled: &BTreeSet<String>,
 ) -> Node {
     let inputs = StateInputs {
@@ -703,7 +705,7 @@ fn terminal_node(
 }
 
 fn worker_node(
-    data: &FleetData,
+    data: &ClanData,
     worker: &Worker,
     terminal: Option<&Terminal>,
     now_ms: i64,
