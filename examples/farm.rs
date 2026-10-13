@@ -13,7 +13,8 @@
 //! cleanup's hammer on one. Every few seconds one worker
 //! flips between working and waiting on Karl, so dwarves walk; B broadcasts, S asks for a status
 //! report, N hatches a new worker, M sends a burst of messages between dwarves, T toggles the
-//! King thinking and X closes a worktree (its heap crumbles). With `--shot`, it saves a
+//! King thinking, R delivers a message to the Envoy (he casts) and X closes a worktree (its heap
+//! crumbles). With `--shot`, it saves a
 //! screenshot once settled and another while a worker walks, a new one emerges, a broadcast
 //! ripples, messages fly and a heap crumbles (`-walk`), then exits.
 //! `--pixels farm|HEIGHT` and `--palette NAME` select dwarf rendering.
@@ -166,6 +167,7 @@ fn main() -> eframe::Result {
                 },
                 shot,
                 receipt_at_ms,
+                received: None,
                 reduced_motion,
                 started: Instant::now(),
                 flipped_at: Instant::now(),
@@ -184,6 +186,8 @@ struct Demo {
     farm: FarmView,
     shot: Option<String>,
     receipt_at_ms: Option<i64>,
+    /// When R last delivered a message to the Envoy.
+    received: Option<Instant>,
     reduced_motion: bool,
     started: Instant,
     flipped_at: Instant,
@@ -345,6 +349,7 @@ impl eframe::App for Demo {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let receipt = self
             .receipt_at_ms
+            .or_else(|| self.received.map(|at| at.elapsed().as_millis() as i64))
             .map_or_else(ReceiptCue::default, |elapsed| {
                 ReceiptCue::at(Some(0), elapsed, self.reduced_motion)
             });
@@ -369,6 +374,14 @@ impl eframe::App for Demo {
         if self.shot.is_none() {
             if self.flipped_at.elapsed() >= FLIP_EVERY {
                 self.flip();
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::R)) {
+                self.received = Some(Instant::now());
+                let flight = AgentMessage::new("slack", "envoy", MessageKind::Relay)
+                    .resolve(&self.snapshot)
+                    .expect("the Envoy in the clan");
+                self.farm
+                    .message(flight, ui.input(|i| i.time), self.reduced_motion);
             }
             let (b, st, n, t, m, x) = ui.input(|i| {
                 (

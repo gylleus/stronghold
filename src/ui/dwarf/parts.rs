@@ -2,6 +2,8 @@
 //! the origin): boots, body, arms with the tool, head with hair, beard, face and hat, and the
 //! rune priest's staff. Each is cut in the look's colours; [`super::draw`] places them.
 
+use std::f32::consts::TAU;
+
 use eframe::egui::{Color32, Pos2, pos2, vec2};
 
 use super::cutout::{Piece, Xf, blob, capsule, ellipse, place};
@@ -17,6 +19,10 @@ const FLAME: Color32 = Color32::from_rgb(0xff, 0xb0, 0x30);
 const FLAME_CORE: Color32 = Color32::from_rgb(0xff, 0xf0, 0xb0);
 const BANDANA: Color32 = Color32::from_rgb(0xa8, 0x34, 0x2a);
 const CRYSTAL: Color32 = Color32::from_rgb(0x69, 0xae, 0xc4);
+/// The runes circling the crystal of a casting priest, on the near side of it.
+const CRYSTAL_LIGHT: Color32 = Color32::from_rgb(0xd4, 0xf4, 0xf8);
+/// Where a casting priest grips his staff.
+const STAFF_GRIP: Pos2 = pos2(29.0, -30.0);
 /// Where the fist is, in arm coordinates (the arm hangs straight down from the shoulder).
 const HAND: Pos2 = pos2(SHOULDER.x, -25.5);
 
@@ -525,7 +531,8 @@ fn crystal(p: &mut Piece, at: Pos2, pulse: f32) {
         tint(CRYSTAL, 0.65),
     );
 }
-/// A planted staff leaves both hands free over the pool. No animation at rest.
+/// A planted staff leaves both hands free over the pool. No animation at rest. Casting, he
+/// thrusts it up in his fist, and the runes circling its crystal pass behind his hat.
 pub(super) fn priest_staff(pose: &Pose) -> Piece {
     let mut p = Piece::default();
     p.cut(capsule(pos2(29.0, -76.0), pos2(29.0, -2.0), 1.8), WOOD);
@@ -534,6 +541,14 @@ pub(super) fn priest_staff(pose: &Pose) -> Piece {
     }
     p.cut(capsule(pos2(24.0, -79.0), pos2(34.0, -79.0), 1.6), GOLD);
     crystal(&mut p, pos2(29.0, -84.0), pose.scry);
+    if pose.cast.is_some() {
+        let held = staff_grip(pose);
+        for poly in &mut p.polys {
+            poly.points = place(std::mem::take(&mut poly.points), held);
+        }
+        spell(&mut p, pose, false);
+        return p;
+    }
     if pose.scry > 0.0 {
         for (x, y) in [(40.0, -63.0), (48.0, -48.0), (37.0, -33.0)] {
             rune(
@@ -544,6 +559,46 @@ pub(super) fn priest_staff(pose: &Pose) -> Piece {
         }
     }
     p
+}
+
+/// The casting priest's spell on the near side: rays off the crystal and the runes passing in
+/// front of it, drawn over his hat and fist.
+pub(super) fn priest_spell(pose: &Pose) -> Piece {
+    let mut p = Piece::default();
+    spell(&mut p, pose, true);
+    p
+}
+
+/// The staff gripped a third of the way up and tipped forward, its crystal high over his hat.
+fn staff_grip(pose: &Pose) -> Xf {
+    let hand = Xf::rotate_about(SHOULDER, -pose.arm).apply(HAND);
+    Xf::translate(hand.to_vec2())
+        .then(Xf::rotate(0.22))
+        .then(Xf::translate(-STAFF_GRIP.to_vec2()))
+}
+
+/// The half of a spell on the `near` side of the crystal (none unless casting).
+fn spell(p: &mut Piece, pose: &Pose, near: bool) {
+    let Some(turn) = pose.cast else { return };
+    let c = staff_grip(pose).apply(pos2(29.0, -84.0));
+    if near {
+        for i in 0..8 {
+            let a = i as f32 * TAU / 8.0 - turn * 0.5;
+            let dir = vec2(a.cos(), a.sin());
+            let reach = if i % 2 == 0 { 17.0 } else { 13.0 };
+            p.paint(
+                capsule(c + dir * 10.0, c + dir * reach, 0.9),
+                tint(CRYSTAL, 0.7),
+            );
+        }
+    }
+    for i in 0..3 {
+        let a = turn + i as f32 * TAU / 3.0;
+        if (a.sin() > 0.0) == near {
+            let at = c + vec2(a.cos() * 21.0, a.sin() * 8.0) - vec2(1.5, 2.5);
+            rune(p, at, if near { CRYSTAL_LIGHT } else { CRYSTAL });
+        }
+    }
 }
 
 pub(super) fn head(look: &Look, pose: &Pose) -> Piece {
