@@ -15,7 +15,7 @@ use crate::traffic::{Endpoint, Flight, MessageKind};
 use crate::ui::envelope::{InFlight, Phase};
 
 /// How long the portal flares as a scroll materialises.
-const PORTAL_S: f64 = 0.35;
+const PORTAL_S: f64 = 0.7;
 
 /// Whether `flight` leaves from Karl's portal: Karl's own, or the Queen instructing an ant (her
 /// whip's nudges stay with her).

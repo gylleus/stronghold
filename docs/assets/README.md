@@ -50,10 +50,14 @@ rendered pixel grid, independent of camera zoom. The setting is persisted as `ar
   Arrival removes the cart and restores the worker's state pose. There is no idle ride.
 - `mail.rs` keeps message routes/timing and draws sealed scrolls. Karl's stone rune portal
   replaces the tube: scrolls materialise in its centre and the threshold flares on departure
-  or arrival. `Prop::Portal` is still at frame zero; message events select frames 1–3.
-  Reduced motion suppresses the flare. Fire has four frames at six frames per second;
-  the portal, receiving stone and pool animate on events/work. Scenery and waiting figures
-  stay still. Snore z's and the pebble bonk use the same material colours as the bubbles.
+  or arrival. The open portal has a two-second veil swirl (eight frames at four frames per
+  second), with a stronger 0.7-second flare for mail. `world::portal_frame` combines the
+  veil phase and flare strength into 32 cached frames. Reduced motion freezes the veil and
+  suppresses the flare. Its texture foot sits three texels below `surface_y` to compensate
+  for transparent padding and bed the stone threshold into the turf. Fire has four frames
+  at six frames per second; the receiving stone and pool animate on events/work. Other
+  scenery and waiting figures stay still. Snore z's and the pebble bonk use the same
+  material colours as the bubbles.
 - Agent guilds use both colour and shape: Claude has amber cloth and a round sun crest;
   Codex has blue cloth and a tall diamond crest. Helmets, caps and bandanas carry the guild
   colour too. `art::dress` assigns `dwarf::Crest`; `dwarf/parts.rs` cuts the actual brooches.

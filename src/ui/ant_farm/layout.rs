@@ -269,12 +269,13 @@ impl Scene {
         self.landing.left() - 0.6 * self.cell()
     }
 
-    /// The middle of the base of Karl's portal on the surface.
+    /// Texture foot, with the stone threshold sunk into the turf. The drawing has two
+    /// texels of padding below its base, so this seats the stone one texel into the rock.
     pub fn karl_portal(&self) -> Pos2 {
         let left = self.landing.right();
         pos2(
             left + 0.3 * self.cell() + PORTAL_W / 2.0 * self.px,
-            self.surface_y,
+            self.surface_y + 3.0 * self.px,
         )
     }
 
