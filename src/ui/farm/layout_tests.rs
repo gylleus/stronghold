@@ -1854,3 +1854,48 @@ fn portal_stone_threshold_meets_the_surface_in_every_outline() {
         );
     }
 }
+
+#[test]
+fn king_close_holds_target_in_view_and_bonks_once_instead_of_falling() {
+    use eframe::egui;
+    let mut snapshot = snapshot();
+    snapshot.add_king();
+    let mut clan = crate::ui::clan_view::ClanView::new();
+    let mut farm = FarmView::new();
+    farm.reduce_motion = Some(false);
+    let ctx = egui::Context::default();
+    let mut frame = |farm: &mut FarmView, snapshot: &ClanSnapshot, time: f64| {
+        clan.sync(snapshot);
+        let mut response = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(RECT),
+                time: Some(time),
+                ..Default::default()
+            },
+            |ui| response = Some(farm.show(ui, snapshot, &mut clan)),
+        );
+        output.textures_delta.clear();
+        response.unwrap()
+    };
+    frame(&mut farm, &snapshot, 0.0);
+    farm.prepare_king_close([id("loose")].into_iter(), 0.01);
+    assert!(farm.throws.contains(&id("loose")));
+    // The close request itself must not remove or hit a still-live dwarf.
+    frame(&mut farm, &snapshot, 0.02);
+    assert!(!farm.throws.animating());
+    snapshot.nodes.retain(|n| n.id != id("loose"));
+    snapshot.add_king();
+    assert!(!frame(&mut farm, &snapshot, 0.03).bonk);
+    assert!(farm.throws.animating());
+    assert!(
+        farm.falls.is_empty(),
+        "the regular death must wait for the tool"
+    );
+    assert!(!frame(&mut farm, &snapshot, 0.30).bonk);
+    assert!(frame(&mut farm, &snapshot, 0.59).bonk);
+    assert!(!frame(&mut farm, &snapshot, 0.60).bonk);
+    frame(&mut farm, &snapshot, 0.90);
+    assert!(!farm.throws.contains(&id("loose")));
+    assert!(farm.falls.is_empty());
+}

@@ -492,7 +492,7 @@ pub fn call(
         "get_agent" => get_agent(control, &p),
         "send_to_agent" => send_to_agent(control, origin, &p),
         "press_key" => press_key(control, &p),
-        "close_agents" => close_agents(control, &p),
+        "close_agents" => close_agents(control, origin, &p),
         "park_agents" => park_agents(control, &p),
         "broadcast_to_coordinators" => broadcast(control, &p),
         "whip_status" => whip_status(control, &p),
@@ -1148,14 +1148,14 @@ fn press_key(control: &mut dyn Control, p: &Params) -> ToolResult {
     ))
 }
 
-fn close_agents(control: &mut dyn Control, p: &Params) -> ToolResult {
+fn close_agents(control: &mut dyn Control, origin: &Origin, p: &Params) -> ToolResult {
     let ids = p
         .strings("ids")?
         .filter(|ids| !ids.is_empty())
         .ok_or_else(|| Error::Args("missing \"ids\"".into()))?;
     let whole_tab = p.bool("whole_tab")?.unwrap_or(false);
     let dry_run = p.bool("dry_run")?.unwrap_or(true);
-    let mut params = json!({ "whole_tab": whole_tab, "dry_run": dry_run });
+    let mut params = json!({ "whole_tab": whole_tab, "dry_run": dry_run, "origin": origin });
     match ids.as_slice() {
         [one] => params["id"] = json!(one),
         _ => params["ids"] = json!(ids),

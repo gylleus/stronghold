@@ -27,6 +27,7 @@ pub mod rubble;
 mod rubble_tests;
 pub mod scenery;
 pub mod sprites;
+mod tool_throw;
 mod world;
 pub mod zoom;
 #[cfg(test)]
@@ -147,6 +148,8 @@ pub struct FarmResponse {
     pub open_envoy: bool,
     /// Open the read-only Ledger pane.
     pub open_ledger: bool,
+    /// A thrown tool hit this frame.
+    pub bonk: bool,
     pub hovered: Option<NodeId>,
     /// Dwarves inside a selection box dragged from empty ground, when it was released this
     /// frame, and whether Shift/Cmd was held (add to the selection rather than replace it).
@@ -200,6 +203,7 @@ pub struct FarmView {
     ripples: Vec<Ripple>,
     /// Dwarves that left the clan, falling to the bottom.
     falls: Vec<Fall>,
+    throws: tool_throw::Throws,
     /// The King is working on something (his chat turn runs): he hops about.
     king_busy: bool,
     /// His chat is the conversation shown: he gets the selection ring.
@@ -527,6 +531,19 @@ impl FarmView {
         self.pops.push(node, cue, now_s, still);
     }
 
+    /// Marks only visible targets of an accepted King close. Their bodies are held when
+    /// the snapshot removes them; no change to process shutdown or the snapshot itself.
+    pub fn prepare_king_close(&mut self, ids: impl Iterator<Item = NodeId>, now_s: f64) {
+        if self.last_frame_s.is_none_or(|last| now_s - last > AWAY_S) {
+            return;
+        }
+        for id in ids {
+            if let Some(body) = self.tracks.get(&id).and_then(|t| t.body) {
+                self.throws.prepare(id, body, now_s);
+            }
+        }
+    }
+
     /// Draws the farm filling the available space and handles clicks, hover and the context
     /// menu. `clan` supplies the shared selection, filters, badges, tooltips and actions.
     pub fn show(
@@ -562,6 +579,19 @@ impl FarmView {
             .retain(|r| now_s - r.start_s < RIPPLE_S + ECHO_S + ARRIVAL_S);
         self.births.retain(|t| now_s - t < BIRTH_GLOW_S);
         self.falls.retain(|f| now_s - f.start_s < f.duration());
+        if away {
+            self.throws.clear();
+        }
+        let from = scene
+            .dwarf(&NodeId::king())
+            .map(|d| motion::to_unit(d.pos, scene.rect));
+        let bonk = self.throws.tick(
+            now_s,
+            from,
+            self.still(),
+            |id| snapshot.node(id).is_some(),
+            |id| self.tracks.get(id).and_then(|t| t.body),
+        );
         self.bury(&scene, snapshot, now_s, death::reduce_motion);
         let placed = self.advance(&scene, now_s);
         let still = self.still();
@@ -694,6 +724,7 @@ impl FarmView {
             now_s,
         );
         beams::paint(&painter, &scene, &placed, self.beams.tick(now_s), now_s);
+        self.throws.paint(&painter, &mut figures, &scene, now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
         comms::tray(
             &painter,
@@ -723,6 +754,7 @@ impl FarmView {
             || !self.ripples.is_empty()
             || !self.births.is_empty()
             || !self.falls.is_empty()
+            || self.throws.animating()
             || !self.mail.is_empty()
             || !self.beams.is_empty()
             || !self.pops.is_empty()
@@ -781,6 +813,7 @@ impl FarmView {
             None => Default::default(),
         };
         FarmResponse {
+            bonk,
             clicked: response.clicked().then(|| hovered.clone()).flatten(),
             clicked_empty: response.clicked()
                 && hovered.is_none()
@@ -973,6 +1006,7 @@ impl FarmView {
         let mut still = None;
         for (id, track) in &self.tracks {
             if let Some(body) = track.body
+                && !self.throws.contains(id)
                 && scene.dwarf(id).is_none()
                 && !snapshot.nodes.iter().any(|n| &n.id == id)
             {

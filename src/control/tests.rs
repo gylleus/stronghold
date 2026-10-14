@@ -618,11 +618,13 @@ fn every_action_reaches_the_handler() {
             agents: vec!["a".into()],
             whole_tab: false,
             dry_run: false,
+            origin: None,
         },
         ControlCommand::Close {
             agents: vec!["a".into(), "b".into()],
             whole_tab: true,
             dry_run: true,
+            origin: None,
         },
         ControlCommand::Park {
             agents: vec!["a".into(), "b".into()],

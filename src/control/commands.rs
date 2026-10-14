@@ -124,6 +124,8 @@ pub enum ControlCommand {
         agents: Vec<String>,
         whole_tab: bool,
         dry_run: bool,
+        /// Present for MCP closes; distinguishes the King from direct UI/API closes.
+        origin: Option<crate::review::mark::Origin>,
     },
     /// Park `agents` in the resting area ([`crate::park`]), or with `park` false wake them.
     Park {
@@ -260,6 +262,10 @@ impl ControlCommand {
                     agents,
                     whole_tab: p.bool("whole_tab")?.unwrap_or(false),
                     dry_run: p.bool("dry_run")?.unwrap_or(false),
+                    origin: params
+                        .get("origin")
+                        .map(|_| crate::finish::origin_of(params))
+                        .transpose()?,
                 })
             })(),
             "park" => (|| {
