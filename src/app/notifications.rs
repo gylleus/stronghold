@@ -288,6 +288,13 @@ impl StrongholdApp {
                 {
                     self.envoy_core.open_request = true;
                 }
+                None if clicked
+                    .targets
+                    .iter()
+                    .any(|t| t.starts_with(super::lorekeeper::TARGET)) =>
+                {
+                    self.ledger_panel.open_requested = true
+                }
                 None => {}
             }
         }
@@ -308,6 +315,9 @@ impl StrongholdApp {
         let target = entry.target.as_deref();
         let node = target.and_then(|t| notify::resolve_target(self.snapshot.as_ref()?, t));
         match node {
+            None if target.is_some_and(|t| t.starts_with(super::lorekeeper::TARGET)) => {
+                self.ledger_panel.open_requested = true;
+            }
             None if target == Some(super::envoy::DRAFTS_TARGET) => {
                 self.envoy_core.open_request = true;
             }

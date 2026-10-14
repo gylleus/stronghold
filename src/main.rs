@@ -8,6 +8,7 @@ fn main() -> eframe::Result {
     let cli = stronghold::claude::hook::run_cli(&args)
         .or_else(|| stronghold::control::client::run_cli(&args))
         .or_else(|| stronghold::mcp::run_cli(&args))
+        .or_else(|| stronghold::lorekeeper::run_cli(&args))
         .or_else(|| stronghold::playbook::run_cli(&args))
         .or_else(|| stronghold::notify::run_cli(&args))
         .or_else(|| stronghold::voice::tts::run_cli(&args))

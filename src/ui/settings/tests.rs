@@ -638,7 +638,7 @@ fn cleanup_run_now_works_with_schedule_off_and_shows_the_last_result() {
     let status = WhipStatus::default();
     let info = general();
     let mut context = cx(&status, &info, KingStatus::default());
-    let last = crate::worktrees::automatic::Run::finished(1000, &[], None);
+    let last = crate::worktrees::automatic::finished_run(1000, &[], None);
     context.cleanup.last = Some(&last);
     assert!(!pane.worktree_settings().enabled);
     let mut requested = false;
@@ -654,4 +654,30 @@ fn cleanup_run_now_works_with_schedule_off_and_shows_the_last_result() {
         requested |= pane.show(ui.ctx(), &context).run_cleanup;
     });
     assert!(!requested);
+}
+
+#[test]
+fn lorekeeper_defaults_safe_and_saves_future_run_preferences() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    std::fs::write(&path, r#"{"whip":{"enabled":false}}"#).unwrap();
+    let mut pane = SettingsPane::load(Some(path.clone()));
+    assert_eq!(pane.lorekeeper().model, "sonnet");
+    assert_eq!(pane.lorekeeper().mode, crate::lorekeeper::Mode::DryRun);
+    assert!(!pane.lorekeeper().enabled);
+    pane.open_section(Section::Lorekeeper);
+    let status = WhipStatus::default();
+    let info = general();
+    let context = cx(&status, &info, KingStatus::default());
+    for label in ["Live", "Weekly", "Save for future runs"] {
+        click_label(label, |ui| pane.show(ui.ctx(), &context));
+    }
+    let saved = SettingsPane::load(Some(path));
+    assert_eq!(saved.lorekeeper().mode, crate::lorekeeper::Mode::Live);
+    assert!(saved.lorekeeper().enabled);
+    assert_eq!(
+        saved.lorekeeper().interval,
+        crate::lorekeeper::Interval::Weekly
+    );
+    assert!(!saved.whip().enabled);
 }

@@ -352,6 +352,7 @@ impl<C: Control> McpServer<C> {
                 let cwd = std::env::current_dir().ok();
                 lifecycle::call(&mut self.control, &self.review.origin, cwd, name, &args)
             })
+            .or_else(|| crate::lorekeeper::mcp::call(&self.review.origin, name, &args))
             .or_else(|| worktrees::call(name, &args))
             .or_else(|| tools::call(&mut self.control, &self.review.origin, name, &args))
             .ok_or_else(|| (INVALID_PARAMS, format!("unknown tool: {name}")))?;

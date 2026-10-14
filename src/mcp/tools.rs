@@ -173,7 +173,7 @@ fn one_or_many(values: &[&str], description: &str) -> Value {
 
 /// Every tool, for `tools/list`.
 pub fn definitions() -> Vec<Value> {
-    vec![
+    let mut tools = vec![
         tool(
             "clan_status",
             "Clan status",
@@ -472,7 +472,9 @@ pub fn definitions() -> Vec<Value> {
             object(json!({}), &[]),
             READ,
         ),
-    ]
+    ];
+    tools.extend(crate::lorekeeper::mcp::definitions());
+    tools
 }
 
 // ---------------------------------------------------------------------------

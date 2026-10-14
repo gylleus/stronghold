@@ -8,6 +8,7 @@ pub mod art;
 pub mod envoy;
 pub mod general;
 pub mod king;
+pub mod lorekeeper;
 pub mod notifications;
 pub mod voice;
 pub mod whip;
@@ -34,6 +35,7 @@ pub enum Section {
     #[default]
     King,
     Envoy,
+    Lorekeeper,
     Whip,
     Notifications,
     Voice,
@@ -43,9 +45,10 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 8] = [
+    pub const ALL: [Section; 9] = [
         Section::King,
         Section::Envoy,
+        Section::Lorekeeper,
         Section::Whip,
         Section::Notifications,
         Section::Voice,
@@ -58,6 +61,7 @@ impl Section {
         match self {
             Section::King => "King",
             Section::Envoy => "Envoy",
+            Section::Lorekeeper => "Lorekeeper",
             Section::Whip => "Whip",
             Section::Notifications => "Notifications",
             Section::Voice => "Voice",
@@ -128,6 +132,7 @@ pub struct SettingsPane {
     voice_draft: VoiceSettings,
     notify_draft: NotifySettings,
     envoy_draft: envoy::EnvoyDraft,
+    lorekeeper_draft: lorekeeper::Draft,
     /// The General section's name field.
     user_draft: String,
     /// "Whip all stalled now" was clicked; see [`SettingsPane::take_whip_stalled`].
@@ -156,6 +161,7 @@ impl SettingsPane {
             voice_draft: applied.voice.clone(),
             notify_draft: applied.notifications.clone(),
             envoy_draft: envoy::EnvoyDraft::new(&applied.envoy),
+            lorekeeper_draft: lorekeeper::Draft::new(&applied.lorekeeper),
             user_draft: applied.user.name.clone().unwrap_or_default(),
             applied,
             path,
@@ -172,6 +178,10 @@ impl SettingsPane {
     /// The saved King settings.
     pub fn king(&self) -> &KingSettings {
         &self.applied.king
+    }
+
+    pub fn lorekeeper(&self) -> &crate::lorekeeper::Settings {
+        &self.applied.lorekeeper
     }
 
     pub fn envoy(&self) -> &crate::envoy::settings::EnvoySettings {
@@ -211,6 +221,7 @@ impl SettingsPane {
         self.voice_draft = self.applied.voice.clone();
         self.notify_draft = self.applied.notifications.clone();
         self.envoy_draft = envoy::EnvoyDraft::new(&self.applied.envoy);
+        self.lorekeeper_draft = lorekeeper::Draft::new(&self.applied.lorekeeper);
         self.section = section;
         self.open = true;
     }
@@ -307,6 +318,7 @@ impl SettingsPane {
         match self.section {
             Section::King => king::section(self, ui, &cx.king, out),
             Section::Envoy => envoy::section(self, ui, out),
+            Section::Lorekeeper => lorekeeper::section(self, ui),
             Section::Whip => {
                 out.whip = whip::form(self, ui);
                 ui.separator();

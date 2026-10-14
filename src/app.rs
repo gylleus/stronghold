@@ -12,6 +12,7 @@ pub mod envoy;
 mod envoy_session;
 mod health;
 mod lifecycle;
+mod lorekeeper;
 mod notifications;
 mod palette;
 mod panes;
@@ -158,6 +159,7 @@ pub struct StrongholdApp {
     pub envoy_core: envoy::AppEnvoy,
     envoy_panel: ui::envoy::DraftsPanel,
     ledger_panel: ui::ledger::LedgerPane,
+    lorekeeper: lorekeeper::AppLorekeeper,
     /// Health checks for silent misconfigurations, and the badge showing them.
     health: health::AppHealth,
 }
@@ -263,6 +265,7 @@ impl StrongholdApp {
             envoy_core: envoy::AppEnvoy::start(ctx),
             envoy_panel: ui::envoy::DraftsPanel::default(),
             ledger_panel: ui::ledger::LedgerPane::default(),
+            lorekeeper: lorekeeper::AppLorekeeper::new(&crate::claude::hook::data_dir()),
             health: health::AppHealth::start(ctx),
         };
         app.talk_startup();
@@ -1100,6 +1103,7 @@ impl eframe::App for StrongholdApp {
                 }
             }
             self.envoy_session.reconcile(&data);
+            self.lorekeeper.session.reconcile(&data);
             for message in self.traffic.inbox.update(&data.inbox, now_ms()) {
                 self.traffic.push(message);
             }
@@ -1200,6 +1204,7 @@ impl eframe::App for StrongholdApp {
         self.poll_control(ctx);
         self.poll_review();
         self.poll_envoy();
+        self.poll_lorekeeper(ctx);
         self.poll_health();
         self.overlays_changed |= envoy_before != self.envoy_status();
         self.poll_whip_now();

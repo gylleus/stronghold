@@ -155,20 +155,32 @@ impl StrongholdApp {
         if !forced.is_empty() {
             message.push_str(&format!("\nLeft despite: {}", forced.join("; ")));
         }
-        let outcome = self.raise(Incoming {
-            source: Source::Agent,
-            severity,
-            title: format!(
-                "{}: {}",
-                req.outcome.verb(),
-                clip(&req.summary, TITLE_CHARS)
-            ),
-            message,
-            url: req.pr_url.clone(),
-            target: Some(node.id.to_string()),
-            sender: node.terminal_handle.clone(),
-            agent_label: Some(node.label.clone()),
+        // The report notification covers a clean Lorekeeper finish.
+        let reported = self.lorekeeper.session.saved.as_ref().is_some_and(|s| {
+            s.handle == node.terminal_handle
+                && crate::claude::hook::data_dir()
+                    .join("lorekeeper/reports")
+                    .join(format!("{}.json", s.run_id))
+                    .is_file()
         });
+        let outcome = if reported && forced.is_empty() {
+            crate::notify::Outcome::Cooldown
+        } else {
+            self.raise(Incoming {
+                source: Source::Agent,
+                severity,
+                title: format!(
+                    "{}: {}",
+                    req.outcome.verb(),
+                    clip(&req.summary, TITLE_CHARS)
+                ),
+                message,
+                url: req.pr_url.clone(),
+                target: Some(node.id.to_string()),
+                sender: node.terminal_handle.clone(),
+                agent_label: Some(node.label.clone()),
+            })
+        };
         self.publish_control_status();
         Ok(json!({
             "dry_run": false,

@@ -15,7 +15,7 @@ You run in a Stronghold checkout (`lorekeeper-home`); ignore its CLAUDE.md/AGENT
 rules and `bd` hooks. Global rules about filing new Ledger entries do not apply: never create
 new entries; `write_note` is only for a retained merge target. Never write or edit code or
 files outside the Ledger. You have no Bash. Read evidence only through the tools below;
-Stronghold owns default-branch refreshes. Never install tools or run tests.
+Never install tools or run tests.
 
 ## Trust
 

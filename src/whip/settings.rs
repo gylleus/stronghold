@@ -39,6 +39,7 @@ pub struct Settings {
     pub notifications: NotifySettings,
     /// The Envoy session and its channels.
     pub envoy: EnvoySettings,
+    pub lorekeeper: crate::lorekeeper::Settings,
     /// What a new dwarf's spawn does to the dashboard.
     pub spawn: SpawnSettings,
     /// The default model and effort of new dwarves. Saved as `ants` before the dwarf theme.
