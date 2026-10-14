@@ -507,7 +507,7 @@ fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
         Prop::Cave(_) | Prop::Masonry => unreachable!("rooms draw at their actual size"),
         Prop::CleanupHammer => unreachable!("hammer uses its generated sprite"),
         Prop::Rubble(health, seed) => super::rubble::draw(c, health, seed),
-        Prop::Bookcase | Prop::ArchiveCabinet | Prop::Lectern => super::library::draw(c, prop),
+        Prop::Bookcase | Prop::ArchiveCabinet | Prop::Lectern => super::ledger::draw(c, prop),
         Prop::Nature(d) => super::nature::draw(c, d),
         Prop::Peaks => {
             // Matching edge heights make the distant range repeat without a seam.
@@ -1429,7 +1429,7 @@ mod tests {
     }
 
     #[test]
-    fn rotated_hammer_shares_the_palette_cache_with_library_and_rubble() {
+    fn rotated_hammer_shares_the_palette_cache_with_ledger_and_rubble() {
         let ctx = egui::Context::default();
         let mut world = WorldArt::default();
         for name in ["endesga-32", "oil-6"] {

@@ -46,9 +46,9 @@ Check live rather than trusting a table: `orca status --json` (runtime must be r
   it is a retired workflow; ignore it.
 - Tickets: Linear (VROOM) through the coordinator's Linear MCP. Orca's Linear integration is
   not connected, so workers get ticket text only through their dispatch spec.
-- **The Library** is the clan's shared memory (the `library` MCP server). Search it before
+- **The Ledger** is the clan's shared memory (the `ledger` MCP server). Search it before
   planning a run, and file what the run learned when it ends; the worker protocol's
-  _The Library_ has the rules.
+  _The Ledger_ has the rules.
 - No secrets tooling: agents never self-serve credentials; they summon Karl (_Human in the loop_).
 
 ## Core principles
@@ -84,9 +84,10 @@ Check live rather than trusting a table: `orca status --json` (runtime must be r
    the gate is: verdict footer SHA == PR head, and every thread (new ones included) ends in a
    fix or a reason. Zero Ankra comments means it didn't run; check its row in
    `gh pr checks` (a push re-triggers it). Never surface a PR to Karl before this holds.
-6. **Check the ledger before building.** `orca orchestration task-list --brief --json` before
-   spawning a decision track, and `gh pr list --repo depict-org/<r> --state open --search
-"<symptom>"` before writing a fix: colleagues are a clan too.
+6. **Check what exists before building.** Search the Ledger and run `orca orchestration
+   task-list --brief --json` before spawning a decision track, and `gh pr list --repo
+   depict-org/<r> --state open --search "<symptom>"` before writing a fix: colleagues are a
+   clan too.
 7. **Machine evidence gates normal merges; Karl gates the scary ones.** CI green + review
    answered + verification evidence = merge-ready. Auth/security, write paths, live merchant
    data, and anything Karl flagged need his approval first.
