@@ -50,9 +50,9 @@ pub fn definitions() -> Vec<Value> {
             "title": "Mark PR ready for review",
             "description": "Tells Stronghold ({user}'s clan dashboard) that a pull request is ready \
                 for {user}'s review, so it shows in their review queue attributed to your terminal. \
-                Call it right after sending merge_ready for a gate-ready PR, or when setting the \
-                ✅ ready marker. It only records locally: nothing is posted to GitHub or sent to \
-                other agents. Works even when Stronghold isn't running (it shows on start).",
+                Only coordinators after verifying the gate, or standalone agents, may call it. \
+                Dispatched workers must send merge_ready to their coordinator instead. It only \
+                records locally: nothing is posted to GitHub or sent to other agents. Works even when Stronghold isn't running (it shows on start).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -400,6 +400,24 @@ mod tests {
     }
 
     #[test]
+    fn mark_pr_ready_refuses_dispatched_workers_even_when_offline() {
+        for variable in ["ORCA_TASK_ID", "ORCA_DISPATCH_ID"] {
+            for running in [true, false] {
+                let dir = tempfile::tempdir().unwrap();
+                let mut env = agent_env(dir.path());
+                env.origin = Origin::from_vars(|k| (k == variable).then(|| "worker-id".into()));
+                let mut server = McpServer::new(Fake::new(running, json!({}))).with_review_env(env);
+                let r = call_tool(&mut server, "mark_pr_ready", json!({"pr_url": URL}));
+                assert_eq!(r["isError"], true, "{variable}, running={running}: {r}");
+                assert!(text(&r).contains("merge_ready"));
+                assert!(text(&r).contains("coordinator"));
+                assert!(server.control().calls.is_empty());
+                assert!(!dir.path().join(mark::PENDING_FILE).exists());
+            }
+        }
+    }
+
+    #[test]
     fn mark_pr_ready_sends_the_callers_orca_identity() {
         let dir = tempfile::tempdir().unwrap();
         let reply = json!({"url": URL, "outcome": "new", "count": 1, "agent": {"id": "term:term_442fcb9f", "label": "api-255"}});
@@ -582,16 +600,26 @@ mod tests {
     }
 
     /// A stand-in for the app: answers review commands from a queue.
-    struct QueueApp(Mutex<ReviewQueue>);
+    #[derive(Default)]
+    struct QueueApp {
+        queue: Mutex<ReviewQueue>,
+        snapshot: Option<crate::model::ClanSnapshot>,
+        terminals: Vec<crate::orca::Terminal>,
+    }
 
     impl CommandHandler for QueueApp {
         fn execute(&self, command: ControlCommand) -> Result<Value, ControlError> {
             let ControlCommand::Review(command) = command else {
                 return Err(ControlError::failed("not a review command"));
             };
-            let mut queue = self.0.lock().unwrap();
+            let mut queue = self.queue.lock().unwrap();
             match command {
                 ReviewCommand::Ready(mark) => {
+                    crate::review::view::check_ready_origin(
+                        &mark.origin,
+                        self.snapshot.as_ref(),
+                        &self.terminals,
+                    )?;
                     queue.add(&mark);
                     Ok(
                         json!({"url": mark.pr.url(), "count": queue.visible(mark.at_ms).len(), "agent": null}),
@@ -617,12 +645,124 @@ mod tests {
         }
     }
 
+    #[test]
+    fn mark_pr_ready_checks_worker_nodes_and_accepts_coordinators_and_standalone() {
+        use crate::clan::ClanData;
+        use crate::model::{ClanSnapshot, NodeKind};
+        use crate::orca::{AgentIdentity, Run, Terminal};
+
+        let terminals = ["worker", "coordinator", "standalone"].map(|handle| Terminal {
+            handle: handle.into(),
+            tab_id: Some(handle.into()),
+            leaf_id: Some("leaf".into()),
+            agent_identity: Some(AgentIdentity::Codex),
+            ..Terminal::default()
+        });
+        let data = ClanData {
+            terminals: terminals.into(),
+            runs: vec![Run {
+                id: "run".into(),
+                coordinator_handle: Some("coordinator".into()),
+                ..Run::default()
+            }],
+            workers: vec![
+                serde_json::from_value(json!({
+                    "dispatchId": "dispatch", "taskId": "task", "runId": "run",
+                    "agentTerminalHandle": "worker", "dispatchStatus": "dispatched",
+                }))
+                .unwrap(),
+            ],
+            ..ClanData::default()
+        };
+        let snapshot = ClanSnapshot::build(&data, 0);
+        for (handle, kind) in [
+            ("worker", NodeKind::Worker),
+            ("coordinator", NodeKind::Coordinator),
+            ("standalone", NodeKind::Terminal),
+        ] {
+            let origin = Origin {
+                terminal_handle: Some(handle.into()),
+                ..Origin::default()
+            };
+            let agent =
+                crate::review::view::resolve_agent(&origin, &snapshot, &data.terminals).unwrap();
+            assert_eq!(snapshot.node(&agent.id).unwrap().kind, kind);
+        }
+        let app = Arc::new(QueueApp {
+            snapshot: Some(snapshot),
+            terminals: data.terminals,
+            ..QueueApp::default()
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.sock");
+        let _server = ControlServer::start(
+            &path,
+            Backend {
+                status: SharedStatus::new(),
+                screens: Arc::new(NoScreens),
+                commands: app.clone(),
+            },
+        )
+        .unwrap();
+        let origins = [
+            (
+                Origin {
+                    terminal_handle: Some("worker".into()),
+                    ..Origin::default()
+                },
+                true,
+            ),
+            (
+                Origin {
+                    pane_key: Some("worker:leaf".into()),
+                    ..Origin::default()
+                },
+                true,
+            ),
+            (
+                Origin {
+                    tab_id: Some("worker".into()),
+                    ..Origin::default()
+                },
+                true,
+            ),
+            (
+                Origin {
+                    terminal_handle: Some("coordinator".into()),
+                    ..Origin::default()
+                },
+                false,
+            ),
+            (
+                Origin {
+                    terminal_handle: Some("standalone".into()),
+                    ..Origin::default()
+                },
+                false,
+            ),
+            (Origin::default(), false),
+        ];
+        for (i, (origin, refused)) in origins.into_iter().enumerate() {
+            let mut env = agent_env(dir.path());
+            env.origin = origin;
+            let mut mcp = McpServer::new(SocketControl::new(path.clone())).with_review_env(env);
+            let url = format!("https://github.com/o/r/pull/{}", i + 1);
+            let r = call_tool(&mut mcp, "mark_pr_ready", json!({"pr_url": url}));
+            assert_eq!(r["isError"], refused, "{}", text(&r));
+            assert_eq!(app.queue.lock().unwrap().get(&url).is_none(), refused);
+            if refused {
+                assert!(text(&r).contains("merge_ready to your coordinator"));
+            }
+            assert!(!dir.path().join(mark::PENDING_FILE).exists());
+        }
+    }
+
     /// The tool, the control socket and the app's command handler, end to end.
     #[test]
     fn mark_pr_ready_reaches_the_app_over_the_socket() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("c.sock");
-        let app = Arc::new(QueueApp(Mutex::new(ReviewQueue::default())));
+        let app = Arc::new(QueueApp::default());
         let server = ControlServer::start(
             &path,
             Backend {
@@ -642,7 +782,7 @@ mod tests {
         assert_eq!(r["isError"], false, "{}", text(&r));
         assert!(text(&r).ends_with("now lists 1 PR."), "{}", text(&r));
         {
-            let queue = app.0.lock().unwrap();
+            let queue = app.queue.lock().unwrap();
             let entry = queue.get(URL).unwrap();
             assert_eq!(
                 entry.origin.terminal_handle.as_deref(),

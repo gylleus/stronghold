@@ -61,6 +61,23 @@ pub fn resolve_agent(
     })
 }
 
+/// Workers report to their coordinator; only the responsible agent may add a ready mark.
+pub fn check_ready_origin(
+    origin: &Origin,
+    snapshot: Option<&ClanSnapshot>,
+    terminals: &[Terminal],
+) -> Result<(), crate::control::ControlError> {
+    let worker = snapshot
+        .and_then(|s| resolve_agent(origin, s, terminals).and_then(|a| s.node(&a.id)))
+        .is_some_and(|n| n.kind == NodeKind::Worker);
+    if origin.is_dispatched_worker() || worker {
+        return Err(crate::control::ControlError::invalid_params(
+            crate::review::mark::WORKER_READY_ERROR,
+        ));
+    }
+    Ok(())
+}
+
 /// One listed PR.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReviewRow {

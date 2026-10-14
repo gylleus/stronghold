@@ -131,7 +131,7 @@ pub fn review_section(
                     ui.add(crate::ui::art::portrait(ui.ctx(), crate::ui::art::Portrait::Still, 28.0));
                     ui.add(
                         egui::Label::new(
-                            RichText::new("Nothing waiting. Agents call mark_pr_ready (or send merge_ready) when a PR is ready.").weak(),
+                            RichText::new("Nothing waiting. Coordinators and standalone agents call mark_pr_ready when a PR is ready.").weak(),
                         )
                         .wrap(),
                     );

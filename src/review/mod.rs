@@ -2,12 +2,11 @@
 //! GitHub state until the user reviews them or they merge.
 //!
 //! Marks come from the `mark_pr_ready` MCP tool and `stronghold pr-ready` (both carry the
-//! caller's Orca identity), and from `merge_ready` bus messages (listed only with a `✅` marker
-//! on the PR's head; see [`queue`]). The app reads each PR with
+//! caller's Orca identity). Only coordinators and standalone terminals may mark PRs; worker
+//! `merge_ready` messages go to their coordinators. The app reads each PR with
 //! `gh pr view` (read-only). Docs: `docs/control-api.md` (`pr_ready`, `review_queue`),
 //! `docs/mcp.md`.
 
-pub mod bus;
 pub mod control;
 pub mod github;
 pub mod mark;

@@ -4,9 +4,8 @@
 //!
 //! An entry is shown until the user dismisses it or marks it reviewed (a later mark shows it
 //! again, and so does a new push after "reviewed"), or until GitHub says it merged or closed
-//! and [`GONE_GRACE_MS`] passed. Drafts are never shown. Entries from the bus (a worker's
-//! `merge_ready` to its coordinator) show only once GitHub says the PR carries the
-//! coordinator's `✅` ready marker on its current head.
+//! and [`GONE_GRACE_MS`] passed. Drafts are never shown. Legacy bus marks and marks with
+//! dispatched worker identities are ignored, including when loading a saved queue.
 
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
@@ -16,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::review::github::{GhError, MarkerKind, PrState, PrStatus, same_sha};
+use crate::review::github::{GhError, PrState, PrStatus, same_sha};
 use crate::review::mark::{MarkSource, Origin, ReadyMark};
 use crate::review::pr::PrRef;
 
@@ -144,10 +143,6 @@ impl Entry {
         self.gone_since_ms
             .is_some_and(|t| now_ms - t >= GONE_GRACE_MS)
     }
-
-    fn is_bus(&self) -> bool {
-        matches!(self.source, MarkSource::Bus { .. })
-    }
 }
 
 /// How [`ReviewQueue::add`] changed the queue.
@@ -183,6 +178,9 @@ impl ReviewQueue {
 
     /// Records a mark. A mark newer than the entry's refreshes it and shows it again.
     pub fn add(&mut self, mark: &ReadyMark) -> AddOutcome {
+        if matches!(mark.source, MarkSource::Bus { .. }) || mark.origin.is_dispatched_worker() {
+            return AddOutcome::Unchanged;
+        }
         let key = mark.pr.url();
         let Some(entry) = self.entries.get_mut(&key) else {
             self.entries.insert(key, Entry::new(mark));
@@ -249,16 +247,12 @@ impl ReviewQueue {
         }
     }
 
-    /// Whether `entry` is listed: not resolved, not gone for long, not a draft, and (for bus
-    /// entries) carrying a `✅` ready marker on its head. A `merge_ready` message is a worker's
-    /// hand-off to its coordinator, not a request to the user; only the coordinator's marker or
-    /// `mark_pr_ready` puts a PR in front of them.
+    /// Whether `entry` is listed: not resolved, not gone for long, and not a draft.
     pub fn is_visible(&self, entry: &Entry, now_ms: i64) -> bool {
         let status = entry.status.as_ref();
         !entry.is_resolved()
             && !entry.gone_past_grace(now_ms)
             && !status.is_some_and(|s| s.state == PrState::Draft)
-            && (!entry.is_bus() || status.is_some_and(ready_on_head))
     }
 
     /// The listed entries, newest mark first.
@@ -385,7 +379,15 @@ impl ReviewQueue {
         };
         match serde_json::from_str::<Saved>(&text) {
             Ok(saved) => Self {
-                entries: saved.entries.into_iter().map(|e| (e.url(), e)).collect(),
+                entries: saved
+                    .entries
+                    .into_iter()
+                    .filter(|e| {
+                        !matches!(e.source, MarkSource::Bus { .. })
+                            && !e.origin.is_dispatched_worker()
+                    })
+                    .map(|e| (e.url(), e))
+                    .collect(),
                 github_unavailable: None,
             },
             Err(e) => {
@@ -429,15 +431,6 @@ struct Saved {
     entries: Vec<Entry>,
 }
 
-/// The PR description opens with `✅ Ready for review` naming the current head.
-fn ready_on_head(status: &PrStatus) -> bool {
-    status
-        .marker
-        .as_ref()
-        .is_some_and(|m| m.kind == MarkerKind::Ready)
-        && status.marker_on_head() == Some(true)
-}
-
 /// The queue's key for a URL: its canonical PR URL, or the text itself when it is not one.
 fn canonical(url: &str) -> String {
     PrRef::parse(url).map_or_else(|| url.to_owned(), |p| p.url())
@@ -446,7 +439,7 @@ fn canonical(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::review::github::{Ci, Marker};
+    use crate::review::github::{Ci, Marker, MarkerKind};
 
     const URL: &str = "https://github.com/acme/api/pull/255";
 
@@ -495,6 +488,14 @@ mod tests {
     }
 
     #[test]
+    fn worker_merge_ready_does_not_create_a_mark() {
+        let mut q = ReviewQueue::default();
+        assert_eq!(q.add(&bus(10)), AddOutcome::Unchanged);
+        assert!(q.entries().next().is_none());
+        assert!(q.take_new(10).is_empty());
+    }
+
+    #[test]
     fn tool_mark_shows_at_once_and_notifies_once() {
         let mut q = ReviewQueue::default();
         assert_eq!(q.add(&mark(MarkSource::Tool, 10)), AddOutcome::New);
@@ -529,60 +530,35 @@ mod tests {
     }
 
     #[test]
-    fn bus_marks_wait_for_github_and_merged_ones_never_show() {
-        let mut q = ReviewQueue::default();
-        q.add(&bus(10));
-        assert!(urls(&q, 10).is_empty(), "waits for its first status");
-        q.apply_status(URL, Ok(status(PrState::Merged, "abcdef1")), 20);
-        assert!(urls(&q, 20).is_empty());
+    fn legacy_bus_marks_are_dropped_even_with_a_ready_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(QUEUE_FILE);
+        let mut legacy = Entry::new(&bus(10));
+        legacy.status = Some(with_marker(
+            PrState::Open,
+            "bbbbbbb222",
+            MarkerKind::Ready,
+            "bbbbbbb",
+        ));
+        let saved = Saved {
+            version: 1,
+            entries: vec![legacy],
+        };
+        fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let mut q = ReviewQueue::load(&path);
+        assert!(q.entries().next().is_none());
+        assert!(q.poll_urls().is_empty());
         assert!(q.take_new(20).is_empty());
-        assert!(q.prune(20));
-        assert!(q.get(URL).is_none());
-
-        let mut q = ReviewQueue::default();
-        q.add(&bus(10));
-        q.apply_status(URL, Err(GhError::Unavailable("gh auth login".into())), 20);
-        assert_eq!(q.github_unavailable(), Some("gh auth login"));
-        assert!(
-            urls(&q, 20).is_empty(),
-            "a bus message alone, unverified, is not a ready mark"
-        );
-        q.apply_status(URL, Err(GhError::Failed("not found".into())), 21);
-        assert!(urls(&q, 21).is_empty());
-    }
-
-    #[test]
-    fn bus_hand_off_without_a_ready_marker_on_head_stays_out() {
-        // A worker's merge_ready while the coordinator's marker says not ready (api#649).
-        let mut q = ReviewQueue::default();
-        q.add(&bus(10));
-        let not_ready = with_marker(PrState::Open, "bbbbbbb222", MarkerKind::NotReady, "aaaaaaa");
-        q.apply_status(URL, Ok(not_ready), 20);
-        assert!(urls(&q, 20).is_empty());
-        assert!(q.take_new(20).is_empty(), "and no notification");
-
-        let stale = with_marker(PrState::Open, "bbbbbbb222", MarkerKind::Ready, "aaaaaaa");
-        q.apply_status(URL, Ok(stale), 30);
-        assert!(urls(&q, 30).is_empty(), "a ready marker for an older head");
-
-        q.apply_status(URL, Ok(status(PrState::Open, "bbbbbbb222")), 40);
-        assert!(urls(&q, 40).is_empty(), "no marker at all");
-
-        let ready = with_marker(PrState::Open, "bbbbbbb222", MarkerKind::Ready, "bbbbbbb");
-        q.apply_status(URL, Ok(ready), 50);
-        assert_eq!(urls(&q, 50), [URL], "the coordinator marked the head ready");
-        assert_eq!(q.take_new(50).len(), 1);
+        assert_eq!(q.add(&mark(MarkSource::Tool, 30)), AddOutcome::New);
+        assert_eq!(urls(&q, 30), [URL]);
+        assert_eq!(q.add(&bus(40)), AddOutcome::Unchanged);
+        assert_eq!(q.get(URL).unwrap().source, MarkSource::Tool);
+        assert_eq!(q.get(URL).unwrap().marked_ms, 30);
     }
 
     #[test]
     fn drafts_never_show() {
-        // A worker's merge_ready about a draft (infrastructure-gitops#1541).
-        let mut q = ReviewQueue::default();
-        q.add(&bus(10));
         let draft = with_marker(PrState::Draft, "bbbbbbb222", MarkerKind::Ready, "bbbbbbb");
-        q.apply_status(URL, Ok(draft.clone()), 20);
-        assert!(urls(&q, 20).is_empty());
-
         let mut q = ReviewQueue::default();
         q.add(&mark(MarkSource::Tool, 10));
         assert_eq!(urls(&q, 10), [URL], "before the first read");
@@ -631,7 +607,7 @@ mod tests {
         assert!(q.dismiss(URL, 20));
         assert!(urls(&q, 20).is_empty());
         assert!(q.poll_urls().is_empty());
-        assert_eq!(q.add(&bus(15)), AddOutcome::Updated);
+        assert_eq!(q.add(&mark(MarkSource::Tool, 15)), AddOutcome::Updated);
         assert!(
             urls(&q, 21).is_empty(),
             "a mark from before the dismissal keeps it hidden"

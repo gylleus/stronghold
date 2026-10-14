@@ -259,7 +259,8 @@ When a PR passes the gate, the coordinator **rewrites the PR description** (neve
 comment) so it describes the design as it now stands, then marks it.
 
 - Only the coordinator, only after the gate passed. Workers write and maintain the initial
-  description but never set the marker.
+  description but never set the marker or call `mark_pr_ready` (including `stronghold pr-ready`).
+  Their `merge_ready` goes only to the coordinator; it does not add a review-queue entry.
 - First line, one of two forms, naming the verified SHA:
   - `✅ **Ready for review** — <one line> (<sha>)`
   - `⏸ **Not ready** — <the one blocker> (<sha>)`
@@ -271,7 +272,8 @@ comment) so it describes the design as it now stands, then marks it.
   (deploy, cron window, dependencies).
 - Read the current body first and edit with `gh pr edit <n> --body-file -`. Say it comes from
   {user}'s AI agent. `fleet-sweep.sh` reads each PR's first line.
-- After a `✅` marker, hand over: `mark_pr_ready {pr_url}` (Stronghold's review queue), then one
+- After verifying the gate and setting a `✅` marker, the coordinator hands over:
+  `mark_pr_ready {pr_url}` (Stronghold's review queue), then one
   `notify` (info, the PR url, what {user} does next), per _Human in the loop_.
 
 ## Trust boundaries

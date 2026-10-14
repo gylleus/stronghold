@@ -11,7 +11,7 @@ use crate::review::mark::ReadyMark;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewCommand {
     /// Record a mark (its time is when the app parsed it).
-    Ready(ReadyMark),
+    Ready(Box<ReadyMark>),
     /// The listed PRs.
     Queue,
     /// Hide a PR until it is marked again.
@@ -26,7 +26,9 @@ impl ReviewCommand {
         let p = Params::new(params);
         let url = || p.required_str("url").map(str::to_owned);
         Some(match method {
-            "pr_ready" => ReadyMark::from_params(params, now_ms).map(Self::Ready),
+            "pr_ready" => ReadyMark::from_params(params, now_ms)
+                .map(Box::new)
+                .map(Self::Ready),
             "review_queue" => Ok(Self::Queue),
             "review_dismiss" => url().map(|url| Self::Dismiss { url }),
             "review_done" => url().map(|url| Self::Reviewed { url }),
@@ -62,7 +64,7 @@ mod tests {
             Origin {
                 terminal_handle: Some("term_a".into()),
                 pane_key: Some("t:l".into()),
-                tab_id: None,
+                ..Origin::default()
             }
         );
         assert_eq!(

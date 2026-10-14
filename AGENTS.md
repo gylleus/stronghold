@@ -29,7 +29,7 @@ it overrides the "Conservative" default below for commits and the local merge (n
 4. Report a short summary (what changed; the user gets it with `just install` and reopening
    Stronghold), then exit your session.
 
-There is no GitHub remote: no push, no PR, no `mark_pr_ready`.
+The remote is `git@github.com:gylleus/stronghold.git`. Push only when the user asks; no PR, no `mark_pr_ready`.
 
 ## Build & Test
 

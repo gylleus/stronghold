@@ -72,15 +72,18 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `tell_king` | `message`, `kind` (`info` \| `question` \| `blocked`), `url` | – (durable `king-inbox.json`, online or offline) | not destructive |
 | `king_inbox` | `limit` (default 20, max 100) | – (reads the durable inbox) | read-only |
 | `ask_user` | `question`, `context`, `severity` (`info` \| `warn` \| `urgent`), `url` | `ask` | not destructive |
-| `finish_session` | `summary`, `approval` (`karl` \| `trivial`), `outcome` (`done` \| `handed_over` \| `abandoned`), `pr_url`, `force` | `finish` (a `dry_run` check, then the real one) | destructive |
+| `finish_session` | `summary`, `approval` (`user` \| `trivial`), `outcome` (`done` \| `handed_over` \| `abandoned`), `pr_url`, `force` | `finish` (a `dry_run` check, then the real one) | destructive |
 | `spawn_session` | `mode` (`worktree` \| `new_worktree` \| `worker`), `prompt`, plus `worktree`, `repo` + `name`, `base_branch`, `run_id`, `terminal`, `title`, `label`, `agent`, `model`, `effort`, `allow_suffix` | `spawn` | destructive |
 | `clean_worktrees` | `dry_run` (**default true**), `ids` (needed with `dry_run: false`) | – (runs `orca`, `git`, `gh` itself) | destructive |
 
-`mark_pr_ready` is for clan agents: the server is registered at user scope, so every Claude
-session (clan agents in Orca terminals included) has it. It sends the caller's Orca identity
-(`ORCA_TERMINAL_HANDLE`, `ORCA_PANE_KEY`, `ORCA_TAB_ID` from the `stronghold mcp` process's
-environment, which it inherits from the agent's terminal) so the PR shows under the agent's
-node. Agents without MCP (Codex) run `stronghold pr-ready <url> [--title …] [--summary …]`,
+`mark_pr_ready` is for coordinators after verifying the gate, and standalone terminals.
+Dispatched workers must send `merge_ready` to their coordinator instead; they must never
+call this tool or `stronghold pr-ready`. The tool refuses task/dispatch identities and worker
+nodes. The server is registered at user scope, so every Claude session (clan agents in Orca
+terminals included) has it. It sends the caller's Orca identity (`ORCA_TERMINAL_HANDLE`,
+`ORCA_PANE_KEY`, `ORCA_TAB_ID`, plus `ORCA_TASK_ID` and `ORCA_DISPATCH_ID` when present) from
+the `stronghold mcp` process's inherited environment so the PR shows under the agent's node.
+Agents without MCP run `stronghold pr-ready <url> [--title …] [--summary …]`,
 which does the same. See the control API's [Review queue](control-api.md#review-queue).
 
 `notify` is how any agent reaches the user without going through the King: a macOS and/or

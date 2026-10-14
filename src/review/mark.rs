@@ -1,4 +1,4 @@
-//! A "ready for review" mark: an agent (or a bus `merge_ready` message) saying a PR is ready,
+//! A "ready for review" mark: a coordinator or standalone agent saying a PR is ready,
 //! with who said it. Marks reach the app over the control API (`pr_ready`), or through
 //! `<data dir>/pr-ready.jsonl` when the app is not running, which it ingests on start.
 
@@ -23,8 +23,11 @@ pub const MAX_PENDING_BYTES: u64 = 256 * 1024;
 /// Longest title and summary kept.
 pub const MAX_TEXT_CHARS: usize = 500;
 
-/// The Orca identity of the agent that marked a PR, from its terminal's environment (or the
-/// bus message's sender).
+pub const WORKER_READY_ERROR: &str = "Dispatched workers cannot mark PRs ready for review. Send \
+    merge_ready to your coordinator instead; the coordinator must verify the gate and call \
+    mark_pr_ready.";
+
+/// The Orca identity of the agent that marked a PR, from its terminal's environment.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Origin {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -34,11 +37,15 @@ pub struct Origin {
     pub pane_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch_id: Option<String>,
 }
 
 impl Origin {
     /// From this process's environment (`ORCA_TERMINAL_HANDLE`, `ORCA_PANE_KEY`, `ORCA_TAB_ID`,
-    /// which Orca sets in every terminal it opens).
+    /// which Orca sets in every terminal it opens), plus task/dispatch IDs when present.
     pub fn from_env() -> Self {
         Self::from_vars(|k| std::env::var(k).ok())
     }
@@ -54,11 +61,20 @@ impl Origin {
             terminal_handle: get(ENV_HANDLE),
             pane_key: get(ENV_PANE_KEY),
             tab_id: get(ENV_TAB_ID),
+            task_id: get("ORCA_TASK_ID"),
+            dispatch_id: get("ORCA_DISPATCH_ID"),
         }
     }
 
+    pub fn is_dispatched_worker(&self) -> bool {
+        self.task_id.is_some() || self.dispatch_id.is_some()
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.terminal_handle.is_none() && self.pane_key.is_none() && self.tab_id.is_none()
+        self.terminal_handle.is_none()
+            && self.pane_key.is_none()
+            && self.tab_id.is_none()
+            && !self.is_dispatched_worker()
     }
 }
 
@@ -70,7 +86,7 @@ pub enum MarkSource {
     Tool,
     /// `stronghold pr-ready`.
     Cli,
-    /// A `merge_ready` bus message.
+    /// A legacy `merge_ready` bus mark, retained for reading old queue files.
     Bus { message_id: String },
 }
 
@@ -116,6 +132,9 @@ impl ReadyMark {
         source: MarkSource,
         at_ms: i64,
     ) -> Result<Self, String> {
+        if origin.is_dispatched_worker() {
+            return Err(WORKER_READY_ERROR.into());
+        }
         let pr = PrRef::parse(url).ok_or_else(|| {
             format!("{url:?} is not a GitHub pull request URL (https://github.com/<org>/<repo>/pull/<n>)")
         })?;
@@ -341,6 +360,8 @@ mod tests {
             ("ORCA_TERMINAL_HANDLE", "term_abc"),
             ("ORCA_PANE_KEY", "tab1:leaf1"),
             ("ORCA_TAB_ID", "  "),
+            ("ORCA_TASK_ID", "  "),
+            ("ORCA_DISPATCH_ID", ""),
         ]
         .into();
         let origin = Origin::from_vars(|k| env.get(k).map(|v| (*v).to_owned()));
@@ -349,10 +370,25 @@ mod tests {
             Origin {
                 terminal_handle: Some("term_abc".into()),
                 pane_key: Some("tab1:leaf1".into()),
-                tab_id: None,
+                ..Origin::default()
             }
         );
         assert!(Origin::from_vars(|_| None).is_empty());
+    }
+
+    #[test]
+    fn control_params_refuse_task_and_dispatch_identities() {
+        for field in ["task_id", "dispatch_id"] {
+            for via in ["tool", "cli"] {
+                let params = json!({
+                    "url": "https://github.com/o/r/pull/1",
+                    "via": via,
+                    "origin": {field: "worker-id"},
+                });
+                let error = ReadyMark::from_params(&params, 0).unwrap_err();
+                assert_eq!(error.message, WORKER_READY_ERROR);
+            }
+        }
     }
 
     #[test]

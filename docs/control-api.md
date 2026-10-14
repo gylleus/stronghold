@@ -529,10 +529,13 @@ the automatic whip's dry-run setting. The next periodic tick comes one period la
 
 ### `pr_ready`
 
-Records that a PR is ready for review. Agents call it through the `mark_pr_ready` MCP tool or
+Records that a PR is ready for review. Coordinators (after verifying the gate) and standalone
+terminals call it through the `mark_pr_ready` MCP tool or
 `stronghold pr-ready`, which fill in `origin` from the caller's Orca environment
-(`ORCA_TERMINAL_HANDLE`, `ORCA_PANE_KEY`, `ORCA_TAB_ID`). It only records in Stronghold; nothing
-goes to GitHub or the bus.
+(`ORCA_TERMINAL_HANDLE`, `ORCA_PANE_KEY`, `ORCA_TAB_ID`, `ORCA_TASK_ID`, `ORCA_DISPATCH_ID`).
+Callers with a task or dispatch ID, or whose identity resolves to a worker node, are refused
+and told to send `merge_ready` to their coordinator instead. It only records in Stronghold;
+nothing goes to GitHub or the bus.
 
 | param | type | meaning |
 |---|---|---|
@@ -540,7 +543,7 @@ goes to GitHub or the bus.
 | `title` | string | optional; GitHub's title replaces it once read |
 | `summary` | string | optional one line |
 | `via` | `tool` \| `cli` | where the mark came from (default `tool`) |
-| `origin` | `{terminal_handle, pane_key, tab_id}` | the marking agent's Orca identity |
+| `origin` | `{terminal_handle, pane_key, tab_id, task_id, dispatch_id}` | the marking agent's Orca identity |
 
 ```json
 {"v":1,"method":"pr_ready","params":{"url":"https://github.com/o/r/pull/7","via":"cli",
@@ -591,7 +594,7 @@ caller's terminal waiting (needs input) until they answer. The reply is `notify`
 
 ### `finish`
 
-`{"summary", "approval": "karl"|"trivial", "outcome"?: "done"|"handed_over"|"abandoned",
+`{"summary", "approval": "user"|"trivial", "outcome"?: "done"|"handed_over"|"abandoned",
 "pr_url"?, "force"?, "forced"?: […], "dry_run"?, "origin"?}` (`approval` is optional only on a
 `dry_run`). An agent ending its own session (the `finish_session` MCP tool).
 With `dry_run` it returns the caller's node (`agent`: id, label, kind, worktree, branch) with
@@ -601,7 +604,7 @@ or problems without `force`, fail with `refused`; past them the app records the 
 the terminal after `closing_in_ms` with the `plan` returned.
 
 ```json
-{"v":1,"method":"finish","params":{"summary":"Merged into main","approval":"karl","origin":{"terminal_handle":"term_…"}}}
+{"v":1,"method":"finish","params":{"summary":"Merged into main","approval":"user","origin":{"terminal_handle":"term_…"}}}
 → {"ok":true,"result":{"dry_run":false,"agent":{"id":"term:term_…",…},"finished":{…},
    "closing_in_ms":2000,"plan":{…},"notification":"delivered"}}
 ```
@@ -611,7 +614,7 @@ the terminal after `closing_in_ms` with the `plan` returned.
 `{"from", "to", "kind"?}`. Draws a message between agents, which happened elsewhere, as an
 envelope flying from `from` to `to` in the hold; nothing is sent. Each end
 is a node id, a terminal handle, `run:<id>` (its coordinator), `dispatch:<id>`, `king`,
-`envoy` (the live Envoy session), `karl` or `slack` (the outside world: the landing mound
+`envoy` (the live Envoy session), `user` or `slack` (the outside world: the landing mound
 in the hold). `kind` picks the look: `instruction`, `message` (default), `ask` (or `question`,
 `escalation`), `merge_ready`, `relay` (or `slack`, `envoy`), `nudge` or `status`. Unknown ends
 are ignored. Bus messages, `send`, `notify`, `ask`, whip nudges and the user's typing are drawn
@@ -656,15 +659,18 @@ marks its notifications read.
 
 ## Review queue
 
-PRs reach the queue from `pr_ready` and from `merge_ready` bus messages in the inbox the app
-polls (every PR URL in the subject, body or payload, attributed to the sender). A mark made
-while the app is down waits in `<data dir>/pr-ready.jsonl` (0600) and is taken on start. The
-app reads each queued PR with `gh pr view --json …` (read-only) every 3 minutes and at once
-when it joins. A `merge_ready` message is a worker's hand-off to its coordinator, so a bus
-entry shows only once GitHub says the PR's description opens with the coordinator's `✅ Ready
-for review` marker naming the current head. Drafts never show, whatever marked them. Merged or
-closed PRs leave after 5 minutes. The queue is saved
-in `<data dir>/review-queue.json` (0600).
+PRs reach the queue only from `pr_ready`, called by a coordinator after verifying the gate or
+by a standalone terminal. Worker `merge_ready` bus messages remain hand-offs to coordinators
+and never create marks. A mark made while the app is down waits in `<data dir>/pr-ready.jsonl`
+(0600) and is taken on start. The app reads each queued PR with `gh pr view --json …`
+(read-only) every 3 minutes and at once when it joins. Drafts never show. Merged or closed PRs
+leave after 5 minutes. The queue is saved in `<data dir>/review-queue.json` (0600).
+
+Legacy bus marks are ignored on load. Existing worker-made tool/CLI marks without task or
+dispatch IDs cannot reliably be identified once their worker node is gone. Dismiss those
+through the review queue or `stronghold ctl review_dismiss '{"url":"<PR URL>"}'`; the
+coordinator can call `mark_pr_ready` after verifying the gate to replace the attribution and
+show the PR again.
 
 ## `stronghold ctl`
 

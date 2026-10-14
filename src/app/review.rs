@@ -1,5 +1,5 @@
-//! The app side of the review queue: ingests marks (control API, the pending file, `merge_ready`
-//! bus messages), applies GitHub reads, notifies, saves, and draws the queue in the King panel,
+//! The app side of the review queue: ingests marks (control API and pending file), applies
+//! GitHub reads, notifies, saves, and draws the queue in the King panel,
 //! the top bar and the clan's "PR" badges.
 
 use std::collections::HashSet;
@@ -16,8 +16,10 @@ use crate::review::github::GhCli;
 use crate::review::mark::{self, Origin};
 use crate::review::poller::{GithubPoller, POLL_INTERVAL};
 use crate::review::queue::{AddOutcome, ReviewQueue};
-use crate::review::view::{AgentRef, ReviewRow, queue_json, resolve_agent, rows};
-use crate::review::{ReadyMark, ReviewCommand, bus};
+use crate::review::view::{
+    AgentRef, ReviewRow, check_ready_origin, queue_json, resolve_agent, rows,
+};
+use crate::review::{ReadyMark, ReviewCommand};
 use crate::ui::review::{ReviewAction, SectionState};
 
 /// How often merged/closed and long-resolved entries are dropped.
@@ -30,8 +32,6 @@ pub(super) struct AppReview {
     poller: GithubPoller,
     /// The queue changed since it was last saved.
     dirty: bool,
-    /// `polled_at_ms` of the clan data whose inbox was read last.
-    inbox_read_at: Option<i64>,
     /// URLs last handed to the poller.
     watched: Vec<String>,
     last_prune_ms: i64,
@@ -69,7 +69,6 @@ impl AppReview {
             path,
             poller,
             dirty,
-            inbox_read_at: None,
             watched: Vec::new(),
             last_prune_ms: 0,
             last_count: 0,
@@ -104,11 +103,10 @@ impl StrongholdApp {
         rows(&self.review.queue, now_ms, |o| self.review_agent(o))
     }
 
-    /// Per frame: reads new bus messages, applies GitHub reads, prunes, keeps the poller's
+    /// Per frame: applies GitHub reads, prunes, keeps the poller's
     /// watch list current, notifies about new entries, marks clan nodes and saves.
     pub(super) fn poll_review(&mut self) {
         let now = now_ms();
-        self.ingest_bus(now);
         for (url, result) in self.review.poller.updates() {
             self.review.queue.apply_status(&url, result, now);
             self.review.dirty = true;
@@ -157,32 +155,6 @@ impl StrongholdApp {
         }
     }
 
-    /// Adds the `merge_ready` messages of a new poll (the poller reads new PRs as soon as they
-    /// join its watch list). The first poll after start is history: its entries are listed
-    /// without notifications.
-    fn ingest_bus(&mut self, now: i64) {
-        let Some(data) = &self.data else { return };
-        if self.review.inbox_read_at == Some(data.polled_at_ms) {
-            return;
-        }
-        let first = self.review.inbox_read_at.is_none();
-        self.review.inbox_read_at = Some(data.polled_at_ms);
-        let marks = bus::marks_from_inbox(&data.inbox, now);
-        let mut changed = Vec::new();
-        for m in &marks {
-            if self.review.queue.add(m) != AddOutcome::Unchanged {
-                changed.push(m.pr.url());
-            }
-        }
-        if changed.is_empty() {
-            return;
-        }
-        self.review.dirty = true;
-        if first {
-            self.review.queue.silence(&changed);
-        }
-    }
-
     fn review_notification(&self, entry: &crate::review::Entry) -> Incoming {
         let title = entry.title();
         let agent = self
@@ -218,7 +190,7 @@ impl StrongholdApp {
     pub(super) fn control_review(&mut self, command: ReviewCommand) -> Result<Value, ControlError> {
         let now = now_ms();
         match command {
-            ReviewCommand::Ready(mark) => Ok(self.review_mark(&mark, now)),
+            ReviewCommand::Ready(mark) => self.review_mark(&mark, now),
             ReviewCommand::Queue => {
                 let rows = self.review_rows(now);
                 Ok(queue_json(&rows, self.review.queue.github_unavailable()))
@@ -228,7 +200,9 @@ impl StrongholdApp {
         }
     }
 
-    fn review_mark(&mut self, mark: &ReadyMark, now: i64) -> Value {
+    fn review_mark(&mut self, mark: &ReadyMark, now: i64) -> Result<Value, ControlError> {
+        let terminals = self.data.as_ref().map_or(&[][..], |d| &d.terminals[..]);
+        check_ready_origin(&mark.origin, self.snapshot.as_ref(), terminals)?;
         let outcome = self.review.queue.add(mark);
         log::info!(
             "review: {} marked ready ({outcome:?}) by {:?}",
@@ -244,7 +218,7 @@ impl StrongholdApp {
         let agent = self.review_agent(&mark.origin);
         let count = self.review_rows(now).len();
         self.save_review();
-        json!({
+        Ok(json!({
             "url": url,
             "outcome": match outcome {
                 AddOutcome::New => "new",
@@ -254,7 +228,7 @@ impl StrongholdApp {
             "agent": agent,
             "origin": mark.origin,
             "count": count,
-        })
+        }))
     }
 
     fn review_resolve(
