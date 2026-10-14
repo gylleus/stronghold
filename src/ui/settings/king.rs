@@ -19,7 +19,7 @@ pub struct KingStatus<'a> {
     pub auto_mode: bool,
     /// The model the chat header shows (from the CLI's `system/init`, or the one requested).
     pub running_model: Option<&'a str>,
-    /// `MYRSTACK_CHAT_MODEL`, when set: it wins over the saved model.
+    /// `STRONGHOLD_CHAT_MODEL`, when set: it wins over the saved model.
     pub env_model: Option<&'a str>,
 }
 

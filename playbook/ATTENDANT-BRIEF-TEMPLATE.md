@@ -1,6 +1,6 @@
 # Attendant brief — <campaign> (fill every <…>; keep the rest verbatim)
 
-> Fallback only: start an attendant when Myrstack isn't running. With Myrstack up, its event
+> Fallback only: start an attendant when Stronghold isn't running. With Stronghold up, its event
 > forwarding and whip do this job and an attendant would double every forward.
 
 You are the ATTENDANT for an Orca-orchestrated agent clan. You are a cheap watcher only:
@@ -48,8 +48,8 @@ path and branch name, `%`, `$`) means the coordinator session has EXITED, and `-
 there would execute your forward as a shell command. Then do NOT forward. Instead:
 
 1. Append `coordinator unreachable since <time>` to `SCRATCH/attendant-status.txt`.
-2. Summon Karl once, with Myrstack's `notify` tool: title `Coordinator COORD is dead`, message
-   `<event> from <track> is waiting`, `severity: urgent`. If Myrstack isn't running (`notify`
+2. Summon Karl once, with Stronghold's `notify` tool: title `Coordinator COORD is dead`, message
+   `<event> from <track> is waiting`, `severity: urgent`. If Stronghold isn't running (`notify`
    answers that it queued the notification), also summon Karl now:
    `osascript -e 'display dialog "Clan attendant: coordinator COORD is dead; <event> from <track> is waiting" with title "orca clan" buttons {"OK"} giving up after 300'`
 3. Keep the loop running; queue further events one per line in `SCRATCH/attendant-queue.txt`.

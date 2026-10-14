@@ -24,12 +24,12 @@ pub const SOCKET_FILE: &str = "control.sock";
 
 /// Environment variable overriding the socket path (relative paths resolve against the working
 /// directory, which helps when the data dir is too deep for a socket path's ~104-byte limit).
-pub const SOCKET_ENV: &str = "MYRSTACK_CONTROL_SOCKET";
+pub const SOCKET_ENV: &str = "STRONGHOLD_CONTROL_SOCKET";
 
-/// `$MYRSTACK_CONTROL_SOCKET`, else `<data dir>/control.sock` (the data dir honours
-/// `$MYRSTACK_DATA_DIR`).
+/// `$STRONGHOLD_CONTROL_SOCKET`, else `<data dir>/control.sock` (the data dir honours
+/// `$STRONGHOLD_DATA_DIR`).
 pub fn socket_path() -> PathBuf {
-    std::env::var_os(SOCKET_ENV)
+    crate::legacy::env_os(SOCKET_ENV)
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| crate::claude::hook::data_dir().join(SOCKET_FILE))

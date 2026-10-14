@@ -5,11 +5,11 @@
 //! `cargo run --example chat_theme_poc` (`… -- stock` starts with the stock theme)
 
 use eframe::egui;
-use myrstack::chat::protocol::{PermissionRequest, parse_line};
-use myrstack::chat::{SessionState, Transcript};
-use myrstack::model::NodeId;
-use myrstack::ui::chat::{ChatAction, ChatPanelState, ChatView, chat_ui};
-use myrstack::ui::theme;
+use stronghold::chat::protocol::{PermissionRequest, parse_line};
+use stronghold::chat::{SessionState, Transcript};
+use stronghold::model::NodeId;
+use stronghold::ui::chat::{ChatAction, ChatPanelState, ChatView, chat_ui};
+use stronghold::ui::theme;
 
 fn main() -> eframe::Result {
     let stock = std::env::args().any(|a| a == "stock");
@@ -143,8 +143,8 @@ fn scripted_transcript() -> Transcript {
     for line in [
         r#"{"type":"system","subtype":"init","session_id":"s","model":"claude-test","tools":[]}"#,
         r#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"m1"}},"parent_tool_use_id":null}"#,
-        r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"mcp__myrstack__fleet_status"}},"parent_tool_use_id":null}"#,
-        r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"mcp__myrstack__fleet_status","input":{}}]},"parent_tool_use_id":null}"#,
+        r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"mcp__stronghold__clan_status"}},"parent_tool_use_id":null}"#,
+        r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"mcp__stronghold__clan_status","input":{}}]},"parent_tool_use_id":null}"#,
         r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"{\"working\":9,\"stalled\":1}"}]},"parent_tool_use_id":null}"#,
     ] {
         t.apply(&parse_line(line).expect("scripted line"));
@@ -161,7 +161,7 @@ fn scripted_transcript() -> Transcript {
     t.push_voice_user("Yes, whip it and tell beta to hurry up.");
     t.push_permission(PermissionRequest {
         request_id: "p1".into(),
-        tool_name: "mcp__myrstack__send_to_agent".into(),
+        tool_name: "mcp__stronghold__send_to_agent".into(),
         display_name: None,
         input: serde_json::json!({
             "agent": "term:term_1",

@@ -32,7 +32,7 @@ fn id(s: &str) -> NodeId {
 const ORCA: &str = "/Users/x/orca/workspaces";
 
 /// Run `alpha` in repo `shop` (coordinator, a live worker, a released dispatch without a
-/// worktree), run `beta` in repo `infra` and a loose terminal in `myrstack`.
+/// worktree), run `beta` in repo `infra` and a loose terminal in `stronghold`.
 fn snapshot() -> ClanSnapshot {
     let mut s = ClanSnapshot::default();
     s.runs = vec![
@@ -75,7 +75,7 @@ fn snapshot() -> ClanSnapshot {
     b1.worktree_path = Some(format!("{ORCA}/infra/pg-17"));
 
     let mut loose = node("loose", NodeKind::Terminal, None);
-    loose.worktree_path = Some("/Users/x/repo/saker/myrstack-worktrees/myr-1".into());
+    loose.worktree_path = Some("/Users/x/repo/saker/stronghold-worktrees/myr-1".into());
     loose.state = NodeState::NeedsInput;
 
     s.nodes = vec![ca, a1, a2, cb, b1, loose];
@@ -109,12 +109,12 @@ fn repo_of_orca_workspace() {
 #[test]
 fn repo_of_falls_back_to_the_repo_dir() {
     assert_eq!(
-        repo_of("/Users/x/code/saker/myrstack").as_deref(),
-        Some("myrstack")
+        repo_of("/Users/x/code/saker/stronghold").as_deref(),
+        Some("stronghold")
     );
     assert_eq!(
-        repo_of("/Users/x/repo/myrstack-worktrees/myr-k7y.6").as_deref(),
-        Some("myrstack")
+        repo_of("/Users/x/repo/stronghold-worktrees/myr-k7y.6").as_deref(),
+        Some("stronghold")
     );
     assert_eq!(repo_of("/"), None);
     assert_eq!(repo_of(""), None);
@@ -211,7 +211,7 @@ fn counts() {
     let repos = repo_counts(&s);
     assert_eq!(repos["shop"], 3);
     assert_eq!(repos["infra"], 2);
-    assert_eq!(repos["myrstack"], 1);
+    assert_eq!(repos["stronghold"], 1);
     assert_eq!(state_counts(&s)[&NodeState::Working], 2);
     assert_eq!(kind_counts(&s)[&NodeKind::Worker], 3);
 }
@@ -420,7 +420,7 @@ fn runs_and_loose_terminals_group_by_repo() {
 
     let groups = repo_groups(&s);
     let names: Vec<&str> = groups.iter().map(|g| g.repo.as_str()).collect();
-    assert_eq!(names, ["infra", "myrstack", "shop", NO_REPO]);
+    assert_eq!(names, ["infra", "shop", "stronghold", NO_REPO]);
 
     let infra = &groups[0];
     assert_eq!(infra.runs.len(), 1);
@@ -429,16 +429,16 @@ fn runs_and_loose_terminals_group_by_repo() {
     assert_eq!(infra.loose[0].id, id("other"));
     assert_eq!(infra.states.values().sum::<usize>(), 3);
 
-    let shop = &groups[2];
+    let shop = &groups[1];
     assert_eq!(shop.runs[0].id, "alpha");
     assert!(shop.loose.is_empty());
     // The released worker without a worktree counts under its run's repo.
     assert_eq!(shop.states.get(&NodeState::Done), Some(&1));
     assert_eq!(shop.states.values().sum::<usize>(), 3);
 
-    let myrstack = &groups[1];
-    assert!(myrstack.runs.is_empty());
-    assert_eq!(myrstack.loose[0].state, NodeState::NeedsInput);
+    let stronghold = &groups[2];
+    assert!(stronghold.runs.is_empty());
+    assert_eq!(stronghold.loose[0].state, NodeState::NeedsInput);
     assert_eq!(groups[3].loose[0].id, id("bare"));
 }
 

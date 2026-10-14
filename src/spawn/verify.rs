@@ -12,7 +12,7 @@ use super::Agent;
 pub enum Expect {
     /// This prompt, echoed as a user message or being worked on.
     Prompt(String),
-    /// Some input Myrstack didn't write (a worker's dispatch preamble).
+    /// Some input Stronghold didn't write (a worker's dispatch preamble).
     AnyInput,
     /// No prompt: the agent's input box showing is enough.
     Ready,

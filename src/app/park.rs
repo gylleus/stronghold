@@ -2,12 +2,12 @@
 
 use serde_json::{Value, json};
 
-use super::{MyrstackApp, now_ms};
+use super::{StrongholdApp, now_ms};
 use crate::control::ControlError;
 use crate::control::view::kind_name;
 use crate::model::NodeId;
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// Parks `park` and wakes `wake`, as picked in a clan or farm context menu.
     pub(super) fn park_from_menu(&mut self, park: Vec<NodeId>, wake: Vec<NodeId>) {
         for id in &park {

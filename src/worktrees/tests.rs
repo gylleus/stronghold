@@ -480,13 +480,13 @@ fn beads_export_is_not_uncommitted_work() {
 
 #[test]
 fn lsof_output_parses_and_matches_inside_dirs() {
-    let text = "p100\nccargo\nn/w/myrstack/a/target\np200\nczsh\nn/w/myrstack/ab\np300\ncclaude\nn/w/myrstack/a\n";
+    let text = "p100\nccargo\nn/w/stronghold/a/target\np200\nczsh\nn/w/stronghold/ab\np300\ncclaude\nn/w/stronghold/a\n";
     let list = parse_lsof_cwd(text);
     assert_eq!(list.len(), 3);
     assert_eq!(list[1].command, "zsh");
-    // `/w/myrstack/ab` is not inside `/w/myrstack/a`; our own pid is skipped.
+    // `/w/stronghold/ab` is not inside `/w/stronghold/a`; our own pid is skipped.
     assert_eq!(
-        processes_inside(Path::new("/w/myrstack/a"), &list, 300),
+        processes_inside(Path::new("/w/stronghold/a"), &list, 300),
         vec!["cargo (100)".to_string()]
     );
 }
@@ -640,19 +640,19 @@ fn base_branches_start_with_the_worktree_base_ref() {
 #[test]
 fn census_counts_linked_worktrees_per_repo() {
     let mut list = vec![
-        worktree("a::/x", "/home/orca/workspaces/myrstack/one"),
-        worktree("a::/y", "/home/orca/workspaces/myrstack/two"),
+        worktree("a::/x", "/home/orca/workspaces/stronghold/one"),
+        worktree("a::/y", "/home/orca/workspaces/stronghold/two"),
         worktree("b::/z", "/tmp/elsewhere"),
     ];
     list[2].project_id = Some("github:depict-org/depict".into());
-    let mut main = worktree("a::/r", "/repo/myrstack");
+    let mut main = worktree("a::/r", "/repo/stronghold");
     main.is_main_worktree = true;
     list.push(main);
     assert_eq!(
         census(&list),
         Census {
             total: 3,
-            per_repo: vec![("myrstack".into(), 2), ("depict".into(), 1)]
+            per_repo: vec![("stronghold".into(), 2), ("depict".into(), 1)]
         }
     );
 }
@@ -696,7 +696,7 @@ fn plan_text_lists_removals_and_keeps() {
     let entry = |name: &str, remove: bool, reason: &str, bytes: Option<u64>| PlanEntry {
         id: format!("r::{name}"),
         name: name.into(),
-        repo: "myrstack".into(),
+        repo: "stronghold".into(),
         path: format!("/w/{name}"),
         branch: None,
         bytes,
@@ -724,8 +724,8 @@ fn plan_text_lists_removals_and_keeps() {
     assert_eq!(
         plan.text(),
         "2 linked worktrees: 1 to remove (frees 2.0 GB), 1 kept (holding 0 B).\n\
-         Remove:\n- myrstack/old (2.0 GB): merged into main\n\
-         Keep:\n- myrstack/live: live terminal: t\n\
+         Remove:\n- stronghold/old (2.0 GB): merged into main\n\
+         Keep:\n- stronghold/live: live terminal: t\n\
          Directories Orca doesn't list (not touched): /w/stray"
     );
 }

@@ -4,10 +4,10 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use myrstack::envoy::channel::{EventKind, InboundEvent};
-use myrstack::envoy::drafts::{Draft, DraftStatus, ReplyTo};
-use myrstack::envoy::inbox::Inbox;
-use myrstack::ui::envoy::{DraftAction, DraftsPanel};
+use stronghold::envoy::channel::{EventKind, InboundEvent};
+use stronghold::envoy::drafts::{Draft, DraftStatus, ReplyTo};
+use stronghold::envoy::inbox::Inbox;
+use stronghold::ui::envoy::{DraftAction, DraftsPanel};
 
 struct Demo {
     panel: DraftsPanel,
@@ -84,7 +84,7 @@ fn fixtures(outbox: bool) -> (Vec<Draft>, Inbox) {
     );
     let task = Draft::proposal(
         "Review the fixture build and report any regressions.".into(),
-        Some("myrstack".into()),
+        Some("stronghold".into()),
         "Avery requested a review; the King can start a dwarf to check it.".into(),
         link.into(),
         0,
@@ -121,18 +121,18 @@ fn main() -> eframe::Result {
     let (mut drafts, inbox) = fixtures(outbox);
     let gateway = args.iter().any(|a| a == "--gateway");
     if gateway {
-        let link=myrstack::envoy::drafts::RequestLink{id:"envoy-request-1".into(),turn_id:1,original_ask:"Please review abc012def at 2026-10-06T12:34:56Z.\nCount: 42\n```rust\nlet x = 17;\n```\n".into(),requester:"Build dwarf".into(),why:"Unblock the fixture release review".into(),agent:true};
+        let link=stronghold::envoy::drafts::RequestLink{id:"envoy-request-1".into(),turn_id:1,original_ask:"Please review abc012def at 2026-10-06T12:34:56Z.\nCount: 42\n```rust\nlet x = 17;\n```\n".into(),requester:"Build dwarf".into(),why:"Unblock the fixture release review".into(),agent:true};
         let mut draft = Draft::outgoing(
             "C123".into(),
             None,
             link.verbatim(),
             "Avery owns this review".into(),
             link,
-            myrstack::control::server::now_ms(),
+            stronghold::control::server::now_ms(),
         );
         draft.id = "envoy-draft-1".into();
         draft.automatic = true;
-        draft.auto_at_ms = Some(myrstack::control::server::now_ms() + 120_000);
+        draft.auto_at_ms = Some(stronghold::control::server::now_ms() + 120_000);
         drafts = vec![draft];
     }
     eframe::run_native(
@@ -142,14 +142,14 @@ fn main() -> eframe::Result {
             ..Default::default()
         },
         Box::new(move |cc| {
-            myrstack::ui::theme::install(&cc.egui_ctx);
+            stronghold::ui::theme::install(&cc.egui_ctx);
             cc.egui_ctx.set_theme(egui::Theme::Dark);
             let mut panel = DraftsPanel::default();
             if outbox {
                 panel.open(&[]);
             }
             if gateway {
-                let mut orphan = myrstack::envoy::requests::Request {
+                let mut orphan = stronghold::envoy::requests::Request {
                     id: "envoy-request-2".into(),
                     to: "Adopted fixture thread".into(),
                     requester: None,
@@ -157,11 +157,11 @@ fn main() -> eframe::Result {
                     binding_sequence: 0,
                     binding_proposal: None,
                     turns: Vec::new(),
-                    thread: Some(myrstack::envoy::requests::Thread {
+                    thread: Some(stronghold::envoy::requests::Thread {
                         conversation: "D123".into(),
                         ts: "1790000000.000001".into(),
                     }),
-                    status: myrstack::envoy::requests::Status::Sent,
+                    status: stronghold::envoy::requests::Status::Sent,
                     settled: false,
                     adopted_ms: Some(0),
                     reply_after_us: None,
@@ -171,17 +171,17 @@ fn main() -> eframe::Result {
                 };
                 if args.iter().any(|a| a == "--binding") {
                     orphan.binding_sequence = 1;
-                    orphan.binding_proposal = Some(myrstack::envoy::requests::BindingProposal {
+                    orphan.binding_proposal = Some(stronghold::envoy::requests::BindingProposal {
                         id: 1,
-                        requester: myrstack::envoy::requests::Requester::from_origin(
-                            myrstack::review::mark::Origin {
+                        requester: stronghold::envoy::requests::Requester::from_origin(
+                            stronghold::review::mark::Origin {
                                 terminal_handle: Some("Build dwarf".into()),
                                 ..Default::default()
                             },
                         )
                         .unwrap(),
                         reason: "The build dwarf owns this review and needs the replies.".into(),
-                        preview: myrstack::envoy::requests::BindingPreview {
+                        preview: stronghold::envoy::requests::BindingPreview {
                             thread: orphan.thread.clone().unwrap(),
                             first_line: "Please review the fixture release.".into(),
                             slack_link: "https://example.slack.com/archives/D123/p1790000000000001"

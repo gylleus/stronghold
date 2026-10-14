@@ -2,11 +2,11 @@
 
 use eframe::egui;
 
-use super::MyrstackApp;
+use super::StrongholdApp;
 use crate::chat::config::MODEL_ENV;
 use crate::ui::settings::{GeneralInfo, KingStatus, NotifyStatus, PaneContext};
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// Opens the Settings window on the section it showed last (⌘,, "Settings…").
     pub(super) fn open_settings(&mut self) {
         self.whip_window.open_settings();
@@ -18,9 +18,7 @@ impl MyrstackApp {
             return;
         }
         let general = self.general_info();
-        let env_model = std::env::var(MODEL_ENV)
-            .ok()
-            .filter(|m| !m.trim().is_empty());
+        let env_model = crate::legacy::env(MODEL_ENV).filter(|m| !m.trim().is_empty());
         let (native, last_failure, system_sounds) = self.notify_status();
         let cx = PaneContext {
             whip_status: &self.whip_status,

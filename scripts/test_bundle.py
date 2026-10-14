@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bundle  # noqa: E402
 
-OTOOL_L_EXE = """/build/target/release/myrstack:
+OTOOL_L_EXE = """/build/target/release/stronghold:
 \t@rpath/libsherpa-onnx-c-api.dylib (compatibility version 0.0.0, current version 0.0.0)
 \t/opt/homebrew/opt/foo/lib/libfoo.1.dylib (compatibility version 1.0.0, current version 1.2.0)
 \t/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2575.40.6)
@@ -63,7 +63,7 @@ class Parsing(unittest.TestCase):
         self.assertEqual(
             bundle.parse_otool_id("/x/libfoo.dylib:\n@rpath/libfoo.dylib\n"), "@rpath/libfoo.dylib"
         )
-        self.assertIsNone(bundle.parse_otool_id("/x/myrstack:\n"))
+        self.assertIsNone(bundle.parse_otool_id("/x/stronghold:\n"))
 
     def test_system_libraries(self):
         self.assertTrue(bundle.is_system("/usr/lib/libSystem.B.dylib"))
@@ -100,7 +100,7 @@ class FakeInspector:
     the dylib's own rpath), and exe -> libfoo (absolute) -> system only."""
 
     LIBS = {
-        "/build/myrstack": [
+        "/build/stronghold": [
             "@rpath/libsherpa.dylib",
             "/opt/foo/libfoo.dylib",
             "/usr/lib/libSystem.B.dylib",
@@ -109,7 +109,7 @@ class FakeInspector:
         "/cache/lib/libonnxruntime.dylib": ["/usr/lib/libSystem.B.dylib"],
         "/opt/foo/libfoo.dylib": ["/usr/lib/libSystem.B.dylib", "@rpath/libsherpa.dylib"],
     }
-    RPATHS = {"/build/myrstack": ["/cache/lib"], "/cache/lib/libsherpa.dylib": ["@loader_path"]}
+    RPATHS = {"/build/stronghold": ["/cache/lib"], "/cache/lib/libsherpa.dylib": ["@loader_path"]}
 
     def libs(self, path):
         return self.LIBS[path]
@@ -123,7 +123,7 @@ class FakeInspector:
 
 class Collect(unittest.TestCase):
     def test_collects_non_system_dylibs_recursively(self):
-        found = bundle.collect_dylibs("/build/myrstack", FakeInspector())
+        found = bundle.collect_dylibs("/build/stronghold", FakeInspector())
         self.assertEqual(
             found,
             {
@@ -135,15 +135,15 @@ class Collect(unittest.TestCase):
 
     def test_missing_dylib_is_an_error(self):
         inspector = FakeInspector()
-        inspector.LIBS = dict(FakeInspector.LIBS, **{"/build/myrstack": ["@rpath/libgone.dylib"]})
+        inspector.LIBS = dict(FakeInspector.LIBS, **{"/build/stronghold": ["@rpath/libgone.dylib"]})
         with self.assertRaises(FileNotFoundError):
-            bundle.collect_dylibs("/build/myrstack", inspector)
+            bundle.collect_dylibs("/build/stronghold", inspector)
 
     def test_no_dylibs(self):
         inspector = FakeInspector()
-        inspector.LIBS = {"/build/myrstack": ["/usr/lib/libSystem.B.dylib"]}
-        self.assertEqual(bundle.collect_dylibs("/build/myrstack", inspector), {})
-        self.assertEqual(bundle.relink_commands("/app/myrstack", [], {}, {}), [])
+        inspector.LIBS = {"/build/stronghold": ["/usr/lib/libSystem.B.dylib"]}
+        self.assertEqual(bundle.collect_dylibs("/build/stronghold", inspector), {})
+        self.assertEqual(bundle.relink_commands("/app/stronghold", [], {}, {}), [])
 
     def test_clashing_file_names(self):
         with self.assertRaises(ValueError):
@@ -152,11 +152,11 @@ class Collect(unittest.TestCase):
         self.assertEqual(set(bundle.frameworks_names(same).values()), {"libx.1.dylib"})
 
     def test_relink_commands(self):
-        found = bundle.collect_dylibs("/build/myrstack", FakeInspector())
+        found = bundle.collect_dylibs("/build/stronghold", FakeInspector())
         names = bundle.frameworks_names(found)
         fw = "/app/Contents/Frameworks"
         copied = {f"{fw}/libsherpa.dylib": ["/cache/lib", "@loader_path"], f"{fw}/libfoo.dylib": []}
-        cmds = bundle.relink_commands("/app/Contents/MacOS/myrstack", ["/cache/lib", "/cache/lib"], copied, names)
+        cmds = bundle.relink_commands("/app/Contents/MacOS/stronghold", ["/cache/lib", "/cache/lib"], copied, names)
         changes = ["-change", "/opt/foo/libfoo.dylib", "@rpath/libfoo.dylib"]
         self.assertEqual(
             cmds[0],
@@ -164,7 +164,7 @@ class Collect(unittest.TestCase):
                 "install_name_tool", *changes,
                 "-delete_rpath", "/cache/lib",
                 "-add_rpath", "@executable_path/../Frameworks",
-                "/app/Contents/MacOS/myrstack",
+                "/app/Contents/MacOS/stronghold",
             ],
         )  # fmt: skip
         self.assertEqual(
@@ -185,10 +185,10 @@ class InfoPlist(unittest.TestCase):
             bundle.write_info_plist(path, "1.2.3")
             with open(path, "rb") as f:
                 plist = plistlib.load(f)
-        self.assertEqual(plist["CFBundleIdentifier"], "ai.depict.myrstack")
-        self.assertEqual(plist["CFBundleName"], "Myrstack")
-        self.assertEqual(plist["CFBundleDisplayName"], "Myrstack")
-        self.assertEqual(plist["CFBundleExecutable"], "myrstack")
+        self.assertEqual(plist["CFBundleIdentifier"], "ai.depict.stronghold")
+        self.assertEqual(plist["CFBundleName"], "Stronghold")
+        self.assertEqual(plist["CFBundleDisplayName"], "Stronghold")
+        self.assertEqual(plist["CFBundleExecutable"], "stronghold")
         self.assertEqual(plist["CFBundleShortVersionString"], "1.2.3")
         self.assertEqual(plist["CFBundleVersion"], "1.2.3")
         self.assertIs(plist["NSHighResolutionCapable"], True)

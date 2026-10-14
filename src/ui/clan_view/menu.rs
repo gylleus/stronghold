@@ -63,7 +63,7 @@ impl ClanView {
                 if ui
                     .button(format!("Whip {} selected", selection.len()))
                     .on_hover_text(
-                        "Send each selected agent a Myrstack nudge now (the King and \
+                        "Send each selected agent a Stronghold nudge now (the King and \
                          subagents are skipped)",
                     )
                     .clicked()
@@ -104,7 +104,7 @@ impl ClanView {
             let whip_refusal = match node.kind {
                 NodeKind::Envoy => Some("The Envoy listens while idle."),
                 NodeKind::Subagent => Some("Subagents have no terminal to nudge."),
-                NodeKind::King => Some("The King is Myrstack itself."),
+                NodeKind::King => Some("The King is Stronghold itself."),
                 NodeKind::Coordinator
                 | NodeKind::Attendant
                 | NodeKind::Worker
@@ -112,7 +112,7 @@ impl ClanView {
             };
             if ui
                 .add_enabled(whip_refusal.is_none(), egui::Button::new("Whip"))
-                .on_hover_text("Send this agent a Myrstack nudge now")
+                .on_hover_text("Send this agent a Stronghold nudge now")
                 .on_disabled_hover_text(whip_refusal.unwrap_or_default())
                 .clicked()
             {

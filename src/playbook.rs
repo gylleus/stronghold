@@ -1,5 +1,5 @@
 //! The clan playbook: the Markdown rules coordinators, attendants, workers and the Envoy run
-//! by. Myrstack serves them (MCP prompts, resources and tools; `myrstack playbook`) straight from disk on
+//! by. Stronghold serves them (MCP prompts, resources and tools; `stronghold playbook`) straight from disk on
 //! every request, stamped with the git version they came from. See `playbook/README.md`.
 
 use std::fmt;
@@ -14,7 +14,7 @@ pub mod fill;
 pub mod source;
 
 /// Overrides where the playbook files are read from.
-pub const ENV_DIR: &str = "MYRSTACK_PLAYBOOK_DIR";
+pub const ENV_DIR: &str = "STRONGHOLD_PLAYBOOK_DIR";
 
 /// The repo's `playbook/` dir, as of the build.
 pub const BAKED_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/playbook");
@@ -152,7 +152,7 @@ pub fn envoy_launch_prompt(dry_run: bool) -> String {
     };
     format!(
         "You are the Envoy. Your standing rules are the Envoy playbook in your system prompt; \
-         follow them. {mode} Then wait: Myrstack types each new event into this terminal as \
+         follow them. {mode} Then wait: Stronghold types each new event into this terminal as \
          an `Envoy event:` line. Don't poll, and don't load the playbook again: it is already \
          there."
     )
@@ -328,9 +328,9 @@ impl Playbook {
         Self { dir: dir.into() }
     }
 
-    /// `MYRSTACK_PLAYBOOK_DIR`, else the repo's `playbook/`, else `~/Documents/agents`.
+    /// `STRONGHOLD_PLAYBOOK_DIR`, else the repo's `playbook/`, else `~/Documents/agents`.
     pub fn locate() -> Result<Self> {
-        let env = std::env::var_os(ENV_DIR).map(PathBuf::from);
+        let env = crate::legacy::env_os(ENV_DIR).map(PathBuf::from);
         let home = directories::BaseDirs::new().map(|b| b.home_dir().join("Documents/agents"));
         resolve_dir(env, Path::new(BAKED_DIR), home).map(Self::at)
     }
@@ -520,7 +520,7 @@ impl Playbook {
             .unwrap_or_else(|| self.dir.clone())
     }
 
-    /// Files, roles and section titles, for `list_playbook` and `myrstack playbook --list`.
+    /// Files, roles and section titles, for `list_playbook` and `stronghold playbook --list`.
     pub fn listing(&self) -> Result<Listing> {
         let mut files = Vec::new();
         let mut all_text = String::new();
@@ -605,7 +605,7 @@ impl Listing {
     }
 }
 
-/// The section titles of one target, under a version header, for `myrstack playbook X --list`.
+/// The section titles of one target, under a version header, for `stronghold playbook X --list`.
 pub fn target_sections_text(playbook: &Playbook, target: &Target) -> Result<String> {
     let served = playbook.get(target, None)?;
     let mut all = Vec::new();
@@ -700,7 +700,7 @@ pub fn short_hash(text: &str) -> String {
 // ---------------------------------------------------------------------------
 // CLI
 
-/// `myrstack playbook [role|file] [--section X] [--list]`; `None` for other subcommands.
+/// `stronghold playbook [role|file] [--section X] [--list]`; `None` for other subcommands.
 pub fn run_cli(args: &[String]) -> Option<Result<()>> {
     let (cmd, rest) = args.split_first()?;
     (cmd == "playbook").then(|| {
@@ -710,12 +710,12 @@ pub fn run_cli(args: &[String]) -> Option<Result<()>> {
     })
 }
 
-const USAGE: &str = "usage: myrstack playbook [coordinator|attendant|worker|envoy|<file>] \
+const USAGE: &str = "usage: stronghold playbook [coordinator|attendant|worker|envoy|<file>] \
                      [--section <title>] [--list]\n       \
-                     myrstack playbook attendant-brief <run_id>\n       \
-                     myrstack playbook kickoff <task_id>";
+                     stronghold playbook attendant-brief <run_id>\n       \
+                     stronghold playbook kickoff <task_id>";
 
-/// What `myrstack playbook <args>` prints.
+/// What `stronghold playbook <args>` prints.
 pub fn cli_text(args: &[String]) -> Result<String> {
     if let Some(template) = args.first().and_then(|a| source::Template::parse(a)) {
         return template_cli_text(template, &args[1..]);
@@ -760,14 +760,14 @@ pub fn cli_text(args: &[String]) -> Result<String> {
     }
 }
 
-/// `myrstack playbook attendant-brief <run_id>` / `kickoff <task_id>`: the template filled from
+/// `stronghold playbook attendant-brief <run_id>` / `kickoff <task_id>`: the template filled from
 /// the running app's data, else from one Orca poll.
 fn template_cli_text(template: source::Template, args: &[String]) -> Result<String> {
     let id = match args {
         [id] if !id.starts_with('-') => id,
         [flag] if flag == "--help" || flag == "-h" => return Ok(USAGE.to_owned()),
         _ => bail!(
-            "usage: myrstack playbook {} <{}>",
+            "usage: stronghold playbook {} <{}>",
             template.name(),
             template.arg()
         ),

@@ -77,7 +77,7 @@ pub fn selection_panel(ui: &mut Ui, nodes: &[&Node]) -> Option<SelectionAction> 
         if ui
             .button(format!("Whip {}", nodes.len()))
             .on_hover_text(
-                "Send each selected agent a Myrstack nudge now (the King and subagents are \
+                "Send each selected agent a Stronghold nudge now (the King and subagents are \
                  skipped) — w",
             )
             .clicked()

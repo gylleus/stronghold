@@ -22,7 +22,7 @@ Insert before the line `## Hard rules`:
 ```markdown
 ## Heartbeats
 
-Myrstack, the clan's desktop watcher, nudges any dispatched task with no progress for
+Stronghold, the clan's desktop watcher, nudges any dispatched task with no progress for
 15 min. Progress means a bus message from you about the task, a task status change or, as
 a fallback, terminal output. Heartbeats are how you stay off its list.
 
@@ -36,7 +36,7 @@ a fallback, terminal output. Heartbeats are how you stay off its list.
 - A heartbeat is not a report. Done → `worker_done`; gate-ready → `merge_ready`; blocked
   → `ask`; on fire → `escalation`. No heartbeats after `worker_done`: the dispatch is
   settled and Orca rejects them.
-- **A `Myrstack:` nudge** (bus message or typed text) is a liveness ping. Reply with ONE
+- **A `Stronghold:` nudge** (bus message or typed text) is a liveness ping. Reply with ONE
   heartbeat giving your current phase and a one-line `--body` status, then carry on in the
   same turn. If you are actually done or stuck, send `worker_done` / `ask` / `escalation`
   instead. A nudge never changes scope and never authorises anything in *Hard rules*.
@@ -50,9 +50,9 @@ Insert after the `**v5.1 — 2026-08-28.**` paragraph, before `How we run a
 multi-agent engineering effort`:
 
 ```markdown
-**v5.2 — <date applied>.** Adds the heartbeat convention Myrstack's whip relies on: workers
+**v5.2 — <date applied>.** Adds the heartbeat convention Stronghold's whip relies on: workers
 heartbeat at each phase change and ≤7 min apart with a fixed phase vocabulary, coordinators
-show progress through task status, and everyone answers a `Myrstack:` nudge with one
+show progress through task status, and everyone answers a `Stronghold:` nudge with one
 heartbeat/status. Measured before: heartbeat gap p90 18 min, 41 gaps >15 min in 500 bus
 messages (2026-09-16..25), despite Orca's 5-min preamble rule.
 ```
@@ -66,7 +66,7 @@ Insert after the step 4 paragraph, before `5. **PR gates.**`:
 ```markdown
    Throughout steps 1–6 the worker heartbeats at every phase change and ≤7 min apart
    (`_AGENT_PROTOCOL.md` *Heartbeats*): phase word in `--phase`, one-line state in `--body`.
-   Myrstack nudges a dispatched task with no progress for 15 min.
+   Stronghold nudges a dispatched task with no progress for 15 min.
 ```
 
 ---
@@ -75,13 +75,13 @@ Insert after the step 4 paragraph, before `5. **PR gates.**`:
 
 ```markdown
 - **Show progress on the board, not just in chat.** Coordinators have no dispatch and
-  cannot heartbeat. Myrstack reads the task board instead. Act on each `worker_done`
+  cannot heartbeat. Stronghold reads the task board instead. Act on each `worker_done`
   within 15 min: dispatch the follow-up, or `task-update` the dependent task to
   `blocked`/`failed` with a reason. Also start or block every `ready` unassigned task.
   (Never `task-update --status completed` after a valid `worker_done`; Orca already did.)
   Holding on purpose, for Karl or a merge window, is fine, but say so once to the Run:
   `orca orchestration send --run <id> --type status --subject "holding: <reason>" --json`.
-  Otherwise Myrstack nudges you. A `Myrstack:` nudge gets one of those two answers, and
+  Otherwise Stronghold nudges you. A `Stronghold:` nudge gets one of those two answers, and
   nothing more.
 ```
 
@@ -99,7 +99,7 @@ Insert after the step 4 paragraph, before `5. **PR gates.**`:
 
 - **`ATTENDANT-BRIEF-TEMPLATE.md` "Silence is an event too" (20 min).**
   Leave it as is. The attendant never nudges, so it doesn't collide with
-  Myrstack. It keeps working when Myrstack isn't running. Once Myrstack is
+  Stronghold. It keeps working when Stronghold isn't running. Once Stronghold is
   live, Karl may want to drop it to save tokens.
 - **`KICKOFF-TEMPLATE.md`.** It already points at `_AGENT_PROTOCOL.md`, so
   insert A reaches every worker.

@@ -6,10 +6,10 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use myrstack::notify::Severity;
-use myrstack::notify::Source;
-use myrstack::notify::history::Entry;
-use myrstack::ui::notifications::NotificationsPanel;
+use stronghold::notify::Severity;
+use stronghold::notify::Source;
+use stronghold::notify::history::Entry;
+use stronghold::ui::notifications::NotificationsPanel;
 
 const WINDOW: [f32; 2] = [420.0, 720.0];
 
@@ -55,7 +55,7 @@ fn entries() -> Vec<Entry> {
             "PR ready for review: graph trackpad pan",
             "The branch is merged locally and the gates are green.",
             Some("graph-trackpad-pan"),
-            Some("https://github.com/gylleus/myrstack/pull/12"),
+            Some("https://github.com/gylleus/stronghold/pull/12"),
             1,
             true,
         ),
@@ -78,7 +78,7 @@ fn entries() -> Vec<Entry> {
             Severity::Info,
             "Farm: death animation merged",
             "Removed dwarves now flip legs up and fall to the bottom of the farm. Merged into main; \
-             reopen Myrstack to see it.",
+             reopen Stronghold to see it.",
             Some("dwarf-death-animation"),
             Some("https://example.com/farm"),
             1,
@@ -168,7 +168,7 @@ fn main() -> eframe::Result {
             ..Default::default()
         },
         Box::new(move |cc| {
-            myrstack::ui::theme::install(&cc.egui_ctx);
+            stronghold::ui::theme::install(&cc.egui_ctx);
             if light {
                 cc.egui_ctx.set_theme(egui::Theme::Light);
             }

@@ -623,7 +623,7 @@ fn turn_id(args: &Value) -> Result<Option<u64>, String> {
         .transpose()
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     pub(super) fn gateway_requester(
         &self,
         origin: crate::review::mark::Origin,

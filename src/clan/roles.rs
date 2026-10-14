@@ -46,6 +46,8 @@ pub struct RunRoles {
 /// Bus senders that are never a coordinator terminal.
 fn is_service_sender(handle: &str) -> bool {
     crate::orca::is_broadcast_sender(handle)
+        || handle.starts_with("stronghold-")
+        // Run history from before the rename still has the whip as `myrstack-whip`.
         || handle.starts_with("myrstack-")
         || handle.starts_with("run:")
         || handle.starts_with("dispatch:")

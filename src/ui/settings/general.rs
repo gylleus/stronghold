@@ -1,4 +1,4 @@
-//! The General section: whether a spawn focuses the new dwarf, where Myrstack keeps its files, the
+//! The General section: whether a spawn focuses the new dwarf, where Stronghold keeps its files, the
 //! control socket, the build and the playbook, with links to the docs.
 
 use std::path::{Path, PathBuf};
@@ -26,7 +26,7 @@ impl GeneralInfo {
     pub fn build() -> (&'static str, Option<&'static str>) {
         (
             env!("CARGO_PKG_VERSION"),
-            option_env!("MYRSTACK_GIT_COMMIT").filter(|c| !c.is_empty()),
+            option_env!("STRONGHOLD_GIT_COMMIT").filter(|c| !c.is_empty()),
         )
     }
 }
@@ -69,7 +69,7 @@ pub(super) fn section(
                 } else {
                     ui.colored_label(
                         ui.visuals().error_fg_color,
-                        "● not listening (another Myrstack may hold it; see the log)",
+                        "● not listening (another Stronghold may hold it; see the log)",
                     );
                 }
             });

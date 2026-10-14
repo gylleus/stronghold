@@ -401,7 +401,7 @@ pub fn task_create_args(
     args
 }
 
-/// `orca worktree set --display-name`: the name Orca (and Myrstack) shows for a worktree.
+/// `orca worktree set --display-name`: the name Orca (and Stronghold) shows for a worktree.
 pub fn worktree_name_args(worktree_id: &str, name: &str) -> Vec<String> {
     let mut args = base(&["worktree", "set"]);
     args.push(flag("worktree", format!("id:{worktree_id}")));
