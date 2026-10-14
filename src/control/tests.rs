@@ -143,6 +143,9 @@ impl Harness {
         status.publish(status_view());
         let commands = FakeCommands::default();
         let backend = Backend {
+            github: Arc::new(crate::review::github::GhCli {
+                binary: "/nonexistent/gh".into(),
+            }),
             status: status.clone(),
             screens: Arc::new(FakeScreens),
             commands: Arc::new(commands.clone()),

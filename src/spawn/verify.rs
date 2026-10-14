@@ -66,12 +66,17 @@ const PLACEHOLDERS: &[&str] = &["try \"", "ask codex", "find and fix", "type you
 const CODEX_HEADER: &str = ">_ openai codex";
 /// Lower-cased header row Codex draws only when it runs with approvals and sandbox off.
 const CODEX_YOLO: &str = "permissions: yolo mode";
+/// The session footer appears after configuration loads; the splash only has shortcuts.
+const CODEX_SESSION_FOOTER: &str = "← for agents";
 
-/// Whether `lines` show Codex's startup header without "permissions: YOLO mode": the session
-/// asks for approval. `false` when the header isn't on screen, as nothing can be told then.
+/// Whether Codex's initialized header lacks "permissions: YOLO mode", suggesting approvals
+/// are enabled. The initial splash already has the title and composer, but no permissions
+/// row yet. Without the session footer (or header), nothing can be told.
 pub fn codex_approvals_on(lines: &[String]) -> bool {
     let lower: Vec<String> = lines.iter().map(|l| l.to_lowercase()).collect();
-    lower.iter().any(|l| l.contains(CODEX_HEADER)) && !lower.iter().any(|l| l.contains(CODEX_YOLO))
+    lower.iter().any(|l| l.contains(CODEX_HEADER))
+        && lower.iter().any(|l| l.contains(CODEX_SESSION_FOOTER))
+        && !lower.iter().any(|l| l.contains(CODEX_YOLO))
 }
 
 /// Classifies `lines` (a rendered screen, top to bottom) for a launch of `agent`.

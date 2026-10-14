@@ -77,16 +77,25 @@ fn assert_kept(before: &Scene, after: &Scene) {
             .find(|u| u.key == t.key)
             .unwrap_or_else(|| panic!("{:?} kept", t.key));
         assert_eq!(t.chamber, u.chamber, "{:?} chamber moved", t.key);
-        assert_eq!(t.shaft, u.shaft, "{:?} shaft moved", t.key);
         assert_eq!(t.label_top, u.label_top, "{:?} label moved", t.key);
     }
     assert_eq!(before.px, after.px, "the scale is kept");
 }
 
-/// Every chamber in `scene` is in its view, clear of the others and their shafts, and holds
+/// Every chamber in `scene` is in its view, clear of the others and the shared ladder, and holds
 /// its dwarves.
 fn assert_laid_out(scene: &Scene) {
     let tunnels = &scene.tunnels;
+    for gallery in scene.work_galleries() {
+        assert_eq!(
+            tunnels
+                .iter()
+                .filter(|t| t.chamber.intersects(gallery))
+                .count(),
+            1,
+            "a gallery must stay within one workspace during growth and rearrangement"
+        );
+    }
     for (i, t) in tunnels.iter().enumerate() {
         assert!(
             scene.rect.contains_rect(t.chamber),
@@ -96,13 +105,13 @@ fn assert_laid_out(scene: &Scene) {
         for u in tunnels.iter().skip(i + 1) {
             assert!(!t.chamber.intersects(u.chamber), "{:?}, {:?}", t.key, u.key);
             assert!(
-                !t.shaft.intersects(u.chamber),
+                !scene.work_ladder().intersects(u.chamber),
                 "{:?} crosses {:?}",
                 t.key,
                 u.key
             );
             assert!(
-                !u.shaft.intersects(t.chamber),
+                !scene.work_ladder().intersects(t.chamber),
                 "{:?} crosses {:?}",
                 u.key,
                 t.key
@@ -160,8 +169,8 @@ fn growth_within_the_margin_moves_nothing() {
         {
             let u = after.tunnels.iter().find(|u| u.key == t.key).unwrap();
             assert_eq!(
-                (t.chamber, t.shaft),
-                (u.chamber, u.shaft),
+                (t.chamber, t.label_top),
+                (u.chamber, u.label_top),
                 "{:?} moved",
                 t.key
             );
@@ -386,4 +395,28 @@ fn an_dwarf_leaving_its_room_moves_no_room() {
     let after = frame(&s, &mut plan, 1_000);
     assert_kept(&before, &after);
     assert_eq!(plan.rearranges, 1);
+}
+
+#[test]
+fn saved_column_plans_are_refitted_as_workspace_bands() {
+    let s = clan(3, 2);
+    let mut plan = RoomPlan::default();
+    let expected = frame(&s, &mut plan, 0);
+    let mut saved = serde_json::to_value(&plan).unwrap();
+    saved.as_object_mut().unwrap().remove("workspace_bands");
+    saved["fitted"] = serde_json::json!({
+        "px": 3.0, "levels": 1, "widths": [400.0, 400.0, 480.0], "depths": [1, 1, 1]
+    });
+    for (col, room) in saved["rooms"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .enumerate()
+    {
+        room["level"] = 0.into();
+        room["col"] = col.into();
+    }
+    let mut restored: RoomPlan = serde_json::from_value(saved).unwrap();
+    assert_eq!(frame(&s, &mut restored, 0), expected);
+    assert_eq!(restored.rearranges, 1);
 }
