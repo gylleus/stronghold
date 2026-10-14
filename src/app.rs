@@ -999,6 +999,8 @@ impl StrongholdApp {
         if self.worktrees.tick(worktrees, now_ms) {
             self.poller.send(PollerCommand::RefreshNow);
         }
+        self.worktrees
+            .tick_auto(*self.whip_window.worktree_settings(), now_ms);
         if !std::mem::take(&mut self.cleanup_in_farm) {
             self.worktrees.hammer(ctx);
         }

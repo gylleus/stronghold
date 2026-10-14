@@ -19,6 +19,7 @@
 //! archived. Activity and protection guards always apply. [`archive`] owns recovery artifacts.
 
 pub mod archive;
+pub mod automatic;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, OpenOptions};
@@ -451,6 +452,9 @@ pub struct Verdict {
     #[serde(default)]
     pub scratch: Vec<String>,
     pub remove: bool,
+    /// Eligible for unattended removal, with merged-work proof and no archive needed.
+    #[serde(default)]
+    pub auto_remove: bool,
     /// For a kept worktree, every reason to keep it; for a removed one, why it is safe.
     pub reasons: Vec<String>,
     /// For a removed one: untracked notes to save under [`notes_root`] first.
@@ -534,6 +538,16 @@ pub fn decide(facts: &Facts) -> Verdict {
     }
     verdict.archivable = !verdict.remove && blockers.is_empty();
     verdict.archive_blockers = blockers;
+    verdict.auto_remove = verdict.remove
+        && !verdict.archive_required
+        && !verdict.archivable
+        && facts.git.as_ref().is_ok_and(|git| {
+            git.merged_into.is_some()
+                || git.patches_in.is_some()
+                || git.content_in.is_some()
+                || git.merged_pr_head.is_some()
+                || git.content_in_merged_pr.is_some()
+        });
     verdict
 }
 
@@ -1941,8 +1955,64 @@ pub fn execute_archives(
     archive_ids: &HashSet<String>,
     log: &Path,
     now_ms: impl Fn() -> i64,
+    progress: impl FnMut(&Removal),
+) -> Result<Vec<Removal>, String> {
+    execute_with_policy(
+        client,
+        plan,
+        RemovalPolicy::Manual(archive_ids),
+        log,
+        now_ms,
+        progress,
+    )
+}
+
+/// Scheduled cleanup can never enter the archive path, including after a fresh re-check.
+pub fn execute_automatic(
+    client: &OrcaClient,
+    plan: &Plan,
+    log: &Path,
+    now_ms: impl Fn() -> i64,
+    progress: impl FnMut(&Removal),
+) -> Result<Vec<Removal>, String> {
+    execute_with_policy(
+        client,
+        plan,
+        RemovalPolicy::Automatic,
+        log,
+        now_ms,
+        progress,
+    )
+}
+
+enum RemovalPolicy<'a> {
+    Manual(&'a HashSet<String>),
+    Automatic,
+}
+
+impl RemovalPolicy<'_> {
+    fn allows(&self, entry: &PlanEntry) -> bool {
+        match self {
+            Self::Automatic => automatic::eligible(&entry.verdict),
+            Self::Manual(ids) => entry.verdict.remove || ids.contains(&entry.id),
+        }
+    }
+}
+
+fn execute_with_policy(
+    client: &OrcaClient,
+    plan: &Plan,
+    policy: RemovalPolicy<'_>,
+    log: &Path,
+    now_ms: impl Fn() -> i64,
     mut progress: impl FnMut(&Removal),
 ) -> Result<Vec<Removal>, String> {
+    let empty = HashSet::new();
+    let archive_ids = match &policy {
+        RemovalPolicy::Manual(ids) => *ids,
+        RemovalPolicy::Automatic => &empty,
+    };
+    let automatic = matches!(policy, RemovalPolicy::Automatic);
     let marker = log.with_file_name(SWEEP_FILE);
     if let Some(parent) = marker.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -1968,11 +2038,7 @@ pub fn execute_archives(
     let _sweep = SweepGuard(marker.clone());
     drop(marker_file);
     let remover = client.clone().timeout(REMOVE_TIMEOUT);
-    let selected = || {
-        plan.entries
-            .iter()
-            .filter(|e| e.verdict.remove || archive_ids.contains(&e.id))
-    };
+    let selected = || plan.entries.iter().filter(|e| policy.allows(e));
     let total = selected().count();
     let mut done = Vec::new();
     for entry in selected() {
@@ -2008,7 +2074,9 @@ pub fn execute_archives(
                 let verdict = decide(&facts);
                 let wants_archive = archive_ids.contains(&entry.id) || verdict.archive_required;
                 let mut saved = None;
-                let tidied = if wants_archive
+                let tidied = if automatic && !automatic::eligible(&verdict) {
+                    Err(Outcome::Skipped { reasons: vec!["no longer eligible for automatic cleanup; merged work without an archive is required".into()] })
+                } else if wants_archive
                     && (verdict.archivable
                         || verdict.archive_required
                         || verdict.remove && verdict.archive_blockers.is_empty())

@@ -1560,3 +1560,89 @@ fn protected_worktrees_never_appear_in_the_stale_strip() {
         );
     }
 }
+
+#[test]
+fn unattended_cleanup_requires_merged_proof_and_rejects_every_archive_path() {
+    assert!(automatic::eligible(&decide(&clean())));
+    let mut unpushed = clean();
+    unmerged(&mut unpushed);
+    assert!(decide(&unpushed).archive_required);
+    assert!(!automatic::eligible(&decide(&unpushed)));
+    let mut pushed = unpushed.clone();
+    git_mut(&mut pushed).on_remote = Some("origin/topic".into());
+    assert!(decide(&pushed).archivable);
+    assert!(!automatic::eligible(&decide(&pushed)));
+    pushed.pr = PrLookup::Found {
+        number: 123,
+        state: PrState::Closed,
+    };
+    assert!(
+        decide(&pushed).remove,
+        "manual cleanup may remove remote-backed closed PRs"
+    );
+    assert!(
+        !automatic::eligible(&decide(&pushed)),
+        "unmerged remote work is never automatic"
+    );
+    for mutate in [
+        (|f: &mut Facts| f.parked = true) as fn(&mut Facts),
+        |f| f.pinned = true,
+        |f| f.terminals.push("terminal".into()),
+        |f| f.processes.push("process".into()),
+        |f| f.dispatches.push("worker".into()),
+        |f| {
+            f.pr = PrLookup::Found {
+                number: 1,
+                state: PrState::Open,
+            }
+        },
+        |f| {
+            f.age_ms = Some(1000);
+            git_mut(f).ahead = Some(0);
+        },
+        |f| git_mut(f).dirty.push(" M src/main.rs".into()),
+    ] {
+        let mut fresh = clean();
+        mutate(&mut fresh);
+        assert!(
+            !automatic::eligible(&decide(&fresh)),
+            "fresh re-check must revoke earlier eligibility"
+        );
+    }
+}
+
+#[test]
+fn automatic_executor_never_attempts_archivable_or_kept_entries() {
+    let mut unpushed = clean();
+    unmerged(&mut unpushed);
+    let mut pushed = unpushed.clone();
+    git_mut(&mut pushed).on_remote = Some("origin/topic".into());
+    let mut kept = clean();
+    kept.pinned = true;
+    let plan = Plan {
+        entries: [unpushed, pushed, kept]
+            .iter()
+            .enumerate()
+            .map(|(i, facts)| PlanEntry {
+                id: i.to_string(),
+                verdict: decide(facts),
+                ..PlanEntry::default()
+            })
+            .collect(),
+        ..Plan::default()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let client = OrcaClient::with_binary(dir.path().join("must-not-be-invoked"));
+    let mut attempts = 0;
+    let result = execute_automatic(
+        &client,
+        &plan,
+        &dir.path().join("log.jsonl"),
+        || 0,
+        |_| attempts += 1,
+    )
+    .unwrap();
+    assert!(result.is_empty());
+    assert_eq!(attempts, 0);
+    assert!(!dir.path().join("log.jsonl").exists());
+}

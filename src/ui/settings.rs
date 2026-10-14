@@ -11,6 +11,7 @@ pub mod king;
 pub mod notifications;
 pub mod voice;
 pub mod whip;
+pub mod worktrees;
 
 use std::path::PathBuf;
 
@@ -37,17 +38,19 @@ pub enum Section {
     Notifications,
     Voice,
     Art,
+    Worktrees,
     General,
 }
 
 impl Section {
-    pub const ALL: [Section; 7] = [
+    pub const ALL: [Section; 8] = [
         Section::King,
         Section::Envoy,
         Section::Whip,
         Section::Notifications,
         Section::Voice,
         Section::Art,
+        Section::Worktrees,
         Section::General,
     ];
 
@@ -59,6 +62,7 @@ impl Section {
             Section::Notifications => "Notifications",
             Section::Voice => "Voice",
             Section::Art => "Art",
+            Section::Worktrees => "Worktrees",
             Section::General => "General",
         }
     }
@@ -75,11 +79,14 @@ pub struct PaneContext<'a> {
     pub voice: VoiceStatus<'a>,
     /// Delivery state and sound names for the Notifications section.
     pub notify: NotifyStatus<'a>,
+    pub cleanup: worktrees::Status<'a>,
 }
 
 /// What the user changed this frame.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct PaneOutput {
+    /// Run the automatic cleanup policy once, regardless of the schedule switch.
+    pub run_cleanup: bool,
     /// Saved Envoy preferences; safety ON also applies to the current session.
     pub envoy: Option<crate::envoy::settings::EnvoySettings>,
     /// Saved whip settings.
@@ -182,6 +189,10 @@ impl SettingsPane {
     /// The saved default model and effort of new dwarves.
     pub fn dwarves(&self) -> &DwarfSettings {
         &self.applied.dwarves
+    }
+
+    pub fn worktree_settings(&self) -> &crate::worktrees::automatic::Settings {
+        &self.applied.worktrees
     }
 
     pub fn art(&self) -> &crate::ui::farm::art::ArtSettings {
@@ -325,6 +336,7 @@ impl SettingsPane {
                     self.commit(settings);
                 }
             }
+            Section::Worktrees => worktrees::section(self, ui, &cx.cleanup, out),
             Section::General => {
                 self.user_name_ui(ui);
                 let focus_new = self.applied.spawn.focus_new;

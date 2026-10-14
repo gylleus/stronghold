@@ -21,7 +21,9 @@ use crate::orca::spawn::Worktree;
 use crate::ui::dwarf::cutout::Outline;
 use crate::ui::farm::hammer;
 use crate::ui::farm::rubble::CleanupJob;
-use crate::worktrees::{self, Census, Outcome, Plan, Removal, SweepMarker, format_bytes};
+use crate::worktrees::{
+    self, Census, Outcome, Plan, Removal, SweepMarker, automatic, format_bytes,
+};
 
 /// How often disk usage is measured (`du` over every worktree takes a while).
 pub const SIZE_SCAN_EVERY_MS: i64 = 30 * 60 * 1000;
@@ -89,6 +91,12 @@ pub struct WorktreePanel {
     stale_plan: Option<Plan>,
     stale_scan: Option<Receiver<Result<Plan, String>>>,
     next_stale_ms: i64,
+    auto_schedule: automatic::Schedule,
+    auto_running: bool,
+    auto_requested: bool,
+    auto_last: Option<automatic::Run>,
+    auto_log: PathBuf,
+    recent_job: Option<(CleanupJob, i64)>,
 }
 
 impl WorktreePanel {
@@ -118,6 +126,12 @@ impl WorktreePanel {
             stale_plan: None,
             stale_scan: None,
             next_stale_ms: 0,
+            auto_schedule: automatic::Schedule::default(),
+            auto_running: false,
+            auto_requested: false,
+            auto_last: automatic::Run::load_last(&automatic::log_path()),
+            auto_log: automatic::log_path(),
+            recent_job: None,
             hammer: ctx.load_texture(
                 "worktrees/hammer",
                 hammer::render([26, 40], Outline::Fine),
@@ -129,6 +143,13 @@ impl WorktreePanel {
     /// Collects background results and starts what is due. Returns true when a cleanup just
     /// finished (the clan should be polled again).
     pub fn tick(&mut self, worktrees: Option<&[Worktree]>, now_ms: i64) -> bool {
+        if self
+            .recent_job
+            .as_ref()
+            .is_some_and(|(_, until)| now_ms >= *until)
+        {
+            self.recent_job = None;
+        }
         if let Some(rx) = &self.size_scan {
             match rx.try_recv() {
                 Ok(sizes) => {
@@ -160,6 +181,50 @@ impl WorktreePanel {
         }
         self.poll_stale(worktrees.is_some(), now_ms);
         finished
+    }
+
+    pub fn auto_last(&self) -> Option<&automatic::Run> {
+        self.auto_last.as_ref()
+    }
+    pub fn auto_running(&self) -> bool {
+        self.auto_running
+    }
+    pub fn auto_busy(&self) -> bool {
+        self.open
+            || self.external.is_some()
+            || self.stale_scan.is_some()
+            || matches!(
+                self.stage,
+                Some(Stage::Evaluating(_) | Stage::Running { .. })
+            )
+    }
+    pub fn request_auto(&mut self) {
+        self.auto_requested = true;
+    }
+
+    pub fn tick_auto(&mut self, settings: automatic::Settings, now_ms: i64) {
+        if self.auto_schedule.claim(
+            settings,
+            now_ms,
+            self.auto_last.as_ref().map(|r| r.at_ms),
+            self.auto_busy(),
+            self.auto_requested,
+        ) {
+            self.auto_requested = false;
+            self.start_evaluation(true);
+        }
+    }
+
+    fn finish_auto(&mut self, removals: &[Removal], error: Option<&str>) {
+        let run = automatic::Run::finished(now_ms(), removals, error);
+        if let Err(error) = run.append(&self.auto_log) {
+            log::warn!("auto-cleanup summary could not be saved: {error}");
+        }
+        log::info!("{}", run.summary);
+        self.last_summary = Some(run.summary.clone());
+        self.auto_schedule.finished(run.at_ms);
+        self.auto_last = Some(run);
+        self.auto_running = false;
     }
 
     pub fn stale_plan(&self) -> Option<&Plan> {
@@ -249,9 +314,52 @@ impl WorktreePanel {
             }
             _ => None,
         };
-        let Some(next) = next else {
+        let Some(mut next) = next else {
             return false;
         };
+        if self.auto_running
+            && let Stage::Review { plan, .. } = &next
+        {
+            let plan = automatic::select(plan);
+            if !plan.entries.is_empty() {
+                let chosen = plan.entries.iter().map(|e| e.id.clone()).collect();
+                self.start_removal(&plan, &chosen, false, true);
+                return false;
+            }
+            next = Stage::Finished {
+                removals: Vec::new(),
+                error: None,
+            };
+        }
+        if let Stage::Finished { removals, .. } = &next {
+            self.recent_job = Some((
+                CleanupJob {
+                    done: removals.len(),
+                    total: removals.len(),
+                    current: None,
+                    cleared: removals
+                        .iter()
+                        .filter(|r| r.outcome == Outcome::Removed)
+                        .map(|r| r.id.clone())
+                        .collect(),
+                },
+                now_ms() + 1500,
+            ));
+            if let Some(plan) = &mut self.stale_plan {
+                plan.entries.retain(|e| {
+                    !removals
+                        .iter()
+                        .any(|r| r.id == e.id && r.outcome == Outcome::Removed)
+                });
+            }
+        }
+        if self.auto_running {
+            match &next {
+                Stage::Finished { removals, error } => self.finish_auto(removals, error.as_deref()),
+                Stage::Failed(error) => self.finish_auto(&[], Some(error)),
+                _ => {}
+            }
+        }
         let finished = matches!(next, Stage::Finished { .. });
         self.stage = Some(next);
         if finished {
@@ -292,8 +400,11 @@ impl WorktreePanel {
         rx
     }
 
-    fn start_evaluation(&mut self) {
-        self.open = true;
+    fn start_evaluation(&mut self, automatic: bool) {
+        self.auto_running = automatic;
+        if !automatic {
+            self.open = true;
+        }
         let client = self.client.clone();
         let sizes = self.sizes.by_path.clone();
         let ctx = self.ctx.clone();
@@ -307,7 +418,13 @@ impl WorktreePanel {
         self.stage = Some(Stage::Evaluating(rx));
     }
 
-    fn start_removal(&mut self, plan: &Plan, chosen: &BTreeSet<String>, archive: bool) {
+    fn start_removal(
+        &mut self,
+        plan: &Plan,
+        chosen: &BTreeSet<String>,
+        archive: bool,
+        automatic: bool,
+    ) {
         let mut plan = plan.clone();
         plan.entries.retain(|e| {
             (e.verdict.remove || archive && e.verdict.archivable) && chosen.contains(&e.id)
@@ -327,17 +444,28 @@ impl WorktreePanel {
             .spawn(move || {
                 let progress_tx = tx.clone();
                 let progress_ctx = ctx.clone();
-                let result = worktrees::execute_archives(
-                    &client,
-                    &plan,
-                    &archive_ids,
-                    &worktrees::default_log_path(),
-                    now_ms,
-                    |r| {
-                        let _ = progress_tx.send(ExecMsg::Progress(Box::new(r.clone())));
-                        progress_ctx.request_repaint();
-                    },
-                );
+                let progress = |r: &Removal| {
+                    let _ = progress_tx.send(ExecMsg::Progress(Box::new(r.clone())));
+                    progress_ctx.request_repaint();
+                };
+                let result = if automatic {
+                    worktrees::execute_automatic(
+                        &client,
+                        &plan,
+                        &worktrees::default_log_path(),
+                        now_ms,
+                        progress,
+                    )
+                } else {
+                    worktrees::execute_archives(
+                        &client,
+                        &plan,
+                        &archive_ids,
+                        &worktrees::default_log_path(),
+                        now_ms,
+                        progress,
+                    )
+                };
                 let _ = tx.send(ExecMsg::Done(result));
                 ctx.request_repaint();
             });
@@ -383,7 +511,7 @@ impl WorktreePanel {
                 current: m.current_id.clone(),
                 cleared: Vec::new(),
             }),
-            _ => None,
+            _ => self.recent_job.as_ref().map(|(job, _)| job.clone()),
         }
     }
 
@@ -450,7 +578,7 @@ impl WorktreePanel {
 
     fn open_cleanup(&mut self) {
         if self.stage.is_none() {
-            self.start_evaluation();
+            self.start_evaluation(false);
         } else {
             self.open = true;
         }
@@ -566,7 +694,7 @@ impl WorktreePanel {
             Some(Action::Remove) => {
                 if let Some(Stage::Review { plan, chosen }) = &self.stage {
                     let (plan, chosen) = (plan.clone(), chosen.clone());
-                    self.start_removal(&plan, &chosen, false);
+                    self.start_removal(&plan, &chosen, false, false);
                 }
             }
             Some(Action::Archive(id)) => {
@@ -580,10 +708,10 @@ impl WorktreePanel {
             Some(Action::ConfirmArchive) => {
                 if let Some(Stage::ArchiveConfirm { plan, id }) = &self.stage {
                     let (plan, chosen) = (plan.clone(), BTreeSet::from([id.clone()]));
-                    self.start_removal(&plan, &chosen, true);
+                    self.start_removal(&plan, &chosen, true, false);
                 }
             }
-            Some(Action::Retry) => self.start_evaluation(),
+            Some(Action::Retry) => self.start_evaluation(false),
             Some(Action::Close) => self.open = false,
             None => {}
         }
@@ -591,7 +719,10 @@ impl WorktreePanel {
 
     /// The removal progress, while a cleanup runs here or from the MCP tool.
     fn progress(&self) -> Option<(usize, usize)> {
-        self.cleanup_job().map(|job| (job.done, job.total))
+        match &self.stage {
+            Some(Stage::Running { done, total, .. }) => Some((done.len(), *total)),
+            _ => self.external.as_ref().map(|job| (job.done, job.total)),
+        }
     }
 
     /// The demolition dwarf at the bottom of the window while worktrees are removed, when

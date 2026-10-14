@@ -32,6 +32,7 @@ fn cx<'a>(
         general,
         voice: VoiceStatus::default(),
         notify: NotifyStatus::default(),
+        cleanup: worktrees::Status::default(),
     }
 }
 
@@ -606,4 +607,51 @@ fn focus_new_dwarves_is_off_by_default_and_saves_at_once() {
 
     assert!(!pane.set_focus_new(false).focus_new);
     assert!(!SettingsPane::load(Some(path)).spawn().focus_new);
+}
+
+#[test]
+fn automatic_cleanup_defaults_off_and_preserves_other_settings_when_enabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    std::fs::write(&path, r#"{"whip":{"dry_run":false}}"#).unwrap();
+    let mut pane = SettingsPane::load(Some(path.clone()));
+    assert!(!pane.worktree_settings().enabled);
+    pane.open_section(Section::Worktrees);
+    let status = WhipStatus::default();
+    let info = general();
+    click_label("Automatic cleanup", |ui| {
+        pane.show(ui.ctx(), &cx(&status, &info, KingStatus::default()))
+    });
+    let loaded = SettingsPane::load(Some(path));
+    assert!(loaded.worktree_settings().enabled);
+    assert_eq!(
+        loaded.worktree_settings().interval,
+        crate::worktrees::automatic::Interval::ThreeHours
+    );
+    assert!(!loaded.whip().dry_run);
+}
+
+#[test]
+fn cleanup_run_now_works_with_schedule_off_and_shows_the_last_result() {
+    let mut pane = SettingsPane::load(None);
+    pane.open_section(Section::Worktrees);
+    let status = WhipStatus::default();
+    let info = general();
+    let mut context = cx(&status, &info, KingStatus::default());
+    let last = crate::worktrees::automatic::Run::finished(1000, &[], None);
+    context.cleanup.last = Some(&last);
+    assert!(!pane.worktree_settings().enabled);
+    let mut requested = false;
+    click_label("Run now", |ui| {
+        requested |= pane.show(ui.ctx(), &context).run_cleanup;
+    });
+    assert!(requested);
+    assert!(!pane.worktree_settings().enabled);
+    assert!(drawn(&mut pane, &context, &[&last.summary]).contains(&last.summary));
+    context.cleanup.busy = true;
+    requested = false;
+    click_label("Run now", |ui| {
+        requested |= pane.show(ui.ctx(), &context).run_cleanup;
+    });
+    assert!(!requested);
 }

@@ -48,6 +48,8 @@ pub struct Settings {
     pub art: ArtSettings,
     /// The user's name, as agents and the King call them.
     pub user: crate::user::UserSettings,
+    /// Optional scheduled removal of merged, unprotected worktrees.
+    pub worktrees: crate::worktrees::automatic::Settings,
 }
 
 /// Global whip configuration. Durations are in ms.
