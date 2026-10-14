@@ -250,7 +250,7 @@ pub struct Scene {
     pub throne_hall: Rect,
     pub comms: Option<CommsRoom>,
     pub storage: Rect,
-    /// The Ledger's chamber; `None` on short panes with no free rock (see [`super::ledger::spot`]).
+    /// The Ledger's chamber (see [`super::ledger::spot`]); optional while frames interpolate.
     pub ledger: Option<Rect>,
     pub tunnels: Vec<Tunnel>,
     pub beds: Vec<Bed>,
@@ -394,7 +394,9 @@ pub(super) fn band(size: Vec2, a: f32, crowd: Crowd) -> Band {
     if crowd.envoy {
         occupied.push((0.5 * b, 5.5 * b));
     }
-    let rock_h = (2.4 * a + king_offset).max(storage_h).max(comms_h) + 0.6 * a - 5.0 * px;
+    let rock_h = (2.4 * a + king_offset).max(storage_h).max(comms_h) + a
+        - super::ledger::surface_clearance(px)
+        - 5.0 * px;
     let ledger = super::ledger::spot(size, px, occupied, rock_h);
     Band {
         surface,
@@ -768,7 +770,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             right,
             height,
         } => {
-            let top = surface_y + 0.4 * a;
+            let top = surface_y + super::ledger::surface_clearance(px);
             Some(Rect::from_min_max(
                 pos2(rect.left() + left, top),
                 pos2(rect.left() + right, top + height),
@@ -781,7 +783,6 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             ),
             vec2(throne_hall.width(), super::ledger::HEIGHT * a),
         )),
-        super::ledger::Spot::Hidden => None,
     };
 
     // The plan's rooms, emptied ones too while they wait out their grace. A room's chamber

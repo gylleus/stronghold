@@ -244,26 +244,37 @@ mod tests {
 
     #[test]
     fn ledger_scrolls_travel_between_the_lectern_and_the_dwarf_by_the_chamber_shaft() {
-        let snapshot = snapshot();
-        let scene = scene(&snapshot);
-        let placed: Vec<_> = scene
-            .dwarves
-            .iter()
-            .map(|a| Placed {
-                pos: a.pos,
-                heading: None,
-            })
-            .collect();
-        let lectern = super::super::ledger::lectern(&scene).unwrap();
-        let worker = Endpoint::Node(id("working"));
-        let read = flight_path(&scene, &placed, &message(&Endpoint::Ledger, &worker)).unwrap();
-        assert_eq!(read[0], lectern);
-        assert_eq!(read[1], pos2(lectern.x, scene.gallery.center().y));
-        assert_eq!(read.last(), Some(&scene.dwarf(&id("working")).unwrap().pos));
-        let mut filed = flight_path(&scene, &placed, &message(&worker, &Endpoint::Ledger)).unwrap();
-        filed.reverse();
-        assert_eq!(read, filed);
-        assert!(!from_portal(&message(&Endpoint::Ledger, &worker)));
+        use crate::model::{NodeKind, NodeState};
+        use crate::ui::farm::layout_tests::node;
+
+        for envoy in [false, true] {
+            let mut snapshot = snapshot();
+            if envoy {
+                snapshot
+                    .nodes
+                    .push(node("envoy", NodeKind::Envoy, None, NodeState::Idle));
+            }
+            let scene = scene(&snapshot);
+            let placed: Vec<_> = scene
+                .dwarves
+                .iter()
+                .map(|a| Placed {
+                    pos: a.pos,
+                    heading: None,
+                })
+                .collect();
+            let lectern = super::super::ledger::lectern(&scene).unwrap();
+            let worker = Endpoint::Node(id("working"));
+            let read = flight_path(&scene, &placed, &message(&Endpoint::Ledger, &worker)).unwrap();
+            assert_eq!(read[0], lectern);
+            assert_eq!(read[1], pos2(lectern.x, scene.gallery.center().y));
+            assert_eq!(read.last(), Some(&scene.dwarf(&id("working")).unwrap().pos));
+            let mut filed =
+                flight_path(&scene, &placed, &message(&worker, &Endpoint::Ledger)).unwrap();
+            filed.reverse();
+            assert_eq!(read, filed);
+            assert!(!from_portal(&message(&Endpoint::Ledger, &worker)));
+        }
     }
 
     #[test]
