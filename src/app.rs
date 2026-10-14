@@ -133,7 +133,7 @@ pub struct StrongholdApp {
     control: control::AppControl,
     /// "Close session" confirmation dialog and the log of closes.
     close: ui::close::CloseDialog,
-    /// Worktree count in the top bar, the cleanup window and its hammer.
+    /// Worktree count in the top bar, the cleanup panel and its hammer.
     worktrees: ui::worktrees::WorktreePanel,
     /// The farm drew the rubble (and the hammer breaking it) this frame, so the hammer skips the
     /// window's bottom edge.
@@ -603,6 +603,7 @@ impl StrongholdApp {
         if self.search.is_open() {
             return;
         }
+        self.worktrees.handle_escape(ctx);
         for command in ui::keys::take_commands(ctx) {
             self.run_key_command(ctx, command);
         }
@@ -984,19 +985,18 @@ impl StrongholdApp {
         self.close.request(ui::close::CloseRequest::Nodes(ids));
     }
 
-    /// Draws the dialog and submits a confirmed plan's steps, in order.
-    /// The worktree cleanup window, and the hammer while it removes.
+    /// Collects cleanup results even when the panel is hidden, and draws its hammer.
     fn worktree_cleanup(&mut self, ctx: &egui::Context, now_ms: i64) {
         let worktrees = self.data.as_ref().map(|d| &d.worktrees[..]);
         if self.worktrees.tick(worktrees, now_ms) {
             self.poller.send(PollerCommand::RefreshNow);
         }
-        self.worktrees.window(ctx);
         if !std::mem::take(&mut self.cleanup_in_farm) {
             self.worktrees.hammer(ctx);
         }
     }
 
+    /// Draws the dialog and submits a confirmed plan's steps, in order.
     fn close_dialog(&mut self, ctx: &egui::Context) {
         let terminals = self.data.as_ref().map_or(&[][..], |d| &d.terminals[..]);
         let confirmed = self
