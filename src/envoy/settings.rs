@@ -2,13 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// #agent-comms, where coworkers' agents talk to Karl's.
-pub const AGENT_COMMS: &str = "C0BHZLG3X63";
-/// Karl's Slack member id; mentions of it are pings to Karl.
-pub const KARL_USER_ID: &str = "U0AMMLGSFL0";
-/// Owner of the repos Slack names as `repo#N`.
-pub const GITHUB_OWNER: &str = "depict-org";
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EnvoySettings {
@@ -21,8 +14,11 @@ pub struct EnvoySettings {
     pub dry_run: bool,
     /// Channels whose whole feed the Envoy listens to through the bridge.
     pub channels: Vec<String>,
-    /// Whose mentions and DMs count as pings to Karl.
+    /// Whose mentions and DMs count as pings to Karl. Slack's `auth.test` replaces it at
+    /// start; mention and DM polls wait while both are empty.
     pub karl_user_id: String,
+    /// GitHub owner of the repos Slack names as `repo#N`; empty turns PR lookups off.
+    pub github_owner: String,
     /// How often mentions and DMs are polled with Slack search (the bridge can't see them).
     #[serde(deserialize_with = "poll_secs")]
     pub poll_secs: u64,
@@ -99,8 +95,9 @@ impl Default for EnvoySettings {
             agent: "claude".into(),
             model: Some("sonnet".into()),
             dry_run: true,
-            channels: vec![AGENT_COMMS.into()],
-            karl_user_id: KARL_USER_ID.into(),
+            channels: Vec::new(),
+            karl_user_id: String::new(),
+            github_owner: String::new(),
             poll_secs: 120,
             policies: Vec::new(),
             fresh_after_secs: 300,
@@ -119,7 +116,9 @@ mod tests {
         let s: EnvoySettings = serde_json::from_str(r#"{"model":"opus"}"#).unwrap();
         assert_eq!(s.model.as_deref(), Some("opus"));
         assert!(s.dry_run);
-        assert_eq!(s.channels, vec![AGENT_COMMS.to_string()]);
+        assert!(s.channels.is_empty());
+        assert!(s.karl_user_id.is_empty());
+        assert!(s.github_owner.is_empty());
         assert_eq!(s.fresh_after_secs, 300);
         assert_eq!(s.reset_after_events, 40);
         assert_eq!(s.reset_after_tokens, 80_000);

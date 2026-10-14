@@ -328,11 +328,11 @@ impl Playbook {
         Self { dir: dir.into() }
     }
 
-    /// `STRONGHOLD_PLAYBOOK_DIR`, else the repo's `playbook/`, else `~/Documents/agents`.
+    /// `STRONGHOLD_PLAYBOOK_DIR`, else the repo's `playbook/`, else the
+    /// [agents dir](crate::paths::agents_dir).
     pub fn locate() -> Result<Self> {
         let env = crate::legacy::env_os(ENV_DIR).map(PathBuf::from);
-        let home = directories::BaseDirs::new().map(|b| b.home_dir().join("Documents/agents"));
-        resolve_dir(env, Path::new(BAKED_DIR), home).map(Self::at)
+        resolve_dir(env, Path::new(BAKED_DIR), crate::paths::agents_dir()).map(Self::at)
     }
 
     pub fn dir(&self) -> &Path {
@@ -511,7 +511,7 @@ impl Playbook {
     }
 
     /// Where git runs: the real dir of the playbook file, so a dir of symlinks into the repo
-    /// (`~/Documents/agents`) still gets the repo's version.
+    /// (the agents dir) still gets the repo's version.
     fn git_dir(&self) -> PathBuf {
         FILES
             .iter()

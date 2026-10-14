@@ -25,7 +25,7 @@ use objc2_user_notifications::{
 use super::{Clicked, Outgoing, PAYLOAD_KEY, Poster, Repaint, decode_payload, encode_payload};
 
 /// `CFBundleIdentifier` of `Stronghold.app`.
-pub const BUNDLE_ID: &str = "ai.depict.stronghold";
+pub const BUNDLE_ID: &str = "com.gylleus.stronghold";
 
 /// Action identifier of a plain click on a notification.
 const DEFAULT_ACTION: &str = "com.apple.UNNotificationDefaultActionIdentifier";

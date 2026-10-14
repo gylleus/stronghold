@@ -17,9 +17,9 @@ pub const INTERVAL: Duration = Duration::from_secs(10);
 /// How many of the newest entries the hold lists.
 pub const NEWEST: usize = 5;
 
-/// `~/Documents/agents/ledger`.
+/// `ledger` in the [agents dir](crate::paths::agents_dir).
 pub fn default_dir() -> Option<PathBuf> {
-    directories::BaseDirs::new().map(|d| d.home_dir().join("Documents/agents/ledger"))
+    crate::paths::agents_dir().map(|d| d.join("ledger"))
 }
 
 /// One entry: a markdown file in the Ledger's folder.

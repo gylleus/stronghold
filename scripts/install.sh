@@ -68,7 +68,7 @@ python3 "$root/scripts/bundle.py" --binary "$root/target/release/stronghold" --o
 rm -rf "$app"
 mv "$staging" "$app"
 rmdir "$staging_dir"
-# Register it so notification clicks and `open -b ai.depict.stronghold` find this copy.
+# Register it so notification clicks and `open -b com.gylleus.stronghold` find this copy.
 "$lsregister" -f "$app" 2>/dev/null || true
 echo "installed $app"
 

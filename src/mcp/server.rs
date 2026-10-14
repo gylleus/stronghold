@@ -81,7 +81,8 @@ Worktrees: clean_worktrees plans removing Orca worktrees nothing needs any more 
 default; a real run takes approved ids and/or archive_ids). Idle unpushed work is archived \
 before removal; pushed unmerged work needs explicit archive_ids. The plan marks archivable \
 entries and blockers. Archives contain a verified bundle, working/staged patches, untracked \
-files and restore instructions under ~/Documents/agents/archive/. Activity, pins, parked agents, \
+files and restore instructions under archive/ in the agents dir (~/Documents/agents unless \
+STRONGHOLD_AGENTS_DIR is set). Activity, pins, parked agents, \
 main checkouts, open PRs and the age gate always prevent archival removal. Nothing is pushed. ",
     notify::rules_text!(),
     "

@@ -10,7 +10,7 @@ macro_rules! say_rules {
 at most 25 words, plain everyday words a non-engineer would use, the answer first, small \
 rounded numbers. No ids, hashes, branch or file names and no jargon (dispatch, run id, handle, \
 coordinator handle, PR number): say \"the search go-live PR\" or \"a pull request in \
-depict\", and name agents by their short human name or repo. Don't list; offer the details \
+the shop repo\", and name agents by their short human name or repo. Don't list; offer the details \
 instead (\"Want the list?\"). After the </say> line, write the normal detailed answer for the \
 screen (markdown is fine there)."
     };

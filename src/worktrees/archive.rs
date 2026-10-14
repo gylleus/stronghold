@@ -245,8 +245,9 @@ fn copy_files(dir: &Path, dest: &Path, files: &[String], cap: u64) -> Result<(),
     Ok(())
 }
 
+/// `archive` in the [agents dir](crate::paths::agents_dir).
 pub fn root() -> Option<PathBuf> {
-    directories::BaseDirs::new().map(|b| b.home_dir().join("Documents/agents/archive"))
+    crate::paths::agents_dir().map(|d| d.join("archive"))
 }
 
 fn safe_name(name: &str) -> String {

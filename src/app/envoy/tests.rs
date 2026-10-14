@@ -1463,8 +1463,9 @@ fn batches_say_who_each_event_is_for() {
     let mut core = AppEnvoy::load(dir.path().into());
     core.handle = Some("term_envoy".into());
     let now = 1_791_300_000_000;
+    core.settings.karl_user_id = "U0KARL0001".into();
     let karl = core.karl().to_owned();
-    assert_eq!(karl, "U0AMMLGSFL0");
+    assert_eq!(karl, "U0KARL0001");
     let mut dwarf_root = receipt_event("1791299800.000001");
     dwarf_root.text = "Request from Recs rollout: who owns the wheat index?".into();
     let mut envoy_root = receipt_event("1791299850.000001");
@@ -1561,9 +1562,10 @@ fn karls_id_comes_from_slack_when_it_answers() {
         ..FakeSlack::default()
     };
     let mut core = AppEnvoy::at(dir.path().into(), &egui::Context::default(), fake, bridge);
+    core.settings.karl_user_id = "U0KARL0001".into();
     assert_eq!(
         core.karl(),
-        "U0AMMLGSFL0",
+        "U0KARL0001",
         "the settings' id until Slack answers"
     );
     core.set_enabled(
