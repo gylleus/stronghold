@@ -18,6 +18,8 @@
 //! screenshot once settled and another while a worker walks, a new one emerges, a broadcast
 //! ripples and messages fly (`-walk`), plus rubble burst (`-break`) and cleared
 //! (`-cleared`) frames, then exits. With `--hammer`, the first shot waits for impact.
+//! K closes a synthetic dwarf with the King's tool throw; `--king-throw --shot out.png`
+//! captures its flight and impact.
 //! `--pixels farm|HEIGHT` and `--palette NAME` select dwarf rendering.
 
 use std::collections::HashSet;
@@ -168,6 +170,7 @@ fn main() -> eframe::Result {
                     farm
                 },
                 shot,
+                king_throw: args.iter().any(|a| a == "--king-throw"),
                 captures: Vec::new(),
                 receipt_at_ms,
                 received: None,
@@ -188,6 +191,7 @@ struct Demo {
     clan: ClanView,
     farm: FarmView,
     shot: Option<String>,
+    king_throw: bool,
     /// Encode after capturing all frames so PNG compression cannot skip short effects.
     captures: Vec<(std::sync::Arc<egui::ColorImage>, &'static str)>,
     receipt_at_ms: Option<i64>,
@@ -280,6 +284,24 @@ fn sweep_marker() -> tempfile::TempDir {
 }
 
 impl Demo {
+    fn throw_tool(&mut self, now_s: f64) {
+        let Some(target) = self
+            .snapshot
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Terminal)
+            .map(|n| n.id.clone())
+        else {
+            return;
+        };
+        self.farm
+            .prepare_king_close(std::iter::once(target.clone()), now_s);
+        self.snapshot.nodes.retain(|n| n.id != target);
+        self.snapshot.add_king();
+        self.clan.sync(&self.snapshot);
+        self.flipped_at = Instant::now();
+    }
+
     /// A new worker in run 2, emerging from the King.
     fn hatch(&mut self) {
         let n = self.snapshot.nodes.len();
@@ -395,6 +417,9 @@ impl eframe::App for Demo {
             if self.flipped_at.elapsed() >= FLIP_EVERY {
                 self.flip();
             }
+            if ui.input(|i| i.key_pressed(egui::Key::K)) {
+                self.throw_tool(ui.input(|i| i.time));
+            }
             if ui.input(|i| i.key_pressed(egui::Key::R)) {
                 self.received = Some(Instant::now());
                 let flight = AgentMessage::new("slack", "envoy", MessageKind::Relay)
@@ -463,11 +488,15 @@ impl eframe::App for Demo {
             1 => {
                 if let Some(image) = image {
                     self.captures.push((image, ""));
-                    self.flip();
-                    self.hatch();
-                    self.farm.pulse(Pulse::Broadcast);
-                    self.mail(ui.input(|i| i.time));
-                    self.clear_heap();
+                    if self.king_throw {
+                        self.throw_tool(ui.input(|i| i.time));
+                    } else {
+                        self.flip();
+                        self.hatch();
+                        self.farm.pulse(Pulse::Broadcast);
+                        self.mail(ui.input(|i| i.time));
+                        self.clear_heap();
+                    }
                     self.hammer = None;
                     self.stage = 2;
                 }
@@ -477,16 +506,20 @@ impl eframe::App for Demo {
             }
             3 => {
                 if let Some(image) = image {
-                    self.captures.push((image, "break"));
+                    self.captures
+                        .push((image, if self.king_throw { "flight" } else { "break" }));
                     self.stage = 4;
                 }
             }
-            4 if self.flipped_at.elapsed() >= Duration::from_millis(700) => {
+            4 if self.flipped_at.elapsed()
+                >= Duration::from_millis(if self.king_throw { 570 } else { 700 }) =>
+            {
                 self.stage = 5;
             }
             5 => {
                 if let Some(image) = image {
-                    self.captures.push((image, "walk"));
+                    self.captures
+                        .push((image, if self.king_throw { "impact" } else { "walk" }));
                     self.stage = 6;
                 }
             }

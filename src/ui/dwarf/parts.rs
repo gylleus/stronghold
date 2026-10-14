@@ -418,7 +418,7 @@ pub(super) fn tool_tip(tool: Tool) -> Pos2 {
 }
 
 /// The tool held in the fist at [`HAND`], its shaft running on past the hand along the arm.
-fn tool(p: &mut Piece, tool: Tool, small: bool) {
+pub(super) fn tool(p: &mut Piece, tool: Tool, small: bool) {
     let hand = HAND;
     let end = tool_tip(tool);
     let butt = hand - vec2(0.0, 6.0);

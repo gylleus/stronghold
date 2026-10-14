@@ -606,7 +606,7 @@ fn each_tool_maps_to_its_control_request() {
             json!({"ids": ["term:a", "term:b"], "whole_tab": true, "dry_run": false}),
             vec![(
                 "close",
-                json!({"ids": ["term:a", "term:b"], "whole_tab": true, "dry_run": false}),
+                json!({"ids": ["term:a", "term:b"], "whole_tab": true, "dry_run": false, "origin": agent_origin()}),
             )],
         ),
         (
@@ -718,13 +718,14 @@ fn close_defaults_to_a_dry_run() {
         "targets": [{"id": "term:a", "label": "Worker A", "kind": "worker"}],
         "steps": [{"command": "orca terminal close --terminal=term_a", "label": "Close"}],
         "warnings": ["run X loses a worker"], "refused": null, "can_run": true}});
-    let mut server = McpServer::new(FakeControl::default().reply("close", Ok(plan)));
+    let mut server = McpServer::new(FakeControl::default().reply("close", Ok(plan)))
+        .with_review_env(review::ReviewEnv::default());
     let r = call(&mut server, "close_agents", json!({"ids": ["term:a"]}));
     assert_eq!(
         server.control().calls,
         vec![(
             "close".to_string(),
-            json!({"id": "term:a", "whole_tab": false, "dry_run": true})
+            json!({"id": "term:a", "whole_tab": false, "dry_run": true, "origin": {}})
         )]
     );
     let t = text(&r);
@@ -2610,4 +2611,33 @@ fn queen_tools_queue_offline_with_caller_identity_and_read_it_back() {
         "queen_inbox",
         json!({"limit":0})
     )));
+}
+
+#[test]
+fn close_passes_caller_identity_to_the_pre_close_animation_hook() {
+    for origin in [crate::review::mark::Origin::default(), agent_origin()] {
+        let mut server =
+            McpServer::new(FakeControl::default()).with_review_env(review::ReviewEnv {
+                origin: origin.clone(),
+                ..Default::default()
+            });
+        call(
+            &mut server,
+            "close_agents",
+            json!({"ids": ["a"], "dry_run": false}),
+        );
+        let params = &server.control().calls[0].1;
+        assert_eq!(params["origin"], json!(origin));
+        match ControlCommand::parse("close", params).unwrap().unwrap() {
+            ControlCommand::Close {
+                origin: parsed,
+                dry_run,
+                ..
+            } => {
+                assert_eq!(parsed, Some(origin));
+                assert!(!dry_run);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
 }

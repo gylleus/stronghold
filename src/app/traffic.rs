@@ -83,6 +83,21 @@ impl StrongholdApp {
         ctx.request_repaint();
     }
 
+    pub(super) fn bonk_sound(&self) {
+        let settings = self.whip_window.notifications();
+        if !settings.pop_sounds || settings.quiet {
+            return;
+        }
+        if let Some(path) = crate::notify::Sound::System("Pop".into()).path()
+            && let Err(e) = crate::notify::play_sound(
+                &path,
+                f32::from(settings.volume_percent.min(100)) / 100.0,
+            )
+        {
+            log::warn!("bonk sound: {e:#}");
+        }
+    }
+
     /// One sound for a batch of pops, the most urgent cue's.
     fn pop_sound(&mut self, cues: impl Iterator<Item = Cue>) {
         let settings = self.whip_window.notifications();
@@ -135,6 +150,10 @@ impl StrongholdApp {
         }
         let still = crate::ui::farm::death::reduce_motion();
         for beam in beams {
+            // King closes are drawn from the pre-close hook as tools when the target leaves.
+            if beam.kind == BeamKind::Kill && beam.from == Endpoint::Node(NodeId::king()) {
+                continue;
+            }
             log::debug!("beam: {:?}", beam);
             self.farm.beam(beam, now_s, still);
         }

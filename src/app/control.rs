@@ -320,7 +320,19 @@ impl StrongholdApp {
                 agents,
                 whole_tab,
                 dry_run,
-            } => return self.control_close(&agents, whole_tab, dry_run, reply),
+                origin,
+            } => {
+                let king = origin
+                    .as_ref()
+                    .is_some_and(|o| o.terminal_handle.is_none() && o.pane_key.is_none());
+                return self.control_close(
+                    &agents,
+                    whole_tab,
+                    dry_run,
+                    king.then(|| ctx.input(|i| i.time)),
+                    reply,
+                );
+            }
             ControlCommand::Park { agents, park } => self.control_park(&agents, park),
             ControlCommand::Whip { agents, stalled } => {
                 return self.control_whip(&agents, stalled, reply);
@@ -556,6 +568,7 @@ impl StrongholdApp {
         agents: &[String],
         whole_tab: bool,
         dry_run: bool,
+        king_close_s: Option<f64>,
         reply: Reply,
     ) -> Result<(), ControlError> {
         let plan = self.control_close_plan(agents, whole_tab);
@@ -579,6 +592,10 @@ impl StrongholdApp {
             let e = ControlError::new(ErrorCode::Refused, reason);
             reply.send(Err(e.clone()));
             return Err(e);
+        }
+        if let Some(now_s) = king_close_s {
+            self.farm
+                .prepare_king_close(plan.targets.iter().map(|t| t.id.clone()), now_s);
         }
         log::info!("control API: closing sessions: {:?}", plan.steps);
         let ids = self.submit_control_actions(

@@ -241,6 +241,9 @@ impl StrongholdApp {
                     self.ledger_panel.open_requested = true;
                     ui.ctx().request_repaint();
                 }
+                if response.bonk {
+                    self.bonk_sound();
+                }
                 if response.open_envoy {
                     self.envoy_core.open_request = true;
                 }
