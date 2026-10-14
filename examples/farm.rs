@@ -14,9 +14,10 @@
 //! flips between working and waiting on Karl, so dwarves walk; B broadcasts, S asks for a status
 //! report, N hatches a new worker, M sends a burst of messages between dwarves, T toggles the
 //! King thinking, R delivers a message to the Envoy (he casts) and X closes a worktree (its heap
-//! crumbles). With `--shot`, it saves a
+//! bursts). With `--shot`, it saves a
 //! screenshot once settled and another while a worker walks, a new one emerges, a broadcast
-//! ripples, messages fly and a heap crumbles (`-walk`), then exits.
+//! ripples and messages fly (`-walk`), plus rubble burst (`-break`) and cleared
+//! (`-cleared`) frames, then exits. With `--hammer`, the first shot waits for impact.
 //! `--pixels farm|HEIGHT` and `--palette NAME` select dwarf rendering.
 
 use std::collections::HashSet;
@@ -160,6 +161,7 @@ fn main() -> eframe::Result {
                     farm
                 },
                 shot,
+                captures: Vec::new(),
                 receipt_at_ms,
                 received: None,
                 reduced_motion,
@@ -179,6 +181,8 @@ struct Demo {
     clan: ClanView,
     farm: FarmView,
     shot: Option<String>,
+    /// Encode after capturing all frames so PNG compression cannot skip short effects.
+    captures: Vec<(std::sync::Arc<egui::ColorImage>, &'static str)>,
     receipt_at_ms: Option<i64>,
     /// When R last delivered a message to the Envoy.
     received: Option<Instant>,
@@ -186,7 +190,7 @@ struct Demo {
     started: Instant,
     flipped_at: Instant,
     thinking: bool,
-    /// 0 settling, 1 waiting for the settled shot, 2 walking, 3 waiting for the walk shot.
+    /// Alternating screenshot requests and captures: settled, break, walk, cleared.
     stage: u8,
     /// The cleanup panel running the hammer, and the temporary data dir holding its marker.
     hammer: Option<(WorktreePanel, tempfile::TempDir)>,
@@ -211,6 +215,9 @@ fn worktrees(snapshot: &ClanSnapshot, count: Option<usize>) -> Vec<Worktree> {
             "/x/orca/workspaces/myrstack/{}",
             STALE[i % STALE.len()]
         )));
+    }
+    for (i, tree) in out.iter_mut().enumerate() {
+        tree.created_at = Some(i as i64);
     }
     if let Some(i) = out
         .iter()
@@ -304,9 +311,18 @@ impl Demo {
         }
     }
 
-    /// Closes the newest worktree: its heap crumbles.
+    /// Closes the hammer's target (or newest worktree): its heap bursts.
     fn clear_heap(&mut self) {
-        self.worktrees.pop();
+        let target = self
+            .hammer
+            .as_ref()
+            .and_then(|(panel, _)| panel.cleanup_job())
+            .and_then(|job| job.current);
+        if let Some(index) = target.and_then(|id| self.worktrees.iter().position(|w| w.id == id)) {
+            self.worktrees.remove(index);
+        } else {
+            self.worktrees.pop();
+        }
     }
 
     fn flip(&mut self) {
@@ -420,28 +436,56 @@ impl eframe::App for Demo {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()))
         };
         match self.stage {
-            0 if self.started.elapsed() >= Duration::from_secs(1) => {
+            0 if self.started.elapsed() >= Duration::from_secs(1)
+                && (self.hammer.is_none()
+                    || (0.78..0.84)
+                        .contains(&((ui.input(|i| i.time) / 1.2).rem_euclid(1.0) as f32))) =>
+            {
                 shoot(ui.ctx());
                 self.stage = 1;
             }
             1 => {
                 if let Some(image) = image {
-                    self.save_shot(&image, "");
+                    self.captures.push((image, ""));
                     self.flip();
                     self.hatch();
                     self.farm.pulse(Pulse::Broadcast);
                     self.mail(ui.input(|i| i.time));
                     self.clear_heap();
+                    self.hammer = None;
                     self.stage = 2;
                 }
             }
-            2 if self.flipped_at.elapsed() >= Duration::from_millis(700) => {
+            2 if self.flipped_at.elapsed() >= Duration::from_millis(180) => {
                 shoot(ui.ctx());
                 self.stage = 3;
             }
             3 => {
                 if let Some(image) = image {
-                    self.save_shot(&image, "walk");
+                    self.captures.push((image, "break"));
+                    self.stage = 4;
+                }
+            }
+            4 if self.flipped_at.elapsed() >= Duration::from_millis(700) => {
+                shoot(ui.ctx());
+                self.stage = 5;
+            }
+            5 => {
+                if let Some(image) = image {
+                    self.captures.push((image, "walk"));
+                    self.stage = 6;
+                }
+            }
+            6 if self.flipped_at.elapsed() >= Duration::from_millis(1500) => {
+                shoot(ui.ctx());
+                self.stage = 7;
+            }
+            7 => {
+                if let Some(image) = image {
+                    self.captures.push((image, "cleared"));
+                    for (image, suffix) in &self.captures {
+                        self.save_shot(image, suffix);
+                    }
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
