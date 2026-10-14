@@ -73,11 +73,13 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `finish_session` | `summary`, `approval` (`karl` \| `trivial`), `outcome` (`done` \| `handed_over` \| `abandoned`), `pr_url`, `force` | `finish` (a `dry_run` check, then the real one) | destructive |
 | `clean_worktrees` | `dry_run` (**default true**), `ids` (needed with `dry_run: false`) | – (runs `orca`, `git`, `gh` itself) | destructive |
 
-`mark_pr_ready` is for clan agents: the server is registered at user scope, so every Claude
-session (clan agents in Orca terminals included) has it. It sends the caller's Orca identity
-(`ORCA_TERMINAL_HANDLE`, `ORCA_PANE_KEY`, `ORCA_TAB_ID` from the `myrstack mcp` process's
-environment, which it inherits from the agent's terminal) so the PR shows under the agent's
-node. Agents without MCP (Codex) run `myrstack pr-ready <url> [--title …] [--summary …]`,
+`mark_pr_ready` is for coordinators after verifying the gate, and standalone terminals.
+Dispatched workers must send `merge_ready` to their coordinator instead; they must never
+call this tool or `myrstack pr-ready`. The tool refuses task/dispatch identities and worker
+nodes. The server is registered at user scope, so every Claude session (clan agents in Orca
+terminals included) has it. It sends the caller's Orca identity (`ORCA_TERMINAL_HANDLE`,
+`ORCA_PANE_KEY`, `ORCA_TAB_ID`, plus `ORCA_TASK_ID` and `ORCA_DISPATCH_ID` when present) from
+the `myrstack mcp` process's inherited environment so the PR shows under the agent's node. Agents without MCP (Codex) run `myrstack pr-ready <url> [--title …] [--summary …]`,
 which does the same. See the control API's [Review queue](control-api.md#review-queue).
 
 `notify` is how any agent reaches Karl without going through the King: a macOS and/or

@@ -529,10 +529,13 @@ the automatic whip's dry-run setting. The next periodic tick comes one period la
 
 ### `pr_ready`
 
-Records that a PR is ready for review. Agents call it through the `mark_pr_ready` MCP tool or
+Records that a PR is ready for review. Coordinators (after verifying the gate) and standalone
+terminals call it through the `mark_pr_ready` MCP tool or
 `myrstack pr-ready`, which fill in `origin` from the caller's Orca environment
-(`ORCA_TERMINAL_HANDLE`, `ORCA_PANE_KEY`, `ORCA_TAB_ID`). It only records in Myrstack; nothing
-goes to GitHub or the bus.
+(`ORCA_TERMINAL_HANDLE`, `ORCA_PANE_KEY`, `ORCA_TAB_ID`, `ORCA_TASK_ID`, `ORCA_DISPATCH_ID`).
+Callers with a task or dispatch ID, or whose identity resolves to a worker node, are refused
+and told to send `merge_ready` to their coordinator instead. It only records in Myrstack;
+nothing goes to GitHub or the bus.
 
 | param | type | meaning |
 |---|---|---|
@@ -540,7 +543,7 @@ goes to GitHub or the bus.
 | `title` | string | optional; GitHub's title replaces it once read |
 | `summary` | string | optional one line |
 | `via` | `tool` \| `cli` | where the mark came from (default `tool`) |
-| `origin` | `{terminal_handle, pane_key, tab_id}` | the marking agent's Orca identity |
+| `origin` | `{terminal_handle, pane_key, tab_id, task_id, dispatch_id}` | the marking agent's Orca identity |
 
 ```json
 {"v":1,"method":"pr_ready","params":{"url":"https://github.com/o/r/pull/7","via":"cli",
@@ -656,15 +659,18 @@ marks its notifications read.
 
 ## Review queue
 
-PRs reach the queue from `pr_ready` and from `merge_ready` bus messages in the inbox the app
-polls (every PR URL in the subject, body or payload, attributed to the sender). A mark made
-while the app is down waits in `<data dir>/pr-ready.jsonl` (0600) and is taken on start. The
-app reads each queued PR with `gh pr view --json …` (read-only) every 3 minutes and at once
-when it joins. A `merge_ready` message is a worker's hand-off to its coordinator, so a bus
-entry shows only once GitHub says the PR's description opens with the coordinator's `✅ Ready
-for review` marker naming the current head. Drafts never show, whatever marked them. Merged or
-closed PRs leave after 5 minutes. The queue is saved
-in `<data dir>/review-queue.json` (0600).
+PRs reach the queue only from `pr_ready`, called by a coordinator after verifying the gate or
+by a standalone terminal. Worker `merge_ready` bus messages remain hand-offs to coordinators
+and never create marks. A mark made while the app is down waits in `<data dir>/pr-ready.jsonl`
+(0600) and is taken on start. The app reads each queued PR with `gh pr view --json …`
+(read-only) every 3 minutes and at once when it joins. Drafts never show. Merged or closed PRs
+leave after 5 minutes. The queue is saved in `<data dir>/review-queue.json` (0600).
+
+Legacy bus marks are ignored on load. Existing worker-made tool/CLI marks without task or
+dispatch IDs cannot reliably be identified once their worker node is gone. Dismiss those
+through the review queue or `myrstack ctl review_dismiss '{"url":"<PR URL>"}'`; the
+coordinator can call `mark_pr_ready` after verifying the gate to replace the attribution and
+show the PR again.
 
 ## `myrstack ctl`
 
