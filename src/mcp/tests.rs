@@ -453,8 +453,8 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "mark_pr_ready",
         "review_queue",
         "notify",
-        "tell_queen",
-        "queen_inbox",
+        "tell_king",
+        "king_inbox",
         "ask_karl",
         "finish_session",
         "reach_out",
@@ -486,7 +486,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "attendant_brief",
         "kickoff",
         "review_queue",
-        "queen_inbox",
+        "king_inbox",
         "reach_out_status",
         "envoy_request",
         "envoy_inbox",
@@ -1592,7 +1592,7 @@ fn agent_server<C: Control>(control: C) -> McpServer<C> {
         pending: None,
         queue_file: None,
         notify_pending: None,
-        queen_inbox: None,
+        king_inbox: None,
     })
 }
 
@@ -2574,12 +2574,12 @@ fn ask_karl_tells_envoy_to_keep_taking_batches_and_preserves_unmatched_guidance(
 }
 
 #[test]
-fn queen_tools_queue_offline_with_caller_identity_and_read_it_back() {
+fn king_inbox_tools_queue_offline_with_caller_identity_and_read_it_back() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join(crate::queen_inbox::FILE);
+    let path = dir.path().join(crate::king_inbox::FILE);
     let mut server = McpServer::new(FakeControl::default()).with_review_env(review::ReviewEnv {
         origin: agent_origin(),
-        queen_inbox: Some(path),
+        king_inbox: Some(path),
         ..Default::default()
     });
     let catalog = rpc(&mut server, "tools/list", json!({}));
@@ -2589,26 +2589,30 @@ fn queen_tools_queue_offline_with_caller_identity_and_read_it_back() {
         .iter()
         .map(|v| v["name"].as_str().unwrap())
         .collect();
-    assert!(names.contains(&"tell_queen"));
-    assert!(names.contains(&"queen_inbox"));
+    assert!(names.contains(&"tell_king"));
+    assert!(names.contains(&"king_inbox"));
     let args = json!({"message":"Need shared schema decision", "kind":"question", "url":"https://example.com/issue", "origin":{"terminal_handle":"imposter"}});
-    let result = call(&mut server, "tell_queen", args.clone());
+    let result = call(&mut server, "tell_king", args.clone());
     assert!(!is_error(&result), "{}", text(&result));
-    let read = call(&mut server, "queen_inbox", json!({}));
+    let read = call(&mut server, "king_inbox", json!({}));
     assert!(text(&read).contains("term_442fcb9f"));
     assert!(!text(&read).contains("imposter"));
-    let repeat = call(&mut server, "tell_queen", args);
+    let repeat = call(&mut server, "tell_king", args.clone());
     assert!(text(&repeat).contains("collapsed"));
+    // The Queen's names from before she became the King still answer, unlisted.
+    assert!(!names.contains(&"tell_queen") && !names.contains(&"queen_inbox"));
+    assert!(text(&call(&mut server, "tell_queen", args)).contains("collapsed"));
+    assert!(text(&call(&mut server, "queen_inbox", json!({}))).contains("term_442fcb9f"));
     for args in [
         json!({}),
         json!({"message":"hi", "kind":"bad"}),
         json!({"message":"hi", "url":12}),
     ] {
-        assert!(is_error(&call(&mut server, "tell_queen", args)));
+        assert!(is_error(&call(&mut server, "tell_king", args)));
     }
     assert!(is_error(&call(
         &mut server,
-        "queen_inbox",
+        "king_inbox",
         json!({"limit":0})
     )));
 }
