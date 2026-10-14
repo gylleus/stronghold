@@ -602,7 +602,10 @@ fn clan_status(control: &mut dyn Control) -> ToolResult {
         })
     })?;
     let now = now_ms();
-    let text = clan_text(&s, fallback, now);
+    let mut text = clan_text(&s, fallback, now);
+    if let Some(queue) = s.status.get("review_queue") {
+        text.push_str(&format!("\n{}", review_summary_text(queue)));
+    }
     let structured = json!({
         "fallback": fallback,
         "ready": s.status.get("ready"),
@@ -615,9 +618,46 @@ fn clan_status(control: &mut dyn Control) -> ToolResult {
         "whip": if fallback { Value::Null } else { s.status.get("whip").cloned().unwrap_or_default() },
         "king_auto": if fallback { Value::Null } else { s.status.get("king_auto").cloned().unwrap_or(Value::Bool(false)) },
         "notifications": if fallback { Value::Null } else { s.status.get("notifications").cloned().unwrap_or_default() },
+        "review_queue": s.status.get("review_queue"),
         "quotas": s.quotas,
     });
     Ok(ToolOutput::ok(text, structured))
+}
+
+/// Live review evidence embedded in a status report.
+fn review_summary_text(queue: &Value) -> String {
+    let mut out = vec!["Live review queue:".to_owned()];
+    if let Some(entries) = queue["entries"].as_array() {
+        if entries.is_empty() {
+            out.push("No verified open PRs listed.".into());
+        }
+        for entry in entries {
+            let ci = serde_json::from_value::<crate::review::github::Ci>(entry["ci"].clone())
+                .map(|ci| ci.describe())
+                .unwrap_or_else(|_| "CI unknown".into());
+            out.push(format!(
+                "- {} · {} · {ci} · Ankra on head: {} · marker on head: {}{}",
+                entry["url"].as_str().unwrap_or("?"),
+                entry["state"]
+                    .as_str()
+                    .unwrap_or("unknown; not pending evidence"),
+                entry["ankra_on_head"]
+                    .as_bool()
+                    .map_or("unknown", |b| if b { "yes" } else { "no" }),
+                entry["marker_on_head"]
+                    .as_bool()
+                    .map_or("unknown", |b| if b { "yes" } else { "no" }),
+                entry["error"]
+                    .as_str()
+                    .map(|e| format!(" · {e}"))
+                    .unwrap_or_default()
+            ));
+        }
+    }
+    if let Some(error) = queue.pointer("/github/error").and_then(Value::as_str) {
+        out.push(format!("Live review state unavailable: {error}"));
+    }
+    out.join("\n")
 }
 
 fn clan_text(s: &Status, fallback: bool, now: i64) -> String {
@@ -1647,6 +1687,13 @@ fn alert_line(a: &AlertView, now: i64) -> String {
         && a.source == "agent"
     {
         line.push_str(&format!("{agent}: "));
+    }
+    if a.source == "review" {
+        let state =
+            a.pr.as_ref()
+                .and_then(|pr| pr["state"].as_str())
+                .unwrap_or("unknown; not pending evidence");
+        line.push_str(&format!("[PR {state}] "));
     }
     line.push_str(&a.title);
     if a.count > 1 {

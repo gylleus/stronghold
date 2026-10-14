@@ -4,6 +4,7 @@
 pub mod client;
 pub mod commands;
 pub mod protocol;
+mod review;
 pub mod server;
 #[cfg(test)]
 mod tests;

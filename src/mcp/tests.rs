@@ -1002,6 +1002,9 @@ fn socket_control_talks_to_the_control_server() {
     let server = ControlServer::start(
         &path,
         Backend {
+            github: Arc::new(crate::review::github::GhCli {
+                binary: "/nonexistent/gh".into(),
+            }),
             status,
             screens: Arc::new(Screens),
             commands: Arc::new(Refuse),
@@ -1813,6 +1816,9 @@ fn notify_reaches_the_dispatcher_over_the_socket() {
     let server = ControlServer::start(
         &path,
         Backend {
+            github: Arc::new(crate::review::github::GhCli {
+                binary: "/nonexistent/gh".into(),
+            }),
             status: SharedStatus::new(),
             screens: Arc::new(Screens),
             commands: app.clone(),
@@ -1875,6 +1881,7 @@ fn notify_reaches_the_dispatcher_over_the_socket() {
 
 fn alert(id: u64, read: bool) -> view::AlertView {
     view::AlertView {
+        pr: None,
         id,
         at_ms: NOW - 120_000,
         severity: "warn".into(),
@@ -1913,6 +1920,43 @@ fn alerts_lists_the_inbox_with_read_state() {
     assert_eq!(r["structuredContent"]["unread"], 1);
     let r = call(&mut server, "alerts", json!({"unread_only": true}));
     assert_eq!(text(&r).lines().count(), 2, "{}", text(&r));
+}
+
+#[test]
+fn clan_status_includes_live_review_evidence_in_text_and_json() {
+    let queue = json!({"entries": [{"url": "https://github.com/o/r/pull/1", "state": "open",
+        "ci": {"state": "pending", "pending": 1, "total": 1},
+        "ankra_on_head": false, "marker_on_head": true}], "github": {"available": true}});
+    let status = json!({"ready": false, "clan": status_view().clan, "review_queue": queue});
+    let mut server = McpServer::new(
+        FakeControl::default()
+            .reply("status", Ok(status))
+            .reply("quotas", Ok(json!(status_view().quotas))),
+    );
+    let result = call(&mut server, "clan_status", json!({}));
+    assert!(!is_error(&result), "{}", text(&result));
+    assert_eq!(result["structuredContent"]["review_queue"], queue);
+    assert!(text(&result).contains("https://github.com/o/r/pull/1 · open · CI running"));
+    assert!(text(&result).contains("Ankra on head: no · marker on head: yes"));
+}
+
+#[test]
+fn review_alert_text_labels_merged_and_unverified_prs() {
+    for state in [json!("merged"), json!("closed"), Value::Null] {
+        let mut notice = alert(1, false);
+        notice.source = "review".into();
+        notice.title = "PR ready for review: api#1".into();
+        notice.pr = Some(json!({"state": state}));
+        let mut server =
+            McpServer::new(FakeControl::default().reply("alerts", Ok(json!({"alerts": [notice]}))));
+        let result = call(&mut server, "alerts", json!({}));
+        let label = state.as_str().unwrap_or("unknown; not pending evidence");
+        assert!(text(&result).contains(&format!("[PR {label}] PR ready for review")));
+        assert_eq!(
+            result["structuredContent"]["alerts"][0]["pr"]["state"],
+            state
+        );
+    }
 }
 
 #[test]

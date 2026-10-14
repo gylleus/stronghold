@@ -76,7 +76,9 @@ pub fn definitions() -> Vec<Value> {
             "description": "PRs agents marked ready for {user}'s review that they haven't reviewed \
                 yet, newest first: repo, number, title, the agent that marked it (with its node \
                 id), CI, the Ankra verdict (stale when it reviewed an older commit than the \
-                head), the ready marker, and age. Merged or closed PRs drop off.",
+                head), the ready marker, and age. While Stronghold runs, GitHub state is fetched for \
+                this call; merged, closed and draft PRs are excluded. Failed reads are unverified, \
+                never pending evidence. When the app is down, the saved queue is labeled historical.",
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": {
                 "title": "Review queue",
@@ -186,7 +188,7 @@ fn review_queue(control: &mut dyn Control, env: &ReviewEnv) -> ToolOutput {
     if list.is_empty() {
         out.push("Nothing is waiting for review.".into());
     } else {
-        out.push(format!("Ready for review ({}):", list.len()));
+        out.push(format!("Review queue ({}):", list.len()));
         out.extend(list.iter().map(|e| entry_line(e, now)));
     }
     if result.pointer("/github/available") == Some(&Value::Bool(false)) {
@@ -539,7 +541,7 @@ mod tests {
         let r = call_tool(&mut server, "review_queue", json!({}));
         assert_eq!(server.control().calls[0].0, "review_queue");
         let t = text(&r);
-        assert!(t.starts_with("Ready for review (1):\n- acme/api#255 recs: gate legacy config retirement — api-255 `term:term_a` · CI green (9 checks) · Ankra: comments (stale, not on head) · ✅ ready marker (stale) · review: review required · marked 2h"), "{t}");
+        assert!(t.starts_with("Review queue (1):\n- acme/api#255 recs: gate legacy config retirement — api-255 `term:term_a` · CI green (9 checks) · Ankra: comments (stale, not on head) · ✅ ready marker (stale) · review: review required · marked 2h"), "{t}");
         assert!(t.contains(&format!("\n  {URL}")), "{t}");
         assert!(
             t.ends_with("GitHub status unavailable: gh auth login"),
@@ -698,6 +700,9 @@ mod tests {
         let _server = ControlServer::start(
             &path,
             Backend {
+                github: Arc::new(crate::review::github::GhCli {
+                    binary: "/nonexistent/gh".into(),
+                }),
                 status: SharedStatus::new(),
                 screens: Arc::new(NoScreens),
                 commands: app.clone(),
@@ -766,6 +771,9 @@ mod tests {
         let server = ControlServer::start(
             &path,
             Backend {
+                github: Arc::new(crate::review::github::GhCli {
+                    binary: "/nonexistent/gh".into(),
+                }),
                 status: SharedStatus::new(),
                 screens: Arc::new(NoScreens),
                 commands: app.clone(),
@@ -793,11 +801,7 @@ mod tests {
             assert_eq!(entry.source, MarkSource::Tool);
         }
         let r = call_tool(&mut mcp, "review_queue", json!({}));
-        assert!(
-            text(&r).starts_with("Ready for review (1):"),
-            "{}",
-            text(&r)
-        );
+        assert!(text(&r).starts_with("Review queue (1):"), "{}", text(&r));
         drop(server);
     }
 }
