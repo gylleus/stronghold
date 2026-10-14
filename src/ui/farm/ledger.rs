@@ -1,5 +1,5 @@
-//! Scenery for the Ledger, the clan's knowledge store. No stored records, counts or agent
-//! behaviour yet.
+//! The Ledger's chamber: the clan's knowledge store, with its entry count on the sign. Scrolls
+//! fly to and from its lectern in [`super::mail`]; the farm shows the newest entries on hover.
 use super::{
     layout::Scene,
     sprites::Sprites,
@@ -8,60 +8,74 @@ use super::{
         WOOD, WOOD_DARK, WOOD_LIGHT, pts,
     },
 };
-use eframe::egui::{Align2, FontId, Painter, Pos2, Rect, pos2, vec2};
+use eframe::egui::{Align2, FontId, Painter, Pos2, Rect, Vec2, pos2, vec2};
 
-/// Fit a quiet upper chamber into unused rock, leaving existing rooms and shafts clear.
-/// Narrow panes omit the scenery instead of squeezing functional rooms.
-pub(super) fn placement(scene: &Scene) -> Option<Rect> {
-    let px = scene.px;
-    let top = scene.surface_y + 0.4 * scene.cell();
-    let bottom = (top + 48.0 * px).min(scene.gallery.top() - 5.0 * px);
-    if bottom - top < 35.0 * px {
-        return None;
-    }
-    let mut occupied = vec![
-        scene.throne_hall,
-        scene.storage,
-        Rect::from_min_max(
-            pos2(scene.entrance_x() - 12.0 * px, top),
-            pos2(scene.entrance_x() + 12.0 * px, bottom),
-        ),
-    ];
-    if let Some(comms) = scene.comms {
-        occupied.extend([comms.chamber, comms.shaft]);
-    }
-    // Reserve the whole route from each upper room down to the gallery.
-    occupied.sort_by(|a, b| a.left().total_cmp(&b.left()));
-    let mut left = scene.rect.left() + 8.0 * px;
-    let mut best = (left, left);
-    for room in occupied {
-        let right = (room.left() - 6.0 * px).min(scene.rect.right() - 8.0 * px);
+/// Rock left between the throne hall and a chamber stacked under it, in cells.
+pub(super) const GAP: f32 = 0.4;
+/// A stacked chamber's height, in cells.
+pub(super) const HEIGHT: f32 = 2.6;
+/// What a stacked chamber adds under the throne hall, in cells; the band keeps the gallery
+/// below it.
+pub(super) const STACK: f32 = GAP + HEIGHT;
+
+/// Where the band puts the chamber; see [`spot`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum Spot {
+    /// In free rock beside the other upper rooms: `left..right` from the view's left, `height`
+    /// tall.
+    Beside { left: f32, right: f32, height: f32 },
+    /// Under the throne hall, on its shaft: the King's library.
+    Stacked,
+    /// A short pane with no free rock leaves it out.
+    Hidden,
+}
+
+/// Where the chamber goes in a `size` pane at `px`: in the widest stretch of free rock beside
+/// the upper rooms (`occupied`, their columns from the view's left; `room_h`, the rock's height
+/// under them) when it fits there at the farm's scale, which costs no height. Otherwise under the
+/// throne hall when the pane is taller than wide, where height is to spare; else nowhere.
+pub(super) fn spot(size: Vec2, px: f32, mut occupied: Vec<(f32, f32)>, room_h: f32) -> Spot {
+    let height = room_h.min(48.0 * px);
+    if height >= 35.0 * px {
+        occupied.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut left = 8.0 * px;
+        let mut best = (left, left);
+        for (room_left, room_right) in occupied {
+            let right = (room_left - 6.0 * px).min(size.x - 8.0 * px);
+            if right - left > best.1 - best.0 {
+                best = (left, right);
+            }
+            left = left.max(room_right + 6.0 * px);
+        }
+        let right = size.x - 8.0 * px;
         if right - left > best.1 - best.0 {
             best = (left, right);
         }
-        left = left.max(room.right() + 6.0 * px);
+        let width = (best.1 - best.0).min(82.0 * px);
+        if width >= 57.0 * px {
+            let left = (best.0 + best.1 - width) / 2.0;
+            return Spot::Beside {
+                left,
+                right: left + width,
+                height,
+            };
+        }
     }
-    let right = scene.rect.right() - 8.0 * px;
-    if right - left > best.1 - best.0 {
-        best = (left, right);
+    if size.y >= size.x {
+        Spot::Stacked
+    } else {
+        Spot::Hidden
     }
-    let width = (best.1 - best.0).min(82.0 * px);
-    if width < 57.0 * px {
-        return None;
-    }
-    let x = (best.0 + best.1 - width) / 2.0;
-    Some(Rect::from_min_max(pos2(x, top), pos2(x + width, bottom)))
 }
 
 /// Where Ledger scrolls are filed and taken: the lectern, straight above the chamber's shaft.
-/// `None` when the pane is too narrow for the chamber.
 pub(super) fn lectern(scene: &Scene) -> Option<Pos2> {
-    let room = placement(scene)?;
+    let room = scene.ledger?;
     Some(pos2(room.center().x, room.bottom() - 12.0 * scene.px))
 }
 
-pub(super) fn paint(painter: &Painter, sprites: &Sprites, scene: &Scene) {
-    let Some(room) = placement(scene) else {
+pub(super) fn paint(painter: &Painter, sprites: &Sprites, scene: &Scene, count: usize) {
+    let Some(room) = scene.ledger else {
         return;
     };
     let px = scene.px;
@@ -75,7 +89,11 @@ pub(super) fn paint(painter: &Painter, sprites: &Sprites, scene: &Scene) {
     painter.text(
         room.min + vec2(5.0, 3.0) * px,
         Align2::LEFT_TOP,
-        "LEDGER",
+        if count == 0 {
+            "LEDGER".to_owned()
+        } else {
+            format!("LEDGER · {count}")
+        },
         FontId::monospace(5.0 * px + 2.0),
         GOLD,
     );
@@ -202,18 +220,14 @@ pub(super) fn draw(c: &mut Canvas, prop: Prop) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::layout_tests::{scene, snapshot};
+    use super::super::layout_tests::snapshot;
     use super::*;
     #[test]
-    fn ledger_fits_unused_rock_and_leaves_functional_rooms_clear() {
+    fn ledger_fits_free_rock_or_stacks_under_the_throne_hall_on_tall_panes() {
         use super::super::layout::{FarmInput, layout};
         use super::super::layout_tests::node;
         use crate::model::{NodeKind, NodeState};
         use std::collections::{BTreeSet, HashSet};
-        assert!(
-            placement(&scene(&snapshot())).is_some(),
-            "normal farm has a ledger"
-        );
         for envoy in [false, true] {
             let mut clan = snapshot();
             if envoy {
@@ -227,24 +241,48 @@ mod tests {
                 building: &HashSet::new(),
                 now_ms: 0,
             };
-            for width in [320.0, 640.0, 960.0, 1280.0, 1920.0] {
+            for (width, height) in [
+                (320.0, 800.0),
+                (640.0, 800.0),
+                (960.0, 800.0),
+                (1092.0, 1444.0),
+                (1280.0, 800.0),
+                (1920.0, 1080.0),
+            ] {
                 let scene = layout(
                     &input,
-                    Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 800.0)),
+                    Rect::from_min_size(pos2(0.0, 0.0), vec2(width, height)),
                 );
-                let Some(room) = placement(&scene) else {
+                let at = format!("{width}x{height}, envoy {envoy}");
+                let Some(room) = scene.ledger else {
+                    assert!(height < width, "{at}: tall panes always have the Ledger");
                     continue;
                 };
-                assert!(scene.rect.contains_rect(room));
-                assert!(room.bottom() < scene.gallery.top());
-                // Include the ledger shaft: it must not pass through a stacked room.
-                let route = Rect::from_min_max(room.min, pos2(room.right(), scene.gallery.top()));
-                assert!(!route.intersects(scene.throne_hall));
-                assert!(!route.intersects(scene.storage));
-                assert!(!(room.left()..room.right()).contains(&scene.entrance_x()));
-                if let Some(comms) = scene.comms {
-                    assert!(!route.intersects(comms.chamber));
-                    assert!(!route.intersects(comms.shaft));
+                let hall = scene.throne_hall;
+                let stacked = room.top() > hall.bottom();
+                assert!(scene.rect.contains_rect(room), "{at}");
+                assert!(room.top() > scene.surface_y, "{at}");
+                assert!(room.bottom() < scene.gallery.top(), "{at}");
+                assert!(room.contains(lectern(&scene).unwrap()), "{at}");
+                if stacked {
+                    assert_eq!((room.left(), room.right()), (hall.left(), hall.right()));
+                }
+                // Beside, its shaft must miss every room; stacked, it shares the hall's columns,
+                // clear of the neighbours wherever the pane is not tiny.
+                if !stacked || width >= 960.0 {
+                    let route =
+                        Rect::from_min_max(room.min, pos2(room.right(), scene.gallery.top()));
+                    let mut others = vec![scene.storage];
+                    if !stacked {
+                        others.push(hall);
+                    }
+                    others.extend(scene.comms.map(|c| c.chamber));
+                    others.extend(scene.comms.map(|c| c.shaft));
+                    for r in others {
+                        assert!(!route.intersects(r), "{at}: {r:?}");
+                    }
+                    let x = scene.entrance_x();
+                    assert!(!(room.left()..room.right()).contains(&x), "{at}");
                 }
             }
         }

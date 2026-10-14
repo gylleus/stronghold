@@ -223,6 +223,7 @@ impl StrongholdApp {
                 self.farm.set_envoy_pending(self.envoy_core.pending_count());
                 let sites = ui::farm::rubble::sites(&data.worktrees, &snapshot.nodes);
                 self.farm.set_rubble(sites, self.worktrees.cleanup_job());
+                self.farm.set_ledger(self.ledger.poll().clone());
                 let response = self.farm.show(ui, snapshot, &mut self.clan);
                 self.cleanup_in_farm = true;
                 if response.open_envoy {

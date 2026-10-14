@@ -250,6 +250,8 @@ pub struct Scene {
     pub throne_hall: Rect,
     pub comms: Option<CommsRoom>,
     pub storage: Rect,
+    /// The Ledger's chamber; `None` on short panes with no free rock (see [`super::ledger::spot`]).
+    pub ledger: Option<Rect>,
     pub tunnels: Vec<Tunnel>,
     pub beds: Vec<Bed>,
     /// In draw order: parents before the subagents trailing them.
@@ -319,13 +321,23 @@ pub(super) struct Band {
     comms_px: f32,
     comms_h: f32,
     king_offset: f32,
+    ledger: super::ledger::Spot,
 }
 
 impl Band {
+    /// The height a Ledger chamber stacked under the throne hall adds.
+    fn ledger_stack(&self, a: f32) -> f32 {
+        if self.ledger == super::ledger::Spot::Stacked {
+            super::ledger::STACK * a
+        } else {
+            0.0
+        }
+    }
+
     pub(super) fn gallery_top(&self, a: f32) -> f32 {
         self.surface
             + 0.4 * a
-            + (2.4 * a + self.king_offset)
+            + (2.4 * a + self.king_offset + self.ledger_stack(a))
                 .max(self.storage_h)
                 .max(self.comms_h)
             + 0.6 * a
@@ -371,6 +383,19 @@ pub(super) fn band(size: Vec2, a: f32, crowd: Crowd) -> Band {
     } else {
         0.0
     };
+    // The Ledger's chamber looks for free rock between the upper rooms' columns.
+    let px = a / CELL;
+    let entrance = landing_left - 0.6 * a;
+    let mut occupied = vec![
+        (size.x * 0.5 - 2.0 * a, size.x * 0.5 + 2.0 * a),
+        (size.x - 0.5 * a - storage_w, size.x - 0.5 * a),
+        (entrance - 12.0 * px, entrance + 12.0 * px),
+    ];
+    if crowd.envoy {
+        occupied.push((0.5 * b, 5.5 * b));
+    }
+    let rock_h = (2.4 * a + king_offset).max(storage_h).max(comms_h) + 0.6 * a - 5.0 * px;
+    let ledger = super::ledger::spot(size, px, occupied, rock_h);
     Band {
         surface,
         landing_left,
@@ -382,6 +407,7 @@ pub(super) fn band(size: Vec2, a: f32, crowd: Crowd) -> Band {
         comms_px,
         comms_h,
         king_offset,
+        ledger,
     }
 }
 
@@ -736,6 +762,28 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         }
     });
 
+    let ledger = match band.ledger {
+        super::ledger::Spot::Beside {
+            left,
+            right,
+            height,
+        } => {
+            let top = surface_y + 0.4 * a;
+            Some(Rect::from_min_max(
+                pos2(rect.left() + left, top),
+                pos2(rect.left() + right, top + height),
+            ))
+        }
+        super::ledger::Spot::Stacked => Some(Rect::from_min_size(
+            pos2(
+                throne_hall.left(),
+                throne_hall.bottom() + super::ledger::GAP * a,
+            ),
+            vec2(throne_hall.width(), super::ledger::HEIGHT * a),
+        )),
+        super::ledger::Spot::Hidden => None,
+    };
+
     // The plan's rooms, emptied ones too while they wait out their grace. A room's chamber
     // fills its cell; a lower room's shaft comes down at the right of its column, beside the
     // chambers over it.
@@ -993,6 +1041,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         throne_hall,
         comms,
         storage,
+        ledger,
         tunnels,
         beds,
         dwarves,
