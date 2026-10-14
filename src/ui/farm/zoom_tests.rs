@@ -437,7 +437,8 @@ fn focus_requests_reach_the_camera_and_keep_hit_testing_correct() {
     h.farm.fit_to_screen();
     assert_eq!(h.farm.camera, Camera::default());
 
-    // Run/repo focus zooms onto the room, even with members elsewhere in the farm.
+    // Run/repo focus fits the room, even with members elsewhere in the farm.
+    // A full-width workspace can already occupy the available width at fit zoom.
     for repo in [false, true] {
         if repo {
             h.clan.focus_repo("repo-r1-coord");
@@ -451,7 +452,6 @@ fn focus_requests_reach_the_camera_and_keep_hit_testing_correct() {
             .find(|t| t.key == super::layout::TunnelKey::Run("r1".into()))
             .unwrap();
         let transform = h.farm.camera.transform(FULL);
-        assert!(h.farm.camera.zoom > 1.0);
         assert!(FULL.contains_rect(transform * room.chamber));
     }
 

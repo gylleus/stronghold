@@ -1,20 +1,7 @@
-//! The room plan: which cell of the grid under the gallery each tunnel's chamber holds and
-//! how many rows of dwarves it is dug for, carried from frame to frame (and across launches) so
-//! a dwarf joining a room moves nothing else.
-//!
-//! The ground under the gallery is a grid of columns on `levels` levels, a room to a cell.
-//! The plan is fitted to the view: the biggest scale (up to [`MAX_PX`], in half steps) at
-//! which every room is dug for its dwarves and [`SPARE_SLOTS`] more, columns as wide as their
-//! rooms need and stretched to fill the width. Each frame [`RoomPlan::update`] changes as
-//! little as it can:
-//!
-//! - a dwarf that fits its room's rows moves nothing;
-//! - a full room digs deeper while its level has the height, nothing else moving;
-//! - an emptied room stays for [`GRACE_MS`] in case its dwarves come back;
-//! - a new room, a room filled in, a room that can grow no deeper, a resize, or a surface
-//!   band that needs more height lays the plan out afresh (the view glides to it).
-//!
-//! The plan is a function of the history of demands, view sizes and times it was given.
+//! Persistent horizontal workspace bands below the shared gallery. Each band owns the
+//! full width beside the ladder and enough rows for its dwarves. Spare slots and spare
+//! height let rooms grow without moving their neighbours; empty rooms retain their grace.
+//! Resizing or exhausting that capacity fits the bands again at the largest usable scale.
 
 use eframe::egui::Vec2;
 use serde::{Deserialize, Serialize};
@@ -33,12 +20,10 @@ pub const MAX_PX: f32 = 4.5;
 const MIN_PX: f32 = 1.0;
 /// Steps between scales: halves are whole pixels on a Retina screen.
 const PX_STEP: f32 = 0.5;
-/// Most levels of rooms stacked under the gallery.
-const MAX_LEVELS: usize = 3;
 /// Height over each level of rooms for their labels and progress bars, in cells.
 pub const LABEL_GAP: f32 = 1.3;
 
-/// One room in the grid.
+/// One workspace band in the plan.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Room {
     pub key: TunnelKey,
@@ -60,6 +45,8 @@ pub struct Grid {
     pub widths: Vec<f32>,
     /// Rooms stacked in each column.
     pub depths: Vec<usize>,
+    /// Reserved height of each workspace band, excluding its label.
+    pub heights: Vec<f32>,
 }
 
 /// What the plan was last fitted to: the view's size and the surface band's crowds.
@@ -104,7 +91,8 @@ pub enum Change {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RoomPlan {
-    /// Named apart from the earlier plans' `grid`, so a plan saved by them is laid out afresh.
+    /// Old column plans are refitted on load so they cannot reconnect workspace rows.
+    #[serde(rename = "workspace_bands")]
     fitted: Option<Grid>,
     pub rooms: Vec<Room>,
     /// Dwarves the surface band is sized for: it grows with them and shrinks on a rearrange.
@@ -121,21 +109,26 @@ pub struct RoomPlan {
 pub struct Ground {
     pub a: f32,
     pub px: f32,
-    pub levels: usize,
     /// Left edge of each column, from the view's left.
     lefts: Vec<f32>,
     widths: Vec<f32>,
-    /// Height of each level's band under the gallery.
-    pub band_h: f32,
-    /// From the view's top to the top of the first level's band.
-    pub below_top: f32,
+    tops: Vec<f32>,
+    heights: Vec<f32>,
 }
 
 impl Ground {
     pub fn new(size: Vec2, grid: &Grid, crowd: Crowd) -> Self {
         let a = CELL * grid.px;
         let below_top = band(size, a, crowd).gallery_top(a) + (1.2 + LABEL_GAP) * a;
-        let band_h = band_height(size.y, below_top, a, grid.levels);
+        let tops = grid
+            .heights
+            .iter()
+            .scan(below_top, |top, height| {
+                let at = *top;
+                *top += height + LABEL_GAP * a;
+                Some(at)
+            })
+            .collect();
         let available = (size.x - LADDER_GAP * a).max(a);
         let total = grid.widths.iter().sum::<f32>().max(1.0);
         let widths: Vec<f32> = grid.widths.iter().map(|w| w * available / total).collect();
@@ -150,11 +143,10 @@ impl Ground {
         Self {
             a,
             px: grid.px,
-            levels: grid.levels,
             lefts,
             widths,
-            band_h,
-            below_top,
+            tops,
+            heights: grid.heights.clone(),
         }
     }
 
@@ -173,15 +165,13 @@ impl Ground {
     }
 
     /// The most rows a level's band has the height for.
-    pub fn max_rows(&self) -> usize {
-        max_rows(self.band_h, self.a)
+    pub fn max_rows(&self, level: usize) -> usize {
+        max_rows(self.heights[level], self.a)
     }
-}
 
-/// Height of each of `levels` bands of rooms between `below_top` and the view's bottom.
-fn band_height(height: f32, below_top: f32, a: f32, levels: usize) -> f32 {
-    let below = (height - 0.3 * a) - below_top;
-    (below - (levels - 1) as f32 * LABEL_GAP * a) / levels as f32
+    pub fn band_top(&self, level: usize) -> f32 {
+        self.tops[level]
+    }
 }
 
 fn max_rows(band_h: f32, a: f32) -> usize {
@@ -208,55 +198,44 @@ fn target_rows(footprints: &[usize], per_row: usize, max_rows: usize) -> usize {
         .unwrap_or_else(|| rows_for(footprints, 0, per_row))
 }
 
-/// Width of a chamber holding `per_row` dwarves side by side.
-fn chamber_width(per_row: usize, a: f32) -> f32 {
-    ((per_row - 1) as f32 * SLOT + 3.0).max(SLOT) * a
+/// Full-width bands, each sized for its own packed rows. Spare vertical room is
+/// shared evenly, allowing a busy workspace to grow without moving another one.
+fn fit(size: Vec2, crowd: Crowd, rooms: &[&[usize]], px: f32, spare: usize) -> Grid {
+    let a = CELL * px;
+    let below_top = band(size, a, crowd).gallery_top(a) + (1.2 + LABEL_GAP) * a;
+    let per_row = chamber_per_row(size.x - (LADDER_GAP + 1.6) * a, a);
+    let mut heights: Vec<f32> = rooms
+        .iter()
+        .map(|f| rows_height(rows_for(f, spare, per_row), a))
+        .collect();
+    if heights.is_empty() {
+        heights.push(rows_height(1, a));
+    }
+    let levels = heights.len();
+    let needed = heights.iter().sum::<f32>();
+    let available = size.y - 0.3 * a - below_top - (levels - 1) as f32 * LABEL_GAP * a;
+    let extra = ((available - needed) / levels as f32).max(0.0);
+    for height in &mut heights {
+        *height += extra;
+    }
+    Grid {
+        px,
+        levels,
+        widths: vec![size.x],
+        depths: vec![rooms.len()],
+        heights,
+    }
 }
 
-/// The grid fitted to `size` at `px` for `rooms` (each room's footprints), if every room
-/// holds its dwarves and `spare` more in at most as many rows as its level has the height for,
-/// and when `packed` side by side (rows outnumbering the dwarves to a row by one at most);
-/// fewest levels first.
-/// Columns are as wide as their widest room needs, the width left over shared out in
-/// proportion.
-fn fit(
-    size: Vec2,
-    crowd: Crowd,
-    rooms: &[&[usize]],
-    (px, spare, packed): (f32, usize, bool),
-) -> Option<Grid> {
-    let a = CELL * px;
-    if crowd.envoy && px > (size.x / (18.0 * CELL) / PX_STEP).floor().max(1.0) * PX_STEP {
-        return None;
-    }
+fn fits(size: Vec2, crowd: Crowd, grid: &Grid) -> bool {
+    let a = CELL * grid.px;
     let below_top = band(size, a, crowd).gallery_top(a) + (1.2 + LABEL_GAP) * a;
-    let n = rooms.len().max(1);
-    (1..=MAX_LEVELS.min(n)).find_map(|levels| {
-        let max_rows = max_rows(band_height(size.y, below_top, a, levels), a);
-        if max_rows == 0 {
-            return None;
-        }
-        let cols = n.div_ceil(levels);
-        let depths: Vec<usize> = (0..cols).map(|c| (n - c * levels).min(levels)).collect();
-        let mut widths = vec![0.0f32; cols];
-        for (i, footprints) in rooms.iter().enumerate() {
-            let col = i / levels;
-            let slots = (footprints.iter().sum::<usize>() + spare).max(1);
-            let per_row = (1..=slots).find(|&p| {
-                let rows = rows_for(footprints, spare, p);
-                rows <= max_rows && (!packed || rows <= p + 1)
-            })?;
-            let width = chamber_width(per_row, a) + 0.6 * a;
-            widths[col] = widths[col].max(width);
-        }
-        let total: f32 = widths.iter().sum();
-        (total <= size.x - LADDER_GAP * a).then(|| Grid {
-            px,
-            levels,
-            widths: widths.iter().map(|w| w * size.x / total).collect(),
-            depths,
-        })
-    })
+    let bottom =
+        below_top + grid.heights.iter().sum::<f32>() + (grid.levels - 1) as f32 * LABEL_GAP * a;
+    bottom <= size.y - 0.3 * a + 0.01
+        && size.x >= (LADDER_GAP + SLOT + 1.6) * a
+        && (!crowd.envoy
+            || grid.px <= (size.x / (18.0 * CELL) / PX_STEP).floor().max(1.0) * PX_STEP)
 }
 
 /// Scales tried, biggest first.
@@ -308,8 +287,13 @@ impl RoomPlan {
         };
         let new_room = demand.rooms.iter().any(|(k, _)| self.room(k).is_none());
         let resized = self.fit.size != [size.x, size.y] || self.fit.envoy != demand.envoy;
-        let consistent = grid.widths.len() == grid.depths.len()
-            && self.rooms.iter().all(|r| r.col < grid.widths.len());
+        let consistent = grid.widths.len() == 1
+            && grid.heights.len() == grid.levels
+            && self
+                .rooms
+                .iter()
+                .enumerate()
+                .all(|(i, r)| r.col == 0 && r.level == i);
         if filled_in || new_room || resized || !consistent {
             return self.rearrange(demand, size);
         }
@@ -332,8 +316,8 @@ impl RoomPlan {
             self.fit.storage = storage;
         }
         let ground = Ground::new(size, &grid, self.crowd(demand.envoy));
-        let max_rows = ground.max_rows();
         for room in &mut self.rooms {
+            let max_rows = ground.max_rows(room.level);
             let footprints = demand.footprints(&room.key).unwrap_or_default();
             let per_row = ground.per_row(room.level, room.col);
             let need = rows_for(footprints, 0, per_row);
@@ -370,36 +354,22 @@ impl RoomPlan {
         let footprints: Vec<&[usize]> = keys.iter().map(|(_, f, _)| *f).collect();
         // Keep spare capacity so another dwarf can join without moving the rooms.
         let tries = |spares: &'static [usize]| {
-            scales().flat_map(move |px| {
-                [true, false]
-                    .into_iter()
-                    .flat_map(move |packed| spares.iter().map(move |&spare| (px, spare, packed)))
-            })
+            scales().flat_map(move |px| spares.iter().map(move |&spare| (px, spare)))
         };
         let grid = tries(&[2, 1])
             .chain(tries(&[0]))
-            .find_map(|t| fit(size, crowd, &footprints, t))
-            .unwrap_or_else(|| {
-                // Too many rooms for the view: the smallest scale, rooms squeezed in.
-                let levels = MAX_LEVELS.min(keys.len().max(1));
-                let cols = keys.len().max(1).div_ceil(levels);
-                Grid {
-                    px: MIN_PX,
-                    levels,
-                    widths: vec![size.x / cols as f32; cols],
-                    depths: (0..cols)
-                        .map(|c| (keys.len().max(1) - c * levels).min(levels))
-                        .collect(),
-                }
-            });
+            .map(|(px, spare)| fit(size, crowd, &footprints, px, spare))
+            .find(|grid| fits(size, crowd, grid))
+            // Beyond the view's capacity, keep ownership and non-overlap even if the
+            // lowest bands extend offscreen at the minimum scale.
+            .unwrap_or_else(|| fit(size, crowd, &footprints, MIN_PX, 0));
         let ground = Ground::new(size, &grid, crowd);
-        let max_rows = ground.max_rows();
-        let levels = grid.levels;
         self.rooms = keys
             .into_iter()
             .enumerate()
             .map(|(i, (key, footprints, empty_since_ms))| {
-                let (level, col) = (i % levels, i / levels);
+                let (level, col) = (i, 0);
+                let max_rows = ground.max_rows(level);
                 Room {
                     key,
                     level,

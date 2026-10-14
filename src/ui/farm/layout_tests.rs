@@ -377,8 +377,8 @@ fn one_tunnel_per_run_then_per_repo() {
         scene.tunnels[0].tasks, None,
         "no task counts, no progress bar"
     );
-    let xs: Vec<f32> = scene.tunnels.iter().map(|t| t.chamber.center().x).collect();
-    assert!(xs.windows(2).all(|w| w[0] < w[1]), "left to right: {xs:?}");
+    let ys: Vec<f32> = scene.tunnels.iter().map(|t| t.chamber.top()).collect();
+    assert!(ys.windows(2).all(|w| w[0] < w[1]), "top to bottom: {ys:?}");
 }
 
 #[test]
@@ -510,8 +510,23 @@ fn task_progress_keeps_galleries_on_their_level() {
     assert_eq!(late.progress, Some(1.0));
     assert_eq!(early.tasks, Some((0, 4)));
     assert_eq!(late.tasks, Some((4, 4)));
-    assert_eq!(late.chamber.top(), early.chamber.top());
+    assert!(late.chamber.top() > early.chamber.bottom());
     assert!(late.chamber.bottom() <= rect.bottom());
+    let before = scene;
+    s.runs[0].task_counts.as_mut().unwrap().completed = 2;
+    let after = layout(
+        &FarmInput {
+            snapshot: &s,
+            hidden: &BTreeSet::new(),
+            pr_ready: &HashSet::new(),
+            building: &HashSet::new(),
+            now_ms: 0,
+        },
+        rect,
+    );
+    for (a, b) in before.tunnels.iter().zip(&after.tunnels) {
+        assert_eq!(a.chamber, b.chamber, "progress must not move its workspace");
+    }
 }
 
 #[test]
@@ -1494,10 +1509,9 @@ fn only_the_resting_area_has_beds() {
     assert!(scene(&snapshot()).beds.is_empty());
 }
 
-/// Many runs in a tall view stack their chambers two to a column, which draws the dwarves
-/// bigger than one long row of narrow columns, with the shared ladder clear of every room.
+/// Many runs in a tall view keep separate horizontal bands and a clear shared ladder.
 #[test]
-fn many_tunnels_stack_chambers_to_draw_dwarves_bigger() {
+fn many_tunnels_keep_separate_bands_in_a_tall_view() {
     let mut s = ClanSnapshot::default();
     s.nodes
         .push(node("king", NodeKind::King, None, NodeState::Working));
@@ -1783,19 +1797,19 @@ pub(super) fn reach(scene: &Scene) -> f32 {
     (bottom - scene.rect.top()) / scene.rect.height()
 }
 
-/// At typical clan sizes the rooms use most of the ground under the gallery, with dwarves
-/// drawn bigger than a fixed grid drew them, and every dwarf in its chamber.
+/// Workspace bands fit typical clan sizes without overlapping. Keeping groups on
+/// separate rows trades some dwarf size and ground fill for clear ownership.
 #[test]
 fn the_farm_fills_the_view() {
     // (view, dwarves, smallest dwarf cell in points, least fill)
     let cases = [
         (vec2(1280.0, 800.0), 5, 56.0, 0.75),
         // Finished workers now occupy chamber slots alongside the other miners.
-        (vec2(1280.0, 800.0), 15, 40.0, 0.75),
-        (vec2(1280.0, 800.0), 30, 40.0, 0.75),
+        (vec2(1280.0, 800.0), 15, 32.0, 0.65),
+        (vec2(1280.0, 800.0), 30, 24.0, 0.65),
         (vec2(900.0, 650.0), 5, 48.0, 0.75),
-        (vec2(900.0, 650.0), 15, 32.0, 0.75),
-        (vec2(900.0, 650.0), 30, 24.0, 0.7),
+        (vec2(900.0, 650.0), 15, 24.0, 0.65),
+        (vec2(900.0, 650.0), 30, 16.0, 0.65),
     ];
     for (size, n, cell, least) in cases {
         let s = typical_clan(n);
@@ -2076,5 +2090,83 @@ fn work_galleries_and_routes_share_one_ladder_at_every_crowd_size() {
         assert_eq!(interrupted[0], at);
         assert_eq!(interrupted[1].x, ladder.center().x);
         assert_eq!(*interrupted.last().unwrap(), target.pos);
+    }
+}
+
+/// Every excavated work row belongs to exactly one labelled workspace group,
+/// including overflow rows and the resting area.
+#[test]
+fn uneven_workspaces_never_share_an_excavated_row() {
+    let mut s = ClanSnapshot::default();
+    for (repo, count) in [("alpha", 1), ("beta", 3), ("gamma", 9)] {
+        for i in 0..count {
+            let mut n = node(
+                &format!("{repo}-{i}"),
+                NodeKind::Terminal,
+                None,
+                NodeState::Working,
+            );
+            n.worktree_path = Some(format!("/x/orca/workspaces/{repo}/main"));
+            s.nodes.push(n);
+        }
+    }
+    let mut sleeper = node("sleeper", NodeKind::Terminal, None, NodeState::Idle);
+    sleeper.parked_at_ms = Some(1);
+    s.nodes.push(sleeper);
+    for size in [vec2(1280.0, 800.0), vec2(900.0, 650.0), vec2(600.0, 800.0)] {
+        let scene = layout(
+            &FarmInput {
+                snapshot: &s,
+                hidden: &BTreeSet::new(),
+                pr_ready: &HashSet::new(),
+                building: &HashSet::new(),
+                now_ms: 0,
+            },
+            Rect::from_min_size(Pos2::ZERO, size),
+        );
+        for row in scene.work_galleries() {
+            let owners: Vec<_> = scene
+                .tunnels
+                .iter()
+                .filter(|t| t.chamber.intersects(row))
+                .collect();
+            assert_eq!(
+                owners.len(),
+                1,
+                "{size:?}: gallery {row:?} crosses {owners:?}"
+            );
+            let owner = owners[0];
+            assert!(row.left() <= owner.label_top.x && owner.label_top.x <= row.right());
+        }
+        for dwarf in &scene.dwarves {
+            let Spot::Chamber(key, _) = &dwarf.spot else {
+                continue;
+            };
+            let tunnel = scene.tunnels.iter().find(|t| &t.key == key).unwrap();
+            assert!(tunnel.chamber.contains(dwarf.pos));
+            assert!(
+                scene
+                    .work_galleries()
+                    .iter()
+                    .any(|row| row.contains(dwarf.pos))
+            );
+        }
+        let gamma = scene
+            .tunnels
+            .iter()
+            .find(|t| t.key == TunnelKey::Repo("gamma".into()))
+            .unwrap();
+        if size.x == 600.0 {
+            assert!(
+                scene
+                    .work_galleries()
+                    .iter()
+                    .filter(|row| gamma.chamber.intersects(**row))
+                    .count()
+                    > 1,
+                "the large workspace wraps within its own section"
+            );
+        }
+        assert_eq!(scene.beds.iter().filter(|b| b.sleeper.is_some()).count(), 1);
     }
 }
