@@ -18,8 +18,8 @@ const INTERRUPTED_NOTE: &str = "[Request interrupted by user]";
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatItem {
     User(String),
-    /// Incoming ant data, never a Karl bubble.
-    Ant(Box<crate::queen_inbox::AntMessage>),
+    /// An incoming agent message, never a Karl bubble.
+    Inbox(Box<crate::king_inbox::InboxMessage>),
     /// Karl's message spoken with hold-to-talk (drawn with a 🎤 marker).
     VoiceUser(String),
     /// Reply text as streamed, `<say>` tags included; the pane shows the say-line apart
@@ -133,15 +133,15 @@ impl Transcript {
         self.set_timestamps(start, Some(timestamp));
     }
 
-    pub fn push_ant(&mut self, message: &crate::queen_inbox::AntMessage) {
-        if let Some(ChatItem::Ant(existing)) = self
+    pub fn push_inbox(&mut self, message: &crate::king_inbox::InboxMessage) {
+        if let Some(ChatItem::Inbox(existing)) = self
             .items
             .iter_mut()
-            .find(|item| matches!(item, ChatItem::Ant(m) if m.id == message.id))
+            .find(|item| matches!(item, ChatItem::Inbox(m) if m.id == message.id))
         {
             **existing = message.clone();
         } else {
-            self.push_local(ChatItem::Ant(Box::new(message.clone())));
+            self.push_local(ChatItem::Inbox(Box::new(message.clone())));
         }
     }
 

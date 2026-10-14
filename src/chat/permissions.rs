@@ -26,7 +26,7 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "alerts",
     "quotas",
     "review_queue",
-    "queen_inbox",
+    "king_inbox",
     "get_playbook",
     "list_playbook",
     "attendant_brief",
@@ -70,12 +70,12 @@ pub enum Verdict {
 pub struct PermissionPolicy {
     always: HashSet<String>,
     auto: bool,
-    ant_turn: bool,
+    inbox_turn: bool,
 }
 
 impl PermissionPolicy {
     pub fn verdict(&self, tool: &str) -> Verdict {
-        if is_auto_approved(tool) || (!self.ant_turn && self.always.contains(tool)) {
+        if is_auto_approved(tool) || (!self.inbox_turn && self.always.contains(tool)) {
             Verdict::Allow
         } else if self.auto {
             Verdict::Auto
@@ -97,7 +97,7 @@ impl PermissionPolicy {
     }
 
     pub fn set_ant_turn(&mut self, on: bool) {
-        self.ant_turn = on;
+        self.inbox_turn = on;
     }
 
     pub fn auto(&self) -> bool {
@@ -107,7 +107,7 @@ impl PermissionPolicy {
     /// Forgets the "always allow" choices (a new chat); auto mode is a setting and stays.
     pub fn reset(&mut self) {
         self.always.clear();
-        self.ant_turn = false;
+        self.inbox_turn = false;
     }
 }
 

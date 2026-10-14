@@ -34,7 +34,7 @@ pub struct ChatSession {
     pub state: SessionState,
     /// Messages to send once the session is ready (`STRONGHOLD_CHAT_SEND`, for smoke tests).
     queued: Vec<String>,
-    ant_inflight: Option<String>,
+    inbox_inflight: Option<String>,
     /// Where auto mode is saved (the chat directory).
     dir: std::path::PathBuf,
     auto_mode: bool,
@@ -83,7 +83,7 @@ impl ChatSession {
             transcript: Transcript::default(),
             state: SessionState::Starting,
             queued,
-            ant_inflight: None,
+            inbox_inflight: None,
             dir,
             auto_mode,
             told_auto: None,
@@ -125,7 +125,7 @@ impl ChatSession {
             notice.push_str(&format!(" (effort {effort})"));
         }
         notice.push('…');
-        self.ant_inflight = None;
+        self.inbox_inflight = None;
         self.end_speech_turn();
         self.transcript.session_ended();
         self.transcript.push_system(notice);
@@ -206,7 +206,7 @@ impl ChatSession {
         match event {
             ChatEvent::State(state) => {
                 if !matches!(state, SessionState::Ready | SessionState::Starting) {
-                    self.ant_inflight = None;
+                    self.inbox_inflight = None;
                     self.end_speech_turn();
                     self.transcript.session_ended();
                 }
@@ -245,9 +245,9 @@ impl ChatSession {
                 self.transcript.push_permission(request);
             }
             ChatEvent::AutoApproved(request) => self.transcript.mark_auto(&request),
-            ChatEvent::AntSettled { id, error } => {
-                if self.ant_inflight.as_deref() == Some(&id) {
-                    self.ant_inflight = None;
+            ChatEvent::InboxSettled { id, error } => {
+                if self.inbox_inflight.as_deref() == Some(&id) {
+                    self.inbox_inflight = None;
                     self.transcript.running = false;
                 }
                 if let Some(error) = error {
@@ -255,7 +255,7 @@ impl ChatSession {
                 }
             }
             ChatEvent::NewSession(id) => {
-                self.ant_inflight = None;
+                self.inbox_inflight = None;
                 log::info!("chat: new session {id}");
                 self.history = None;
                 self.transcript = Transcript::default();
@@ -295,7 +295,7 @@ impl ChatSession {
         self.state == SessionState::Ready && !self.transcript.running
     }
 
-    /// Import durable inbox items independently of whether the Queen is busy. Only an idle
+    /// Import durable inbox items independently of whether the King is busy. Only an idle
     /// session gets a wake-up turn; the supervisor commits its receipt and handles recovery.
     pub fn poll_ant_messages(
         &mut self,
@@ -306,7 +306,7 @@ impl ChatSession {
         if self.history.is_some() {
             return Ok(());
         }
-        let mut inbox = crate::queen_inbox::Inbox::open(path)?;
+        let mut inbox = crate::king_inbox::Inbox::open(path)?;
         let session_id = session::SessionStore::saved(&self.dir).map(|r| r.session_id);
         let mut changed = false;
         for message in &mut inbox.messages {
@@ -322,21 +322,21 @@ impl ChatSession {
             if !message.delivered
                 || (message.session_id.is_some() && message.session_id == session_id)
             {
-                self.transcript.push_ant(message);
+                self.transcript.push_inbox(message);
             }
         }
         if changed {
             inbox.save()?;
         }
         if self.can_send()
-            && self.ant_inflight.is_none()
+            && self.inbox_inflight.is_none()
             && let Some(message) = inbox.messages.iter().find(|m| !m.delivered)
         {
-            self.ant_inflight = Some(message.id.clone());
+            self.inbox_inflight = Some(message.id.clone());
             self.transcript.running = true;
-            // Auto mode is host-owned. It is never read from an ant's payload.
+            // Auto mode is host-owned. It is never read from an agent's payload.
             let note = format!("{}\n\n", auto_mode::note(self.auto_mode));
-            self.handle.send(ChatCommand::Ant {
+            self.handle.send(ChatCommand::Inbox {
                 path: path.into(),
                 id: message.id.clone(),
                 note,

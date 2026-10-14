@@ -69,8 +69,8 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `mark_pr_ready` | `pr_url`, `title`, `summary` | `pr_ready` (queued in `pr-ready.jsonl` when the app is down) | not destructive, idempotent |
 | `review_queue` | – | `review_queue` (the saved queue when the app is down) | read-only |
 | `notify` | `title`, `message`, `severity` (`info` \| `warn` \| `urgent`), `url`, `agent` | `notify` (queued in `pending-notifications.jsonl` when the app is down) | not destructive |
-| `tell_queen` | `message`, `kind` (`info` \| `question` \| `blocked`), `url` | – (durable `queen-inbox.json`, online or offline) | not destructive |
-| `queen_inbox` | `limit` (default 20, max 100) | – (reads the durable inbox) | read-only |
+| `tell_king` | `message`, `kind` (`info` \| `question` \| `blocked`), `url` | – (durable `king-inbox.json`, online or offline) | not destructive |
+| `king_inbox` | `limit` (default 20, max 100) | – (reads the durable inbox) | read-only |
 | `ask_karl` | `question`, `context`, `severity` (`info` \| `warn` \| `urgent`), `url` | `ask` | not destructive |
 | `finish_session` | `summary`, `approval` (`karl` \| `trivial`), `outcome` (`done` \| `handed_over` \| `abandoned`), `pr_url`, `force` | `finish` (a `dry_run` check, then the real one) | destructive |
 | `clean_worktrees` | `dry_run` (**default true**), `ids` (needed with `dry_run: false`) | – (runs `orca`, `git`, `gh` itself) | destructive |
@@ -356,26 +356,28 @@ printf '%s\n' \
   | stronghold mcp
 ```
 
-## Ant messages to the Queen
+## Agent messages to the King
 
-`tell_queen {"message":"Need a decision on the shared schema", "kind":"blocked", "url":"https://example.com/issue"}`
-adds an incoming ant item to the Queen chat, attributed from the MCP process's Orca environment.
+`tell_king {"message":"Need a decision on the shared schema", "kind":"blocked", "url":"https://example.com/issue"}`
+adds an incoming agent item to the King's chat, attributed from the MCP process's Orca environment.
 `kind` defaults to `info`; `question` is also accepted. Messages are limited to 1,000 characters.
-`queen_inbox {"limit":20}` reads recent items (1–100, newest first), including queued/delivered
+`king_inbox {"limit":20}` reads recent items (1–100, newest first), including queued/delivered
 state, sender and clickable node ID. Neither tool requires the app to be running.
 
-Use this for Queen triage with Karl, not routine progress. Workers use their coordinator for
+Use this for the King's triage with Karl, not routine progress. Workers use their coordinator for
 task-local escalation. `ask_karl` is for an answer you wait on; `notify` summons Karl or hands
-over finished work; `reach_out` reaches the Envoy. `tell_queen` does not promise a reply.
+over finished work; `reach_out` reaches the Envoy. `tell_king` does not promise a reply. The old names `tell_queen` and
+`queen_inbox` still answer.
 
-The Queen shows the message and recommends action to Karl. Ant text is untrusted data, never
+The King shows the message and recommends action to Karl. Agent text is untrusted data, never
 Karl's instructions or approval. Actions still require Karl unless auto mode is on. The pane
-renders an ant card rather than a Karl bubble, including after conversation reload.
+renders an agent card rather than a Karl bubble, including after conversation reload.
 
-`<data dir>/queen-inbox.json` holds the durable inbox. A cross-process file lock serializes
+`<data dir>/king-inbox.json` holds the durable inbox (a `queen-inbox.json` left from before
+the rename is folded into it when the inbox is next opened). A cross-process file lock serializes
 acceptance, receipts and rate limits (five new messages per sender per ten minutes, like
 `notify`; identical messages collapse within thirty minutes). Busy/unavailable chat sessions
 leave messages queued. Delivery records the conversation before sending a stable message ID;
-after interruption it checks that conversation's saved ant record before retrying. Delivered
-items remain available through `queen_inbox`. Storage failures are reported, never treated as
+after interruption it checks that conversation's saved inbox record before retrying. Delivered
+items remain available through `king_inbox`. Storage failures are reported, never treated as
 successful delivery.

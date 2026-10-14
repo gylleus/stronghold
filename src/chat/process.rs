@@ -37,7 +37,7 @@ pub enum SessionState {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatEvent {
     State(SessionState),
-    AntSettled {
+    InboxSettled {
         id: String,
         error: Option<String>,
     },
@@ -62,7 +62,7 @@ pub enum ChatEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatCommand {
     Send(String),
-    Ant {
+    Inbox {
         path: std::path::PathBuf,
         id: String,
         note: String,
@@ -128,7 +128,7 @@ impl ChatHandle {
                     repaint,
                     policy: PermissionPolicy::default(),
                     pending: HashMap::new(),
-                    ant: None,
+                    delivering: None,
                 }
                 .run();
             })
@@ -164,11 +164,11 @@ impl Drop for ChatHandle {
     }
 }
 
-/// Only a parsed ant item in the assigned conversation counts, never a quote in an
+/// Only a parsed inbox item in the assigned conversation counts, never a quote in an
 /// assistant/tool response. Read failures stop delivery rather than risking a duplicate.
-fn ant_recorded(
+fn inbox_recorded(
     config: &ChatConfig,
-    message: &crate::queen_inbox::AntMessage,
+    message: &crate::king_inbox::InboxMessage,
 ) -> std::io::Result<bool> {
     let Some(session_id) = &message.session_id else {
         return Ok(false);
@@ -194,7 +194,7 @@ fn ant_recorded(
         if transcript
             .items
             .iter()
-            .any(|item| matches!(item, super::ChatItem::Ant(m) if m.id == message.id))
+            .any(|item| matches!(item, super::ChatItem::Inbox(m) if m.id == message.id))
         {
             return Ok(true);
         }
@@ -225,7 +225,7 @@ struct Supervisor {
     policy: PermissionPolicy,
     /// Permission requests waiting for the user, by request id.
     pending: HashMap<String, PermissionRequest>,
-    ant: Option<(std::path::PathBuf, String)>,
+    delivering: Option<(std::path::PathBuf, String)>,
 }
 
 impl Supervisor {
@@ -312,9 +312,9 @@ impl Supervisor {
                     self.set_model(model, effort);
                     return true;
                 }
-                ChatCommand::Ant { id, .. } => self.emit(ChatEvent::AntSettled {
+                ChatCommand::Inbox { id, .. } => self.emit(ChatEvent::InboxSettled {
                     id,
-                    error: Some("Ant message queued until the Queen is running.".into()),
+                    error: Some("Agent message queued until the King is running.".into()),
                 }),
                 ChatCommand::Send(_) => {
                     self.emit(ChatEvent::Error(
@@ -337,7 +337,7 @@ impl Supervisor {
     }
 
     fn start_new_chat(&mut self) {
-        self.ant = None;
+        self.delivering = None;
         self.store.new_session();
         self.policy.reset();
         self.pending.clear();
@@ -374,7 +374,7 @@ impl Supervisor {
 
     /// Runs one process until it exits, the user starts a new chat, or the app shuts down.
     fn drive(&mut self, mut child: Child) -> RunEnd {
-        self.ant = None;
+        self.delivering = None;
         let (line_tx, lines) = unbounded();
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
@@ -417,9 +417,9 @@ impl Supervisor {
                             return RunEnd::Restart;
                         }
                         ChatCommand::SetAuto(on) => self.set_auto(on, &mut stdin),
-                        ChatCommand::Ant { path, id, note } => {
-                            if let Err(error) = self.send_ant(&path, &id, &note, &mut stdin) {
-                                self.emit(ChatEvent::AntSettled { id, error: Some(format!("Ant message remains queued: {error}")) });
+                        ChatCommand::Inbox { path, id, note } => {
+                            if let Err(error) = self.send_inbox(&path, &id, &note, &mut stdin) {
+                                self.emit(ChatEvent::InboxSettled { id, error: Some(format!("Agent message remains queued: {error}")) });
                             }
                             Ok(())
                         }
@@ -476,22 +476,22 @@ impl Supervisor {
 
     /// The durable assignment is written before stdin. After an interrupted delivery, a
     /// matching typed record in the CLI transcript is the receipt: never type it twice.
-    fn send_ant(
+    fn send_inbox(
         &mut self,
         path: &std::path::Path,
         id: &str,
         note: &str,
         stdin: &mut Option<ChildStdin>,
     ) -> std::io::Result<()> {
-        let mut inbox = crate::queen_inbox::Inbox::open(path)?;
+        let mut inbox = crate::king_inbox::Inbox::open(path)?;
         let message = inbox
             .messages
             .iter_mut()
             .find(|m| m.id == id)
-            .ok_or_else(|| std::io::Error::other("unknown ant message"))?;
-        if message.delivered || ant_recorded(&self.config, message)? {
+            .ok_or_else(|| std::io::Error::other("unknown agent message"))?;
+        if message.delivered || inbox_recorded(&self.config, message)? {
             inbox.delivered(id)?;
-            self.emit(ChatEvent::AntSettled {
+            self.emit(ChatEvent::InboxSettled {
                 id: id.into(),
                 error: None,
             });
@@ -506,7 +506,7 @@ impl Supervisor {
         self.policy.set_ant_turn(true);
         write_line(stdin, &payload.to_string())?;
         self.store.mark_started();
-        self.ant = Some((path.into(), id.into()));
+        self.delivering = Some((path.into(), id.into()));
         Ok(())
     }
 
@@ -573,12 +573,12 @@ impl Supervisor {
             _ => {}
         }
         if matches!(&message, Incoming::Result(_)) {
-            if let Some((path, id)) = self.ant.take() {
-                let error = crate::queen_inbox::Inbox::open(&path)
+            if let Some((path, id)) = self.delivering.take() {
+                let error = crate::king_inbox::Inbox::open(&path)
                     .and_then(|mut inbox| inbox.delivered(&id))
                     .err()
                     .map(|e| e.to_string());
-                self.emit(ChatEvent::AntSettled { id, error });
+                self.emit(ChatEvent::InboxSettled { id, error });
             }
             self.policy.set_ant_turn(false);
         }

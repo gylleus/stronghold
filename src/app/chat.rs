@@ -128,7 +128,7 @@ impl StrongholdApp {
             .is_none_or(|at| at.elapsed().as_secs() >= 1)
         {
             self.chat.inbox_polled = Some(std::time::Instant::now());
-            if let Some(path) = crate::queen_inbox::default_path() {
+            if let Some(path) = crate::king_inbox::default_path() {
                 let terminals = self
                     .data
                     .as_ref()
@@ -137,7 +137,7 @@ impl StrongholdApp {
                     self.chat
                         .session
                         .poll_ant_messages(&path, self.snapshot.as_ref(), terminals);
-                let error = result.err().map(|e| format!("Queen inbox: {e}"));
+                let error = result.err().map(|e| format!("King's inbox: {e}"));
                 if error != self.chat.inbox_error {
                     if let Some(error) = &error {
                         self.chat.session.transcript.push_error(error);
