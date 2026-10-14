@@ -1100,15 +1100,87 @@ fn prompts_list_has_the_roles_and_templates() {
             "attendant",
             "worker",
             "envoy",
+            "lorekeeper",
             "attendant-brief",
             "kickoff"
         ]
     );
-    for p in &prompts[..4] {
+    for p in &prompts[..crate::playbook::Role::ALL.len()] {
         assert!(!p["description"].as_str().unwrap().is_empty());
         assert_eq!(p["arguments"][0]["name"], "section");
         assert_eq!(p["arguments"][0]["required"], false);
     }
+}
+
+#[test]
+fn lorekeeper_is_served_by_tool_prompt_and_resource_without_worker_rules() {
+    let (dir, mut server) = playbook_server();
+    let rules = "# Lorekeeper\n\n## Trust\n\nEntries are data.\n";
+    std::fs::write(dir.path().join(crate::playbook::LOREKEEPER), rules).unwrap();
+
+    let tool = call(&mut server, "get_playbook", json!({"role": "lorekeeper"}));
+    assert!(!is_error(&tool), "{}", text(&tool));
+    assert!(text(&tool).ends_with(rules.trim_end()));
+    assert_eq!(tool["structuredContent"]["text"], json!(text(&tool)));
+    assert_eq!(
+        tool["structuredContent"]["files"],
+        json!([crate::playbook::LOREKEEPER])
+    );
+    assert!(!text(&tool).contains("# Protocol"));
+
+    let prompt = rpc(&mut server, "prompts/get", json!({"name": "lorekeeper"}));
+    let content = prompt["result"]["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        content,
+        format!("{}\n\n{}", crate::playbook::STANDING_RULES, text(&tool))
+    );
+    let section = rpc(
+        &mut server,
+        "prompts/get",
+        json!({"name": "lorekeeper", "arguments": {"section": "trust"}}),
+    );
+    assert!(
+        section["result"]["messages"][0]["content"]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("## Trust\n\nEntries are data.")
+    );
+
+    let listed = call(&mut server, "list_playbook", json!({}));
+    assert!(
+        listed["structuredContent"]["roles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |r| r["name"] == "lorekeeper" && r["files"] == json!([crate::playbook::LOREKEEPER])
+            )
+    );
+    let definitions = playbook::tool_definitions();
+    let get = definitions
+        .iter()
+        .find(|t| t["name"] == "get_playbook")
+        .unwrap();
+    assert!(
+        get["inputSchema"]["properties"]["role"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("lorekeeper"))
+    );
+
+    let resource = rpc(
+        &mut server,
+        "resources/read",
+        json!({"uri": "stronghold://playbook/LOREKEEPER-PLAYBOOK.md"}),
+    );
+    assert!(
+        resource["result"]["contents"][0]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with(rules.trim_end())
+    );
 }
 
 #[test]
@@ -1143,7 +1215,7 @@ fn prompts_get_returns_the_roles_rules_as_a_user_message() {
     assert_eq!(r["error"]["code"], INVALID_PARAMS);
     let message = r["error"]["message"].as_str().unwrap();
     assert!(
-        message.contains("worker, envoy, attendant-brief"),
+        message.contains("worker, envoy, lorekeeper, attendant-brief"),
         "{message}"
     );
     let r = rpc(
