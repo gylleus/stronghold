@@ -163,6 +163,7 @@ impl HeadlessControl {
         status.publish(view);
         Self {
             backend: Backend {
+                github: Arc::new(crate::review::github::GhCli::default()),
                 status,
                 screens,
                 commands: Arc::new(RefuseCommands),

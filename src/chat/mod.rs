@@ -25,7 +25,9 @@ use protocol::{ContentBlock, Incoming};
 use crate::traffic::ledger;
 
 /// Text of the "Status report" button.
-pub const STATUS_REPORT_PROMPT: &str = "Give me a status report.";
+pub const STATUS_REPORT_PROMPT: &str = "Give me a status report. Fetch clan_status and review_queue \
+fresh in this turn. Only list PRs waiting on me from that fresh queue with verified open state; \
+alerts and agent messages are context, not pending-review evidence.";
 
 /// The chat as the app holds it: the process handle and the transcript built from its events.
 pub struct ChatSession {
