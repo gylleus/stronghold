@@ -220,13 +220,13 @@ fn closed_worktrees_scatter() {
 #[test]
 fn each_hammer_contact_emits_dust_chips_and_sparks() {
     use rubble::{ParticleKind, impact_particles};
-    for phase in [0.0, 0.48, 0.679, 1.0] {
+    for phase in [0.0, 0.32, 0.439, 0.79, 1.0] {
         assert_eq!(impact_particles(phase, 17).count(), 0, "outside contact");
     }
-    for cycle in [0.0, 1.2, 2.4] {
-        let phase = super::hammer::phase(cycle + 0.9, false);
+    for cycle in [0.0, 0.65, 1.3] {
+        let phase = super::hammer::phase(cycle + 0.36, false);
         let particles: Vec<_> = impact_particles(phase, 17).collect();
-        assert_eq!(particles.len(), 28, "bounded on every stroke");
+        assert_eq!(particles.len(), 12, "bounded on every stroke");
         for kind in [ParticleKind::Dust, ParticleKind::Chip, ParticleKind::Spark] {
             assert!(particles.iter().any(|p| p.kind == kind));
         }
@@ -234,11 +234,11 @@ fn each_hammer_contact_emits_dust_chips_and_sparks() {
         assert!(particles.iter().any(|p| p.offset.x > 1.0));
         assert!(particles.iter().any(|p| p.offset.y < -1.0));
     }
-    let early: Vec<_> = impact_particles(0.72, 17).collect();
-    let late: Vec<_> = impact_particles(0.96, 17).collect();
+    let early: Vec<_> = impact_particles(0.5, 17).collect();
+    let late: Vec<_> = impact_particles(0.74, 17).collect();
     assert!(early.iter().zip(&late).all(|(a, b)| b.alpha < a.alpha));
-    assert_eq!(early, impact_particles(0.72, 17).collect::<Vec<_>>());
-    assert_ne!(early, impact_particles(0.72, 18).collect::<Vec<_>>());
+    assert_eq!(early, impact_particles(0.5, 17).collect::<Vec<_>>());
+    assert_ne!(early, impact_particles(0.5, 18).collect::<Vec<_>>());
 }
 
 #[test]
@@ -335,4 +335,19 @@ fn bulk_cleanup_caps_bursts_and_drops_them_after_the_fade() {
     view.layout(&scene, 1.0 + rubble::BREAK_S, false, false);
     assert_eq!(view.burst_count(), 0);
     assert!(!view.animating(), "no repaint needed after the fade");
+}
+
+#[test]
+fn impact_shake_kicks_only_at_contact_and_decays_to_rest() {
+    use super::hammer::{CONTACT, IMPACT_SPAN};
+    assert_eq!(rubble::impact_shake(CONTACT - 0.001), vec2(0.0, 0.0));
+    let kick = rubble::impact_shake(CONTACT).length();
+    assert!(kick > 2.5);
+    for fraction in [0.25, 0.5, 0.75, 0.95] {
+        assert!(
+            rubble::impact_shake(CONTACT + IMPACT_SPAN * fraction).length()
+                <= kick * (1.0 - fraction).powi(3) + 0.001
+        );
+    }
+    assert_eq!(rubble::impact_shake(CONTACT + IMPACT_SPAN), vec2(0.0, 0.0));
 }

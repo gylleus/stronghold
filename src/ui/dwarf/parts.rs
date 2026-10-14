@@ -333,6 +333,16 @@ pub(super) fn back_arm(look: &Look) -> Piece {
     p
 }
 
+/// The far hand grips the same large prop as the front hand.
+pub(super) fn support_arm(look: &Look, hand: Pos2) -> Piece {
+    let mut p = Piece::default();
+    let elbow = BACK_SHOULDER.lerp(hand, 0.5) + vec2(-3.0, 6.0);
+    p.cut(capsule(BACK_SHOULDER, elbow, 5.2), shade(look.tunic, 0.3));
+    p.cut(capsule(elbow, hand, 4.5), look.tunic);
+    p.cut(ellipse(hand, 5.0, 5.0, 14), shade(look.skin, 0.15));
+    p
+}
+
 /// The front arm with the tool in its fist, turned by the pose's grip; empty-handed while
 /// he lugs a nugget or lies down.
 pub(super) fn arm(look: &Look, pose: &Pose) -> Piece {
