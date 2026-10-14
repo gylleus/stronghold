@@ -17,6 +17,13 @@ pub(super) const HEIGHT: f32 = 2.6;
 /// What a stacked chamber adds under the throne hall, in cells; the band keeps the gallery
 /// below it.
 pub(super) const STACK: f32 = GAP + HEIGHT;
+/// Width of a compact chamber in texels, leaving room between its three pieces of furniture.
+const COMPACT_WIDTH: f32 = 64.0;
+
+/// Clear two lines of name tags below the surface, including at the smallest farm scales.
+pub(super) fn surface_clearance(px: f32) -> f32 {
+    (16.0 * px).max(30.0)
+}
 
 /// Where the band puts the chamber; see [`spot`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -26,59 +33,70 @@ pub(super) enum Spot {
     Beside { left: f32, right: f32, height: f32 },
     /// Under the throne hall, on its shaft: the King's library.
     Stacked,
-    /// A short pane with no free rock leaves it out.
-    Hidden,
 }
 
 /// Where the chamber goes in a `size` pane at `px`: in the widest stretch of free rock beside
 /// the upper rooms (`occupied`, their columns from the view's left; `room_h`, the rock's height
 /// under them) when it fits there at the farm's scale, which costs no height. Otherwise under the
-/// throne hall when the pane is taller than wide, where height is to spare; else nowhere.
+/// throne hall when the pane is taller than wide, where height is to spare. On wider panes,
+/// a compact chamber uses its own scale so the gallery and dwarves need not move to fit it.
 pub(super) fn spot(size: Vec2, px: f32, mut occupied: Vec<(f32, f32)>, room_h: f32) -> Spot {
-    let height = room_h.min(48.0 * px);
-    if height >= 35.0 * px {
-        occupied.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut left = 8.0 * px;
-        let mut best = (left, left);
-        for (room_left, room_right) in occupied {
-            let right = (room_left - 6.0 * px).min(size.x - 8.0 * px);
-            if right - left > best.1 - best.0 {
-                best = (left, right);
-            }
-            left = left.max(room_right + 6.0 * px);
-        }
-        let right = size.x - 8.0 * px;
+    occupied.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut left = 8.0 * px;
+    let mut best = (left, left);
+    for (room_left, room_right) in occupied {
+        let right = (room_left - 3.0 * px).min(size.x - 8.0 * px);
         if right - left > best.1 - best.0 {
             best = (left, right);
         }
-        let width = (best.1 - best.0).min(82.0 * px);
-        if width >= 57.0 * px {
-            let left = (best.0 + best.1 - width) / 2.0;
-            return Spot::Beside {
-                left,
-                right: left + width,
-                height,
-            };
+        left = left.max(room_right + 3.0 * px);
+    }
+    let right = size.x - 8.0 * px;
+    if right - left > best.1 - best.0 {
+        best = (left, right);
+    }
+    let width = (best.1 - best.0).min(82.0 * px);
+    let height = room_h.min(48.0 * px);
+    let beside = |height| {
+        let left = (best.0 + best.1 - width) / 2.0;
+        Spot::Beside {
+            left,
+            right: left + width,
+            height,
+        }
+    };
+    if width >= 57.0 * px && height >= 35.0 * px {
+        return beside(height);
+    }
+    if size.x > size.y {
+        let compact_px = (width / COMPACT_WIDTH).min(px);
+        if compact_px >= 1.0 && room_h >= 35.0 * compact_px {
+            return beside(35.0 * compact_px);
         }
     }
-    if size.y >= size.x {
-        Spot::Stacked
-    } else {
-        Spot::Hidden
-    }
+    // Even a pane too narrow for the compact chamber keeps the Ledger, below the King.
+    Spot::Stacked
+}
+
+/// Painting and scroll destinations share the chamber's scale, including during a resize.
+fn room_px(room: Rect, px: f32) -> f32 {
+    px.min(room.width() / COMPACT_WIDTH)
 }
 
 /// Where Ledger scrolls are filed and taken: the lectern, straight above the chamber's shaft.
 pub(super) fn lectern(scene: &Scene) -> Option<Pos2> {
     let room = scene.ledger?;
-    Some(pos2(room.center().x, room.bottom() - 12.0 * scene.px))
+    Some(pos2(
+        room.center().x,
+        room.bottom() - 12.0 * room_px(room, scene.px),
+    ))
 }
 
 pub(super) fn paint(painter: &Painter, sprites: &Sprites, scene: &Scene, count: usize) {
     let Some(room) = scene.ledger else {
         return;
     };
-    let px = scene.px;
+    let px = room_px(room, scene.px);
     let shaft = Rect::from_min_max(
         pos2(room.center().x - 8.0 * px, room.bottom() - px),
         pos2(room.center().x + 8.0 * px, scene.gallery.center().y),
@@ -220,69 +238,96 @@ pub(super) fn draw(c: &mut Canvas, prop: Prop) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::layout_tests::snapshot;
+    use super::super::layout_tests::{snapshot, typical_clan};
     use super::*;
     #[test]
-    fn ledger_fits_free_rock_or_stacks_under_the_throne_hall_on_tall_panes() {
+    fn ledger_is_visible_without_overlapping_the_hold_at_every_pane_shape() {
         use super::super::layout::{FarmInput, layout};
         use super::super::layout_tests::node;
         use crate::model::{NodeKind, NodeState};
         use std::collections::{BTreeSet, HashSet};
+        let ctx = eframe::egui::Context::default();
+        let mut output = ctx.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
         for envoy in [false, true] {
-            let mut clan = snapshot();
-            if envoy {
-                clan.nodes
-                    .push(node("envoy", NodeKind::Envoy, None, NodeState::Idle));
-            }
-            let input = FarmInput {
-                snapshot: &clan,
-                hidden: &BTreeSet::new(),
-                pr_ready: &HashSet::new(),
-                building: &HashSet::new(),
-                now_ms: 0,
-            };
-            for (width, height) in [
-                (320.0, 800.0),
-                (640.0, 800.0),
-                (960.0, 800.0),
-                (1092.0, 1444.0),
-                (1280.0, 800.0),
-                (1920.0, 1080.0),
+            for mut clan in [
+                snapshot(),
+                typical_clan(5),
+                typical_clan(15),
+                typical_clan(30),
             ] {
-                let scene = layout(
-                    &input,
-                    Rect::from_min_size(pos2(0.0, 0.0), vec2(width, height)),
-                );
-                let at = format!("{width}x{height}, envoy {envoy}");
-                let Some(room) = scene.ledger else {
-                    assert!(height < width, "{at}: tall panes always have the Ledger");
-                    continue;
-                };
-                let hall = scene.throne_hall;
-                let stacked = room.top() > hall.bottom();
-                assert!(scene.rect.contains_rect(room), "{at}");
-                assert!(room.top() > scene.surface_y, "{at}");
-                assert!(room.bottom() < scene.gallery.top(), "{at}");
-                assert!(room.contains(lectern(&scene).unwrap()), "{at}");
-                if stacked {
-                    assert_eq!((room.left(), room.right()), (hall.left(), hall.right()));
+                clan.nodes.retain(|n| n.kind != NodeKind::Envoy);
+                if envoy {
+                    clan.nodes
+                        .push(node("envoy", NodeKind::Envoy, None, NodeState::Idle));
                 }
-                // Beside, its shaft must miss every room; stacked, it shares the hall's columns,
-                // clear of the neighbours wherever the pane is not tiny.
-                if !stacked || width >= 960.0 {
-                    let route =
-                        Rect::from_min_max(room.min, pos2(room.right(), scene.gallery.top()));
-                    let mut others = vec![scene.storage];
-                    if !stacked {
-                        others.push(hall);
+                let input = FarmInput {
+                    snapshot: &clan,
+                    hidden: &BTreeSet::new(),
+                    pr_ready: &HashSet::new(),
+                    building: &HashSet::new(),
+                    now_ms: 0,
+                };
+                for (width, height) in [
+                    (320.0, 800.0),
+                    (640.0, 800.0),
+                    (960.0, 800.0),
+                    (1092.0, 1444.0),
+                    (1573.0, 1136.0),
+                    (1280.0, 800.0),
+                    (900.0, 650.0),
+                    (1920.0, 1080.0),
+                ] {
+                    let scene = layout(
+                        &input,
+                        Rect::from_min_size(pos2(0.0, 0.0), vec2(width, height)),
+                    );
+                    let at = format!(
+                        "{width}x{height}, envoy {envoy}, {} dwarves",
+                        clan.nodes.len()
+                    );
+                    let room = scene
+                        .ledger
+                        .unwrap_or_else(|| panic!("{at}: missing Ledger"));
+                    let hall = scene.throne_hall;
+                    let stacked = room.top() > hall.bottom();
+                    assert!(scene.rect.contains_rect(room), "{at}");
+                    assert!(room.top() > scene.surface_y, "{at}");
+                    let tag_height = ctx.fonts_mut(|fonts| {
+                        super::super::TAG_ROWS as f32
+                            * fonts.row_height(&FontId::proportional(8.0 + 1.5 * scene.px))
+                    });
+                    assert!(
+                        room.top() >= scene.surface_y + tag_height,
+                        "{at}: clear of surface name tags"
+                    );
+                    assert!(room.bottom() < scene.gallery.top(), "{at}");
+                    assert!(room.contains(lectern(&scene).unwrap()), "{at}");
+                    if stacked {
+                        assert_eq!((room.left(), room.right()), (hall.left(), hall.right()));
                     }
-                    others.extend(scene.comms.map(|c| c.chamber));
-                    others.extend(scene.comms.map(|c| c.shaft));
-                    for r in others {
-                        assert!(!route.intersects(r), "{at}: {r:?}");
+                    // Beside, its shaft must miss every room; stacked, it shares the hall's columns,
+                    // clear of the neighbours wherever the pane is not tiny.
+                    if !stacked || width >= 900.0 {
+                        let route =
+                            Rect::from_min_max(room.min, pos2(room.right(), scene.gallery.top()));
+                        let mut others = vec![scene.storage];
+                        if !stacked {
+                            others.push(hall);
+                        }
+                        others.extend(scene.comms.map(|c| c.chamber));
+                        others.extend(scene.comms.map(|c| c.shaft));
+                        others.extend(scene.tunnels.iter().flat_map(|t| [t.chamber, t.shaft]));
+                        others.push(Rect::from_min_max(
+                            pos2(scene.entrance_x() - 0.6 * scene.cell(), scene.surface_y),
+                            pos2(scene.entrance_x() + 0.6 * scene.cell(), scene.gallery.top()),
+                        ));
+                        for r in others {
+                            assert!(!route.intersects(r), "{at}: {r:?}");
+                        }
+                        let x = scene.entrance_x();
+                        assert!(!(room.left()..room.right()).contains(&x), "{at}");
                     }
-                    let x = scene.entrance_x();
-                    assert!(!(room.left()..room.right()).contains(&x), "{at}");
                 }
             }
         }
