@@ -497,7 +497,8 @@ or a pose in it (same places, same state → place rules for every agent).
 | Claude / Codex / unknown agent | **Livery colour** of hood and tunic: amber-ochre / slate with teal trim / plain grey |
 | Needs input (waiting on the user) | Dwarves queue at the **mine entrance** on the mountainside |
 | The user's messages | Pop out of a brass **message tube** rising from the rock, as sealed scrolls |
-| Done / PR ready | Dwarf carries a **gold nugget** to the **treasury**, where each PR is a **treasure heap** |
+| Done or idle with a PR in the review queue (coordinator / standalone terminal) | Dwarf carries a **gold nugget** to the **treasury**, where each PR is a **treasure heap** |
+| Done worker / done without a PR in the review queue | Dwarf **dozing** at its mine post with **Zz**; workers never visit the treasury |
 | Idle / stalled | Dwarf **dozing** against the rock, sitting on a crate |
 | The whip (nudge a stalled agent) | A **pebble bonks the helmet**: a small stone arcs in, "tink", the dwarf jolts awake |
 | Failed | Dwarf **knocked flat** on their back, helmet off, red livery, cross bubble |
