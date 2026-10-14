@@ -112,7 +112,7 @@ pub enum Pose {
     Dig,
     /// Building at the chamber's face (editing or building).
     Build,
-    /// Lying still (idle or stalled).
+    /// Lying still (idle, stalled or done without review work).
     Sleep,
     /// Waving on the landing for the user.
     Wait,
@@ -128,7 +128,7 @@ pub enum Pose {
 pub enum Mark {
     /// Waiting on the user.
     Alert,
-    /// Idle.
+    /// Idle or done without review work.
     Sleep,
     /// Stalled: a pebble bonks the helmet.
     Stalled,
@@ -460,10 +460,10 @@ pub enum Home {
     Trail,
 }
 
-/// The state → place rule: waiting on the user goes to the landing, done (or idle with a PR ready
-/// for review) goes to storage, all else stays at its post (a coordinator at the mouth, a
-/// worker in the chamber), failed ones turning red there. Subagents trail their parent
-/// whatever their state.
+/// The state → place rule: waiting on the user goes to the landing, done or idle with a PR
+/// ready for review goes to storage (never workers), all else stays at its post (a coordinator
+/// at the mouth, a worker in the chamber). Finished dwarves without review work sleep there;
+/// failed ones turn red. Subagents trail their parent whatever their state.
 pub fn home(kind: NodeKind, state: NodeState, pr_ready: bool) -> Home {
     match kind {
         NodeKind::King => return Home::King,
@@ -473,9 +473,12 @@ pub fn home(kind: NodeKind, state: NodeState, pr_ready: bool) -> Home {
     }
     match state {
         NodeState::NeedsInput => Home::Landing,
-        NodeState::Done => Home::Storage,
-        NodeState::Idle if pr_ready => Home::Storage,
-        NodeState::Working | NodeState::Idle | NodeState::Stalled | NodeState::Failed => {
+        NodeState::Done | NodeState::Idle if pr_ready && kind != NodeKind::Worker => Home::Storage,
+        NodeState::Working
+        | NodeState::Idle
+        | NodeState::Stalled
+        | NodeState::Done
+        | NodeState::Failed => {
             if matches!(kind, NodeKind::Coordinator | NodeKind::Attendant) {
                 Home::Mouth
             } else {
@@ -494,10 +497,9 @@ pub fn pose(kind: NodeKind, state: NodeState, home: Home) -> Pose {
     }
     match state {
         NodeState::NeedsInput => Pose::Wait,
-        NodeState::Done => Pose::Carry,
-        NodeState::Idle if home == Home::Storage => Pose::Carry,
+        NodeState::Done | NodeState::Idle if home == Home::Storage => Pose::Carry,
         NodeState::Failed => Pose::Failed,
-        NodeState::Idle | NodeState::Stalled => Pose::Sleep,
+        NodeState::Idle | NodeState::Stalled | NodeState::Done => Pose::Sleep,
         NodeState::Working if home == Home::Chamber => Pose::Dig,
         NodeState::Working => Pose::Stand,
     }
@@ -506,11 +508,11 @@ pub fn pose(kind: NodeKind, state: NodeState, home: Home) -> Pose {
 pub fn mark(state: NodeState, pr_ready: bool) -> Option<Mark> {
     match state {
         NodeState::NeedsInput => Some(Mark::Alert),
-        NodeState::Idle if pr_ready => Some(Mark::PrReady),
-        NodeState::Idle => Some(Mark::Sleep),
+        NodeState::Idle | NodeState::Done if pr_ready => Some(Mark::PrReady),
+        NodeState::Idle | NodeState::Done => Some(Mark::Sleep),
         NodeState::Stalled => Some(Mark::Stalled),
         NodeState::Failed => Some(Mark::Failed),
-        NodeState::Done | NodeState::Working => pr_ready.then_some(Mark::PrReady),
+        NodeState::Working => pr_ready.then_some(Mark::PrReady),
     }
 }
 
@@ -1081,7 +1083,7 @@ fn dwarf(
         mark: if matches!(node.kind, NodeKind::King | NodeKind::Envoy) {
             None
         } else {
-            mark(node.state, pr)
+            mark(node.state, pr && node.kind != NodeKind::Worker)
         },
         facing_right: pose == Pose::Dig || node.kind == NodeKind::Envoy,
         tag: match node.kind {
