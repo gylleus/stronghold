@@ -22,12 +22,12 @@ pub fn definitions() -> Vec<Value> {
             "annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true}
         }),
         json!({
-            "name":"lorekeeper_lookup", "description":"Read evidence through fixed git or GitHub operations. repo is owner/name for PRs, or an absolute worktree root under ~/repo or ~/orca/workspaces for git. git_fetch refreshes origin refs; other git operations read origin's default branch. No shell commands or extra flags. Output is capped at 256 KiB.",
+            "name":"lorekeeper_lookup", "description":"Read evidence through fixed git or GitHub operations. repo is owner/name for PRs, or a bare Orca repository name (e.g. recommendations) or absolute worktree root under ~/repo or ~/orca/workspaces for git. git_fetch refreshes origin refs; other git operations read origin's default branch. git_grep searches literal text, not regex: search alternatives separately. No shell commands or extra flags. Output is capped at 256 KiB.",
             "inputSchema":{"type":"object","additionalProperties":false,"properties":{
                 "op":{"type":"string","enum":["pr_view","pr_list","git_fetch","git_log","git_show","git_grep"]},
                 "repo":{"type":"string","maxLength":4096}, "number":{"type":"integer","minimum":1},
-                "search":{"type":"string","maxLength":2000}, "limit":{"type":"integer","minimum":1,"maximum":50},
-                "path":{"type":"string","maxLength":1024}, "pattern":{"type":"string","maxLength":2000}
+                "search":{"type":"string","maxLength":2000,"description":"pr_list only: GitHub search query"}, "limit":{"type":"integer","minimum":1,"maximum":50,"description":"git_log only"},
+                "path":{"type":"string","maxLength":1024}, "pattern":{"type":"string","maxLength":2000,"description":"git_grep only: one literal string, not a regular expression; | is literal, not alternation"}
             },"required":["op","repo"]},
             "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true}
         }),
