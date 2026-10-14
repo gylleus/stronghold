@@ -14,13 +14,13 @@ use crate::orca::Terminal;
 use crate::playbook::fill::{self, ClanFacts, FillContext, Filled};
 use crate::playbook::{ATTENDANT_BRIEF, KICKOFF, Playbook, Target};
 
-pub const FROM_APP: &str = "the running Myrstack app";
-pub const FROM_POLL: &str = "one direct Orca poll as Myrstack isn't running";
+pub const FROM_APP: &str = "the running Stronghold app";
+pub const FROM_POLL: &str = "one direct Orca poll as Stronghold isn't running";
 
 /// Where Claude Code keeps session scratchpads: `<root>/claude-<uid>/<project>/<session>/scratchpad`.
 pub const SCRATCH_ROOTS: [&str; 2] = ["/private/tmp", "/tmp"];
 
-/// A template Myrstack can fill.
+/// A template Stronghold can fill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Template {
     /// Filled for a run id.

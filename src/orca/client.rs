@@ -28,7 +28,7 @@ pub const FALLBACK_PATHS: &[&str] = &["/opt/homebrew/bin/orca", "/usr/local/bin/
 /// Variables through which `orca` works out which terminal is calling: `orchestration send`
 /// without `--from` takes the sender from `ORCA_TERMINAL_HANDLE` or `ORCA_PANE_KEY`, and the
 /// worktree/workspace ids scope its active-terminal fallback. A process launched from an Orca
-/// terminal inherits them, so they are removed for messages Myrstack sends on its own behalf.
+/// terminal inherits them, so they are removed for messages Stronghold sends on its own behalf.
 pub const SENDER_IDENTITY_ENV: &[&str] = &[
     "ORCA_TERMINAL_HANDLE",
     "ORCA_PANE_KEY",
@@ -146,7 +146,7 @@ impl OrcaClient {
     }
 
     /// Runs `orca` without the calling terminal's identity ([`SENDER_IDENTITY_ENV`]), so
-    /// messages are not attributed to the Orca terminal that launched Myrstack.
+    /// messages are not attributed to the Orca terminal that launched Stronghold.
     pub fn without_sender_identity(self) -> Self {
         self.without_env(SENDER_IDENTITY_ENV.iter().copied())
     }
@@ -521,7 +521,7 @@ mod tests {
     #[test]
     fn removed_env_is_not_passed_to_orca() {
         use std::os::unix::fs::PermissionsExt;
-        const VAR: &str = "MYRSTACK_CLIENT_TEST_SENDER";
+        const VAR: &str = "STRONGHOLD_CLIENT_TEST_SENDER";
         // SAFETY: the variable is unique to this test, so no other thread reads or writes it.
         unsafe { std::env::set_var(VAR, "term_launcher") };
         let dir = tempfile::tempdir().unwrap();

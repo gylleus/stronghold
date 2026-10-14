@@ -185,7 +185,7 @@ fn status(view: &StatusView) -> Value {
     })
 }
 
-/// Unread inbox count and the newest unread notifications, for `fleet_status`.
+/// Unread inbox count and the newest unread notifications, for `clan_status`.
 fn notifications_summary(view: &StatusView) -> Value {
     let unread: Vec<_> = view.alerts.iter().filter(|a| !a.read).collect();
     json!({
@@ -404,7 +404,7 @@ impl Drop for ControlServer {
 /// Creates the socket at `path` with mode 0600.
 ///
 /// A leftover socket nobody listens on (the app crashed) is removed; a live one means another
-/// Myrstack is serving, and binding fails with `AddrInUse`. The socket is bound under a temporary
+/// Stronghold is serving, and binding fails with `AddrInUse`. The socket is bound under a temporary
 /// name, restricted, then renamed into place, so it is never reachable with looser permissions.
 pub fn bind_socket(path: &Path) -> io::Result<UnixListener> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {

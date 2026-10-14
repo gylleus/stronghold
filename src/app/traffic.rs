@@ -3,7 +3,7 @@
 
 use eframe::egui;
 
-use super::MyrstackApp;
+use super::StrongholdApp;
 use crate::model::{ClanSnapshot, NodeId, NodeKind};
 use crate::review::mark::Origin;
 use crate::traffic::beam::{Beam, BeamKind, ToolCall};
@@ -15,7 +15,7 @@ const SPAWN_WAIT_S: f64 = 20.0;
 /// How long other tool calls wait for their ends (the first clan data, say).
 const CALL_WAIT_S: f64 = 3.0;
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// An agent reaching Karl: from the caller at `origin`, else from the node `about`.
     pub(super) fn traffic_to_karl(&self, origin: &Origin, about: Option<&str>, kind: MessageKind) {
         let from = self
@@ -58,7 +58,7 @@ impl MyrstackApp {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// Pops the agents whose state change just settled in both views, with a soft sound for
     /// the done and the waiting when Karl turned it on.
     pub(super) fn poll_state_pops(&mut self, ctx: &egui::Context) {

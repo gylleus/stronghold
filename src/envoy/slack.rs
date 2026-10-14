@@ -48,8 +48,8 @@ pub trait SlackIo: SlackSender {
 pub struct SlackCli;
 
 fn binary(name: &str) -> Result<PathBuf, String> {
-    let env = format!("MYRSTACK_{}", name.to_ascii_uppercase().replace('-', "_"));
-    if let Some(path) = std::env::var_os(&env).filter(|p| !p.is_empty()) {
+    let env = format!("STRONGHOLD_{}", name.to_ascii_uppercase().replace('-', "_"));
+    if let Some(path) = crate::legacy::env_os(&env).filter(|p| !p.is_empty()) {
         return Ok(path.into());
     }
     let paths = std::env::var_os("PATH").unwrap_or_default();

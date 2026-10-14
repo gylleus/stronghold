@@ -18,13 +18,13 @@ screen (markdown is fine there)."
 
 /// Put before a message Karl spoke (not shown in his bubble): the King's reply is read aloud.
 pub const VOICE_NOTE: &str = concat!(
-    "[Myrstack] Karl said this by voice (hold-to-talk); this turn is spoken. ",
+    "[Stronghold] Karl said this by voice (hold-to-talk); this turn is spoken. ",
     say_rules!()
 );
 
 /// Put before a typed message while "Speak replies" is on: his reply is read aloud.
 pub const SPEAK_NOTE: &str = concat!(
-    "[Myrstack] Speak replies is on; this turn is spoken. ",
+    "[Stronghold] Speak replies is on; this turn is spoken. ",
     say_rules!()
 );
 

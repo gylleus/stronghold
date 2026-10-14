@@ -157,7 +157,7 @@ pub enum BridgeProbe {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum NotifyProbe {
-    /// Not from `Myrstack.app`, so macOS keeps no permission for this process.
+    /// Not from `Stronghold.app`, so macOS keeps no permission for this process.
     #[default]
     NotBundled,
     /// macOS's answer: `allowed`, `provisional`, `not asked yet`, `denied; …`, …
@@ -250,7 +250,7 @@ fn gh_check(p: &ToolProbe) -> Check {
             Level::Error,
             "not found on the app's PATH: the review queue can't read PRs",
         )
-        .fix("`brew install gh`, or set MYRSTACK_GH_BIN to its path");
+        .fix("`brew install gh`, or set STRONGHOLD_GH_BIN to its path");
     };
     if let Some(error) = &p.error {
         return Check::new("gh", NAME, Level::Warn, format!("{path}: {error}"))
@@ -270,7 +270,7 @@ fn king_check(king: &KingFact) -> Check {
                 .fix("It restarts by itself; see the log (palette: Open log) if it keeps crashing")
         }
         KingFact::Unavailable(why) => Check::new("king", NAME, Level::Error, why.clone())
-            .fix("Install the `claude` CLI or set MYRSTACK_CLAUDE_BIN"),
+            .fix("Install the `claude` CLI or set STRONGHOLD_CLAUDE_BIN"),
         KingFact::Stopped => Check::new("king", NAME, Level::Warn, "chat process stopped")
             .fix("Open the King's chat (⌘J) to start it"),
     }
@@ -278,7 +278,7 @@ fn king_check(king: &KingFact) -> Check {
 
 fn hook_check(p: &HookProbe) -> Check {
     const NAME: &str = "Session hook";
-    const FIX: &str = "Run `myrstack install-hook`";
+    const FIX: &str = "Run `stronghold install-hook`";
     if let Some(error) = &p.error {
         return Check::new(
             "hook",
@@ -315,7 +315,7 @@ fn notify_check(p: &NotifyProbe) -> Check {
                 "notifications",
                 NAME,
                 Level::Off,
-                "not running from Myrstack.app: in-app pop-ups only",
+                "not running from Stronghold.app: in-app pop-ups only",
             );
         }
         NotifyProbe::Status(status) => status,
@@ -324,7 +324,7 @@ fn notify_check(p: &NotifyProbe) -> Check {
         "allowed" | "provisional" => Check::new("notifications", NAME, Level::Ok, status.clone()),
         s if s.starts_with("denied") => {
             Check::new("notifications", NAME, Level::Warn, "denied by macOS")
-                .fix("System Settings › Notifications › Myrstack: allow notifications")
+                .fix("System Settings › Notifications › Stronghold: allow notifications")
         }
         "not asked yet" => Check::new(
             "notifications",
@@ -712,7 +712,7 @@ mod tests {
     fn hook_notifications_and_king_verdicts() {
         let mut p = healthy();
         p.hook.installed = false;
-        p.notifications = NotifyProbe::Status("denied; allow Myrstack in System Settings".into());
+        p.notifications = NotifyProbe::Status("denied; allow Stronghold in System Settings".into());
         let mut f = facts();
         f.king = KingFact::Unavailable("no claude binary".into());
         let report = evaluate(&f, Some(&p), NOW);
@@ -759,10 +759,10 @@ mod tests {
         );
         std::fs::write(
             &settings,
-            r#"{"hooks":{"SessionStart":[{"hooks":[{"command":"\"/d/myrstack-session-hook.sh\""}]}]}}"#,
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"command":"\"/d/stronghold-session-hook.sh\""}]}]}}"#,
         )
         .unwrap();
-        std::fs::write(dir.path().join("myrstack-session-hook.sh"), "").unwrap();
+        std::fs::write(dir.path().join("stronghold-session-hook.sh"), "").unwrap();
         let hook = probe_hook(&settings, dir.path());
         assert!(hook.installed && hook.script && hook.error.is_none());
         std::fs::write(&settings, "{not json").unwrap();

@@ -4,13 +4,13 @@ use eframe::egui;
 use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::{DockArea, TabViewer};
 
-use super::MyrstackApp;
+use super::StrongholdApp;
 use crate::ui;
 use crate::ui::dock::Pane;
 
 /// Draws the panes for one frame.
 struct Panes<'a> {
-    app: &'a mut MyrstackApp,
+    app: &'a mut StrongholdApp,
     now_ms: i64,
 }
 
@@ -24,7 +24,7 @@ impl TabViewer for Panes<'_> {
     fn title(&mut self, tab: &mut Pane) -> egui::WidgetText {
         match tab {
             Pane::Sidebar => "Clan".into(),
-            Pane::Farm => "Dwarf farm".into(),
+            Pane::Farm => "Hold".into(),
             Pane::Details => "Details".into(),
             Pane::Conversation => self.app.conversation_title().into(),
             Pane::Notifications => self.app.notifications_title().into(),
@@ -70,7 +70,7 @@ impl TabViewer for Panes<'_> {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// The dock filling the window below the top bar.
     pub(super) fn panes(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         if std::mem::take(&mut self.envoy_core.open_request) {

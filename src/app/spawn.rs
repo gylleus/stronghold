@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use eframe::egui;
 
-use super::{MyrstackApp, now_ms, repaint_once};
+use super::{StrongholdApp, now_ms, repaint_once};
 use crate::control::{ControlError, ErrorCode, Reply};
 use crate::poller::PollerCommand;
 use crate::spawn::exec::{Job, JobId, OrcaBackend};
@@ -34,7 +34,7 @@ impl AppSpawn {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// Opens "New dwarf…", with the sidebar repo `repo` picked.
     pub(super) fn open_spawn_dialog(&mut self, repo: Option<&str>) {
         self.spawn.dialog.open(repo);

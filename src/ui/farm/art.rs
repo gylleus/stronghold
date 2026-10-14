@@ -46,7 +46,7 @@ impl Pixels {
 
     pub fn label(self) -> String {
         match self {
-            Pixels::Farm => "Farm pixels".into(),
+            Pixels::Farm => "Hold pixels".into(),
             Pixels::Height(h) => format!("{h} px"),
         }
     }

@@ -1,4 +1,4 @@
-# Myrstack art: inventory, Paleccino and asset descriptions
+# Stronghold art: inventory, Paleccino and asset descriptions
 
 Status: **the dwarf mine uses code-drawn cutouts, plus one generated hammer sprite
 (2026-10-13).** Characters, props and scenery share the hard pixel renderer, palette and
@@ -81,7 +81,7 @@ Visual checks (each farm command also writes a `-walk` screenshot):
 cargo run --release --example farm -- --parked --shot /tmp/farm.png
 cargo run --release --example farm -- --parked --palette endesga-32 --shot /tmp/farm-endesga.png
 cargo run --release --example farm -- --parked --palette oil-6 --shot /tmp/farm-oil.png
-MYRSTACK_HOUR=22 cargo run --release --example farm -- --parked --shot /tmp/farm-night.png
+STRONGHOLD_HOUR=22 cargo run --release --example farm -- --parked --shot /tmp/farm-night.png
 cargo run --release --example dwarf_lab -- --pixel 48 --shot /tmp/dwarf-lab.png
 ```
 
@@ -292,13 +292,13 @@ Next, if Karl likes the direction:
   colour swallows the outline;
 - dwarf-specific overlays (a hard hat for builders, an ear trumpet for the Envoy).
 
-## 1. What Myrstack ships today
+## 1. What Stronghold ships today
 
 ### Bundled files (`assets/`, compiled in with `include_bytes!`)
 
 | File | Size / format | Used for | Source | Licence |
 | --- | --- | --- | --- | --- |
-| `art/tools/cleanup_hammer.png` | PNG, downsampled at texture creation | The hammer that strikes a rubble heap on cleanup (`src/ui/farm/hammer.rs`) | Generated for Myrstack on 2026-10-13, prompt in `docs/assets/prompts/cleanup-hammer.txt` | Myrstack's own |
+| `art/tools/cleanup_hammer.png` | PNG, downsampled at texture creation | The hammer that strikes a rubble heap on cleanup (`src/ui/farm/hammer.rs`) | Generated for Stronghold on 2026-10-13, prompt in `docs/assets/prompts/cleanup-hammer.txt` | Stronghold's own |
 | `palettes/*.json` | Lospec palette JSON | The palettes in Settings → Art and the dwarf lab | Lospec, authors credited in `assets/LICENSES.md` | Colour lists, not artwork |
 | `fonts/Phosphor-Bold.ttf` | icon font, 495 KB | Every UI icon: kind icons, state glyphs and toolbar icons (`src/ui/icons.rs`) | Phosphor Icons 2.1, bold | MIT |
 
@@ -306,11 +306,11 @@ Credits and licence texts are in [`assets/LICENSES.md`](../../assets/LICENSES.md
 
 ### Other image files
 
-- `packaging/Myrstack.icns`: the app icon, rendered by `scripts/make_icon.py`. It is Myrstack's own work.
+- `packaging/Stronghold.icns`: the app icon, rendered by `scripts/make_icon.py`. It is Stronghold's own work.
 - `docs/assets/**/*.png`: screenshots and experiments for these notes. They are not shipped.
 - `tests/fixtures/voice/*.wav`: a test fixture. It is not art.
 
-### Art drawn in code (Myrstack's own, no licence question)
+### Art drawn in code (Stronghold's own, no licence question)
 
 Everything else is drawn in code, not loaded from files:
 
@@ -329,7 +329,7 @@ Everything else is drawn in code, not loaded from files:
 **What it is.** Paleccino lives at `~/repo/projects/paleccino` (`git@github.com:gylleus/paleccino.git`,
 v0.2.0). It is the sprite pipeline pulled out of fitness-rpg into a standalone repo. Fitness-rpg
 still runs its own copy in-tree (`image-generation/`, `uv run sprites …`). Paleccino is the
-portable one, and the one to use for Myrstack.
+portable one, and the one to use for Stronghold.
 
 **How it works.**
 
@@ -363,7 +363,7 @@ raw material, not finished sprites.
 | Check (2026-10-11, this Mac) | Result |
 | --- | --- |
 | `paleccino doctor` | Runtime installed, MPS available, all wan5b models present (25 GiB already cached), nothing missing |
-| `init` a Myrstack art project | Works |
+| `init` a Stronghold art project | Works |
 | `plan` a 16 px ant with a 2-frame walk | Works, writes the exact prompt per action |
 | `map` + `check` on today's `crown.png` | Works. The original fails the check (5 off-palette colors), the mapped copy passes |
 | `generate --backend reference`, a dwarf miner | Works. SDXL reference in 34 s, then cutout and a fixed-palette export. A first try was refused for disk space (3.9 GiB free, 4 GiB reserve hard-coded); Karl freed space and the rerun passed |
@@ -388,7 +388,7 @@ What the test showed:
 
 ### 2b. Animation: why Wan failed, and the route that works
 
-Paleccino's `generate` animates with the local **Wan 2.2 5B** video model. For Myrstack's
+Paleccino's `generate` animates with the local **Wan 2.2 5B** video model. For Stronghold's
 miner (seed-41 profile reference, `mine` and `think`, 33 frames at 512 px, about 7–10 min a
 clip) it was **unusable**. The model zoomed in, invented rock and coloured junk, and lost
 the dwarf's identity mid-swing. The raw frames show it, so the background removal isn't to
@@ -404,7 +404,7 @@ cuts the cells on the CPU. Wan was a research track (`image-generation/pixel-ani
 its best result was the 14B model with a pixel adapter on an RTX 3090, for gentle breathing
 motion, and it still needed cleanup.
 
-**The route Myrstack uses, tested 2026-10-11/12:**
+**The route Stronghold uses, tested 2026-10-11/12:**
 
 1. `paleccino plan --definition hold-v1.toml` writes one exact prompt per action
    ([`prompts/hold-v1.toml`](prompts/hold-v1.toml)). I drop the palette paragraph (palettes
@@ -463,12 +463,12 @@ Karl's notes on the image_gen rounds:
 - **Headless Codex needs `< /dev/null`.** Run in the background without it, `codex exec`
   waits forever on stdin. [`tools/imagegen.sh`](tools/imagegen.sh) closes it.
 
-**Fit for Myrstack, and what reuse needs:**
+**Fit for Stronghold, and what reuse needs:**
 
-- **Reuse as an external tool, not a copy.** Add a Myrstack art project in the repo, say
+- **Reuse as an external tool, not a copy.** Add a Stronghold art project in the repo, say
   `art/` (`sprites.toml`, `palette.json`, the definitions TOML, `attempts/`, `asset-library/`),
   and run Paleccino from its own checkout with `--project art/sprites.toml`. Commit only the
-  definitions, palette, chosen exports and provenance. Nothing needs copying, and Myrstack's
+  definitions, palette, chosen exports and provenance. Nothing needs copying, and Stronghold's
   Rust build gains no Python dependency. A `just art …` recipe can wrap the call.
 - **Pixel art only.** Paleccino exports fixed-palette pixel PNGs. That suits the ant farm
   directly. The UI illustrations (Queen avatar, ant cell, anthill) are smooth SVGs today.
@@ -479,7 +479,7 @@ Karl's notes on the image_gen rounds:
   are too small for generated art; the test above puts the floor at 48 px. The farm's layout is
   in farm texels (`px` per texel), so bigger sprites mean adjusting its scale constants and
   the sizes of the drawn props.
-- **Short loops.** Wan makes 33-frame videos. Myrstack's ants use 2-frame walks. Use
+- **Short loops.** Wan makes 33-frame videos. Stronghold's ants use 2-frame walks. Use
   `frame_stride`/`--frames`, or the authored-sheet path, for short loops. Recoloring by coat
   (Claude/Codex/plain) keeps working if the exported ant uses a small, known set of palette
   colors.
@@ -748,8 +748,8 @@ is drawn at a whole-pixel scale. `src/ui/art.rs` would load PNGs with nearest fi
   kinds better.
 - **Farm scale:** the code moves to 48 px cells, and walks go from 2 to 4 frames.
 - **Words:** labels and empty-state copy ("colony", "ants") change to the hold's.
-- **The name:** Myrstack is Swedish for anthill, which no longer fits. Renaming is Karl's call
-  and isn't part of this work.
+- **The name:** the app was Myrstack, Swedish for anthill, which no longer fit. Karl renamed it
+  Stronghold on 2026-10-13.
 
 ### 4i. Side view: getting the dwarves to face sideways
 
@@ -781,7 +781,7 @@ findings above matter only if Paleccino's local reference stage is used.
   repeats the facing.
 - **To make it reliable,** port fitness-rpg's `--guide-image` / `--guide-strength`
   (image-to-image from a side-view silhouette) and `view = "profile"` into Paleccino.
-  That changes Paleccino, not Myrstack, so it's Karl's call. With a guide, every seed comes
+  That changes Paleccino, not Stronghold, so it's Karl's call. With a guide, every seed comes
   out in profile, and dwarves of one role share a stance, which helps a big roster look
   consistent.
 
@@ -793,7 +793,7 @@ and frames as the paletted export. The pixel look comes from the downsample to 4
 from the palette: the test dwarf has 743 colours unpaletted and still reads as pixel art.
 The palette adds cohesion and mood.
 
-So Myrstack ships the original-colour atlases and applies the palette itself:
+So Stronghold ships the original-colour atlases and applies the palette itself:
 
 - **At texture load, not in a shader.** egui has no simple hook for a custom fragment
   shader; a `PaintCallback` with glow or wgpu would work but costs far more code. Recoloring

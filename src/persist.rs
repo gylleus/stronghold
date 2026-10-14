@@ -8,7 +8,7 @@ use crate::ui::farm::rooms::RoomPlan;
 use crate::ui::sidebar::ClanFilter;
 
 /// Storage key of [`PersistedState`].
-pub const STORAGE_KEY: &str = "myrstack_state";
+pub const STORAGE_KEY: &str = "stronghold_state";
 /// Bumped when the saved format changes incompatibly; other versions are ignored on load.
 pub const FORMAT_VERSION: u32 = 1;
 
@@ -84,7 +84,7 @@ mod tests {
             version: FORMAT_VERSION,
             chat_hidden: true,
             filter: ClanFilter {
-                repos: BTreeSet::from(["myrstack".to_owned()]),
+                repos: BTreeSet::from(["stronghold".to_owned()]),
                 states: BTreeSet::from([NodeState::NeedsInput, NodeState::Stalled]),
                 kinds: BTreeSet::from([NodeKind::Worker]),
                 show_loose: false,
@@ -101,7 +101,7 @@ mod tests {
             farm_rooms: {
                 let mut plan = RoomPlan::default();
                 plan.rooms = vec![crate::ui::farm::rooms::Room {
-                    key: crate::ui::farm::layout::TunnelKey::Repo("myrstack".into()),
+                    key: crate::ui::farm::layout::TunnelKey::Repo("stronghold".into()),
                     level: 1,
                     col: 2,
                     rows: 3,

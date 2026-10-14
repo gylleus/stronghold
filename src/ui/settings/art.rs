@@ -20,8 +20,8 @@ pub(super) fn section(ui: &mut egui::Ui, applied: &ArtSettings) -> Option<ArtSet
                 for choice in Pixels::CHOICES {
                     ui.selectable_value(&mut art.pixels, choice, choice.label())
                         .on_hover_text(match choice {
-                            Pixels::Farm => "One pixel per farm pixel, like the rest of the farm.",
-                            Pixels::Height(_) => "Dwarves render this many pixels tall. The world keeps the farm grid.",
+                            Pixels::Farm => "One pixel per hold pixel, like the rest of the hold.",
+                            Pixels::Height(_) => "Dwarves render this many pixels tall. The world keeps the hold's grid.",
                         });
                 }
             });
