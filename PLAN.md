@@ -105,7 +105,7 @@ Crates: `eframe`/`egui`, `serde`/`serde_json`,
 
 **M1 — Hold.** Build the snapshot, render runs in rooms with their coordinators,
 show agent state through dwarf poses and locations, group loose terminals by repo,
-and fade released workers. *Done when:* the commerce-platform wave run shows its
+and fade released workers. *Done when:* the storefront wave run shows its
 coordinator and workers correctly.
 
 **M2 — Attach.** Select a node to open the side panel with a 500 ms screen

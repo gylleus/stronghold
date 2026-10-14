@@ -9,7 +9,7 @@
      - The prompt now asks for stock 8–60 from goods only, and a service writes stock 0.
      - The draft schema accepts any whole-number duration, so one odd value can't throw away the whole draft. Values outside 5–1440 minutes are dropped; a planted test covers this.
   3. The 999 stand-in:
-     - Stays. Depict's push API has no way to mark stock as untracked; a variant's inventory is only a warehouse id and a quantity. The docs say quantities feed "signals like low
+     - Stays. The platform's push API has no way to mark stock as untracked; a variant's inventory is only a warehouse id and a quantity. The docs say quantities feed "signals like low
        stock", and 999 stays well clear of that.
      - Our own search never uses stock. Results sort by relevance or price, filters are type, price and status, and the Typesense query has no stock term. The PR says so.
   4. Low items:

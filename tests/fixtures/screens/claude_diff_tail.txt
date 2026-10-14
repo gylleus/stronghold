@@ -10,7 +10,7 @@
   to directory restrictions—no change needed. Committing and running the gate now.
   Created PR #249, ran 3 shell commands
 ⏺ A review that asks for changes without naming any now counts as a pass, so no fix-up coder is sent off to guess. PR
-  #249 is green and can be merged (https://github.com/depict-org/commerce-platform/pull/249).
+  #249 is green and can be merged (https://github.com/acme/storefront/pull/249).
   - The fix: it's enforced where the platform reads the reviewer's answer, and the reviewer's instructions now say it
     too: "Every change you ask for is a finding: changes with no findings counts as pass." A change too long to review
     still can't pass, because that path always attaches its own finding. The new test fails against main and passes

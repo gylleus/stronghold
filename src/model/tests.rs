@@ -100,7 +100,7 @@ fn run_has_coordinator_workers_and_task_counts() {
         run.objective
             .as_deref()
             .unwrap()
-            .starts_with("commerce-platform wave")
+            .starts_with("storefront wave")
     );
     assert_eq!(run.coordinator, Some(term(COORDINATOR)));
     let counts = run.task_counts.unwrap();
@@ -115,10 +115,7 @@ fn run_has_coordinator_workers_and_task_counts() {
     assert_eq!(coord.label, "Hack 77 core in template");
     assert_eq!(coord.run_id.as_deref(), Some(RUN));
     assert_eq!(coord.agent, Some(AgentIdentity::Claude));
-    assert_eq!(
-        coord.branch.as_deref(),
-        Some("gylleus/hack-77-service-shops")
-    );
+    assert_eq!(coord.branch.as_deref(), Some("karl/hack-77-service-shops"));
     assert_eq!(coord.state, NodeState::Working);
 
     let worker = snap.node(&term(LIVE_WORKER)).unwrap();
@@ -288,10 +285,10 @@ fn terminal_label_falls_back_to_branch_then_handle() {
     let mut t = Terminal {
         handle: "term_x".into(),
         title: Some("⠂ ".into()),
-        branch: Some("refs/heads/gylleus/feature".into()),
+        branch: Some("refs/heads/karl/feature".into()),
         ..Default::default()
     };
-    assert_eq!(label::terminal_label(&t), "gylleus/feature");
+    assert_eq!(label::terminal_label(&t), "karl/feature");
     t.branch = None;
     assert_eq!(label::terminal_label(&t), "term_x");
 }

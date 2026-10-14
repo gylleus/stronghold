@@ -343,7 +343,7 @@ mod tests {
         let data = ClanData {
             terminals: vec![Terminal {
                 handle: "c1".into(),
-                worktree_path: Some("/u/orca/workspaces/depict/a".into()),
+                worktree_path: Some("/u/orca/workspaces/shop/a".into()),
                 ..Terminal::default()
             }],
             runs: vec![Run {

@@ -1,5 +1,5 @@
 //! Which of Karl's dwarves an inbound event concerns: thread ownership first, then shared refs
-//! (`VROOM-123`, `repo#45`, PR links, branch names), then distinctive label keywords.
+//! (ticket keys like `ABC-123`, `repo#45`, PR links, branch names), then distinctive label keywords.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -201,19 +201,39 @@ fn score(
     None
 }
 
-/// `vroom-123`, `repo#45` and bare `#45` refs, lowercase. PR links become `repo#45`.
-pub fn refs(text: &str) -> BTreeSet<String> {
+/// `abc-123` keys in lowercase `text`: a word of two or more letters, a dash and digits not
+/// followed by a letter, digit or `.` (so `gpt-5.6` and `myr-8hj` are not tickets).
+fn ticket_keys(lower: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
-    let lower = text.to_lowercase();
-    for (i, _) in lower.match_indices("vroom-") {
-        let n: String = lower[i + 6..]
+    for (i, _) in lower.match_indices('-') {
+        let prefix: String = lower[..i]
+            .chars()
+            .rev()
+            .take_while(char::is_ascii_alphanumeric)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let n: String = lower[i + 1..]
             .chars()
             .take_while(char::is_ascii_digit)
             .collect();
-        if !n.is_empty() {
-            out.insert(format!("vroom-{n}"));
+        let next = lower[i + 1 + n.len()..].chars().next();
+        if prefix.len() >= 2
+            && prefix.chars().all(|c| c.is_ascii_lowercase())
+            && !n.is_empty()
+            && !next.is_some_and(|c| c.is_ascii_alphanumeric() || c == '.')
+        {
+            out.insert(format!("{prefix}-{n}"));
         }
     }
+    out
+}
+
+/// Ticket keys (`abc-123`), `repo#45` and bare `#45` refs, lowercase. PR links become `repo#45`.
+pub fn refs(text: &str) -> BTreeSet<String> {
+    let lower = text.to_lowercase();
+    let mut out = ticket_keys(&lower);
     for (i, _) in lower.match_indices("/pull/") {
         let repo = lower[..i].rsplit('/').next().unwrap_or_default();
         let n: String = lower[i + 6..]

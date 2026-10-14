@@ -9,7 +9,7 @@
       "body": "## Ankra AI review\n\n**Verdict: comments.**\n\n(review text trimmed for the fixture)\n\n_Reviewed commit 42ee4463fb6c. This review is read-only and advisory._",
       "createdAt": "2026-09-02T11:52:39Z",
       "id": "IC_kwDOQ-GZiM8AAAABSF4Dkw",
-      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509088147"
+      "url": "https://github.com/acme/api/pull/255#issuecomment-5509088147"
     },
     {
       "author": {
@@ -19,17 +19,17 @@
       "body": "Karl's AI agent completed the R5 review batch on exact head defbc46. The retirem (trimmed)",
       "createdAt": "2026-09-02T12:03:28Z",
       "id": "IC_kwDOQ-GZiM8AAAABSF_9hg",
-      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509217670"
+      "url": "https://github.com/acme/api/pull/255#issuecomment-5509217670"
     },
     {
       "author": {
         "login": "claude"
       },
       "authorAssociation": "NONE",
-      "body": "**Claude encountered an error after 3m 5s** —— [View job](https://github.com/dep (trimmed)",
+      "body": "**Claude encountered an error after 3m 5s** —— [View job](https://github.com/acme (trimmed)",
       "createdAt": "2026-09-02T12:03:46Z",
       "id": "IC_kwDOQ-GZiM8AAAABSGALOA",
-      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509221176"
+      "url": "https://github.com/acme/api/pull/255#issuecomment-5509221176"
     },
     {
       "author": {
@@ -39,17 +39,17 @@
       "body": "Karl's AI agent completed the final R5 batch on exact head 42ee446. Each selecte (trimmed)",
       "createdAt": "2026-09-02T12:10:00Z",
       "id": "IC_kwDOQ-GZiM8AAAABSGEstw",
-      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509295287"
+      "url": "https://github.com/acme/api/pull/255#issuecomment-5509295287"
     },
     {
       "author": {
         "login": "claude"
       },
       "authorAssociation": "NONE",
-      "body": "**Claude encountered an error after 2m 47s** —— [View job](https://github.com/de (trimmed)",
+      "body": "**Claude encountered an error after 2m 47s** —— [View job](https://github.com/ac (trimmed)",
       "createdAt": "2026-09-02T12:10:37Z",
       "id": "IC_kwDOQ-GZiM8AAAABSGFJxQ",
-      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509302725"
+      "url": "https://github.com/acme/api/pull/255#issuecomment-5509302725"
     },
     {
       "author": {
@@ -59,7 +59,7 @@
       "body": "Karl's AI agent addressed the coordinator-lane bounce in one push at exact head  (trimmed)",
       "createdAt": "2026-09-02T12:40:25Z",
       "id": "IC_kwDOQ-GZiM8AAAABSGbsEQ",
-      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509671953"
+      "url": "https://github.com/acme/api/pull/255#issuecomment-5509671953"
     },
     {
       "author": {
@@ -69,7 +69,7 @@
       "body": "Karl's AI agent mechanically restacked R5 onto the bounced-fix R4 head so the PR (trimmed)",
       "createdAt": "2026-09-02T12:52:31Z",
       "id": "IC_kwDOQ-GZiM8AAAABSGlI_w",
-      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5509826815"
+      "url": "https://github.com/acme/api/pull/255#issuecomment-5509826815"
     },
     {
       "author": {
@@ -79,7 +79,7 @@
       "body": "Karl's AI agent completed the final R5 gate batch and restacked it on R4 exact h (trimmed)",
       "createdAt": "2026-09-02T13:13:31Z",
       "id": "IC_kwDOQ-GZiM8AAAABSG1_Jw",
-      "url": "https://github.com/depict-org/realtime/pull/255#issuecomment-5510102823"
+      "url": "https://github.com/acme/api/pull/255#issuecomment-5510102823"
     }
   ],
   "headRefOid": "92b1c9463bf2ddf30382046261754d7005b753e3",
@@ -181,5 +181,5 @@
     }
   ],
   "title": "recs: gate legacy config retirement",
-  "url": "https://github.com/depict-org/realtime/pull/255"
+  "url": "https://github.com/acme/api/pull/255"
 }

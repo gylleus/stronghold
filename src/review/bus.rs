@@ -78,10 +78,7 @@ mod tests {
         let marks = marks_from_inbox(&messages, created + 60_000);
         assert_eq!(marks.len(), 2, "the heartbeat is skipped");
         let m = &marks[0];
-        assert_eq!(
-            m.pr.url(),
-            "https://github.com/depict-org/commerce-platform/pull/249"
-        );
+        assert_eq!(m.pr.url(), "https://github.com/acme/storefront/pull/249");
         assert_eq!(
             m.origin.terminal_handle.as_deref(),
             Some("term_442fcb9f-3706-481e-a4c9-acc9707bc9e6")

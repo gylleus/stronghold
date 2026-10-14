@@ -560,7 +560,7 @@ mod tests {
         let s = parse_view(&fixture("pr_ready_marker_stale.json"), 7).unwrap();
         assert_eq!(s.number, 255);
         assert_eq!(s.title, "recs: gate legacy config retirement");
-        assert_eq!(s.url, "https://github.com/depict-org/realtime/pull/255");
+        assert_eq!(s.url, "https://github.com/acme/api/pull/255");
         assert_eq!(s.state, PrState::Open);
         assert_eq!(s.head_sha, "92b1c9463bf2ddf30382046261754d7005b753e3");
         assert_eq!(

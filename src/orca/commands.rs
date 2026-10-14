@@ -335,10 +335,7 @@ mod tests {
             shell.last_output_at.as_ref().and_then(|t| t.epoch_ms()),
             Some(1_789_598_758_208)
         );
-        assert_eq!(
-            shell.branch_name(),
-            Some("gylleus/tinybird-replay-sessions")
-        );
+        assert_eq!(shell.branch_name(), Some("karl/tinybird-replay-sessions"));
         assert_eq!(shell.execution_host_id.as_deref(), Some("local"));
         assert!(shell.worktree_path.is_some() && shell.tab_id.is_some());
         assert!(shell.leaf_id.is_some() && shell.pty_id.is_some());
@@ -472,12 +469,7 @@ mod tests {
         assert_eq!(runs.len(), 3);
         let run = &runs[0];
         assert_eq!(run.id, "run_7c25cdcf46e0");
-        assert!(
-            run.objective
-                .as_deref()
-                .unwrap()
-                .starts_with("commerce-platform")
-        );
+        assert!(run.objective.as_deref().unwrap().starts_with("storefront"));
         assert_eq!(
             run.coordinator_handle.as_deref(),
             Some("term_df9f48c9-c8e8-4ceb-afca-932028245fb1")

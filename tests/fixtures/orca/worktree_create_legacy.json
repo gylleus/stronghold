@@ -3,10 +3,10 @@
   "ok": true,
   "result": {
     "worktree": {
-      "id": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/gylleus/orca/workspaces/depict/spawn-old",
+      "id": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/k/orca/workspaces/shop/spawn-old",
       "repoId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f",
-      "path": "/Users/gylleus/orca/workspaces/depict/spawn-old",
-      "branch": "refs/heads/gylleus/spawn-old",
+      "path": "/Users/k/orca/workspaces/shop/spawn-old",
+      "branch": "refs/heads/karl/spawn-old",
       "isMainWorktree": false,
       "displayName": "spawn-old"
     },

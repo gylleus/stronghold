@@ -1492,7 +1492,7 @@ mod tests {
 
     #[test]
     fn spans_find_web_links() {
-        let pr = "https://github.com/depict-org/recommendations/pull/142";
+        let pr = "https://github.com/acme/web/pull/142";
         assert_eq!(
             parse_spans(
                 &format!("See {pr}. Also [#142]({pr}) and `{pr}`"),

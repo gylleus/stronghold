@@ -24,7 +24,7 @@ palette opens it in Console.
 
 Click the Ledger chamber to search and read the clan's knowledge store. With the query
 empty, the pane lists the five newest entries. Enter a query and press Enter or Search;
-Auto searches by meaning, switching to text for IDs such as `VROOM-1299` and `myr-bas`.
+Auto searches by meaning, switching to text for IDs such as `ABC-123` and `myr-bas`.
 Meaning and Text can also be selected explicitly. Results show title, folder, note type,
 age and a snippet; selecting one renders its Markdown. Open in default editor opens the
 actual file with macOS `open`.
@@ -55,13 +55,13 @@ scripts/install.sh --uninstall  # remove the app (and the CLI link if it points 
 The app lives in `~/Applications/Stronghold.app` (nothing is written to `/Applications`); open it
 from Finder, Spotlight or `open -a Stronghold`. `~/.cargo/bin/stronghold` becomes a symlink to
 `Stronghold.app/Contents/MacOS/stronghold`, so the CLI (`stronghold mcp` for the registered MCP
-server, `ctl`, `playbook`, `notify`) and the app are always the same build, and bundled dylibs
+server, `ctl`, `playbook`, `notify`, `pr-ready`, `say`, `install-hook`) and the app are always the same build, and bundled dylibs
 resolve through the link. Uninstalling removes that link; get a standalone CLI back with
 `cargo install --path .`.
 
 Building only the bundle: `cargo build --release && scripts/bundle.py` writes
 `target/release/Stronghold.app`. [`scripts/bundle.py`](scripts/bundle.py) writes the Info.plist
-(`ai.depict.stronghold`, version from `Cargo.toml`), copies every non-system dylib the binary
+(`com.gylleus.stronghold`, version from `Cargo.toml`), copies every non-system dylib the binary
 loads (`otool -L`, recursively) into `Contents/Frameworks` and relinks it through `@rpath`, and
 signs the bundle. The icon is `packaging/Stronghold.icns`, rendered by
 [`scripts/make_icon.py`](scripts/make_icon.py) (re-run it after changing the design).
@@ -80,31 +80,7 @@ signature, which changes with every build: after a reinstall, macOS may ask for 
 again. To keep permissions across builds, sign with a stable identity, e.g. a self-signed
 "Stronghold Dev" code-signing certificate made in Keychain Access:
 `STRONGHOLD_SIGN_IDENTITY="Stronghold Dev" scripts/install.sh`. To forget a decision:
-`tccutil reset Microphone ai.depict.stronghold`.
-
-## Renamed from Myrstack
-
-The app was called Myrstack until 2026-10-13 (the repo folder and the bead prefix `myr-` keep
-the old name). An existing install carries over:
-
-- `scripts/install.sh` removes `~/Applications/Myrstack.app` and points `~/.cargo/bin/myrstack`
-  at the new binary, so an MCP server registered as `myrstack` keeps working.
-- On first start, `~/Library/Application Support/Myrstack` is moved to `…/Stronghold`, with a
-  link left at the old path for the session hook and for sessions started before the rename.
-- `MYRSTACK_*` environment variables are still read when the `STRONGHOLD_*` one is unset, the
-  old `fleet_status` tool name still answers, and `myrstack://playbook/…` still resolves.
-
-To finish the move, once:
-
-```bash
-claude mcp add --scope user stronghold -- ~/.cargo/bin/stronghold mcp
-claude mcp remove --scope user myrstack   # sessions started before this keep the old names
-stronghold install-hook                    # points Claude's SessionStart hook at the new script
-```
-
-Then restart the Envoy from the King controls. macOS asks again for notification and microphone
-access, since the bundle id changed to `ai.depict.stronghold`. The King treats tools listed as
-`mcp__myrstack__*` like `mcp__stronghold__*`, so the order of these steps does not matter.
+`tccutil reset Microphone com.gylleus.stronghold`.
 
 ## Talk to it from a chat
 
@@ -120,6 +96,10 @@ Then ask Claude things like "what's the clan status?" or "who needs my input?". 
 are listed in [docs/mcp.md](docs/mcp.md); the local API it proxies to is in
 [docs/control-api.md](docs/control-api.md).
 
+`stronghold install-hook` adds a Claude Code `SessionStart` hook that records which Orca
+terminal runs which Claude session, so Stronghold can match them exactly (`uninstall-hook`
+removes it).
+
 ## Envoy
 
 Start and stop the Envoy from the King controls. It uses one Claude session in the dedicated
@@ -134,16 +114,23 @@ on the next Start. Polling has a 30-second minimum, including values loaded from
 
 ## Playbook
 
-Stronghold owns the clan playbook, the rules coordinators, attendants and workers run by. The
+Stronghold owns the clan playbook, the rules coordinators, attendants, workers and the Envoy
+run by. The
 files live in [`playbook/`](playbook/README.md) and are served straight from disk, stamped
 with the git commit they came from, so no app needs to run:
 
-- MCP prompts `/mcp__stronghold__coordinator`, `/mcp__stronghold__attendant` and
-  `/mcp__stronghold__worker` load a role's rules into a Claude Code session.
+- MCP prompts `/mcp__stronghold__coordinator`, `/mcp__stronghold__attendant`,
+  `/mcp__stronghold__worker` and `/mcp__stronghold__envoy` load a role's rules into a Claude
+  Code session.
 - MCP tools `get_playbook` / `list_playbook` and resources `stronghold://playbook/<file>`.
-- `stronghold playbook [coordinator|attendant|worker|<file>] [--section <title>] [--list]`.
+- `stronghold playbook [coordinator|attendant|worker|envoy|<file>] [--section <title>] [--list]`,
+  and `stronghold playbook attendant-brief <run_id>` / `kickoff <task_id>` for the filled
+  templates.
 
-`STRONGHOLD_PLAYBOOK_DIR` overrides where the files are read from. Details:
+`STRONGHOLD_PLAYBOOK_DIR` overrides where the files are read from (else the repo's
+`playbook/`, else `~/Documents/agents`). Org-specific facts the playbook refers to (GitHub
+org, colleagues, ticket key, Slack contacts) are kept out of the repo, in
+`~/Documents/agents/ORG.md` and `~/Documents/agents/ENVOY-CONTACTS.md`. Details:
 [docs/mcp.md](docs/mcp.md#playbook).
 
 See [PLAN.md](PLAN.md) for the design and milestones.

@@ -3,7 +3,7 @@
   ⎿  … 48 more files changed
   ⎿  (timeout 10m)
   Ran 1 shell command
-⏺ merge_ready: https://github.com/depict-org/commerce-platform/pull/235 (head 2cd9c637). I fixed the review's medium
+⏺ merge_ready: https://github.com/acme/storefront/pull/235 (head 2cd9c637). I fixed the review's medium
   finding, rebased onto main (at #240) and pushed.
   When a plan has ## Tables or ## Actions, planLine now adds a sentence after where the module shows and before the
   goal. For the test fixture it reads: "Olivia wants to build Employees, shown as a backoffice page at /admin/employees.

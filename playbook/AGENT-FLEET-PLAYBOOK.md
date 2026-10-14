@@ -9,10 +9,9 @@ you wait on (including "done, can I close?") and `finish_session` for leaving on
 (_Human in the loop_). v7.2 starts every Codex and Claude agent through `spawn_session`, never
 a hand-typed `orca terminal create` (_Setup and dispatch_).
 
-**Stronghold was called Myrstack until 2026-10-13; it is the same app.** A session started
-before Karl installed the renamed build may still list its tools as `mcp__myrstack__*` (and
-`clan_status` as `fleet_status`), have the CLI as `myrstack`, and get whip nudges as
-`Myrstack: …` from `myrstack-whip`. Treat each as its Stronghold counterpart.
+**Org-specific facts** (GitHub org, colleagues, ticket key, repo gates, old tool names) live
+outside this repo in `~/Documents/agents/ORG.md`. Read it when this file says `<org>` or
+points at it.
 
 ## Topology
 
@@ -37,14 +36,13 @@ Check live rather than trusting a table: `orca status --json` (runtime must be r
 `orca repo list`, `orca account list`. Stable facts:
 
 - Worktrees live at `~/orca/workspaces/<repo>/<name>`; clan repos have base ref `origin/main`.
-- GitHub: `gylleus` is Karl _and_ every clan agent. Colleagues: `danieltroger` (Daniel),
-  `Letju` (Justin).
+- GitHub: `gylleus` is Karl _and_ every clan agent. Colleagues' logins: `ORG.md`.
 - **Ankra** (`ankra-platform[bot]`) auto-reviews every PR on open and on every push. It posts
   one `## Ankra AI review` comment with a `**Verdict: …**` line, edited in place to the latest
   head (`_Reviewed commit <sha>_` footer), plus inline `[high]/[medium]/[low]` threads per
   push. Advisory: its `gh pr checks` row shows a neutral `skipping`. The `claude` row next to
   it is a retired workflow; ignore it.
-- Tickets: Linear (VROOM) through the coordinator's Linear MCP. Orca's Linear integration is
+- Tickets: Linear (team key in `ORG.md`) through the coordinator's Linear MCP. Orca's Linear integration is
   not connected, so workers get ticket text only through their dispatch spec.
 - **The Ledger** is the clan's shared knowledge store (the `ledger` MCP server). Search it
   before planning a run, and file what the run learned when it ends; the rules are in your
@@ -86,7 +84,7 @@ Check live rather than trusting a table: `orca status --json` (runtime must be r
    `gh pr checks` (a push re-triggers it). Never surface a PR to Karl before this holds.
 6. **Check what exists before building.** Search the Ledger and run `orca orchestration
    task-list --brief --json` before spawning a decision track, and `gh pr list --repo
-   depict-org/<r> --state open --search "<symptom>"` before writing a fix: colleagues are a
+   <org>/<r> --state open --search "<symptom>"` before writing a fix: colleagues are a
    clan too.
 7. **Machine evidence gates normal merges; Karl gates the scary ones.** CI green + review
    answered + verification evidence = merge-ready. Auth/security, write paths, live merchant
@@ -175,10 +173,9 @@ sits unsubmitted at the `❯` prompt or behind the Bypass Permissions modal. `te
      worker stops after APPROVED and asks (`ask`); it starts implementing only on your reply.
      Answer within the hour, or send a `holding:` status saying when.
 4. **Implement** in the worktree: own venv/node_modules inside it, a track-derived port range
-   (track 423 owns 42300–42399), shared dev DBs read-only. Gate per repo's CLAUDE.md/CI (in
-   `recommendations`: `just check`, plus `just test-integration` after `just dev-up` when the
-   binding or wire types change). Heartbeat throughout (`_AGENT_PROTOCOL.md` _Heartbeats_).
-5. **PR gates.** Title `VROOM-<n>: <title>` → Ankra verdict → answer every thread → after
+   (track 423 owns 42300–42399), shared dev DBs read-only. Gate per repo's CLAUDE.md/CI (known gates
+   are in `ORG.md`). Heartbeat throughout (`_AGENT_PROTOCOL.md` _Heartbeats_).
+5. **PR gates.** Title `<TICKET>-<n>: <title>` → Ankra verdict → answer every thread → after
    rework, Ankra's pass on the new head → `/simplify` deletion pass → verification evidence in
    the PR body. **No nit rounds:** when your gate review says APPROVE with only low or medium
    items, the worker fixes them in place before `merge_ready`; a REWORK file is for blocking

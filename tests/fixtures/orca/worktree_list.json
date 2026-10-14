@@ -4,7 +4,7 @@
   "result": {
     "worktrees": [
       {
-        "id": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/repo/hackathon/commerce-platform",
+        "id": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/k/repo/hackathon/storefront",
         "identity": {
           "key": "wt2:local:75932e7e-f7d0-44aa-927e-861f8f0c01e9",
           "executionHostId": "local",
@@ -12,10 +12,10 @@
         },
         "instanceId": "75932e7e-f7d0-44aa-927e-861f8f0c01e9",
         "repoId": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd",
-        "projectId": "github:depict-org/commerce-platform",
+        "projectId": "github:acme/storefront",
         "hostId": "local",
         "projectHostSetupId": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd",
-        "path": "/Users/gylleus/repo/hackathon/commerce-platform",
+        "path": "/Users/k/repo/hackathon/storefront",
         "head": "ad0703b3b51ca4b827969bae3f7390e6bb5666f3",
         "branch": "refs/heads/main",
         "isBare": false,
@@ -44,7 +44,7 @@
         "childWorktreeIds": [],
         "lineage": null,
         "git": {
-          "path": "/Users/gylleus/repo/hackathon/commerce-platform",
+          "path": "/Users/k/repo/hackathon/storefront",
           "head": "ad0703b3b51ca4b827969bae3f7390e6bb5666f3",
           "branch": "refs/heads/main",
           "isBare": false,
@@ -52,7 +52,7 @@
         }
       },
       {
-        "id": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/orca/workspaces/commerce-platform/hack-77-admin-speed",
+        "id": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/k/orca/workspaces/storefront/hack-77-admin-speed",
         "identity": {
           "key": "wt2:local:80502b63-dacb-459b-89a9-b6120004ee9b",
           "executionHostId": "local",
@@ -60,15 +60,15 @@
         },
         "instanceId": "80502b63-dacb-459b-89a9-b6120004ee9b",
         "repoId": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd",
-        "projectId": "github:depict-org/commerce-platform",
+        "projectId": "github:acme/storefront",
         "hostId": "local",
         "projectHostSetupId": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd",
         "creatorProvenance": {
           "kind": "host"
         },
-        "path": "/Users/gylleus/orca/workspaces/commerce-platform/hack-77-admin-speed",
+        "path": "/Users/k/orca/workspaces/storefront/hack-77-admin-speed",
         "head": "1f46c9842275289f0a66a3b5fd1cec867f97aa40",
-        "branch": "refs/heads/gylleus/hack-77-admin-speed",
+        "branch": "refs/heads/karl/hack-77-admin-speed",
         "isBare": false,
         "isMainWorktree": false,
         "displayName": "hack-77-admin-speed",
@@ -98,15 +98,15 @@
         "childWorktreeIds": [],
         "lineage": null,
         "git": {
-          "path": "/Users/gylleus/orca/workspaces/commerce-platform/hack-77-admin-speed",
+          "path": "/Users/k/orca/workspaces/storefront/hack-77-admin-speed",
           "head": "1f46c9842275289f0a66a3b5fd1cec867f97aa40",
-          "branch": "refs/heads/gylleus/hack-77-admin-speed",
+          "branch": "refs/heads/karl/hack-77-admin-speed",
           "isBare": false,
           "isMainWorktree": false
         }
       },
       {
-        "id": "5dc08a0b-46a3-4fc0-87dd-6550253b8072::/Users/gylleus/repo/depict/lite-backend",
+        "id": "5dc08a0b-46a3-4fc0-87dd-6550253b8072::/Users/k/repo/shop/lite-backend",
         "identity": {
           "key": "wt2:local:576abc68-5a1b-4aa0-8284-41451593e943",
           "executionHostId": "local",
@@ -114,10 +114,10 @@
         },
         "instanceId": "576abc68-5a1b-4aa0-8284-41451593e943",
         "repoId": "5dc08a0b-46a3-4fc0-87dd-6550253b8072",
-        "projectId": "github:depict-org/lite-backend",
+        "projectId": "github:acme/lite-backend",
         "hostId": "local",
         "projectHostSetupId": "5dc08a0b-46a3-4fc0-87dd-6550253b8072",
-        "path": "/Users/gylleus/repo/depict/lite-backend",
+        "path": "/Users/k/repo/shop/lite-backend",
         "head": "aca4f76ca844b0e46b5c070dd946e7663410d785",
         "branch": "refs/heads/main",
         "isBare": false,
@@ -146,7 +146,7 @@
         "childWorktreeIds": [],
         "lineage": null,
         "git": {
-          "path": "/Users/gylleus/repo/depict/lite-backend",
+          "path": "/Users/k/repo/shop/lite-backend",
           "head": "aca4f76ca844b0e46b5c070dd946e7663410d785",
           "branch": "refs/heads/main",
           "isBare": false,
@@ -154,7 +154,7 @@
         }
       },
       {
-        "id": "5dc08a0b-46a3-4fc0-87dd-6550253b8072::/Users/gylleus/orca/workspaces/lite-backend/lb-surface-fetch",
+        "id": "5dc08a0b-46a3-4fc0-87dd-6550253b8072::/Users/k/orca/workspaces/lite-backend/lb-surface-fetch",
         "identity": {
           "key": "wt2:local:3efc3905-2808-4e22-8f3f-ee0c794ec798",
           "executionHostId": "local",
@@ -162,15 +162,15 @@
         },
         "instanceId": "3efc3905-2808-4e22-8f3f-ee0c794ec798",
         "repoId": "5dc08a0b-46a3-4fc0-87dd-6550253b8072",
-        "projectId": "github:depict-org/lite-backend",
+        "projectId": "github:acme/lite-backend",
         "hostId": "local",
         "projectHostSetupId": "5dc08a0b-46a3-4fc0-87dd-6550253b8072",
         "creatorProvenance": {
           "kind": "host"
         },
-        "path": "/Users/gylleus/orca/workspaces/lite-backend/lb-surface-fetch",
+        "path": "/Users/k/orca/workspaces/lite-backend/lb-surface-fetch",
         "head": "e6a13872bd7cfc339db64d3a5a7c7c145253944a",
-        "branch": "refs/heads/gylleus/lb-surface-fetch",
+        "branch": "refs/heads/karl/lb-surface-fetch",
         "isBare": false,
         "isMainWorktree": false,
         "displayName": "lb-surface-fetch",
@@ -200,15 +200,15 @@
         "childWorktreeIds": [],
         "lineage": null,
         "git": {
-          "path": "/Users/gylleus/orca/workspaces/lite-backend/lb-surface-fetch",
+          "path": "/Users/k/orca/workspaces/lite-backend/lb-surface-fetch",
           "head": "e6a13872bd7cfc339db64d3a5a7c7c145253944a",
-          "branch": "refs/heads/gylleus/lb-surface-fetch",
+          "branch": "refs/heads/karl/lb-surface-fetch",
           "isBare": false,
           "isMainWorktree": false
         }
       },
       {
-        "id": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/gylleus/repo/depict/depict",
+        "id": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/k/repo/shop/shop",
         "identity": {
           "key": "wt2:local:cf82c93f-0857-41c8-9ed8-ddf6b964a436",
           "executionHostId": "local",
@@ -216,10 +216,10 @@
         },
         "instanceId": "cf82c93f-0857-41c8-9ed8-ddf6b964a436",
         "repoId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f",
-        "projectId": "github:depict-org/depict",
+        "projectId": "github:acme/shop",
         "hostId": "local",
         "projectHostSetupId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f",
-        "path": "/Users/gylleus/repo/depict/depict",
+        "path": "/Users/k/repo/shop/shop",
         "head": "4106a37339a8763aeef3ca6cdf6d07dc3e2b0d12",
         "branch": "refs/heads/main",
         "isBare": false,
@@ -250,7 +250,7 @@
         "childWorktreeIds": [],
         "lineage": null,
         "git": {
-          "path": "/Users/gylleus/repo/depict/depict",
+          "path": "/Users/k/repo/shop/shop",
           "head": "4106a37339a8763aeef3ca6cdf6d07dc3e2b0d12",
           "branch": "refs/heads/main",
           "isBare": false,
@@ -258,7 +258,7 @@
         }
       },
       {
-        "id": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/gylleus/orca/workspaces/depict/golive-write-order",
+        "id": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/k/orca/workspaces/shop/golive-write-order",
         "identity": {
           "key": "wt2:local:47b47fe4-93b3-4d19-986e-285b48db592d",
           "executionHostId": "local",
@@ -266,15 +266,15 @@
         },
         "instanceId": "47b47fe4-93b3-4d19-986e-285b48db592d",
         "repoId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f",
-        "projectId": "github:depict-org/depict",
+        "projectId": "github:acme/shop",
         "hostId": "local",
         "projectHostSetupId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f",
         "creatorProvenance": {
           "kind": "host"
         },
-        "path": "/Users/gylleus/orca/workspaces/depict/golive-write-order",
+        "path": "/Users/k/orca/workspaces/shop/golive-write-order",
         "head": "50e7dbc14b57afb25df977b6f830dd10a667d2d8",
-        "branch": "refs/heads/gylleus/golive-write-order",
+        "branch": "refs/heads/karl/golive-write-order",
         "isBare": false,
         "isMainWorktree": false,
         "displayName": "golive-write-order",
@@ -304,9 +304,9 @@
         "childWorktreeIds": [],
         "lineage": null,
         "git": {
-          "path": "/Users/gylleus/orca/workspaces/depict/golive-write-order",
+          "path": "/Users/k/orca/workspaces/shop/golive-write-order",
           "head": "50e7dbc14b57afb25df977b6f830dd10a667d2d8",
-          "branch": "refs/heads/gylleus/golive-write-order",
+          "branch": "refs/heads/karl/golive-write-order",
           "isBare": false,
           "isMainWorktree": false
         }
