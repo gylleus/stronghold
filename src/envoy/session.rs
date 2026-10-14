@@ -12,6 +12,10 @@ pub const HOME: &str = "envoy-home";
 const REPO_NAMES: [&str; 2] = ["stronghold", "myrstack"];
 /// The playbook rendered for `--append-system-prompt-file`, in the app's data dir.
 pub const SYSTEM_PROMPT_FILE: &str = "envoy-system-prompt.md";
+/// The Ledger, the clan's shared knowledge store: a basic-memory server on this Mac.
+const LEDGER_URL: &str = "http://127.0.0.1:8643/mcp";
+/// The Ledger tools the Envoy gets: it looks things up and never writes.
+const LEDGER_TOOLS: [&str; 2] = ["search_notes", "read_note"];
 
 /// The launch plan; `system_prompt` is the file the playbook was written to.
 pub fn plan(
@@ -111,6 +115,7 @@ fn allowed_tools() -> Vec<String> {
             .chain(super::control::METHODS.iter().copied())
             .map(|name| format!("mcp__stronghold__{name}")),
         )
+        .chain(LEDGER_TOOLS.map(|name| format!("mcp__ledger__{name}")))
         .collect()
 }
 
@@ -138,9 +143,11 @@ fn command(model: Option<&str>, prompt: &str, executable: &Path, system_prompt: 
     if let Some(model) = model {
         args.extend(["--model".into(), shell_quote(model)]);
     }
-    // Keep status hooks, but ignore worktree settings and every other MCP server.
-    let mcp =
-        serde_json::json!({"mcpServers": {"stronghold": {"command": executable, "args": ["mcp"]}}});
+    // Keep status hooks, but ignore worktree settings and every MCP server but these two.
+    let mcp = serde_json::json!({"mcpServers": {
+        "stronghold": {"command": executable, "args": ["mcp"]},
+        "ledger": {"type": "http", "url": LEDGER_URL},
+    }});
     args.extend(
         [
             "--setting-sources",
@@ -641,8 +648,10 @@ mod tests {
         let system_prompt = Path::new("/data dir/envoy-system-prompt.md");
         let command = command(Some("sonnet"), "load envoy", executable, system_prompt);
         assert!(command.starts_with("claude --model sonnet --setting-sources user --permission-mode dontAsk --tools Read,Grep,Glob --strict-mcp-config --mcp-config "));
-        let mcp =
-            serde_json::json!({"mcpServers":{"stronghold":{"command":executable,"args":["mcp"]}}});
+        let mcp = serde_json::json!({"mcpServers":{
+            "stronghold":{"command":executable,"args":["mcp"]},
+            "ledger":{"type":"http","url":"http://127.0.0.1:8643/mcp"},
+        }});
         assert!(command.contains(&shell_quote(&mcp.to_string())));
         assert!(command.contains(&format!(
             " --append-system-prompt-file {} --allowedTools ",
@@ -675,6 +684,7 @@ mod tests {
                 .iter()
                 .map(|n| format!("mcp__stronghold__{n}")),
         );
+        expected.extend(["search_notes", "read_note"].map(|n| format!("mcp__ledger__{n}")));
         assert_eq!(allowed, expected);
         let denied = command
             .split("--disallowedTools ")

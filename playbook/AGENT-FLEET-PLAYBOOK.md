@@ -46,9 +46,9 @@ Check live rather than trusting a table: `orca status --json` (runtime must be r
   it is a retired workflow; ignore it.
 - Tickets: Linear (VROOM) through the coordinator's Linear MCP. Orca's Linear integration is
   not connected, so workers get ticket text only through their dispatch spec.
-- **The Ledger** is the clan's shared memory (the `ledger` MCP server). Search it before
-  planning a run, and file what the run learned when it ends; the worker protocol's
-  _The Ledger_ has the rules.
+- **The Ledger** is the clan's shared knowledge store (the `ledger` MCP server). Search it
+  before planning a run, and file what the run learned when it ends; the rules are in your
+  global agent rules (`~/.claude/CLAUDE.md`).
 - No secrets tooling: agents never self-serve credentials; they summon Karl (_Human in the loop_).
 
 ## Core principles
