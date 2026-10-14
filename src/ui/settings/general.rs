@@ -51,8 +51,8 @@ pub(super) fn section(
     let toggled = ui
         .checkbox(&mut focus_new, FOCUS_NEW_LABEL)
         .on_hover_text(
-            "Select and zoom onto a new dwarf's node once it appears. Off: spawns leave the \
-             selection and the view alone.",
+            "Select and pan to a new dwarf's node once it appears, keeping the current zoom. \
+             Off: spawns leave the selection and the view alone.",
         )
         .changed();
     ui.separator();

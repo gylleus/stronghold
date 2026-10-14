@@ -487,7 +487,10 @@ impl FarmView {
             }
         }
         if bounds.is_finite() && bounds.is_positive() {
-            self.camera.focus(scene.rect, bounds);
+            match focus {
+                Focus::Nodes(_) => self.camera.pan_to(scene.rect, bounds.center()),
+                Focus::Run(_) | Focus::Repo(_) => self.camera.focus(scene.rect, bounds),
+            }
         }
     }
 

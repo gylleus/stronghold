@@ -111,7 +111,7 @@ pub enum ControlCommand {
     SelectMany {
         agents: Vec<String>,
     },
-    /// Select a node and pan/zoom the farm onto it; `raise` also brings the window forward.
+    /// Select a node and pan to it at the current zoom; `raise` also brings the window forward.
     Focus {
         agent: String,
         raise: bool,
