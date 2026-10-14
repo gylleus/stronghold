@@ -195,46 +195,59 @@ pub struct Watch {
 
 impl Watch {
     pub fn new(root: PathBuf) -> Self {
-        let loaded = match std::fs::read(root.join("report-receipts.json")) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeSet::new()),
-            Err(e) => Err(e.to_string()),
-        };
         Self {
             root,
-            acknowledged: loaded.clone().unwrap_or_default(),
-            error: loaded.err(),
+            acknowledged: BTreeSet::new(),
+            error: None,
             latest: None,
         }
     }
 
     pub fn poll(&mut self) -> Vec<SavedReport> {
-        if self.error.is_some() {
-            return Vec::new();
+        let previous_error = self.error.take();
+        let reports = self.scan();
+        if self.error != previous_error
+            && let Some(error) = &self.error
+        {
+            log::warn!("Lorekeeper report watch: {error}");
         }
-        match self.scan() {
-            Ok(reports) => reports,
-            Err(e) => {
-                self.error = Some(e.to_string());
-                Vec::new()
-            }
-        }
+        reports
     }
 
-    fn scan(&mut self) -> Result<Vec<SavedReport>> {
+    fn scan(&mut self) -> Vec<SavedReport> {
+        let mut errors = Vec::new();
+        let persisted = match std::fs::read(self.root.join("report-receipts.json")) {
+            Ok(bytes) => {
+                serde_json::from_slice::<BTreeSet<String>>(&bytes).map_err(anyhow::Error::from)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeSet::new()),
+            Err(e) => Err(e.into()),
+        }
+        .unwrap_or_else(|e| {
+            errors.push(format!("Cannot read notification receipts: {e}"));
+            BTreeSet::new()
+        });
+        self.acknowledged.extend(persisted.iter().cloned());
         let entries = match std::fs::read_dir(self.root.join("reports")) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e.into()),
+            Ok(entries) => Some(entries),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                errors.push(format!("Cannot scan reports: {e}"));
+                None
+            }
         };
-        let mut paths = entries
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_type().is_ok_and(|t| t.is_file())
-                    && e.path().extension().is_some_and(|s| s == "json")
-            })
-            .map(|e| e.path())
-            .collect::<Vec<_>>();
+        let mut paths = Vec::new();
+        for entry in entries.into_iter().flatten() {
+            match entry.and_then(|e| e.file_type().map(|kind| (e.path(), kind))) {
+                Ok((path, kind))
+                    if kind.is_file() && path.extension().is_some_and(|s| s == "json") =>
+                {
+                    paths.push(path)
+                }
+                Ok(_) => {}
+                Err(e) => errors.push(format!("Cannot inspect report entry: {e}")),
+            }
+        }
         paths.sort();
         paths.reverse();
         let mut notices = Vec::new();
@@ -244,20 +257,34 @@ impl Watch {
             if !newest && self.acknowledged.contains(&id) {
                 continue;
             }
-            let saved = read(&path)?;
-            ensure!(id == saved.run_id, "Report id does not match filename");
+            let saved = match read(&path).and_then(|saved| {
+                ensure!(id == saved.run_id, "Report id does not match filename");
+                Ok(saved)
+            }) {
+                Ok(saved) => saved,
+                Err(e) => {
+                    errors.push(format!("Skipping {}: {e}", path.display()));
+                    continue;
+                }
+            };
             if newest {
                 self.latest = Some(saved.clone());
             }
-            if !self.acknowledged.contains(&id) {
-                let mut next = self.acknowledged.clone();
-                next.insert(id);
-                super::write_json(&self.root.join("report-receipts.json"), &next)?;
-                self.acknowledged = next;
+            if self.acknowledged.insert(id) {
                 notices.push(saved);
             }
         }
-        Ok(notices)
+        if self.acknowledged != persisted
+            && let Err(e) =
+                super::write_json(&self.root.join("report-receipts.json"), &self.acknowledged)
+        {
+            // Keep the in-memory receipts and retry persistence without losing these notices.
+            errors.push(format!("Cannot save notification receipts: {e}"));
+        }
+        if !errors.is_empty() {
+            self.error = Some(errors.join("\n"));
+        }
+        notices
     }
 }
 
@@ -323,6 +350,110 @@ mod tests {
         bad.kept = u32::MAX;
         assert!(bad.validate().is_err());
         assert!(serde_json::from_value::<Report>(serde_json::json!({"checked":-1})).is_err());
+    }
+
+    #[test]
+    fn bad_report_does_not_block_other_or_later_notifications() {
+        for bad in ["not json", "wrong id", "invalid counts"] {
+            let dir = tempfile::tempdir().unwrap();
+            let reports = dir.path().join("reports");
+            let mut saved = session(&dir.path().join("snapshot"));
+            let first = persist(&reports, &saved, "terminal", report()).unwrap();
+            let bad_path = reports.join("00000000000000000002.json");
+            if bad == "not json" {
+                std::fs::write(&bad_path, bad).unwrap();
+            } else {
+                let mut invalid = first;
+                if bad == "invalid counts" {
+                    invalid.run_id = "00000000000000000002".into();
+                    invalid.report.checked = 200;
+                }
+                super::super::write_json(&bad_path, &invalid).unwrap();
+            }
+            saved.run_id = "00000000000000000003".into();
+            persist(&reports, &saved, "terminal", report()).unwrap();
+            let mut watch = Watch::new(dir.path().into());
+            assert_eq!(watch.poll().len(), 2, "{bad}");
+            assert!(
+                watch
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .contains("00000000000000000002.json")
+            );
+            saved.run_id = "00000000000000000004".into();
+            persist(&reports, &saved, "terminal", report()).unwrap();
+            let later = watch.poll();
+            assert_eq!(later.len(), 1, "{bad}");
+            assert_eq!(later[0].run_id, saved.run_id);
+            assert!(watch.poll().is_empty());
+            std::fs::remove_file(bad_path).unwrap();
+            assert!(watch.poll().is_empty());
+            assert!(watch.error.is_none());
+            assert!(Watch::new(dir.path().into()).poll().is_empty());
+        }
+    }
+
+    #[test]
+    fn corrupt_receipts_recover_from_in_memory_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let saved = session(&dir.path().join("snapshot"));
+        persist(&dir.path().join("reports"), &saved, "terminal", report()).unwrap();
+        let mut watch = Watch::new(dir.path().into());
+        assert_eq!(watch.poll().len(), 1);
+        std::fs::write(dir.path().join("report-receipts.json"), "not json").unwrap();
+        let mut later = saved.clone();
+        later.run_id = "00000000000000000002".into();
+        persist(&dir.path().join("reports"), &later, "terminal", report()).unwrap();
+        let notices = watch.poll();
+        assert!(watch.error.is_some());
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].run_id, later.run_id);
+        assert!(watch.poll().is_empty());
+        assert!(watch.error.is_none());
+        assert!(Watch::new(dir.path().into()).poll().is_empty());
+    }
+
+    #[test]
+    fn corrupt_receipts_at_startup_do_not_block_delivery() {
+        let dir = tempfile::tempdir().unwrap();
+        let saved = session(&dir.path().join("snapshot"));
+        persist(&dir.path().join("reports"), &saved, "terminal", report()).unwrap();
+        std::fs::write(dir.path().join("report-receipts.json"), "not json").unwrap();
+        let mut watch = Watch::new(dir.path().into());
+        assert_eq!(watch.poll().len(), 1);
+        assert!(watch.error.is_some());
+        assert!(watch.poll().is_empty());
+        assert!(watch.error.is_none());
+        assert!(Watch::new(dir.path().into()).poll().is_empty());
+    }
+
+    #[test]
+    fn scan_and_receipt_write_failures_retry_without_losing_reports() {
+        for write_failure in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let reports = dir.path().join("reports");
+            let saved = session(&dir.path().join("snapshot"));
+            if write_failure {
+                persist(&reports, &saved, "terminal", report()).unwrap();
+                std::fs::create_dir(dir.path().join("report-receipts.tmp")).unwrap();
+            } else {
+                std::fs::write(&reports, "not a directory").unwrap();
+            }
+            let mut watch = Watch::new(dir.path().into());
+            assert_eq!(watch.poll().len(), usize::from(write_failure));
+            assert!(watch.error.is_some());
+            if write_failure {
+                std::fs::remove_dir(dir.path().join("report-receipts.tmp")).unwrap();
+            } else {
+                std::fs::remove_file(&reports).unwrap();
+                persist(&reports, &saved, "terminal", report()).unwrap();
+            }
+            assert_eq!(watch.poll().len(), usize::from(!write_failure));
+            assert!(watch.error.is_none());
+            assert!(watch.poll().is_empty());
+            assert!(Watch::new(dir.path().into()).poll().is_empty());
+        }
     }
 
     #[test]
