@@ -38,9 +38,9 @@ pub const MISREPORTED_LAUNCH: &str = "the worker is running although Orca failed
      revoked the dispatch: its worker_done/merge_ready arrive as \"Rejected …\" messages, which \
      Stronghold forwards to the coordinator as the worker's report";
 const MAX_ENTERS: u32 = 3;
-/// The note when a Codex session came up asking for approval.
-pub const CODEX_APPROVALS_ON: &str = "Codex started with approvals on (its header lacks \
-     \"permissions: YOLO mode\"); it will ask before every action. Relaunch it with \
+/// The note when Codex's initialized header suggests approvals are enabled.
+pub const CODEX_APPROVALS_ON: &str = "Codex may have approvals on (its initialized header lacks \
+     \"permissions: YOLO mode\"). Relaunch it with \
      --dangerously-bypass-approvals-and-sandbox";
 
 /// Caller identity variables `orca` reads besides [`crate::orca::client::SENDER_IDENTITY_ENV`];
@@ -697,7 +697,7 @@ pub struct Verifier {
     trust: u32,
     updates: u32,
     enters: u32,
-    /// Codex's header showed it asking for approval (no "YOLO mode").
+    /// Codex's initialized header lacked "YOLO mode", suggesting approvals are enabled.
     pub approvals_on: bool,
     last: Option<ScreenVerdict>,
     pub notes: Vec<String>,
