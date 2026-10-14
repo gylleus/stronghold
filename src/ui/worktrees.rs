@@ -595,10 +595,7 @@ fn stage_view(ui: &mut egui::Ui, stage: &mut Stage, max_height: f32) -> Option<A
         }
         Stage::Review { plan, chosen } => review_view(ui, plan, chosen),
         Stage::Running { total, done, .. } => {
-            ui.label(format!(
-                "Clearing worktrees through Orca… {}/{total}",
-                done.len()
-            ));
+            ui.label(format!("Clearing worktrees… {}/{total}", done.len()));
             ui.add(egui::ProgressBar::new(
                 done.len() as f32 / (*total).max(1) as f32,
             ));
@@ -646,7 +643,7 @@ fn review_view(ui: &mut egui::Ui, plan: &Plan, chosen: &mut BTreeSet<String>) ->
                             .color(ui.visuals().error_fg_color),
                         ),
                     )
-                    .on_hover_text("Runs `orca worktree rm` (no --force) for each ticked worktree")
+                    .on_hover_text("Runs `orca worktree rm`, or `git worktree remove` for unlisted entries; no --force")
                     .clicked();
                 if remove {
                     return Some(Action::Remove);
@@ -696,6 +693,9 @@ fn review_view(ui: &mut egui::Ui, plan: &Plan, chosen: &mut BTreeSet<String>) ->
                                     chosen.remove(&e.id);
                                 }
                             }
+                            if e.unlisted {
+                                ui.weak("unlisted");
+                            }
                             ui.weak(e.bytes.map(format_bytes).unwrap_or_default());
                             let reasons = ui.weak(e.verdict.reasons.join("; "));
                             if !e.verdict.notes.is_empty()
@@ -717,6 +717,9 @@ fn review_view(ui: &mut egui::Ui, plan: &Plan, chosen: &mut BTreeSet<String>) ->
                         ui.horizontal_wrapped(|ui| {
                             ui.label(format!("{}/{}", e.repo, e.name))
                                 .on_hover_text(&e.path);
+                            if e.unlisted {
+                                ui.weak("unlisted");
+                            }
                             ui.weak(e.size_text());
                             ui.weak(e.verdict.reasons.join("; "));
                         });
@@ -724,7 +727,7 @@ fn review_view(ui: &mut egui::Ui, plan: &Plan, chosen: &mut BTreeSet<String>) ->
                 });
             if !plan.orphans.is_empty() {
                 egui::CollapsingHeader::new(format!(
-                    "Folders Orca doesn't list ({}, not touched)",
+                    "Folders without git registration ({}, not touched)",
                     plan.orphans.len()
                 ))
                 .default_open(false)

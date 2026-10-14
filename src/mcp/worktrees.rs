@@ -20,7 +20,7 @@ pub fn definitions() -> Vec<Value> {
     vec![json!({
         "name": TOOL,
         "title": "Clean up Orca worktrees",
-        "description": "Evaluates every linked Orca worktree and plans which to remove. A worktree \
+        "description": "Evaluates every linked worktree in Orca or registered with git and plans which to remove. A worktree \
             is removable only if no Orca terminal, process (by working directory), active \
             dispatch or parked agent is in it, it has no uncommitted changes, no untracked files other than \
             agent notes (*.md) and logs (*.log), and no open PR, and its work is in the base \
@@ -33,7 +33,7 @@ pub fn definitions() -> Vec<Value> {
             and only returns the plan (keep/remove with reasons, space freed, size of kept \
             worktrees with their build output). To remove, show Karl the plan, then call again \
             with dry_run=false and ids = the plan's removable ids he approved. Removal goes \
-            through `orca worktree rm` (no --force) after a fresh re-check, and is logged.",
+            through `orca worktree rm`, or `git worktree remove` for unlisted entries (keeping the branch), with no --force after a fresh re-check, and is logged.",
         "inputSchema": {
             "type": "object",
             "properties": {
