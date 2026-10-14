@@ -1,4 +1,5 @@
-//! Scenery for the future memory library. No stored records, counts or agent behaviour yet.
+//! Scenery for the Ledger, the clan's knowledge store. No stored records, counts or agent
+//! behaviour yet.
 use super::{
     layout::Scene,
     sprites::Sprites,
@@ -67,7 +68,7 @@ pub(super) fn paint(painter: &Painter, sprites: &Sprites, scene: &Scene) {
     painter.text(
         room.min + vec2(5.0, 3.0) * px,
         Align2::LEFT_TOP,
-        "LIBRARY",
+        "LEDGER",
         FontId::monospace(5.0 * px + 2.0),
         GOLD,
     );
@@ -188,7 +189,7 @@ pub(super) fn draw(c: &mut Canvas, prop: Prop) {
             c.detail(8.0, 19.0, 6.0, 1.0, GOLD_DARK);
             c.detail(10.0, 19.0, 2.0, 0.7, LIGHT);
         }
-        _ => unreachable!("library furniture only"),
+        _ => unreachable!("ledger furniture only"),
     }
 }
 
@@ -197,14 +198,14 @@ mod tests {
     use super::super::layout_tests::{scene, snapshot};
     use super::*;
     #[test]
-    fn library_fits_unused_rock_and_leaves_functional_rooms_clear() {
+    fn ledger_fits_unused_rock_and_leaves_functional_rooms_clear() {
         use super::super::layout::{FarmInput, layout};
         use super::super::layout_tests::node;
         use crate::model::{NodeKind, NodeState};
         use std::collections::{BTreeSet, HashSet};
         assert!(
             placement(&scene(&snapshot())).is_some(),
-            "normal farm has a library"
+            "normal farm has a ledger"
         );
         for envoy in [false, true] {
             let mut clan = snapshot();
@@ -229,7 +230,7 @@ mod tests {
                 };
                 assert!(scene.rect.contains_rect(room));
                 assert!(room.bottom() < scene.gallery.top());
-                // Include the library shaft: it must not pass through a stacked room.
+                // Include the ledger shaft: it must not pass through a stacked room.
                 let route = Rect::from_min_max(room.min, pos2(room.right(), scene.gallery.top()));
                 assert!(!route.intersects(scene.throne_hall));
                 assert!(!route.intersects(scene.storage));

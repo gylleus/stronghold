@@ -13,7 +13,7 @@ pub(crate) mod hammer;
 pub mod layout;
 #[cfg(test)]
 mod layout_tests;
-mod library;
+mod ledger;
 pub mod mail;
 pub mod motion;
 pub mod nature;
@@ -1178,7 +1178,7 @@ fn paint_ground(
     for plant in &plants {
         sprites.deco(painter, plant.deco, plant.foot, px, 1.0);
     }
-    library::paint(painter, sprites, scene);
+    ledger::paint(painter, sprites, scene);
     sprites.masonry(painter, scene.throne_hall);
     sprites.throne_hall(painter, scene.throne_hall, px);
     sprites.masonry(painter, scene.storage);
