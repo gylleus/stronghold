@@ -1495,7 +1495,7 @@ fn only_the_resting_area_has_beds() {
 }
 
 /// Many runs in a tall view stack their chambers two to a column, which draws the dwarves
-/// bigger than one long row of narrow columns, and no shaft cuts through another chamber.
+/// bigger than one long row of narrow columns, with the shared ladder clear of every room.
 #[test]
 fn many_tunnels_stack_chambers_to_draw_dwarves_bigger() {
     let mut s = ClanSnapshot::default();
@@ -1991,6 +1991,16 @@ fn work_galleries_and_routes_share_one_ladder_at_every_crowd_size() {
                 NodeState::Working,
             ));
         }
+        for i in 0..3 {
+            let name = format!("apprentice-{i}");
+            s.nodes
+                .push(node(&name, NodeKind::Subagent, None, NodeState::Working));
+            s.edges.push(Edge {
+                from: id("attendant-0"),
+                to: id(&name),
+                kind: EdgeKind::Subagent,
+            });
+        }
         let input = FarmInput {
             snapshot: &s,
             hidden: &BTreeSet::new(),
@@ -2018,7 +2028,12 @@ fn work_galleries_and_routes_share_one_ladder_at_every_crowd_size() {
         let workers: Vec<_> = scene
             .dwarves
             .iter()
-            .filter(|d| matches!(d.spot, Spot::Chamber(..) | Spot::Mouth(..)))
+            .filter(|d| {
+                matches!(
+                    d.spot,
+                    Spot::Chamber(..) | Spot::Mouth(..) | Spot::Trail(..)
+                )
+            })
             .collect();
         for (i, dwarf) in workers.iter().enumerate() {
             let floor = galleries

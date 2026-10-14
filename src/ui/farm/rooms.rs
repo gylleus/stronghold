@@ -36,7 +36,7 @@ const PX_STEP: f32 = 0.5;
 /// Most levels of rooms stacked under the gallery.
 const MAX_LEVELS: usize = 3;
 /// Height over each level of rooms for their labels and progress bars, in cells.
-pub const LABEL_GAP: f32 = 1.5;
+pub const LABEL_GAP: f32 = 1.3;
 
 /// One room in the grid.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -169,7 +169,7 @@ impl Ground {
     }
 
     pub fn per_row(&self, level: usize, col: usize) -> usize {
-        chamber_per_row(self.chamber_w(level, col), self.a)
+        chamber_per_row(self.chamber_w(level, col) - self.a, self.a)
     }
 
     /// The most rows a level's band has the height for.
@@ -210,7 +210,7 @@ fn target_rows(footprints: &[usize], per_row: usize, max_rows: usize) -> usize {
 
 /// Width of a chamber holding `per_row` dwarves side by side.
 fn chamber_width(per_row: usize, a: f32) -> f32 {
-    ((per_row - 1) as f32 * SLOT + 2.0).max(SLOT) * a
+    ((per_row - 1) as f32 * SLOT + 3.0).max(SLOT) * a
 }
 
 /// The grid fitted to `size` at `px` for `rooms` (each room's footprints), if every room

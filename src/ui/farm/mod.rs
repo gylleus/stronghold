@@ -974,7 +974,7 @@ impl FarmView {
                 continue;
             }
             let (chamber, label_top) = glide.at(target, now_s).screen(rect);
-            let shift = chamber.right_bottom() - tunnel.chamber.right_bottom();
+            let shift = chamber.right_top() - tunnel.chamber.right_top();
             for bed in &mut scene.beds {
                 if tunnel.chamber.contains(bed.rect.center()) {
                     bed.rect = bed.rect.translate(shift);
@@ -1270,44 +1270,35 @@ fn paint_ground(
         sprites.bed(painter, bed.rect, px);
     }
 
-    // Each room's name and progress sit in the rock above its first work row.
+    // A single header line leaves the status bubbles clear of the name and task count.
     let font = FontId::monospace(9.0 + 2.0 * px);
     for tunnel in &scene.tunnels {
         let top = tunnel.label_top;
         let width = tunnel.chamber.width() + 0.4 * a;
+        let title = match tunnel.tasks {
+            Some((done, total)) => format!("{done}/{total} · {}", tunnel.label),
+            None => tunnel.label.clone(),
+        };
         let text = label(
             painter,
             top,
             Align2::CENTER_TOP,
-            &tunnel.label,
+            &title,
             font.clone(),
             width,
             px,
             palette,
         );
-        // The run's task progress: a bar filling as tasks complete, and the count.
-        if let (Some(progress), Some((done, total))) = (tunnel.progress, tunnel.tasks) {
-            let count = format!("{done}/{total} tasks done");
-            let small = FontId::monospace(8.0 + 1.5 * px);
+        if let Some(progress) = tunnel.progress {
             let bar_w = width.min(text.width().max(3.0 * a));
             let bar = Rect::from_center_size(
-                egui::pos2(top.x, text.bottom() + 4.0 * px),
+                egui::pos2(top.x, text.bottom() + 2.0 * px),
                 vec2(bar_w, 2.0 * px),
             );
             painter.rect_filled(bar.expand(px), 0.0, palette.label_shadow);
             painter.rect_filled(bar, 0.0, world::WOOD_DARK);
             let filled = Rect::from_min_size(bar.min, vec2(bar.width() * progress, bar.height()));
             painter.rect_filled(filled, 0.0, world::GOLD);
-            label(
-                painter,
-                egui::pos2(top.x, bar.bottom() + 2.0 * px),
-                Align2::CENTER_TOP,
-                &count,
-                small,
-                width,
-                px,
-                palette,
-            );
         }
     }
     sprites.portal(

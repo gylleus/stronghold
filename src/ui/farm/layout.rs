@@ -29,11 +29,11 @@ pub const PORTAL_H: f32 = 40.0;
 const LABEL_CHARS: usize = 28;
 /// Distance between rows of dwarves, in cells: room for a row's bubbles above and name tags
 /// below.
-pub(super) const ROW: f32 = 2.5;
+const ROW: f32 = 2.5;
 /// Width of a dwarf's slot in a row, in cells: room for its name tag.
-pub(super) const SLOT: f32 = 2.4;
+pub(super) const SLOT: f32 = 2.1;
 /// Room under a dwarf for its name tag, in cells.
-pub(super) const TAG: f32 = 0.85;
+const TAG: f32 = 0.85;
 /// Width reserved at the left of all work levels for their shared ladder.
 pub(super) const LADDER_GAP: f32 = 1.8;
 /// A bed in texels: its size, and the mattress top's height above the floor.
@@ -274,11 +274,12 @@ impl Scene {
     pub fn work_galleries(&self) -> Vec<Rect> {
         let a = self.cell();
         let mut rows: Vec<Rect> = Vec::new();
+        let left = self.work_ladder().left();
         for t in &self.tunnels {
             let mut top = t.chamber.top();
             while top + a < t.chamber.bottom() {
                 let row = Rect::from_min_max(
-                    pos2(self.work_ladder().left(), top),
+                    pos2(left, top),
                     pos2(t.chamber.right(), (top + 1.4 * a).min(t.chamber.bottom())),
                 );
                 if let Some(existing) = rows.iter_mut().find(|r| (r.top() - top).abs() < self.px) {
@@ -700,10 +701,21 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     let trail_of = |id: &NodeId| trails.get(id).copied().unwrap_or(0);
     // Each room's dwarves in rank order, with their footprints sized for subagents as big as
     // their parents: the plan digs for those, so the dwarves fit at any scale.
+    let mut mouth_nodes: HashMap<TunnelKey, &Node> = HashMap::new();
     let mut chamber_nodes: Vec<Vec<&Node>> = vec![Vec::new(); keys.len()];
     for node in &visible {
         if matches!(homes[&node.id], Home::Chamber | Home::Mouth) {
-            chamber_nodes[tunnel_of[&tunnel_key(node, &repos)]].push(node);
+            let key = tunnel_key(node, &repos);
+            // One unlabelled taskmaster fits beside the row's workers. Additional
+            // attendants and taskmasters with apprentices need full packed slots.
+            if homes[&node.id] == Home::Mouth
+                && trail_of(&node.id) == 0
+                && !mouth_nodes.contains_key(&key)
+            {
+                mouth_nodes.insert(key, node);
+            } else {
+                chamber_nodes[tunnel_of[&key]].push(node);
+            }
         }
     }
     for nodes in &mut chamber_nodes {
@@ -839,7 +851,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             let (places, rows) = pack(&footprints, per_row);
             // A full row spreads across the chamber.
             slot_ws.push(if per_row > 1 {
-                ((chamber_w - 2.0 * a) / (per_row - 1) as f32).max(SLOT * a)
+                ((chamber_w - 3.0 * a) / (per_row - 1) as f32).max(SLOT * a)
             } else {
                 SLOT * a
             });
@@ -861,7 +873,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             let progress = tasks.map(|(done, total)| done as f32 / total as f32);
             let top = band_top(room.level);
             let chamber = Rect::from_min_size(pos2(left, top), vec2(chamber_w, height));
-            let label_top = pos2(chamber.center().x, top - LABEL_GAP * a + 3.0 * px);
+            let label_top = pos2(chamber.center().x, top - LABEL_GAP * a + px);
             let label = match key {
                 TunnelKey::Run(id) => snapshot
                     .runs
@@ -896,7 +908,19 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
                 trailing.push(node);
                 continue;
             }
-            Home::Chamber | Home::Mouth => continue,
+            Home::Chamber => continue,
+            Home::Mouth => {
+                let key = tunnel_key(node, &repos);
+                if mouth_nodes.get(&key).is_none_or(|n| n.id != node.id) {
+                    continue;
+                }
+                let chamber = tunnels
+                    .iter()
+                    .find(|t| t.key == key)
+                    .expect("room for taskmaster")
+                    .chamber;
+                (Spot::Mouth(key, 0), chamber.min + vec2(0.5, 0.9) * a)
+            }
             Home::Comms => (
                 Spot::Comms,
                 comms.expect("Envoy has a room").dwarf_position(),
@@ -973,8 +997,15 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
                 });
             }
         }
-        let mut mouth_n = 0;
+        let mut mouth_n = usize::from(mouth_nodes.contains_key(&tunnels[t].key));
         for (k, (node, &(row, col))) in nodes.iter().zip(&packed[t].0).enumerate() {
+            // Taskmasters face left; their apprentices trail to the right within the
+            // reserved footprint, unlike miners digging towards the right-hand face.
+            let col = if homes[&node.id] == Home::Mouth {
+                col + footprint(trail_of(&node.id), sub / a).min(per_rows[t]) - 1
+            } else {
+                col
+            };
             let pos = slot(row, col);
             let is_pr = input.pr_ready.contains(&node.id);
             let home = homes[&node.id];

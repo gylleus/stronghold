@@ -82,7 +82,7 @@ fn assert_kept(before: &Scene, after: &Scene) {
     assert_eq!(before.px, after.px, "the scale is kept");
 }
 
-/// Every chamber in `scene` is in its view, clear of the others and their shafts, and holds
+/// Every chamber in `scene` is in its view, clear of the others and the shared ladder, and holds
 /// its dwarves.
 fn assert_laid_out(scene: &Scene) {
     let tunnels = &scene.tunnels;
