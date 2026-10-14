@@ -4,12 +4,12 @@ use anyhow::{Context, Result, ensure};
 use std::path::{Path, PathBuf};
 
 fn copy_tree(source: &Path, target: &Path) -> Result<()> {
-    std::fs::create_dir(target)?;
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
         let kind = entry.file_type()?;
         let dest = target.join(entry.file_name());
         if kind.is_dir() {
+            std::fs::create_dir(&dest)?;
             copy_tree(&entry.path(), &dest)?;
         } else {
             ensure!(
@@ -71,8 +71,18 @@ pub fn create(source: &Path, archive: &Path, stamp: &str) -> Result<PathBuf> {
         destination.file_name().unwrap().to_string_lossy(),
         std::process::id()
     ));
-    copy_tree(&source, &staging).context("Ledger snapshot failed; launch aborted")?;
-    std::fs::rename(&staging, &destination)?;
+    std::fs::create_dir(&staging).with_context(|| {
+        format!(
+            "Cannot create Ledger snapshot staging {}; launch aborted",
+            staging.display()
+        )
+    })?;
+    if let Err(e) = copy_tree(&source, &staging)
+        .and_then(|()| std::fs::rename(&staging, &destination).map_err(Into::into))
+    {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(e).context("Ledger snapshot failed; launch aborted");
+    }
     let mut snapshots = Vec::new();
     for entry in std::fs::read_dir(&archive)? {
         let entry = entry?;
@@ -116,6 +126,38 @@ mod tests {
         assert!(!archive.join("20261014-120000").exists());
         assert!(archive.join("worktree-backup").exists());
         assert!(create(&source, &source.join("archive"), "20261014-130000").is_err());
+    }
+
+    #[test]
+    fn failed_copy_removes_staging_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("ledger");
+        let archive = dir.path().join("archive");
+        std::fs::create_dir_all(source.join("nested")).unwrap();
+        let link = source.join("nested/escape");
+        std::os::unix::fs::symlink("/tmp", &link).unwrap();
+        assert!(create(&source, &archive, "20261014-120000").is_err());
+        assert_eq!(std::fs::read_dir(&archive).unwrap().count(), 0);
+        std::fs::remove_file(link).unwrap();
+        let snapshot = create(&source, &archive, "20261014-120000").unwrap();
+        assert!(snapshot.join("nested").is_dir());
+        assert_eq!(std::fs::read_dir(&archive).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn failed_staging_creation_leaves_existing_directory_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("ledger");
+        let archive = dir.path().join("archive");
+        let staging = archive.join(format!(".20261014-120000-{}", std::process::id()));
+        std::fs::create_dir(&source).unwrap();
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(staging.join("keep"), "untouched").unwrap();
+        assert!(create(&source, &archive, "20261014-120000").is_err());
+        assert_eq!(
+            std::fs::read_to_string(staging.join("keep")).unwrap(),
+            "untouched"
+        );
     }
 
     #[test]

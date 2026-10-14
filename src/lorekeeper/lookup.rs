@@ -5,7 +5,7 @@ use serde::Deserialize;
 use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 const LIMIT: usize = 256 * 1024;
@@ -59,26 +59,68 @@ fn checked_path(path: &str) -> Result<&str> {
     Ok(path)
 }
 
-fn repository(path: &str, roots: &[PathBuf]) -> Result<PathBuf> {
-    let path = Path::new(path)
-        .canonicalize()
-        .context("Repository path does not exist")?;
+fn named_repository(name: &str, repos: &[crate::orca::spawn::Repo]) -> Result<PathBuf> {
+    let mut matches = repos
+        .iter()
+        .filter(|r| r.name() == name || Path::new(&r.path).file_name().is_some_and(|n| n == name));
+    let repo = matches.next().with_context(|| {
+        format!(
+            "No Orca repository named {name:?}; use its registered name or absolute worktree root"
+        )
+    })?;
     ensure!(
-        roots
-            .iter()
-            .filter_map(|r| r.canonicalize().ok())
-            .any(|r| path.starts_with(r)),
-        "Repository must be under ~/repo or ~/orca/workspaces"
+        matches.next().is_none(),
+        "Orca repository name {name:?} is ambiguous; use an absolute worktree root"
     );
-    let (ok, top) = run(
-        git(&path).args(["rev-parse", "--show-toplevel"]),
-        Duration::from_secs(10),
-    )?;
-    ensure!(
-        ok && Path::new(top.trim()).canonicalize()? == path,
-        "Use the repository worktree root"
-    );
-    Ok(path)
+    Ok(PathBuf::from(&repo.path))
+}
+
+fn repository(input: &str, roots: &[PathBuf]) -> Result<PathBuf> {
+    let candidate = if Path::new(input).is_absolute() {
+        PathBuf::from(input)
+    } else {
+        ensure!(
+            super::report::relative_path(input) && Path::new(input).components().count() == 1,
+            "Expected an absolute worktree root or bare Orca repository name, got {input:?}"
+        );
+        let repos = crate::orca::OrcaClient::new()
+            .without_sender_identity()
+            .timeout(Duration::from_secs(10))
+            .repo_list()
+            .with_context(|| format!("Cannot resolve repository {input:?} through Orca"))?;
+        named_repository(input, &repos)?
+    };
+    (|| {
+        let path = candidate
+            .canonicalize()
+            .context("Repository path does not exist")?;
+        ensure!(
+            roots
+                .iter()
+                .filter_map(|r| r.canonicalize().ok())
+                .any(|r| path.starts_with(r)),
+            "Repository must be under ~/repo or ~/orca/workspaces"
+        );
+        let (status, top) = run(
+            git(&path).args(["rev-parse", "--show-toplevel"]),
+            Duration::from_secs(10),
+        )?;
+        ensure!(
+            status.success(),
+            "Not a usable Git worktree: {}",
+            top.trim()
+        );
+        let top = Path::new(top.trim())
+            .canonicalize()
+            .context("Cannot resolve Git worktree root")?;
+        ensure!(
+            top == path,
+            "Use the repository worktree root {}",
+            top.display()
+        );
+        Ok(path)
+    })()
+    .with_context(|| format!("Rejected repository {input:?} at {}", candidate.display()))
 }
 
 fn gh() -> Command {
@@ -106,13 +148,15 @@ fn git(repo: &Path) -> Command {
 }
 
 fn default_ref(repo: &Path) -> Result<String> {
-    let (ok, name) = run(
+    let (status, name) = run(
         git(repo).args(["symbolic-ref", "refs/remotes/origin/HEAD"]),
         Duration::from_secs(10),
     )?;
     let name = name.trim();
     ensure!(
-        ok && name.starts_with("refs/remotes/origin/") && !name.contains(['\n', '\r', ':']),
+        status.success()
+            && name.starts_with("refs/remotes/origin/")
+            && !name.contains(['\n', '\r', ':']),
         "origin/HEAD is unavailable; configure the repository default remote branch first"
     );
     Ok(name.to_owned())
@@ -121,6 +165,10 @@ fn default_ref(repo: &Path) -> Result<String> {
 pub fn execute(request: Lookup) -> Result<String> {
     let home = super::home()?;
     let roots = [home.join("repo"), home.join("orca/workspaces")];
+    execute_in(request, &roots)
+}
+
+fn execute_in(request: Lookup, roots: &[PathBuf]) -> Result<String> {
     let mut cmd = match request {
         Lookup::PrView { repo, number } => {
             ensure!(
@@ -156,13 +204,13 @@ pub fn execute(request: Lookup) -> Result<String> {
             c
         }
         Lookup::GitFetch { repo } => {
-            let repo = repository(&repo, &roots)?;
+            let repo = repository(&repo, roots)?;
             let mut c = git(&repo);
             c.args(["fetch", "--no-recurse-submodules", "origin"]);
             c
         }
         Lookup::GitLog { repo, limit, path } => {
-            let repo = repository(&repo, &roots)?;
+            let repo = repository(&repo, roots)?;
             let limit = limit.unwrap_or(20);
             ensure!((1..=50).contains(&limit), "Log limit must be 1..50");
             let mut c = git(&repo);
@@ -183,7 +231,7 @@ pub fn execute(request: Lookup) -> Result<String> {
         }
         Lookup::GitShow { repo, path } => {
             checked_path(&path)?;
-            let repo = repository(&repo, &roots)?;
+            let repo = repository(&repo, roots)?;
             let mut c = git(&repo);
             c.args([
                 "show",
@@ -202,7 +250,7 @@ pub fn execute(request: Lookup) -> Result<String> {
                 !pattern.is_empty() && pattern.len() <= 2000 && !pattern.contains('\0'),
                 "Pattern must contain 1..2000 bytes"
             );
-            let repo = repository(&repo, &roots)?;
+            let repo = repository(&repo, roots)?;
             let mut c = git(&repo);
             c.args([
                 "grep",
@@ -216,17 +264,26 @@ pub fn execute(request: Lookup) -> Result<String> {
             if let Some(path) = path {
                 c.arg(checked_path(&path)?);
             }
-            let (ok, output) = run(&mut c, Duration::from_secs(45))?;
-            ensure!(ok || output.is_empty(), "git grep failed: {output}");
+            let (status, output) = run(&mut c, Duration::from_secs(45))?;
+            if status.code() == Some(1) && output.is_empty() {
+                return Ok("No literal matches on origin's default branch. Check the path and letter case. The pattern is fixed text: |, .* and other regex syntax are literal; search alternatives separately.".into());
+            }
+            ensure!(
+                status.success(),
+                "git grep failed (status {status}): {output}"
+            );
             return Ok(output);
         }
     };
-    let (ok, output) = run(&mut cmd, Duration::from_secs(45))?;
-    ensure!(ok, "Lookup failed: {output}");
+    let (status, output) = run(&mut cmd, Duration::from_secs(45))?;
+    ensure!(
+        status.success(),
+        "Lookup failed (status {status}): {output}"
+    );
     Ok(output)
 }
 
-fn run(cmd: &mut Command, timeout: Duration) -> Result<(bool, String)> {
+fn run(cmd: &mut Command, timeout: Duration) -> Result<(ExitStatus, String)> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -271,10 +328,7 @@ fn run(cmd: &mut Command, timeout: Duration) -> Result<(bool, String)> {
             if let Some(status) = child.try_wait()?
                 && pipes == 2
             {
-                return Ok((
-                    status.success(),
-                    String::from_utf8_lossy(&output).into_owned(),
-                ));
+                return Ok((status, String::from_utf8_lossy(&output).into_owned()));
             }
             ensure!(started.elapsed() < timeout, "Lookup timed out");
             std::thread::sleep(Duration::from_millis(20));
@@ -295,6 +349,107 @@ fn run(cmd: &mut Command, timeout: Duration) -> Result<(bool, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_repositories_and_literal_grep_preserve_boundaries() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("recommendations");
+        std::fs::create_dir(&repo).unwrap();
+        assert!(
+            git(&repo)
+                .args(["init", "--quiet", "-b", "main"])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        std::fs::write(
+            repo.join("evidence.txt"),
+            "purchase\nbuildChunkEmbeddings\nliteral|alternative\n",
+        )
+        .unwrap();
+        for args in [
+            vec!["add", "evidence.txt"],
+            vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.test",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+            vec!["update-ref", "refs/remotes/origin/main", "HEAD"],
+            vec![
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        ] {
+            assert!(git(&repo).args(args).output().unwrap().status.success());
+        }
+        let catalog = vec![crate::orca::spawn::Repo {
+            path: repo.to_string_lossy().into(),
+            ..Default::default()
+        }];
+        let resolved = named_repository("recommendations", &catalog).unwrap();
+        assert_eq!(resolved, repo);
+        assert!(named_repository("missing", &catalog).is_err());
+        assert!(named_repository("../recommendations", &catalog).is_err());
+        let roots = [dir.path().to_owned()];
+        assert_eq!(
+            repository(resolved.to_str().unwrap(), &roots).unwrap(),
+            repo.canonicalize().unwrap()
+        );
+        assert!(repository(resolved.to_str().unwrap(), &[]).is_err());
+        std::fs::create_dir(repo.join("nested")).unwrap();
+        let error = format!(
+            "{:#}",
+            repository(repo.join("nested").to_str().unwrap(), &roots).unwrap_err()
+        );
+        assert!(error.contains("nested") && error.contains("worktree root"));
+        std::fs::write(repo.join("evidence.txt"), "changed locally").unwrap();
+        for pattern in ["purchase", "buildChunkEmbeddings", "literal|alternative"] {
+            let output = execute_in(
+                Lookup::GitGrep {
+                    repo: repo.to_string_lossy().into(),
+                    pattern: pattern.into(),
+                    path: None,
+                },
+                &roots,
+            )
+            .unwrap();
+            assert!(output.contains(pattern) && output.contains("refs/remotes/origin/main"));
+        }
+        let output = execute_in(
+            Lookup::GitGrep {
+                repo: repo.to_string_lossy().into(),
+                pattern: "purchase|PurchaseEvent".into(),
+                path: None,
+            },
+            &roots,
+        )
+        .unwrap();
+        assert!(
+            output.contains("No literal matches")
+                && output.contains("search alternatives separately")
+        );
+        let stale = dir.path().join("stale-checkout");
+        std::fs::create_dir(&stale).unwrap();
+        std::fs::write(
+            stale.join(".git"),
+            format!("gitdir: {}", dir.path().join("missing").display()),
+        )
+        .unwrap();
+        let error = format!(
+            "{:#}",
+            repository(stale.to_str().unwrap(), &roots).unwrap_err()
+        );
+        assert!(error.contains("stale-checkout") && error.contains("Not a usable Git worktree"));
+    }
     #[test]
     fn no_flags_traversal_or_arbitrary_operations() {
         assert!(github_repo("gylleus/stronghold"));
