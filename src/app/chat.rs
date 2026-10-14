@@ -119,6 +119,9 @@ impl AppChat {
 impl StrongholdApp {
     pub(super) fn poll_chat(&mut self) {
         self.chat.session.poll();
+        for message in self.chat.session.take_ledger_calls() {
+            self.traffic.push(message);
+        }
         if self
             .chat
             .inbox_polled

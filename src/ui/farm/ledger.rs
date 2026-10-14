@@ -8,7 +8,7 @@ use super::{
         WOOD, WOOD_DARK, WOOD_LIGHT, pts,
     },
 };
-use eframe::egui::{Align2, FontId, Painter, Rect, pos2, vec2};
+use eframe::egui::{Align2, FontId, Painter, Pos2, Rect, pos2, vec2};
 
 /// Fit a quiet upper chamber into unused rock, leaving existing rooms and shafts clear.
 /// Narrow panes omit the scenery instead of squeezing functional rooms.
@@ -51,6 +51,13 @@ pub(super) fn placement(scene: &Scene) -> Option<Rect> {
     }
     let x = (best.0 + best.1 - width) / 2.0;
     Some(Rect::from_min_max(pos2(x, top), pos2(x + width, bottom)))
+}
+
+/// Where Ledger scrolls are filed and taken: the lectern, straight above the chamber's shaft.
+/// `None` when the pane is too narrow for the chamber.
+pub(super) fn lectern(scene: &Scene) -> Option<Pos2> {
+    let room = placement(scene)?;
+    Some(pos2(room.center().x, room.bottom() - 12.0 * scene.px))
 }
 
 pub(super) fn paint(painter: &Painter, sprites: &Sprites, scene: &Scene) {

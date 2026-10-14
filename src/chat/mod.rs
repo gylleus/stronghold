@@ -20,7 +20,9 @@ pub use process::{ChatCommand, ChatEvent, ChatHandle, SessionState};
 pub use transcript::{ChatItem, Decision, Transcript};
 pub use voice::SpeechEvent;
 
-use protocol::Incoming;
+use protocol::{ContentBlock, Incoming};
+
+use crate::traffic::ledger;
 
 /// Text of the "Status report" button.
 pub const STATUS_REPORT_PROMPT: &str = "Give me a status report.";
@@ -47,6 +49,8 @@ pub struct ChatSession {
     speak_replies: bool,
     /// The resumed conversation's earlier messages, being read from its transcript.
     history: Option<std::sync::mpsc::Receiver<Transcript>>,
+    /// The King's Ledger calls as traffic, drained by [`take_ledger_calls`](Self::take_ledger_calls).
+    ledger_calls: Vec<crate::traffic::AgentMessage>,
 }
 
 /// Environment variable with a message the chat sends as soon as it is ready; with it the
@@ -88,7 +92,13 @@ impl ChatSession {
             speech: Vec::new(),
             speak_replies: false,
             history,
+            ledger_calls: Vec::new(),
         }
+    }
+
+    /// The Ledger calls the King made since the last call, as traffic.
+    pub fn take_ledger_calls(&mut self) -> Vec<crate::traffic::AgentMessage> {
+        std::mem::take(&mut self.ledger_calls)
     }
 
     /// The `--model` the process was started with (`None`: the CLI default).
@@ -208,6 +218,15 @@ impl ChatSession {
             }
             ChatEvent::Message { message, timestamp } => {
                 voice::tap(&message, &mut self.speech);
+                if let Incoming::Assistant { content, .. } = &message {
+                    for block in content {
+                        if let ContentBlock::ToolUse { name, .. } = block
+                            && let Some(tool) = ledger::claude_tool(name)
+                        {
+                            self.ledger_calls.push(ledger::message("king", tool));
+                        }
+                    }
+                }
                 if matches!(message, Incoming::Result(_)) {
                     self.log_turn();
                 }

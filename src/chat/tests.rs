@@ -1318,3 +1318,28 @@ fn queen_inbox_model_restart_retries_an_unrecorded_turn() {
     );
     assert!(crate::queen_inbox::Inbox::open(&path).unwrap().messages[0].delivered);
 }
+
+#[test]
+fn the_kings_ledger_calls_become_traffic() {
+    let fake = Fake::new();
+    let mut chat = ChatSession::spawn(fake.config(&[]), None);
+    let assistant = |id: &str, name: &str| {
+        let line = serde_json::json!({"type": "assistant", "message": {"id": "msg_1",
+            "content": [{"type": "tool_use", "id": id, "name": name, "input": {}}]}});
+        ChatEvent::Message {
+            message: parse_line(&line.to_string()).unwrap(),
+            timestamp: jiff::Timestamp::now(),
+        }
+    };
+    chat.apply(assistant("toolu_1", "mcp__ledger__search_notes"));
+    chat.apply(assistant("toolu_2", "mcp__stronghold__clan_status"));
+    chat.apply(assistant("toolu_3", "mcp__ledger__write_note"));
+    assert_eq!(
+        chat.take_ledger_calls(),
+        [
+            crate::traffic::ledger::message("king", "search_notes"),
+            crate::traffic::ledger::message("king", "write_note"),
+        ]
+    );
+    assert!(chat.take_ledger_calls().is_empty());
+}
