@@ -22,6 +22,7 @@ pub mod history;
 pub mod icons;
 pub mod keys;
 pub mod king;
+pub mod ledger;
 pub mod message_list;
 pub mod notifications;
 pub mod playbook;

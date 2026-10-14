@@ -137,7 +137,7 @@ impl SendWatch {
 /// The complete lines appended to `path` after `offset`, and the offset to read from next.
 /// Without an offset (first sight) or after a truncation nothing is read: the file's end is
 /// where reading starts.
-fn read_appended(path: &Path, offset: Option<u64>) -> io::Result<(Vec<u8>, u64)> {
+pub(crate) fn read_appended(path: &Path, offset: Option<u64>) -> io::Result<(Vec<u8>, u64)> {
     let mut file = File::open(path)?;
     let len = file.metadata()?.len();
     let start = match offset {

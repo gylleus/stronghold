@@ -2,7 +2,7 @@
 
 use eframe::egui;
 
-use super::{MyrstackApp, repaint_once};
+use super::{StrongholdApp, repaint_once};
 use crate::chat::settings::{KingSettings, resolve_model_from_env};
 use crate::chat::{ChatConfig, ChatSession, STATUS_REPORT_PROMPT};
 use crate::model::{ClanSnapshot, NodeId};
@@ -17,6 +17,8 @@ pub(super) fn karl_to_king() -> AgentMessage {
 pub(super) struct AppChat {
     session: ChatSession,
     panel: ChatPanelState,
+    inbox_polled: Option<std::time::Instant>,
+    inbox_error: Option<String>,
 }
 
 impl AppChat {
@@ -25,6 +27,8 @@ impl AppChat {
         Self {
             session: ChatSession::spawn(ChatConfig::from_env(king), Some(repaint_once(ctx))),
             panel: ChatPanelState::default(),
+            inbox_polled: None,
+            inbox_error: None,
         }
     }
 
@@ -98,7 +102,7 @@ impl AppChat {
     }
 
     /// Applies saved King settings: restarts his process (same conversation) when the
-    /// effective model (`MYRSTACK_CHAT_MODEL` still wins) or the effort changed.
+    /// effective model (`STRONGHOLD_CHAT_MODEL` still wins) or the effort changed.
     pub(super) fn apply_king_settings(&mut self, king: &KingSettings) {
         let model = resolve_model_from_env(king).model().map(str::to_owned);
         let effort = king.normalized().effort;
@@ -112,9 +116,36 @@ impl AppChat {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     pub(super) fn poll_chat(&mut self) {
         self.chat.session.poll();
+        for message in self.chat.session.take_ledger_calls() {
+            self.traffic.push(message);
+        }
+        if self
+            .chat
+            .inbox_polled
+            .is_none_or(|at| at.elapsed().as_secs() >= 1)
+        {
+            self.chat.inbox_polled = Some(std::time::Instant::now());
+            if let Some(path) = crate::queen_inbox::default_path() {
+                let terminals = self
+                    .data
+                    .as_ref()
+                    .map_or(&[][..], |d| d.terminals.as_slice());
+                let result =
+                    self.chat
+                        .session
+                        .poll_ant_messages(&path, self.snapshot.as_ref(), terminals);
+                let error = result.err().map(|e| format!("Queen inbox: {e}"));
+                if error != self.chat.inbox_error {
+                    if let Some(error) = &error {
+                        self.chat.session.transcript.push_error(error);
+                    }
+                    self.chat.inbox_error = error;
+                }
+            }
+        }
     }
 
     /// Cmd+J: hide the conversation pane when it shows the King's chat, else show his chat
@@ -172,7 +203,7 @@ impl MyrstackApp {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// The top bar's King and Status report buttons, run through the command palette's
     /// actions so they behave as picking "Open King chat" or "Status report" there.
     pub(super) fn king_quick_actions(&mut self, ui: &mut egui::Ui) {

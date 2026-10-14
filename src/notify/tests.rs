@@ -5,7 +5,7 @@ fn post(target: &str, source: Source) -> Post {
     Post {
         source,
         severity: Severity::Warn,
-        title: format!("Myrstack: {target} needs input"),
+        title: format!("Stronghold: {target} needs input"),
         body: "body".into(),
         target: Some(target.into()),
         id: None,
@@ -24,7 +24,7 @@ fn single_post_passes_through() {
     let mut rl = PostLimiter::new();
     rl.offer(input("t1"));
     let out = rl.flush(0).unwrap();
-    assert_eq!(out.title, "Myrstack: t1 needs input");
+    assert_eq!(out.title, "Stronghold: t1 needs input");
     assert_eq!(out.body, "body");
     assert_eq!(out.targets, vec!["t1"]);
     assert!(out.native);
@@ -38,7 +38,7 @@ fn burst_collapses_into_summary() {
         rl.offer(input(t));
     }
     let out = rl.flush(0).unwrap();
-    assert_eq!(out.title, "Myrstack: 3 agents need input");
+    assert_eq!(out.title, "Stronghold: 3 agents need input");
     assert_eq!(out.body, "a needs input\nb needs input\nc needs input");
     assert_eq!(out.targets, vec!["a", "b", "c"]);
 }
@@ -46,9 +46,9 @@ fn burst_collapses_into_summary() {
 #[test]
 fn mixed_burst_needs_attention() {
     let out = collapse(vec![input("a"), post("b", Source::Escalation)]);
-    assert_eq!(out.title, "Myrstack: 2 agents need attention");
+    assert_eq!(out.title, "Stronghold: 2 agents need attention");
     let out = collapse(vec![post("a", Source::Agent), post("b", Source::Agent)]);
-    assert_eq!(out.title, "Myrstack: 2 notifications from agents");
+    assert_eq!(out.title, "Stronghold: 2 notifications from agents");
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn a_burst_plays_the_most_severe_sound_once() {
     assert_eq!(out.ids, vec![7]);
     assert_eq!(out.targets, vec!["a", "b", "c"]);
     assert_eq!(
-        out.title, "Myrstack: 2 agents need attention",
+        out.title, "Stronghold: 2 agents need attention",
         "only shown posts are listed"
     );
 }
@@ -97,7 +97,7 @@ fn at_most_five_per_minute_then_summary() {
     // The first post leaves the window at 60 s.
     assert_eq!(rl.flush(59_999), None);
     let out = rl.flush(60_000).unwrap();
-    assert_eq!(out.title, "Myrstack: 2 agents need input");
+    assert_eq!(out.title, "Stronghold: 2 agents need input");
     assert!(!rl.has_pending());
     assert_eq!(rl.flush(60_000), None);
 }
@@ -127,17 +127,17 @@ fn posts_follow_the_delivery() {
 
 #[test]
 fn whip_titles_parse_to_handles() {
-    let r = whip_request("Myrstack: term_7 is waiting on you", "waiting 12m");
+    let r = whip_request("Stronghold: term_7 is waiting on you", "waiting 12m");
     assert_eq!(r.target.as_deref(), Some("term_7"));
     assert_eq!(r.source, Source::NeedsInput);
     assert_eq!(r.severity, Severity::Warn);
     assert_eq!(r.message, "waiting 12m");
-    let r = whip_request("Myrstack: worker term_w task t1 is stalled", "e");
+    let r = whip_request("Stronghold: worker term_w task t1 is stalled", "e");
     assert_eq!(
         (r.target.as_deref(), r.source),
         (Some("term_w"), Source::Escalation)
     );
-    let r = whip_request("Myrstack: coordinator term_c run run_1 is stalled", "e");
+    let r = whip_request("Stronghold: coordinator term_c run run_1 is stalled", "e");
     assert_eq!(r.target.as_deref(), Some("term_c"));
     let r = whip_request("Something else", "e");
     assert_eq!(r.target.as_deref(), Some("Something else"));
@@ -210,7 +210,7 @@ fn detector_reports_only_transitions() {
         waiting("term:b", "b"),
     ]));
     assert_eq!(targets(&reqs), ["b"]);
-    assert_eq!(reqs[0].title, "Myrstack: label term:b needs input");
+    assert_eq!(reqs[0].title, "Stronghold: label term:b needs input");
     assert_eq!(reqs[0].source, Source::NeedsInput);
     assert_eq!(reqs[0].agent_label.as_deref(), Some("label term:b"));
     // Staying in NeedsInput does not repeat; leaving and re-entering does.
@@ -452,7 +452,7 @@ fn notifier_thread_collapses_posts_and_plays_once() {
         let p = posted.lock().unwrap();
         (!p.is_empty()).then(|| p.iter().map(|p| p.0.clone()).collect::<Vec<_>>())
     });
-    assert_eq!(titles, vec!["Myrstack: 2 agents need input"]);
+    assert_eq!(titles, vec!["Stronghold: 2 agents need input"]);
     assert_eq!(
         *played.lock().unwrap(),
         vec![(PathBuf::from("/s/glass.aiff"), 0.5)]
@@ -470,7 +470,7 @@ fn raised_notifications_wait_for_the_app_and_wake_it() {
         crossbeam_channel::never(),
         Arc::new(Mutex::new(Some(wake))),
     );
-    notifier.notify(whip_request("Myrstack: term_7 is waiting on you", "12m"));
+    notifier.notify(whip_request("Stronghold: term_7 is waiting on you", "12m"));
     assert_eq!(*woken.lock().unwrap(), 1);
     let raised = notifier.incoming();
     assert_eq!(raised.len(), 1);

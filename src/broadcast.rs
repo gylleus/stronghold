@@ -20,7 +20,7 @@ use crossbeam_channel::{Receiver, unbounded};
 use crate::model::{ClanSnapshot, NodeState};
 use crate::orca::{BROADCAST_SENDER, OrcaClient, OutgoingMessage};
 
-/// Every Myrstack message starts with this.
+/// Every Stronghold message starts with this.
 pub const PREFIX: &str = "King: ";
 /// Longest subject; longer or multi-line text also goes in the body.
 pub const MAX_SUBJECT_CHARS: usize = 100;
@@ -263,7 +263,7 @@ impl BroadcastJob {
         let (tx, rx) = unbounded();
         let total = deliveries.len();
         thread::Builder::new()
-            .name("myrstack-broadcast".into())
+            .name("stronghold-broadcast".into())
             .spawn(move || {
                 for (index, delivery) in deliveries.iter().enumerate() {
                     let outcome = sender.send(&delivery.message);
@@ -345,7 +345,7 @@ mod tests {
         let data = ClanData {
             terminals: vec![
                 terminal("c1", "/u/orca/workspaces/depict/a"),
-                terminal("c2", "/u/repo/saker/myrstack-worktrees/b"),
+                terminal("c2", "/u/repo/saker/stronghold-worktrees/b"),
                 terminal("w1", "/u/orca/workspaces/depict/a"),
                 terminal("w3", "/u/repo/depict/realtime"),
                 terminal("w4", "/u/repo/depict/realtime"),
@@ -473,8 +473,8 @@ mod tests {
             Some("depict")
         );
         assert_eq!(
-            repo_name("/u/repo/saker/myrstack-worktrees/b").as_deref(),
-            Some("myrstack")
+            repo_name("/u/repo/saker/stronghold-worktrees/b").as_deref(),
+            Some("stronghold")
         );
         assert_eq!(
             repo_name("/u/repo/depict/realtime/").as_deref(),

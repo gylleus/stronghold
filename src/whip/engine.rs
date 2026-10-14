@@ -559,7 +559,7 @@ fn perform(action: &WhipAction, executor: &dyn WhipExecutor, settings: &WhipSett
                 return "notifications off".into();
             }
             executor.notify(
-                &format!("Myrstack: {} is stalled", target_label(target)),
+                &format!("Stronghold: {} is stalled", target_label(target)),
                 evidence,
             );
             Ok(())
@@ -569,7 +569,7 @@ fn perform(action: &WhipAction, executor: &dyn WhipExecutor, settings: &WhipSett
                 return "notifications off".into();
             }
             executor.notify(
-                &format!("Myrstack: {handle} is waiting on you"),
+                &format!("Stronghold: {handle} is waiting on you"),
                 &action_reason(action),
             );
             Ok(())
@@ -580,7 +580,7 @@ fn perform(action: &WhipAction, executor: &dyn WhipExecutor, settings: &WhipSett
                 return "notifications off".into();
             }
             executor.notify(
-                &format!("Myrstack: coordinator of run {run_id} is unreachable"),
+                &format!("Stronghold: coordinator of run {run_id} is unreachable"),
                 &action_reason(action),
             );
             Ok(())
@@ -590,7 +590,7 @@ fn perform(action: &WhipAction, executor: &dyn WhipExecutor, settings: &WhipSett
                 return "notifications off".into();
             }
             executor.notify(
-                &format!("Myrstack: cannot forward run {run_id}'s events"),
+                &format!("Stronghold: cannot forward run {run_id}'s events"),
                 &action_reason(action),
             );
             Ok(())
@@ -842,7 +842,7 @@ mod tests {
         };
         assert_eq!(targets, &vec![worker_target("t1")]);
         assert!(
-            text.starts_with("Myrstack: no progress on task t1 (Fix login) for 16m."),
+            text.starts_with("Stronghold: no progress on task t1 (Fix login) for 16m."),
             "{text}"
         );
         assert_eq!(
@@ -1061,7 +1061,7 @@ mod tests {
                 run_id: Some(RUN.into())
             }
         );
-        assert!(text.starts_with("Myrstack: run run_1 has had no coordinator activity"));
+        assert!(text.starts_with("Stronghold: run run_1 has had no coordinator activity"));
         assert!(text.contains("ready task(s) not started: t2"), "{text}");
     }
 
@@ -1083,7 +1083,7 @@ mod tests {
         assert!(ask.contains("question msg_q"), "{ask}");
         assert!(ask.contains("blocked"));
         let quiet = coordinator_text(&finding(StallReason::QuietNoTasks));
-        assert!(quiet.starts_with("Myrstack: run run_1 has been quiet for 20m"));
+        assert!(quiet.starts_with("Stronghold: run run_1 has been quiet for 20m"));
         // Two Runs on one coordinator fold into one text with one prefix.
         let a = finding(StallReason::QuietNoTasks);
         let mut b = finding(StallReason::QuietNoTasks);
@@ -1168,7 +1168,7 @@ mod tests {
             ]
         );
         assert_eq!(engine.log()[0].target, "worker term_worker task t1");
-        assert!(engine.log()[0].reason.starts_with("Myrstack:"));
+        assert!(engine.log()[0].reason.starts_with("Stronghold:"));
     }
 
     #[test]
@@ -1190,7 +1190,7 @@ mod tests {
             vec![
                 "bus dispatch:ctx_t1".to_string(),
                 format!("terminal {WORKER}"),
-                format!("notify Myrstack: worker {WORKER} task t1 is stalled"),
+                format!("notify Stronghold: worker {WORKER} task t1 is stalled"),
             ]
         );
         let outcomes: Vec<&str> = engine.log().iter().map(|e| e.outcome.as_str()).collect();
@@ -1363,7 +1363,7 @@ mod tests {
                 to: "dispatch:ctx_t1".into(),
                 run_id: Some(RUN.into()),
             },
-            text: "Myrstack: manual".into(),
+            text: "Stronghold: manual".into(),
             warn: None,
         }
     }

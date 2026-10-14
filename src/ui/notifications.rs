@@ -634,7 +634,7 @@ fn entry_header(ui: &mut Ui, entry: &Entry, expanded: bool, now_ms: i64, color: 
             .agent_label
             .clone()
             .or_else(|| entry.sender.clone())
-            .unwrap_or_else(|| "Myrstack".to_owned()),
+            .unwrap_or_else(|| "Stronghold".to_owned()),
     );
     meta.extend(source_label(entry));
     if entry.url.is_some() {
@@ -864,7 +864,7 @@ mod tests {
         e.agent_label = None;
         e.sender = None;
         assert_eq!(
-            panel_click("Myrstack · needs input · link", &mut panel, e),
+            panel_click("Stronghold · needs input · link", &mut panel, e),
             Some(PanelAction::Notice(NoticeAction::MarkRead(1)))
         );
     }

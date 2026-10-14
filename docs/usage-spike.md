@@ -1,6 +1,6 @@
 # Spike: usage and cost per agent (myr-hrw.5)
 
-Question: can Myrstack show token usage or cost per terminal, per session or per account?
+Question: can Stronghold show token usage or cost per terminal, per session or per account?
 
 ## Sources
 
@@ -12,7 +12,7 @@ Question: can Myrstack show token usage or cost per terminal, per session or per
 | Orca app (`app.asar`) | Has its own Claude/Codex usage scanner (`ClaudeUsageStore`, schema v6), which caches to `~/Library/Application Support/orca/orca-claude-usage.json`. On this machine the scan is off and the file does not exist. The CLI does not expose it. Orca's automation runs record `usage.{inputTokens,outputTokens,cacheReadTokens,cacheWriteTokens,totalTokens,estimatedCostUsd}` per run. | Per session/day/project (app UI only). | We can't use it: it's internal and turned off. |
 | Claude transcripts `~/.claude/projects/<dir>/<session>.jsonl` | `message.usage` on every `type: "assistant"` record: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` (split into `cache_creation.ephemeral_{5m,1h}_input_tokens`), `output_tokens_details.thinking_tokens`, `service_tier`, `speed`, plus `message.model` and `message.id`. | Per API message, so per session and per subagent. | Append-only. The first read is about 85 ms in release (about 0.4 s in debug) for a 62 MB transcript; later reads only parse appended lines (under 1 ms). |
 | Claude subagents `<session>/subagents/agent-<id>.jsonl` | The same `message.usage` records. | Per subagent. | Same as above. |
-| Codex `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | `event_msg` with `payload.type == "token_count"`: `info.total_token_usage` (cumulative `input_tokens`, `cached_input_tokens`, `cache_write_input_tokens`, `output_tokens`, `reasoning_output_tokens`, `total_tokens`), `last_token_usage`, `model_context_window`, and a `rate_limits` snapshot (`used_percent`, `plan_type`). | Per session. The last `token_count` event gives the total. | Read backwards from the end of the file for the last `token_count` line. Not implemented: Myrstack doesn't map Codex terminals to rollout files yet. |
+| Codex `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | `event_msg` with `payload.type == "token_count"`: `info.total_token_usage` (cumulative `input_tokens`, `cached_input_tokens`, `cache_write_input_tokens`, `output_tokens`, `reasoning_output_tokens`, `total_tokens`), `last_token_usage`, `model_context_window`, and a `rate_limits` snapshot (`used_percent`, `plan_type`). | Per session. The last `token_count` event gives the total. | Read backwards from the end of the file for the last `token_count` line. Not implemented: Stronghold doesn't map Codex terminals to rollout files yet. |
 
 ## What was built
 

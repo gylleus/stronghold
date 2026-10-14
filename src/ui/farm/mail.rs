@@ -1,5 +1,6 @@
 //! Sealed scrolls carried along the mine's passages. Karl's messages appear in his rune
 //! portal; outside messages reach the priest through the receiver stone's rune conduit.
+//! Knowledge read from or filed in the Ledger travels its chamber's shaft in blue.
 
 use eframe::egui::{Align2, FontId, Painter, Pos2, Rect, Stroke, pos2, vec2};
 
@@ -8,7 +9,7 @@ use super::layout::Scene;
 use super::{
     motion,
     sprites::Sprites,
-    world::{GOLD, INK, LIGHT, Prop},
+    world::{BLUE, GOLD, INK, LIGHT, Prop},
 };
 use crate::model::NodeId;
 use crate::traffic::{Endpoint, Flight, MessageKind};
@@ -16,6 +17,8 @@ use crate::ui::envelope::{InFlight, Phase};
 
 /// How long the portal flares as a scroll materialises.
 const PORTAL_S: f64 = 0.7;
+/// The share of its trip a scroll taken from the Ledger lights the lectern for.
+const LEDGER_FLARE: f32 = 0.2;
 
 /// Whether `flight` leaves from Karl's portal: Karl's own, or the King instructing a dwarf (his
 /// whip's nudges stay with him).
@@ -23,7 +26,7 @@ pub fn from_portal(flight: &Flight) -> bool {
     match &flight.from {
         Endpoint::Karl => true,
         Endpoint::Node(id) => *id == NodeId::king() && flight.kind == MessageKind::Instruction,
-        Endpoint::Outside => false,
+        Endpoint::Outside | Endpoint::Ledger => false,
     }
 }
 
@@ -66,6 +69,7 @@ pub(super) fn locate(scene: &Scene, placed: &[Placed], end: &Endpoint) -> Option
             .map(|(_, at)| (at.pos, false)),
         Endpoint::Karl => Some((above_portal(scene), true)),
         Endpoint::Outside => Some((pos2(scene.entrance_x(), scene.surface_y - 0.5 * a), true)),
+        Endpoint::Ledger => super::ledger::lectern(scene).map(|at| (at, false)),
     }
 }
 
@@ -158,6 +162,11 @@ pub fn paint(
         let (Some(phase), Some(&end)) = (f.phase(now_s), route.last()) else {
             continue;
         };
+        let (tint, light) = if f.flight.kind == MessageKind::Ledger {
+            (BLUE, BLUE)
+        } else {
+            (GOLD, LIGHT)
+        };
         let (at, alpha, trail_end) = match phase {
             Phase::Travel(t) => (motion::along(&route, t).0, 1.0, t),
             Phase::Glow(a) => (end, a, 1.0),
@@ -167,16 +176,22 @@ pub fn paint(
                     end,
                     size * (0.4 + 0.9 * t),
                     px,
-                    GOLD.gamma_multiply(1.0 - t),
+                    tint.gamma_multiply(1.0 - t),
                 );
-                sprites.glow(painter, end, size * 0.6, LIGHT, 1.0 - t);
+                sprites.glow(painter, end, size * 0.6, light, 1.0 - t);
                 continue;
             }
         };
+        // The lectern lights up as a scroll is taken from the Ledger.
+        if let (Phase::Travel(t), Endpoint::Ledger) = (phase, &f.flight.from)
+            && t < LEDGER_FLARE
+        {
+            sprites.glow(painter, route[0], size * 0.8, BLUE, 1.0 - t / LEDGER_FLARE);
+        }
         for leg in route.windows(2) {
             painter.line_segment(
                 [leg[0], leg[1]],
-                Stroke::new(px, GOLD.gamma_multiply(0.18 * alpha)),
+                Stroke::new(px, tint.gamma_multiply(0.18 * alpha)),
             );
         }
         for i in 0..12 {
@@ -187,7 +202,7 @@ pub fn paint(
                 painter,
                 p,
                 px,
-                GOLD.gamma_multiply(alpha * i as f32 / 24.0),
+                tint.gamma_multiply(alpha * i as f32 / 24.0),
                 false,
             );
         }
@@ -201,7 +216,7 @@ pub fn paint(
             let text = f.count.to_string();
             let at = at + vec2(size * 0.5, -size * 0.3);
             let rect = Rect::from_center_size(at, vec2(8.0, 7.0) * px);
-            painter.rect_filled(rect, 0.0, GOLD.gamma_multiply(alpha));
+            painter.rect_filled(rect, 0.0, tint.gamma_multiply(alpha));
             painter.text(
                 at,
                 Align2::CENTER_CENTER,
@@ -224,6 +239,41 @@ mod tests {
             from: from.clone(),
             to: to.clone(),
             kind: MessageKind::Message,
+        }
+    }
+
+    #[test]
+    fn ledger_scrolls_travel_between_the_lectern_and_the_dwarf_by_the_chamber_shaft() {
+        use crate::model::{NodeKind, NodeState};
+        use crate::ui::farm::layout_tests::node;
+
+        for envoy in [false, true] {
+            let mut snapshot = snapshot();
+            if envoy {
+                snapshot
+                    .nodes
+                    .push(node("envoy", NodeKind::Envoy, None, NodeState::Idle));
+            }
+            let scene = scene(&snapshot);
+            let placed: Vec<_> = scene
+                .dwarves
+                .iter()
+                .map(|a| Placed {
+                    pos: a.pos,
+                    heading: None,
+                })
+                .collect();
+            let lectern = super::super::ledger::lectern(&scene).unwrap();
+            let worker = Endpoint::Node(id("working"));
+            let read = flight_path(&scene, &placed, &message(&Endpoint::Ledger, &worker)).unwrap();
+            assert_eq!(read[0], lectern);
+            assert_eq!(read[1], pos2(lectern.x, scene.gallery.center().y));
+            assert_eq!(read.last(), Some(&scene.dwarf(&id("working")).unwrap().pos));
+            let mut filed =
+                flight_path(&scene, &placed, &message(&worker, &Endpoint::Ledger)).unwrap();
+            filed.reverse();
+            assert_eq!(read, filed);
+            assert!(!from_portal(&message(&Endpoint::Ledger, &worker)));
         }
     }
 

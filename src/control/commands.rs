@@ -111,7 +111,7 @@ pub enum ControlCommand {
     SelectMany {
         agents: Vec<String>,
     },
-    /// Select a node and pan/zoom the farm onto it; `raise` also brings the window forward.
+    /// Select a node and pan to it at the current zoom; `raise` also brings the window forward.
     Focus {
         agent: String,
         raise: bool,
@@ -142,7 +142,7 @@ pub enum ControlCommand {
     Spawn(crate::spawn::SpawnArgs),
     /// A notification from an agent to Karl, through the app's dispatcher.
     Notify(crate::notify::agent::AgentNotice),
-    /// An agent's question to Karl (`ask_karl`): notifies him and shows the agent waiting.
+    /// An agent's question to Karl (`ask_karl`): notifies him; all but Envoy show waiting.
     Ask(crate::ask::AskRequest),
     /// An agent ending its own session (`finish_session`), or with `dry_run` checking whether
     /// it may.

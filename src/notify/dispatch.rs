@@ -1,7 +1,7 @@
 //! The central dispatcher every notification goes through, whatever raised it: an agent's
 //! `notify` tool call, a node entering NeedsInput, a whip escalation, a PR marked ready.
 //!
-//! [`NotificationCenter::dispatch`] drops repeats (a per-target cooldown for Myrstack's own
+//! [`NotificationCenter::dispatch`] drops repeats (a per-target cooldown for Stronghold's own
 //! notifications), collapses an agent's identical notifications into one inbox entry, rate
 //! limits each agent, records what passes in the [`History`] and decides from the
 //! [`NotifySettings`] how it is delivered (macOS pop-up, in-app pop-up, sound). It is pure
@@ -15,7 +15,7 @@ use super::history::{Entry, History};
 use super::settings::{Delivery, NotifySettings, Severity};
 use crate::review::PrRef;
 
-/// Myrstack's own notifications about one target (needs input, stalled, PR ready) are sent at
+/// Stronghold's own notifications about one target (needs input, stalled, PR ready) are sent at
 /// most once in this window.
 pub const PER_TARGET_COOLDOWN_MS: i64 = 10 * 60_000;
 /// Window of the per-agent limit.
@@ -31,7 +31,7 @@ pub const DUPLICATE_WINDOW_MS: i64 = 30 * 60_000;
 pub enum Source {
     /// An Envoy draft or channel-health transition.
     Envoy,
-    /// An agent's `notify` tool call (or `myrstack notify-karl`, the control API's `notify`).
+    /// An agent's `notify` tool call (or `stronghold notify-karl`, the control API's `notify`).
     Agent,
     /// A node entered NeedsInput, or the whip saw it wait too long.
     NeedsInput,
@@ -55,7 +55,7 @@ impl Source {
         }
     }
 
-    /// Myrstack's own notifications, which repeat per target and use the cooldown.
+    /// Stronghold's own notifications, which repeat per target and use the cooldown.
     fn has_cooldown(self) -> bool {
         matches!(
             self,
@@ -119,7 +119,7 @@ pub enum Outcome {
     /// Identical to entry `id` sent recently: that entry now counts `count` and is unread
     /// again, and nothing pops up or plays.
     Collapsed { id: u64, count: u32 },
-    /// An agent's handover about a PR Myrstack just announced as ready for review: its text
+    /// An agent's handover about a PR Stronghold just announced as ready for review: its text
     /// replaced that entry's (`id`), which is unread again, and nothing pops up or plays.
     Folded { id: u64 },
     /// The sender hit the per-agent limit; nothing was recorded.
@@ -171,7 +171,7 @@ impl NotificationCenter {
     /// Runs `n` through the cooldown, duplicates and the per-agent limit, records it and
     /// decides its delivery.
     pub fn dispatch(&mut self, n: Incoming, settings: &NotifySettings, now_ms: i64) -> Outcome {
-        // One notification per PR handover: Myrstack's "PR ready for review" and the agent's
+        // One notification per PR handover: Stronghold's "PR ready for review" and the agent's
         // own notify about the same PR become one entry, whichever comes first.
         if n.source == Source::Review
             && self
@@ -300,7 +300,7 @@ impl NotificationCenter {
         }
     }
 
-    /// Starts the cooldown of `target` as if Myrstack had just notified it, so the
+    /// Starts the cooldown of `target` as if Stronghold had just notified it, so the
     /// needs-input notification that follows an agent's own question doesn't repeat it.
     pub fn hold_cooldown(&mut self, target: &str, now_ms: i64) {
         self.cooldowns.insert(target.to_owned(), now_ms);
@@ -580,7 +580,7 @@ mod tests {
             c.dispatch(input("t1"), &s, PER_TARGET_COOLDOWN_MS),
             Outcome::Delivered { .. }
         ));
-        // The cooldown is Myrstack's own: an agent on the same terminal still gets through.
+        // The cooldown is Stronghold's own: an agent on the same terminal still gets through.
         assert!(matches!(
             c.dispatch(
                 agent("t1", "blocked", Severity::Warn),

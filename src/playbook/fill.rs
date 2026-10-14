@@ -1,5 +1,5 @@
 //! Pre-filled playbook templates: the attendant brief for a run and the kickoff for a task, with
-//! every `<…>` placeholder Myrstack can answer from live clan data filled in. The rest stay
+//! every `<…>` placeholder Stronghold can answer from live clan data filled in. The rest stay
 //! visibly marked (`<…: FILL IN>`), and the output starts with a header saying what was filled
 //! from where and what is left.
 
@@ -243,7 +243,7 @@ impl ClanFacts {
 pub struct FillContext {
     /// The template file's version stamp.
     pub version: Version,
-    /// `the running Myrstack app` or `one direct Orca poll`.
+    /// `the running Stronghold app` or `one direct Orca poll`.
     pub source: String,
     pub now_ms: i64,
 }
@@ -266,7 +266,7 @@ impl Filled {
     pub fn header(&self) -> String {
         let r = &self.result;
         let mut out = format!(
-            "Myrstack pre-filled {} for {} · {}\n{}\nData: {}, Orca polled {}\n",
+            "Stronghold pre-filled {} for {} · {}\n{}\nData: {}, Orca polled {}\n",
             self.template,
             self.subject,
             utc(self.context.now_ms),
@@ -897,7 +897,7 @@ pub(crate) mod tests {
         let lines: Vec<&str> = header.lines().collect();
         assert_eq!(
             lines[0],
-            "Myrstack pre-filled ATTENDANT-BRIEF-TEMPLATE.md for run run_1 · 2026-09-25 16:13 UTC"
+            "Stronghold pre-filled ATTENDANT-BRIEF-TEMPLATE.md for run run_1 · 2026-09-25 16:13 UTC"
         );
         assert_eq!(lines[1], "Playbook version: 1b0b685 (clean) · hash 4acf3d6");
         assert!(

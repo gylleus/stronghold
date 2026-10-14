@@ -14,8 +14,8 @@ use crate::chat::settings::KingSettings;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SpawnSettings {
-    /// Select and zoom onto a new dwarf's node once it appears. Off: a spawn leaves the selection
-    /// and the view alone.
+    /// Select and pan to a new dwarf's node at the current zoom once it appears. Off: a spawn
+    /// leaves the selection and the view alone.
     pub focus_new: bool,
 }
 

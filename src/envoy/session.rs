@@ -8,8 +8,14 @@ use crate::clan::ClanData;
 use crate::spawn::{Agent, Catalog, SpawnPlan, SpawnRequest, SpawnTarget, Step, shell_quote};
 
 pub const HOME: &str = "envoy-home";
+/// Orca's names for this repo: Orca names a repo after its folder, which is still `myrstack`.
+const REPO_NAMES: [&str; 2] = ["stronghold", "myrstack"];
 /// The playbook rendered for `--append-system-prompt-file`, in the app's data dir.
 pub const SYSTEM_PROMPT_FILE: &str = "envoy-system-prompt.md";
+/// The Ledger, the clan's shared knowledge store: a basic-memory server on this Mac.
+const LEDGER_URL: &str = "http://127.0.0.1:8643/mcp";
+/// The Ledger tools the Envoy gets: it looks things up and never writes.
+const LEDGER_TOOLS: [&str; 2] = ["search_notes", "read_note"];
 
 /// The launch plan; `system_prompt` is the file the playbook was written to.
 pub fn plan(
@@ -20,9 +26,10 @@ pub fn plan(
     if settings.agent != "claude" {
         return Err("Envoy requires Claude: Codex MCP tool restrictions are not supported".into());
     }
-    let repo = catalog
-        .find_repo("myrstack")
-        .ok_or("Orca has no myrstack repo")?;
+    let repo = REPO_NAMES
+        .iter()
+        .find_map(|name| catalog.find_repo(name))
+        .ok_or("Orca has no stronghold repo")?;
     let home = catalog.worktrees.iter().find(|w| {
         w.repo() == Some(repo.id.as_str())
             && Path::new(&w.path).file_name().is_some_and(|n| n == HOME)
@@ -99,15 +106,16 @@ fn allowed_tools() -> Vec<String> {
             [
                 "get_playbook",
                 "list_playbook",
-                "fleet_status",
+                "clan_status",
                 "list_agents",
                 "get_agent",
                 "ask_karl",
             ]
             .into_iter()
             .chain(super::control::METHODS.iter().copied())
-            .map(|name| format!("mcp__myrstack__{name}")),
+            .map(|name| format!("mcp__stronghold__{name}")),
         )
+        .chain(LEDGER_TOOLS.map(|name| format!("mcp__ledger__{name}")))
         .collect()
 }
 
@@ -121,7 +129,7 @@ fn denied_tools() -> Vec<String> {
                 .iter()
                 .map(|tool| {
                     format!(
-                        "mcp__myrstack__{}",
+                        "mcp__stronghold__{}",
                         tool["name"].as_str().expect("tool name")
                     )
                 })
@@ -135,9 +143,11 @@ fn command(model: Option<&str>, prompt: &str, executable: &Path, system_prompt: 
     if let Some(model) = model {
         args.extend(["--model".into(), shell_quote(model)]);
     }
-    // Keep status hooks, but ignore worktree settings and every other MCP server.
-    let mcp =
-        serde_json::json!({"mcpServers": {"myrstack": {"command": executable, "args": ["mcp"]}}});
+    // Keep status hooks, but ignore worktree settings and every MCP server but these two.
+    let mcp = serde_json::json!({"mcpServers": {
+        "stronghold": {"command": executable, "args": ["mcp"]},
+        "ledger": {"type": "http", "url": LEDGER_URL},
+    }});
     args.extend(
         [
             "--setting-sources",
@@ -178,13 +188,23 @@ pub(crate) fn write_system_prompt(
     Ok(path)
 }
 
+/// Where the rendered playbook goes: the data dir, or a temp folder under `cargo test`, so unit
+/// tests never write into the real one.
+fn system_prompt_dir() -> PathBuf {
+    if cfg!(test) {
+        std::env::temp_dir().join("stronghold-test-envoy")
+    } else {
+        crate::claude::hook::data_dir()
+    }
+}
+
 /// Refuse a second session even when its identity file was lost.
 pub(crate) fn prepare(
     backend: &mut dyn crate::spawn::exec::SpawnBackend,
     settings: &EnvoySettings,
 ) -> Result<SpawnPlan, String> {
     let playbook = crate::playbook::Playbook::locate().map_err(|e| format!("{e:#}"))?;
-    let system_prompt = write_system_prompt(&crate::claude::hook::data_dir(), &playbook)?;
+    let system_prompt = write_system_prompt(&system_prompt_dir(), &playbook)?;
     let plan = plan(&backend.catalog()?, settings, &system_prompt)?;
     let value = backend
         .orca(
@@ -547,7 +567,7 @@ mod tests {
         Catalog {
             repos: vec![Repo {
                 id: "repo".into(),
-                path: "/repo/myrstack".into(),
+                path: "/repo/stronghold".into(),
                 ..Default::default()
             }],
             ..Default::default()
@@ -624,12 +644,14 @@ mod tests {
 
     #[test]
     fn launch_pins_tools_permissions_and_the_matching_mcp_binary() {
-        let executable = Path::new("/Applications/Myrstack App/Contents/MacOS/myrstack");
+        let executable = Path::new("/Applications/Stronghold App/Contents/MacOS/stronghold");
         let system_prompt = Path::new("/data dir/envoy-system-prompt.md");
         let command = command(Some("sonnet"), "load envoy", executable, system_prompt);
         assert!(command.starts_with("claude --model sonnet --setting-sources user --permission-mode dontAsk --tools Read,Grep,Glob --strict-mcp-config --mcp-config "));
-        let mcp =
-            serde_json::json!({"mcpServers":{"myrstack":{"command":executable,"args":["mcp"]}}});
+        let mcp = serde_json::json!({"mcpServers":{
+            "stronghold":{"command":executable,"args":["mcp"]},
+            "ledger":{"type":"http","url":"http://127.0.0.1:8643/mcp"},
+        }});
         assert!(command.contains(&shell_quote(&mcp.to_string())));
         assert!(command.contains(&format!(
             " --append-system-prompt-file {} --allowedTools ",
@@ -650,18 +672,19 @@ mod tests {
             [
                 "get_playbook",
                 "list_playbook",
-                "fleet_status",
+                "clan_status",
                 "list_agents",
                 "get_agent",
                 "ask_karl",
             ]
-            .map(|n| format!("mcp__myrstack__{n}")),
+            .map(|n| format!("mcp__stronghold__{n}")),
         );
         expected.extend(
             super::super::control::METHODS
                 .iter()
-                .map(|n| format!("mcp__myrstack__{n}")),
+                .map(|n| format!("mcp__stronghold__{n}")),
         );
+        expected.extend(["search_notes", "read_note"].map(|n| format!("mcp__ledger__{n}")));
         assert_eq!(allowed, expected);
         let denied = command
             .split("--disallowedTools ")
@@ -676,7 +699,7 @@ mod tests {
             assert!(denied.contains(&name));
         }
         for tool in crate::mcp::server::tool_definitions() {
-            let name = format!("mcp__myrstack__{}", tool["name"].as_str().unwrap());
+            let name = format!("mcp__stronghold__{}", tool["name"].as_str().unwrap());
             assert_ne!(
                 allowed.contains(&name.as_str()),
                 denied.contains(&name.as_str()),
@@ -700,7 +723,7 @@ mod tests {
             "clean_worktrees",
         ] {
             assert!(
-                denied.contains(&format!("mcp__myrstack__{name}").as_str()),
+                denied.contains(&format!("mcp__stronghold__{name}").as_str()),
                 "{name}"
             );
         }

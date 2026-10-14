@@ -450,6 +450,18 @@ fn main_pinned_and_young_worktrees_are_kept() {
     kept_for(&f, "pinned in Orca");
     let mut f = clean();
     f.age_ms = Some(10 * 60 * 1000);
+    git_mut(&mut f).ahead = Some(0);
+    kept_for(&f, "created 10 min ago");
+}
+
+#[test]
+fn age_gate_only_protects_empty_or_unknown_branches() {
+    let mut f = clean();
+    f.age_ms = Some(10 * 60 * 1000);
+    assert!(decide(&f).remove, "finished work needs no grace period");
+    git_mut(&mut f).ahead = None;
+    kept_for(&f, "created 10 min ago");
+    git_mut(&mut f).ahead = Some(0);
     kept_for(&f, "created 10 min ago");
 }
 
@@ -483,13 +495,19 @@ fn beads_export_is_not_uncommitted_work() {
 
 #[test]
 fn lsof_output_parses_and_matches_inside_dirs() {
-    let text = "p100\nccargo\nn/w/myrstack/a/target\np200\nczsh\nn/w/myrstack/ab\np300\ncclaude\nn/w/myrstack/a\n";
+    let text = "p100\nccargo\nn/w/stronghold/a/target\np200\nczsh\nn/w/stronghold/ab\np300\ncclaude\nn/w/stronghold/a\n";
     let list = parse_lsof_cwd(text);
     assert_eq!(list.len(), 3);
     assert_eq!(list[1].command, "zsh");
-    // `/w/myrstack/ab` is not inside `/w/myrstack/a`; our own pid is skipped.
+    // `/w/stronghold/ab` is not inside `/w/stronghold/a`; our own pid is skipped.
     assert_eq!(
-        processes_inside(Path::new("/w/myrstack/a"), &list, 300),
+        processes_inside(
+            Path::new("/w/stronghold/a"),
+            &list,
+            300,
+            &HashSet::new(),
+            false
+        ),
         vec!["cargo (100)".to_string()]
     );
 }
@@ -511,7 +529,13 @@ fn only_the_working_directory_holds_a_worktree() {
         },
     ];
     assert_eq!(
-        processes_inside(Path::new("/w/recommendations/serving-field"), &list, 1),
+        processes_inside(
+            Path::new("/w/recommendations/serving-field"),
+            &list,
+            1,
+            &HashSet::new(),
+            false
+        ),
         vec!["sleep (7)".to_string()]
     );
 }
@@ -643,19 +667,19 @@ fn base_branches_start_with_the_worktree_base_ref() {
 #[test]
 fn census_counts_linked_worktrees_per_repo() {
     let mut list = vec![
-        worktree("a::/x", "/home/orca/workspaces/myrstack/one"),
-        worktree("a::/y", "/home/orca/workspaces/myrstack/two"),
+        worktree("a::/x", "/home/orca/workspaces/stronghold/one"),
+        worktree("a::/y", "/home/orca/workspaces/stronghold/two"),
         worktree("b::/z", "/tmp/elsewhere"),
     ];
     list[2].project_id = Some("github:depict-org/depict".into());
-    let mut main = worktree("a::/r", "/repo/myrstack");
+    let mut main = worktree("a::/r", "/repo/stronghold");
     main.is_main_worktree = true;
     list.push(main);
     assert_eq!(
         census(&list),
         Census {
             total: 3,
-            per_repo: vec![("myrstack".into(), 2), ("depict".into(), 1)]
+            per_repo: vec![("stronghold".into(), 2), ("depict".into(), 1)]
         }
     );
 }
@@ -699,7 +723,7 @@ fn plan_text_lists_removals_and_keeps() {
     let entry = |name: &str, remove: bool, reason: &str, bytes: Option<u64>| PlanEntry {
         id: format!("r::{name}"),
         name: name.into(),
-        repo: "myrstack".into(),
+        repo: "stronghold".into(),
         path: format!("/w/{name}"),
         branch: None,
         bytes,
@@ -727,9 +751,9 @@ fn plan_text_lists_removals_and_keeps() {
     assert_eq!(
         plan.text(),
         "2 linked worktrees: 1 to remove (frees 2.0 GB), 1 kept (holding 0 B).\n\
-         Remove:\n- myrstack/old (2.0 GB): merged into main\n\
-         Keep:\n- myrstack/live: live terminal: t\n\
-         Directories Orca doesn't list (not touched): /w/stray"
+         Remove:\n- stronghold/old (2.0 GB): merged into main\n\
+         Keep:\n- stronghold/live: live terminal: t\n\
+         Directories without git registration (not touched): /w/stray"
     );
 }
 
@@ -1043,7 +1067,10 @@ fn archive_never_bypasses_activity_or_protection() {
             3 => guarded.parked = true,
             4 => guarded.pinned = true,
             5 => guarded.is_main = true,
-            6 => guarded.age_ms = Some(0),
+            6 => {
+                guarded.age_ms = Some(0);
+                git_mut(&mut guarded).ahead = Some(0);
+            }
             _ => {
                 guarded.pr = PrLookup::Found {
                     number: 1,
@@ -1096,8 +1123,410 @@ fn sweep_marker_refuses_concurrent_cleanup_before_calling_orca() {
     fs::write(temp.path().join(SWEEP_FILE), "another cleanup").unwrap();
     let err = execute(&OrcaClient::new(), &Plan::default(), &log, || 0, |_| {}).unwrap_err();
     assert!(err.contains("cleanup already running"));
+    assert!(err.contains("Confirm the previous cleanup has stopped"));
     assert_eq!(
         fs::read(temp.path().join(SWEEP_FILE)).unwrap(),
         b"another cleanup"
     );
+}
+
+#[test]
+fn targeted_prs_fill_old_number_and_branch_holes_and_deduplicate() {
+    let row = |number, branch: &str, state: &str| PrRow {
+        number,
+        state: state.into(),
+        head_ref_name: branch.into(),
+        head_ref_oid: String::new(),
+    };
+    let mut linked = worktree("r::/old", "/old");
+    linked.linked_pr = Some(json!(8312));
+    linked.branch = Some("old".into());
+    let mut open = worktree("r::/open", "/open");
+    open.branch = Some("local".into());
+    open.push_target = Some(PushTarget {
+        branch_name: Some("remote".into()),
+        ..PushTarget::default()
+    });
+    let mut rows = vec![row(9400, "new", "MERGED")];
+    let mut calls = Vec::new();
+    let errors = complete_prs(&mut rows, &[&linked, &open], |q| {
+        calls.push(q.clone());
+        Ok(match q {
+            PrQuery::Number(8312) => vec![row(8312, "old", "MERGED")],
+            PrQuery::Head(b) if b == "old" => vec![row(8312, "old", "MERGED")],
+            PrQuery::Head(b) if b == "remote" => vec![row(8922, "remote", "OPEN")],
+            PrQuery::Head(b) if b == "local" => vec![],
+            _ => panic!("unexpected query {q:?}"),
+        })
+    });
+    assert!(errors.is_empty());
+    assert!(calls.contains(&PrQuery::Number(8312)));
+    assert!(calls.contains(&PrQuery::Head("remote".into())));
+    assert_eq!(rows.iter().filter(|p| p.number == 8312).count(), 1);
+    let prs = Ok(rows);
+    assert_eq!(
+        pr_for(&linked, linked.branch_name(), &prs),
+        PrLookup::Found {
+            number: 8312,
+            state: PrState::Merged
+        }
+    );
+    let mut f = clean();
+    f.pr = pr_for(&open, open.branch_name(), &prs);
+    kept_for(&f, "PR #8922 is open");
+}
+
+#[test]
+fn targeted_failure_is_unknown_only_for_affected_worktrees() {
+    let a = worktree("r::/a", "/a");
+    let b = worktree("r::/b", "/b");
+    let mut rows = Vec::new();
+    let mut calls = 0;
+    let errors = complete_prs(&mut rows, &[&a, &b], |_| {
+        calls += 1;
+        Err("offline".into())
+    });
+    assert_eq!(calls, 1, "failed branch query is cached");
+    let ctx = Context {
+        terminals: vec![],
+        workers: vec![],
+        processes: vec![],
+        daemon_pids: HashSet::new(),
+        parked: BTreeSet::new(),
+        prs: HashMap::from([("r".into(), Ok(rows))]),
+        pr_errors: errors,
+        now_ms: 0,
+    };
+    assert_eq!(ctx.facts(&a).pr, PrLookup::Unknown("offline".into()));
+    assert_eq!(ctx.facts(&b).pr, PrLookup::Unknown("offline".into()));
+    let mut unrelated = worktree("r::/c", "/c");
+    unrelated.branch = None;
+    assert_eq!(ctx.facts(&unrelated).pr, PrLookup::None);
+}
+
+#[test]
+fn daemon_descendants_are_ignored_only_without_an_orca_terminal() {
+    let ps = "52681 1 /Users/k/.codex/packages/app-server-daemon/releases/v/bin/codex app-server daemon pid-update-loop\n\
+        78465 52681 /bin/codex app-server --listen unix://\n\
+        80163 78465 /bin/codex-code-mode-host\n\
+        100 78465 uv run mcp\n101 100 python mcp.py\n102 1 node server.js\n\
+        103 1 /bin/zsh -c echo codex app-server\n104 999 python orphan.py\n105 106 loop\n106 105 loop\n";
+    let daemons = codex_daemon_pids(ps);
+    assert_eq!(daemons, HashSet::from([52681, 78465, 80163, 100, 101]));
+    let processes =
+        parse_lsof_cwd("p52681\nccodex\nn/w/a\np101\ncpython\nn/w/a/sub\np102\ncnode\nn/w/a\n");
+    let mut f = clean();
+    f.processes = processes_inside(Path::new("/w/a"), &processes[..2], 999, &daemons, false);
+    assert!(decide(&f).remove);
+    f.terminals = vec!["agent".into()];
+    f.processes = processes_inside(Path::new("/w/a"), &processes[..2], 999, &daemons, true);
+    kept_for(&f, "python (101)");
+    f.terminals.clear();
+    f.processes = processes_inside(Path::new("/w/a"), &processes, 999, &daemons, false);
+    assert_eq!(f.processes, vec!["node (102)"]);
+    kept_for(&f, "node (102)");
+    f.processes = processes_inside(
+        Path::new("/w/a"),
+        &processes[..2],
+        999,
+        &HashSet::new(),
+        false,
+    );
+    kept_for(&f, "codex (52681)");
+}
+
+#[test]
+fn squash_into_matching_merged_pr_head_is_proof_but_divergence_is_not() {
+    let (_tmp, repo, wt) = repo_with_feature();
+    commit(&wt, "one");
+    commit(&wt, "two");
+    git(&repo, &["checkout", "-q", "-b", "pr-head"]);
+    git(&repo, &["merge", "-q", "--squash", "feature"]);
+    git(&repo, &["commit", "-q", "-m", "squashed"]);
+    let pr_head = rev(&repo, "HEAD");
+    git(&repo, &["checkout", "-q", "main"]);
+    let mut w = worktree("r::wt", wt.to_str().unwrap());
+    w.branch = Some("feature".into());
+    let mut rows = vec![PrRow {
+        number: 8786,
+        state: "MERGED".into(),
+        head_ref_name: "feature".into(),
+        head_ref_oid: pr_head,
+    }];
+    let head = rev(&wt, "HEAD");
+    assert_eq!(merged_pr_containing(&wt, &head, &rows), None);
+    let proof = merged_pr_with_content(&wt, &head, &w, Some("feature"), &rows);
+    assert_eq!(proof, Some(8786));
+    let mut f = clean();
+    unmerged(&mut f);
+    git_mut(&mut f).content_in_merged_pr = proof;
+    assert_eq!(
+        decide(&f).reasons,
+        vec!["its changes are in merged PR #8786's head (squash-merged)"]
+    );
+    rows[0].head_ref_name = "unrelated".into();
+    assert_eq!(
+        merged_pr_with_content(&wt, &head, &w, Some("feature"), &rows),
+        None
+    );
+    w.linked_pr = Some(json!(8786));
+    assert_eq!(
+        merged_pr_with_content(&wt, &head, &w, Some("feature"), &rows),
+        Some(8786)
+    );
+    rows[0].state = "OPEN".into();
+    assert_eq!(
+        merged_pr_with_content(&wt, &head, &w, Some("feature"), &rows),
+        None
+    );
+    rows[0].state = "MERGED".into();
+    commit(&wt, "after-merge");
+    assert_eq!(
+        merged_pr_with_content(&wt, &rev(&wt, "HEAD"), &w, Some("feature"), &rows),
+        None
+    );
+    rows[0].head_ref_oid = "0123456789abcdef0123456789abcdef01234567".into();
+    assert_eq!(
+        merged_pr_with_content(&wt, &head, &w, Some("feature"), &rows),
+        None
+    );
+}
+
+#[test]
+fn git_registered_worktrees_join_the_census_and_are_never_orphans() {
+    let (tmp, repo, wt) = repo_with_feature();
+    let r = Repo {
+        id: "r".into(),
+        path: repo.to_str().unwrap().into(),
+        ..Repo::default()
+    };
+    let root = tmp.path().join("workspaces");
+    let nested = root.join("repo/unlisted with spaces");
+    let direct = root.join("direct");
+    fs::create_dir_all(nested.parent().unwrap()).unwrap();
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "nested",
+            nested.to_str().unwrap(),
+        ],
+    );
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            direct.to_str().unwrap(),
+        ],
+    );
+    fs::create_dir(direct.join("subfolder")).unwrap();
+    fs::create_dir_all(root.join("repo/stray")).unwrap();
+    let listed = vec![worktree("r::wt", wt.to_str().unwrap())];
+    let all = all_worktrees(&listed, std::slice::from_ref(&r), Some(&root)).unwrap();
+    assert_eq!(all.len(), 3);
+    assert_eq!(all.iter().filter(|w| w.is_main_worktree).count(), 0);
+    assert_eq!(
+        all.iter()
+            .filter(|w| w.path == wt.to_str().unwrap())
+            .count(),
+        1
+    );
+    assert_eq!(
+        all.iter().find(|w| w.id == "r::wt").unwrap().branch_name(),
+        Some("feature")
+    );
+    let unlisted = all
+        .iter()
+        .find(|w| w.path.ends_with("unlisted with spaces"))
+        .unwrap();
+    assert!(unlisted.id.starts_with("git:"));
+    assert_eq!(unlisted.repo(), Some("r"));
+    assert_eq!(unlisted.base_ref.as_deref(), Some("origin/main"));
+    assert!(plan_entry(unlisted, &clean()).unlisted);
+    assert_eq!(orphan_dirs(&root, &listed), vec![root.join("repo/stray")]);
+    assert_eq!(orphan_dirs(&root, &all), vec![root.join("repo/stray")]);
+    let terminals = vec![Terminal {
+        worktree_path: Some(nested.join("sub").to_str().unwrap().into()),
+        handle: "term".into(),
+        ..Terminal::default()
+    }];
+    assert_eq!(terminals_in(unlisted, &terminals), vec!["term"]);
+    let args = git_worktree_rm_args(&r, &unlisted.path);
+    assert_eq!(
+        args,
+        vec!["-C", &r.path, "worktree", "remove", "--", &unlisted.path]
+    );
+    assert!(!args.iter().any(|a| a.contains("force")));
+    // Exercise only a disposable repository: git removal preserves the branch and refuses dirt.
+    fs::write(nested.join("untracked.txt"), "keep").unwrap();
+    assert!(matches!(
+        remove_unlisted(&r, &unlisted.path),
+        Outcome::Failed { .. }
+    ));
+    assert!(nested.exists());
+    fs::remove_file(nested.join("untracked.txt")).unwrap();
+    assert_eq!(remove_unlisted(&r, &unlisted.path), Outcome::Removed);
+    assert!(!nested.exists());
+    assert!(!rev(&repo, "refs/heads/nested").is_empty());
+}
+
+#[test]
+fn squash_pr_check_never_lazily_fetches_promised_blobs() {
+    let (tmp, repo, wt) = repo_with_feature();
+    let base = (0..30).map(|i| format!("line {i}\n")).collect::<String>();
+    fs::write(repo.join("data"), &base).unwrap();
+    git(&repo, &["add", "data"]);
+    git(&repo, &["commit", "-q", "-m", "data"]);
+    git(&wt, &["merge", "-q", "main"]);
+    fs::write(wt.join("data"), base.replace("line 2\n", "feature\n")).unwrap();
+    git(&wt, &["commit", "-qam", "feature"]);
+    let feature_head = rev(&wt, "HEAD");
+    git(&repo, &["checkout", "-qb", "pr-head"]);
+    git(&repo, &["merge", "-q", "--squash", "feature"]);
+    git(&repo, &["commit", "-q", "-m", "squash"]);
+    fs::write(
+        repo.join("data"),
+        base.replace("line 2\n", "feature\n")
+            .replace("line 25\n", "later\n"),
+    )
+    .unwrap();
+    git(&repo, &["commit", "-qam", "later"]);
+    let pr_head = rev(&repo, "HEAD");
+    let remote = tmp.path().join("remote.git");
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            repo.to_str().unwrap(),
+            remote.to_str().unwrap(),
+        ],
+    );
+    git(&remote, &["config", "uploadpack.allowFilter", "true"]);
+    let partial = tmp.path().join("partial");
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--filter=blob:none",
+            "--no-checkout",
+            &format!("file://{}", remote.display()),
+            partial.to_str().unwrap(),
+        ],
+    );
+    let packs = || {
+        fs::read_dir(partial.join(".git/objects/pack"))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "pack"))
+            .count()
+    };
+    let before = packs();
+    let rows = vec![PrRow {
+        number: 7,
+        state: "MERGED".into(),
+        head_ref_name: "feature".into(),
+        head_ref_oid: pr_head,
+    }];
+    let mut w = worktree("git:partial", partial.to_str().unwrap());
+    w.branch = Some("feature".into());
+    assert!(
+        present_commits(&partial, rows.iter().map(|p| p.head_ref_oid.as_str()))
+            .contains(&rows[0].head_ref_oid)
+    );
+    assert_eq!(
+        merged_pr_with_content(&partial, &feature_head, &w, Some("feature"), &rows),
+        None
+    );
+    assert_eq!(
+        packs(),
+        before,
+        "the check must not fetch missing promised blobs"
+    );
+}
+
+#[test]
+fn unlisted_worktree_matches_retained_dispatch_by_path() {
+    let w = worktree("git:/w/a", "/w/a");
+    let worker: Worker = serde_json::from_value(json!({
+        "dispatchId": "live", "dispatchStatus": "dispatched",
+        "resource": {"worktreeId": "r::/w/a"}
+    }))
+    .unwrap();
+    assert_eq!(dispatches_in(&w, &[worker]), vec!["live"]);
+}
+
+#[test]
+fn unlisted_census_is_scoped_to_workspaces_but_listed_paths_are_preserved() {
+    let (tmp, repo, wt) = repo_with_feature();
+    let r = Repo {
+        id: "r".into(),
+        path: repo.to_str().unwrap().into(),
+        ..Repo::default()
+    };
+    let root = tmp.path().join("workspaces");
+    let nested = root.join("repo/nested");
+    let direct = root.join("root-level");
+    let sibling = tmp.path().join("workspaces-other/unlisted");
+    fs::create_dir_all(nested.parent().unwrap()).unwrap();
+    fs::create_dir_all(sibling.parent().unwrap()).unwrap();
+    for (branch, path) in [
+        ("nested", &nested),
+        ("direct", &direct),
+        ("outside", &sibling),
+    ] {
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                branch,
+                path.to_str().unwrap(),
+            ],
+        );
+    }
+    let repos = std::slice::from_ref(&r);
+    let all = all_worktrees(&[], repos, Some(&root)).unwrap();
+    assert_eq!(all.len(), 2);
+    assert!(
+        all.iter()
+            .all(|w| canonical_path(Path::new(&w.path)).starts_with(canonical_path(&root)))
+    );
+    assert!(all.iter().any(|w| w.branch_name() == Some("direct")));
+    assert!(all.iter().any(|w| w.branch_name() == Some("nested")));
+    let listed = vec![worktree("r::listed", wt.to_str().unwrap())];
+    let all = all_worktrees(&listed, repos, Some(&root)).unwrap();
+    assert_eq!(all.len(), 3);
+    assert!(
+        all.iter()
+            .any(|w| w.id == "r::listed" && w.path == wt.to_str().unwrap())
+    );
+    assert!(orphan_dirs(&root, &all).is_empty());
+    let without_root = all_worktrees(&listed, repos, None).unwrap();
+    assert_eq!(without_root.len(), 1);
+    assert_eq!(without_root[0].id, "r::listed");
+}
+
+#[test]
+fn archive_respects_detection_merge_proofs_and_nonempty_age_exception() {
+    let mut f = clean();
+    unmerged(&mut f);
+    f.age_ms = Some(0);
+    assert!(decide(&f).archive_required);
+    git_mut(&mut f).content_in_merged_pr = Some(42);
+    assert!(decide(&f).remove);
+    assert!(!decide(&f).archive_required);
+    git_mut(&mut f).ahead = Some(0);
+    assert!(!decide(&f).remove);
+    assert!(!decide(&f).archivable);
 }

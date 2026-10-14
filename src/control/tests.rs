@@ -423,7 +423,7 @@ fn whip_quotas_alerts() {
     view.alerts = vec![
         view::AlertView {
             at_ms: 5,
-            title: "Myrstack: needs input".into(),
+            title: "Stronghold: needs input".into(),
             ..Default::default()
         },
         view::AlertView {
@@ -449,14 +449,14 @@ fn whip_quotas_alerts() {
     assert_eq!(health["checks"], json!([]));
     assert_eq!(
         h.ok("alerts", Value::Null)["alerts"][0]["title"],
-        "Myrstack: needs input"
+        "Stronghold: needs input"
     );
     let notifications = &h.ok("status", Value::Null)["notifications"];
     assert_eq!(notifications["total"], 2);
     assert_eq!(notifications["unread"], 1);
     assert_eq!(
         notifications["latest_unread"][0]["title"],
-        "Myrstack: needs input"
+        "Stronghold: needs input"
     );
 }
 
@@ -914,13 +914,13 @@ fn filter_change_applies_only_given_fields() {
         ..ClanFilter::default()
     };
     FilterChange {
-        repos: Some(BTreeSet::from(["myrstack".to_string()])),
+        repos: Some(BTreeSet::from(["stronghold".to_string()])),
         ..FilterChange::default()
     }
     .apply(&mut filter);
     assert_eq!(filter.text, "old");
     assert!(!filter.show_loose);
-    assert!(filter.repos.contains("myrstack"));
+    assert!(filter.repos.contains("stronghold"));
     FilterChange {
         clear: true,
         text: Some("new".into()),

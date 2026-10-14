@@ -186,7 +186,7 @@ pub const ACTIONS: &[Action] = &[
     action(
         ActionId::FitFarm,
         "fit_farm",
-        "Fit farm",
+        "Fit hold",
         "zoom screen view all center",
         Some("f"),
     ),
@@ -752,7 +752,7 @@ mod tests {
             title(ActionId::ToggleReleased, &cx),
             "Show recently released"
         );
-        assert_eq!(title(ActionId::FitFarm, &cx), "Fit farm");
+        assert_eq!(title(ActionId::FitFarm, &cx), "Fit hold");
     }
 
     #[test]

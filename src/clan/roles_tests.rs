@@ -256,7 +256,13 @@ fn bus_senders_skip_workers_services_and_worker_messages() {
     data.inbox = vec![
         msg("m1", COORD, &format!("run:{RUN}"), "status", NOW - 30 * MIN),
         msg("m2", WORKER, &format!("run:{RUN}"), "status", NOW),
-        msg("m3", "myrstack-karl", &format!("run:{RUN}"), "status", NOW),
+        msg(
+            "m3",
+            "stronghold-karl",
+            &format!("run:{RUN}"),
+            "status",
+            NOW,
+        ),
         msg("m4", &format!("run:{RUN}"), "dispatch:ctx_1", "status", NOW),
         // Not in the worker list, but only workers send heartbeats.
         msg("m5", OTHER, &format!("run:{RUN}"), "heartbeat", NOW),

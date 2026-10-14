@@ -71,7 +71,7 @@ fn resolves_every_way_an_agent_is_named() {
     assert_eq!(resolve(&s, "run:r1"), Some(at("term_c")));
     assert_eq!(resolve(&s, "king"), Some(Endpoint::Node(NodeId::king())));
     assert_eq!(
-        resolve(&s, "myrstack-whip"),
+        resolve(&s, "stronghold-whip"),
         Some(Endpoint::Node(NodeId::king()))
     );
     assert_eq!(resolve(&s, "Karl"), Some(Endpoint::Karl));
@@ -132,7 +132,7 @@ fn bus_messages_map_to_kinds() {
         Some(MessageKind::Message)
     );
     assert_eq!(kind("term_w", "run:r1", "heartbeat"), None);
-    assert_eq!(kind("myrstack-whip", "term_w", "status"), None);
+    assert_eq!(kind("stronghold-whip", "term_w", "status"), None);
     assert_eq!(kind("term_c", "@all", "status"), None);
 }
 

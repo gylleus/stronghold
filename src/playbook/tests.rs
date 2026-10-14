@@ -453,18 +453,18 @@ fn cli_rejects_bad_options() {
 fn template_subcommands_need_exactly_one_id() {
     let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     let e = cli_text(&args(&["kickoff"])).unwrap_err().to_string();
-    assert_eq!(e, "usage: myrstack playbook kickoff <task_id>");
+    assert_eq!(e, "usage: stronghold playbook kickoff <task_id>");
     let e = cli_text(&args(&["attendant-brief", "a", "b"]))
         .unwrap_err()
         .to_string();
-    assert_eq!(e, "usage: myrstack playbook attendant-brief <run_id>");
+    assert_eq!(e, "usage: stronghold playbook attendant-brief <run_id>");
     let e = cli_text(&args(&["attendant-brief", "--json"]))
         .unwrap_err()
         .to_string();
     assert!(e.starts_with("usage:"), "{e}");
     let help = cli_text(&args(&["kickoff", "--help"])).unwrap();
     assert!(
-        help.contains("myrstack playbook kickoff <task_id>"),
+        help.contains("stronghold playbook kickoff <task_id>"),
         "{help}"
     );
 }

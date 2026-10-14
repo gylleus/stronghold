@@ -1,4 +1,4 @@
-//! The app's log file: `~/Library/Logs/Myrstack/myrstack.log`, rotated by size.
+//! The app's log file: `~/Library/Logs/Stronghold/stronghold.log`, rotated by size.
 //!
 //! An app launched from Finder has its stderr thrown away, so every log line also goes to this
 //! file. [`init`] sets up `env_logger` to write each line to stderr and to a [`RotatingFile`].
@@ -9,14 +9,14 @@ use std::path::{Path, PathBuf};
 
 /// The log file grows to this size before it is rotated.
 pub const MAX_BYTES: u64 = 5 * 1024 * 1024;
-/// Files kept: the live log plus `myrstack.log.1` … `.{KEEP - 1}`.
+/// Files kept: the live log plus `stronghold.log.1` … `.{KEEP - 1}`.
 pub const KEEP: usize = 3;
-const FILE_NAME: &str = "myrstack.log";
+const FILE_NAME: &str = "stronghold.log";
 
-/// Where the log goes: `$MYRSTACK_DATA_DIR/myrstack.log` for a test instance, else
-/// `~/Library/Logs/Myrstack/myrstack.log`.
+/// Where the log goes: `$STRONGHOLD_DATA_DIR/stronghold.log` for a test instance, else
+/// `~/Library/Logs/Stronghold/stronghold.log`.
 pub fn path() -> PathBuf {
-    if let Some(dir) = std::env::var_os("MYRSTACK_DATA_DIR").filter(|d| !d.is_empty()) {
+    if let Some(dir) = crate::legacy::env_os("STRONGHOLD_DATA_DIR").filter(|d| !d.is_empty()) {
         return PathBuf::from(dir).join(FILE_NAME);
     }
     directories::BaseDirs::new()

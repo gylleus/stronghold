@@ -11,7 +11,7 @@ use crate::chat::SessionState;
 use crate::chat::context::{ContextGauge, Level};
 use crate::chat::history::HistoryChunk;
 use crate::chat::permissions::{
-    DESTRUCTIVE_TOOLS, MYRSTACK_PREFIX, short_tool_name, summarize_input, truncate,
+    DESTRUCTIVE_TOOLS, own_tool, short_tool_name, summarize_input, truncate,
 };
 use crate::chat::say::split_say;
 use crate::chat::transcript::{ChatItem, Decision, PermissionCard, ToolCall, Transcript};
@@ -330,6 +330,7 @@ fn estimate_height(item: &ChatItem, width: f32, m: &TextMetrics) -> f32 {
             };
             m.text_height(&shown, width * 0.8 - 24.0) + 14.0
         }
+        ChatItem::Ant(message) => m.text_height(&message.message, width) + m.row * 3.0,
         ChatItem::Assistant { text, .. } => m.text_height(text, width) + m.row * 0.5,
         ChatItem::Permission(card) if card.decision.is_none() => m.row * 8.0,
         ChatItem::Error(text) => m.text_height(text, width),
@@ -399,7 +400,7 @@ fn header(ui: &mut Ui, view: &ChatView<'_>, actions: &mut Vec<ChatAction>) {
             if ui
                 .toggle_value(&mut auto, "Auto")
                 .on_hover_text(
-                    "Auto mode: every tool call of the King's (Myrstack sends, keys, closes, \
+                    "Auto mode: every tool call of the King's (Stronghold sends, keys, closes, \
                      spawns and whip changes, file reads, web fetches, other MCP servers) \
                      runs without asking. close_agents still dry-runs unless told otherwise.",
                 )
@@ -580,6 +581,29 @@ fn item_ui(
     actions: &mut Vec<ChatAction>,
 ) -> Option<NodeId> {
     match item {
+        ChatItem::Ant(message) => {
+            let mut selected = None;
+            ui.group(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong(format!("Ant · {} · {}", message.label, message.kind));
+                    if let Some(id) = &message.node_id {
+                        let node = NodeId(id.clone());
+                        if is_node(&node) && ui.link(id).clicked() {
+                            selected = Some(node);
+                        }
+                    }
+                    if !message.delivered {
+                        ui.weak("queued");
+                    }
+                });
+                ui.label(&message.message);
+                if let Some(url) = &message.url {
+                    ui.hyperlink(url);
+                }
+                ui.weak("From an ant · not Karl's instructions");
+            });
+            return selected;
+        }
         ChatItem::User(text) => user_bubble(ui, text),
         ChatItem::VoiceUser(text) => user_bubble(ui, &voice_bubble_text(text)),
         ChatItem::Assistant { text, .. } => {
@@ -838,10 +862,8 @@ fn tool_row(ui: &mut Ui, call: &ToolCall) {
 fn permission_card(ui: &mut Ui, card: &PermissionCard, actions: &mut Vec<ChatAction>) {
     let request = &card.request;
     let name = short_tool_name(&request.tool_name);
-    let reaches_agents = request
-        .tool_name
-        .strip_prefix(MYRSTACK_PREFIX)
-        .is_some_and(|t| DESTRUCTIVE_TOOLS.contains(&t));
+    let reaches_agents =
+        own_tool(&request.tool_name).is_some_and(|t| DESTRUCTIVE_TOOLS.contains(&t));
     if let Some(decision) = card.decision {
         let text = match decision {
             Decision::Allow => format!("✓ Approved {name}"),
@@ -1598,8 +1620,8 @@ mod tests {
         let lines = [
             r#"{"type":"system","subtype":"init","session_id":"s","model":"claude-test","tools":[]}"#,
             r#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"m1"}},"parent_tool_use_id":null}"#,
-            r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"mcp__myrstack__fleet_status"}},"parent_tool_use_id":null}"#,
-            r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"mcp__myrstack__fleet_status","input":{}}]},"parent_tool_use_id":null}"#,
+            r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"mcp__stronghold__clan_status"}},"parent_tool_use_id":null}"#,
+            r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"mcp__stronghold__clan_status","input":{}}]},"parent_tool_use_id":null}"#,
             r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"{\"needs_input\":[]}"}]},"parent_tool_use_id":null}"#,
             r#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"m2"}},"parent_tool_use_id":null}"#,
             r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"parent_tool_use_id":null}"#,
@@ -1610,7 +1632,7 @@ mod tests {
         }
         t.push_permission(PermissionRequest {
             request_id: "p1".into(),
-            tool_name: "mcp__myrstack__send_to_agent".into(),
+            tool_name: "mcp__stronghold__send_to_agent".into(),
             display_name: None,
             input: json!({"agent": "term:term_1", "text": "King: carry on"}),
             tool_use_id: None,
@@ -1794,10 +1816,10 @@ mod tests {
     fn auto_mode_shows_badge_hint_notice_and_markers() {
         let mut t = Transcript::default();
         t.push_system(crate::chat::auto_mode::notice(true));
-        t.apply(&parse_line(r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t9","name":"mcp__myrstack__send_to_agent","input":{}}]},"parent_tool_use_id":null}"#).unwrap());
+        t.apply(&parse_line(r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t9","name":"mcp__stronghold__send_to_agent","input":{}}]},"parent_tool_use_id":null}"#).unwrap());
         t.mark_auto(&PermissionRequest {
             request_id: "p9".into(),
-            tool_name: "mcp__myrstack__send_to_agent".into(),
+            tool_name: "mcp__stronghold__send_to_agent".into(),
             display_name: None,
             input: json!({}),
             tool_use_id: Some("t9".into()),

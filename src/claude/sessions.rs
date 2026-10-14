@@ -408,8 +408,8 @@ mod tests {
                 "-Users-gylleus-repo-depict-recommendations--claude-worktrees-vroom-299-pins",
             ),
             (
-                "/Users/gylleus/repo/saker/myrstack-worktrees/myr-8hj.1",
-                "-Users-gylleus-repo-saker-myrstack-worktrees-myr-8hj-1",
+                "/Users/gylleus/repo/saker/stronghold-worktrees/myr-8hj.1",
+                "-Users-gylleus-repo-saker-stronghold-worktrees-myr-8hj-1",
             ),
             ("/a/b_c d@e", "-a-b-c-d-e"),
             // One dash per UTF-16 unit: `å` is one unit, the emoji is two.
