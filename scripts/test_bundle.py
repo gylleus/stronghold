@@ -185,7 +185,7 @@ class InfoPlist(unittest.TestCase):
             bundle.write_info_plist(path, "1.2.3")
             with open(path, "rb") as f:
                 plist = plistlib.load(f)
-        self.assertEqual(plist["CFBundleIdentifier"], "ai.depict.stronghold")
+        self.assertEqual(plist["CFBundleIdentifier"], "com.gylleus.stronghold")
         self.assertEqual(plist["CFBundleName"], "Stronghold")
         self.assertEqual(plist["CFBundleDisplayName"], "Stronghold")
         self.assertEqual(plist["CFBundleExecutable"], "stronghold")

@@ -37,6 +37,8 @@ impl EnvoyDraft {
                 .filter(|s| !s.is_empty())
                 .map(str::to_owned)
                 .collect(),
+            karl_user_id: self.settings.karl_user_id.trim().to_owned(),
+            github_owner: self.settings.github_owner.trim().to_owned(),
             ..self.settings.clone()
         }
     }
@@ -79,6 +81,14 @@ pub(super) fn section(pane: &mut SettingsPane, ui: &mut egui::Ui, out: &mut supe
             ui.end_row();
             ui.label("Channels (IDs, one per line)");
             ui.add(egui::TextEdit::multiline(&mut draft.channels).desired_rows(3));
+            ui.end_row();
+            ui.label("Karl's Slack member id")
+                .on_hover_text("Whose mentions and DMs are pings to Karl. Slack's auth.test replaces it at start.");
+            ui.text_edit_singleline(&mut draft.settings.karl_user_id);
+            ui.end_row();
+            ui.label("GitHub owner")
+                .on_hover_text("Owner of the repos Slack names as repo#N, used to look up their PR branches; empty turns the lookup off.");
+            ui.text_edit_singleline(&mut draft.settings.github_owner);
             ui.end_row();
             ui.label("Fresh context after quiet (seconds)")
                 .on_hover_text("A batch typed after this much quiet starts from a cleared context; 0 clears before every batch. Bursts share one context.");

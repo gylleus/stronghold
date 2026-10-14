@@ -35,9 +35,9 @@ pub trait SlackIo: SlackSender {
         let _ = bridge;
         Err("Subscription listing unavailable".into())
     }
-    /// The head branch of PR `repo#number`; `Ok(None)` when there is no such PR.
-    fn pr_head(&mut self, repo: &str, number: u64) -> Result<Option<String>, String> {
-        let _ = (repo, number);
+    /// The head branch of PR `owner/repo#number`; `Ok(None)` when there is no such PR.
+    fn pr_head(&mut self, owner: &str, repo: &str, number: u64) -> Result<Option<String>, String> {
+        let _ = (owner, repo, number);
         Err("PR lookup unavailable".into())
     }
     fn api(&mut self, method: &str, params: &[(&str, String)]) -> Result<Value, String>;
@@ -115,9 +115,9 @@ fn run(name: &str, args: &[String], bridge: Option<&Path>) -> Result<String, Str
 }
 
 impl SlackIo for SlackCli {
-    fn pr_head(&mut self, repo: &str, number: u64) -> Result<Option<String>, String> {
+    fn pr_head(&mut self, owner: &str, repo: &str, number: u64) -> Result<Option<String>, String> {
         use crate::review::github::{GhCli, GhError};
-        match GhCli::default().head_branch(super::settings::GITHUB_OWNER, repo, number) {
+        match GhCli::default().head_branch(owner, repo, number) {
             Ok(branch) => Ok(Some(branch)),
             Err(GhError::Failed(_)) => Ok(None),
             Err(GhError::Unavailable(e)) => Err(e),
@@ -511,6 +511,9 @@ impl<I: SlackIo> SlackChannel<I> {
         now_ms: i64,
         batch: &mut PollBatch,
     ) -> Result<(), String> {
+        if self.settings.karl_user_id.is_empty() {
+            return Err("No Slack member id for Karl yet (auth.test or settings)".into());
+        }
         let key = format!("{}:{}", kind.name(), self.settings.karl_user_id);
         let start = self.inbox.first_enabled_ms.unwrap_or(now_ms);
         let since = self
@@ -573,6 +576,9 @@ impl<I: SlackIo> SlackChannel<I> {
 
     /// Caches the head branches of PRs new events name, a few per poll, so dwarves match by branch.
     fn resolve_prs(&mut self, events: &[InboundEvent]) {
+        if self.settings.github_owner.is_empty() {
+            return;
+        }
         let refs: BTreeSet<String> = events
             .iter()
             .flat_map(|e| super::matching::refs(&e.text))
@@ -582,7 +588,7 @@ impl<I: SlackIo> SlackChannel<I> {
         for r in refs.into_iter().take(MAX_PR_LOOKUPS) {
             let (repo, number) = r.split_once('#').expect("repo#N");
             let Ok(number) = number.parse() else { continue };
-            match self.io.pr_head(repo, number) {
+            match self.io.pr_head(&self.settings.github_owner, repo, number) {
                 Ok(head) => {
                     self.inbox.pr_heads.insert(r, head.unwrap_or_default());
                 }

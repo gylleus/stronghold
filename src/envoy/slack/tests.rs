@@ -17,7 +17,7 @@ impl SlackSender for Fake {
     }
 }
 impl SlackIo for Fake {
-    fn pr_head(&mut self, repo: &str, number: u64) -> Result<Option<String>, String> {
+    fn pr_head(&mut self, _: &str, repo: &str, number: u64) -> Result<Option<String>, String> {
         self.methods.push(format!("pr_head {repo}#{number}"));
         Ok((number != 404).then(|| format!("gylleus/{repo}-{number}")))
     }
@@ -49,6 +49,8 @@ fn channel(dir: &Path) -> SlackChannel<Fake> {
         dir.into(),
         EnvoySettings {
             channels: vec!["C123".into()],
+            karl_user_id: "U0KARL0001".into(),
+            github_owner: "acme-org".into(),
             ..EnvoySettings::default()
         },
     )
@@ -475,18 +477,18 @@ fn pr_refs_resolve_to_head_branches_once() {
 fn karls_id_is_resolved_from_auth_test() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = channel(dir.path());
-    assert_eq!(c.settings.karl_user_id, "U0AMMLGSFL0");
+    assert_eq!(c.settings.karl_user_id, "U0KARL0001");
     c.io.replies
-        .push_back(json!({"ok":true,"user":"karl126","user_id":"u0ammlgsfl0","team":"Depict"}));
-    assert_eq!(c.resolve_karl().unwrap().as_deref(), Some("U0AMMLGSFL0"));
+        .push_back(json!({"ok":true,"user":"karl","user_id":"u0karl0002","team":"Acme"}));
+    assert_eq!(c.resolve_karl().unwrap().as_deref(), Some("U0KARL0002"));
     c.io.replies
-        .push_back(json!({"ok":true,"user":"karl126","user_id":"W0NEWID","team":"Depict"}));
+        .push_back(json!({"ok":true,"user":"karl","user_id":"W0NEWID","team":"Acme"}));
     assert_eq!(c.resolve_karl().unwrap().as_deref(), Some("W0NEWID"));
     assert_eq!(
         c.settings.karl_user_id, "W0NEWID",
         "the resolved id replaces the configured one"
     );
-    c.io.replies.push_back(json!({"ok":true,"team":"Depict"}));
+    c.io.replies.push_back(json!({"ok":true,"team":"Acme"}));
     assert_eq!(
         c.resolve_karl().unwrap(),
         None,

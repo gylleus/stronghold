@@ -27,6 +27,7 @@ pub mod model;
 pub mod notify;
 pub mod orca;
 pub mod park;
+pub mod paths;
 pub mod persist;
 pub mod playbook;
 pub mod poller;
