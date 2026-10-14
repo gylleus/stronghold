@@ -20,24 +20,12 @@ pub fn definitions() -> Vec<Value> {
     vec![json!({
         "name": TOOL,
         "title": "Clean up Orca worktrees",
-        "description": "Evaluates every linked worktree in Orca or registered with git and plans which to remove. A worktree \
-            is removable only if no Orca terminal, process (by working directory), active \
-            dispatch or parked agent is in it, it has no uncommitted changes, no untracked files other than \
-            agent notes (*.md) and logs (*.log), and no open PR, and its work is in the base \
-            branch or on GitHub: HEAD merged, every commit patch-equivalent in the base (rebase \
-            merge), its changes already in the base's tree (squash merge), HEAD inside a merged \
-            PR's head commit, or its PR merged/closed with every commit on a remote. Anything \
-            unknown keeps it. A removable worktree with notes saves them to \
-            ~/Documents/agents/notes/<repo>/<worktree>/ and deletes its logs first. Other \
-            untracked files are listed with their size and keep it. dry_run defaults to TRUE \
-            and only returns the plan (keep/remove with reasons, space freed, size of kept \
-            worktrees with their build output). To remove, show Karl the plan, then call again \
-            with dry_run=false and ids = the plan's removable ids he approved. Removal goes \
-            through `orca worktree rm`, or `git worktree remove` for unlisted entries (keeping the branch), with no --force after a fresh re-check, and is logged.",
+        "description": "Plans cleanup of idle worktrees listed by Orca or registered with Git under ~/orca/workspaces. Live terminals, processes, dispatches, parked agents, pins, main checkouts, open PRs and the age gate always keep a worktree. Merged work is removable; unmerged HEAD on no remote with known no open PR is removable after a verified local archive. Pushed unmerged work is never automatically removed. Untracked .orca/ and .local/ are saved under ~/Documents/agents/notes/<repo>/<worktree>/ (50 MB cap). Other git-work keep reasons expose archivable and archive_blockers. dry_run defaults true. Show Karl the plan before dry_run=false: ids selects ordinary removable entries; archive_ids explicitly archives and removes eligible kept entries. Archives under ~/Documents/agents/archive/<repo>/<worktree>-<timestamp>/ contain verified branch.bundle, binary working and staged patches, untracked copies (200 MB cap), and README restore commands. Fresh guards are checked before mutation, then removal uses orca worktree rm, or git worktree remove for unlisted entries, without force. The local branch is retained; nothing is pushed. Archive paths are logged.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "dry_run": { "type": "boolean", "default": true, "description": "Only return the plan. Pass false (with ids) to remove." },
+                "archive_ids": { "type": "array", "items": { "type": "string" }, "description": "With dry_run=false: explicitly approved archivable worktree ids to archive locally and remove." },
                 "ids": { "type": "array", "items": { "type": "string" }, "description": "With dry_run=false: the worktree ids (from the plan) to remove." },
             },
         },
@@ -70,22 +58,10 @@ fn clean(args: &Value) -> Result<ToolOutput, String> {
         Some(Value::Bool(b)) => *b,
         Some(_) => return Err("\"dry_run\" must be a boolean".into()),
     };
-    let ids: Option<HashSet<String>> = match args.get("ids") {
-        None | Some(Value::Null) => None,
-        Some(Value::Array(a)) => Some(
-            a.iter()
-                .map(|v| v.as_str().map(str::to_owned))
-                .collect::<Option<_>>()
-                .ok_or("\"ids\" must be strings")?,
-        ),
-        Some(_) => return Err("\"ids\" must be an array of strings".into()),
-    };
-    if !dry_run && ids.as_ref().is_none_or(HashSet::is_empty) {
-        return Err(
-            "dry_run=false needs \"ids\": the removable worktree ids from a dry run that Karl \
-             approved"
-                .into(),
-        );
+    let ids = selected_ids(args, "ids")?;
+    let archive_ids = selected_ids(args, "archive_ids")?;
+    if !dry_run && ids.is_empty() && archive_ids.is_empty() {
+        return Err("dry_run=false needs ids or archive_ids from a plan Karl approved".into());
     }
     let client = OrcaClient::new().without_sender_identity();
     let plan = worktrees::evaluate(&client, &HashMap::new(), now_ms())?;
@@ -103,24 +79,39 @@ fn clean(args: &Value) -> Result<ToolOutput, String> {
             is_error: false,
         });
     }
-    let ids = ids.unwrap_or_default();
     let not_removable: Vec<&String> = ids
         .iter()
-        .filter(|id| !plan.removable().any(|e| &e.id == *id))
+        .chain(archive_ids.iter())
+        .filter(|id| {
+            !plan.entries.iter().any(|e| {
+                &e.id == *id
+                    && (ids.contains(*id) && e.verdict.remove
+                        || archive_ids.contains(*id)
+                            && (e.verdict.archivable
+                                || e.verdict.remove && e.verdict.archive_blockers.is_empty()))
+            })
+        })
         .collect();
     let mut chosen = plan.clone();
-    chosen
-        .entries
-        .retain(|e| e.verdict.remove && ids.contains(&e.id));
-    let removals = worktrees::execute(
+    chosen.entries.retain(|e| {
+        e.verdict.remove && ids.contains(&e.id)
+            || archive_ids.contains(&e.id)
+                && (e.verdict.archivable
+                    || e.verdict.remove && e.verdict.archive_blockers.is_empty())
+    });
+    let removals = worktrees::execute_archives(
         &client,
         &chosen,
+        &archive_ids,
         &worktrees::default_log_path(),
         now_ms,
         |_| {},
     )?;
     let mut lines = vec![worktrees::summary(&removals)];
     for r in &removals {
+        if let Some(path) = &r.archive_path {
+            lines.push(format!("- archive: {path}"));
+        }
         lines.push(match &r.outcome {
             Outcome::Removed => match &r.notes_saved_to {
                 Some(dir) => format!(
@@ -153,10 +144,26 @@ fn clean(args: &Value) -> Result<ToolOutput, String> {
     })
 }
 
+fn selected_ids(args: &Value, key: &str) -> Result<HashSet<String>, String> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(HashSet::new()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("{key} must contain strings"))
+            })
+            .collect(),
+        Some(_) => Err(format!("{key} must be an array of strings")),
+    }
+}
+
 fn plan_json(plan: &Plan) -> Value {
     json!({
         "dry_run": true,
         "removable_ids": plan.removable().map(|e| e.id.clone()).collect::<Vec<_>>(),
+        "archivable_ids": plan.entries.iter().filter(|e| e.verdict.archivable).map(|e| e.id.clone()).collect::<Vec<_>>(),
         "freed_bytes": plan.freed_bytes(),
         "plan": plan,
     })

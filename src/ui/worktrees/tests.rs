@@ -190,10 +190,12 @@ fn hidden_removal_keeps_progress_and_completion_without_reopening() {
         bytes: Some(1024),
         reason: "merged".into(),
         notes_saved_to: None,
+        archive_path: None,
         outcome: Outcome::Removed,
         at_ms: 1,
     };
-    tx.send(ExecMsg::Progress(removal.clone())).unwrap();
+    tx.send(ExecMsg::Progress(Box::new(removal.clone())))
+        .unwrap();
     assert!(!h.panel.poll_stage());
     assert_eq!(h.panel.progress(), Some((1, 1)));
     h.reopen("0 worktrees · clearing 1/1");
@@ -207,4 +209,28 @@ fn hidden_removal_keeps_progress_and_completion_without_reopening() {
     assert!(
         matches!(&h.panel.stage, Some(Stage::Finished { removals, error: None }) if removals == &[removal])
     );
+}
+
+#[test]
+fn archive_action_requires_a_separate_confirmation() {
+    let mut plan = plan();
+    plan.entries[0].path = "/unused/worktree".into();
+    plan.entries[0].verdict = Verdict {
+        archivable: true,
+        reasons: vec!["unmerged work".into()],
+        ..Default::default()
+    };
+    let mut h = Harness::new(Stage::Review {
+        plan,
+        chosen: BTreeSet::new(),
+    });
+    h.click("Keep (1)");
+    h.click("Archive & remove");
+    assert!(
+        matches!(&h.panel.stage, Some(Stage::ArchiveConfirm { id, .. }) if id == "repo::branch")
+    );
+    assert!(text_center(&h.frame(vec![]), "Confirm archive & remove").is_some());
+    h.escape();
+    assert!(!h.panel.open);
+    assert!(matches!(&h.panel.stage, Some(Stage::ArchiveConfirm { .. })));
 }

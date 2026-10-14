@@ -13,8 +13,12 @@
 //! the base, every commit patch-equivalent to one in it (a rebase merge), the branch's changes
 //! already in its tree (a squash merge), HEAD inside a merged PR's head, or the PR merged or
 //! closed with every commit on a remote. Untracked agent notes (`*.md`) and logs (`*.log`)
-//! don't keep a worktree: the notes are saved under `~/Documents/agents/notes/` and the logs
-//! deleted right before removal. Any other untracked file keeps it.
+//! don't keep a worktree: notes and untracked `.orca/` / `.local/` scratch (up to 50 MB)
+//! are saved under `~/Documents/agents/notes/` and logs deleted before removal. Unpushed,
+//! unmerged idle work is archived locally first; other git-work keep reasons can be explicitly
+//! archived. Activity and protection guards always apply. [`archive`] owns recovery artifacts.
+
+pub mod archive;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, OpenOptions};
@@ -378,6 +382,12 @@ pub enum PrLookup {
 /// A worktree's git state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GitFacts {
+    /// Exact untracked paths under top-level agent scratch directories.
+    pub scratch: Vec<String>,
+    /// A recovery copy cannot safely include all git work (unsupported files or size cap).
+    pub archive_error: Option<String>,
+    /// Scratch cannot be preserved under the notes cap; blocks ordinary removal too.
+    pub scratch_error: Option<String>,
     pub head: String,
     /// Local branch, `None` on a detached HEAD.
     pub branch: Option<String>,
@@ -432,6 +442,14 @@ pub struct Facts {
 /// Keep or remove, and why.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Verdict {
+    #[serde(default)]
+    pub archivable: bool,
+    #[serde(default)]
+    pub archive_blockers: Vec<String>,
+    #[serde(default)]
+    pub archive_required: bool,
+    #[serde(default)]
+    pub scratch: Vec<String>,
     pub remove: bool,
     /// For a kept worktree, every reason to keep it; for a removed one, why it is safe.
     pub reasons: Vec<String>,
@@ -450,15 +468,76 @@ impl Verdict {
             reasons,
             notes: Vec::new(),
             logs: Vec::new(),
+            ..Self::default()
         }
     }
 }
 
-/// Decides one worktree. It is removed only when every check passed and was answered: no
-/// terminal, process or dispatch in it, no uncommitted change or untracked file other than
-/// notes and logs, no open PR, and HEAD's work in a base branch or on GitHub (see the module
-/// docs).
+/// Decides ordinary removal, automatic archive-first removal, and explicit archive eligibility.
+/// Activity/protection guards apply to every path; unknown PR state permits explicit archive only.
 pub fn decide(facts: &Facts) -> Verdict {
+    let mut verdict = decide_regular(facts);
+    // Remove only git-work reasons from a second decision: all activity guards still apply.
+    let mut guards = facts.clone();
+    guards.git = facts
+        .git
+        .as_ref()
+        .map(|git| GitFacts {
+            ahead: git.ahead,
+            merged_into: Some("archive".into()),
+            ..GitFacts::default()
+        })
+        .map_err(Clone::clone);
+    if matches!(guards.pr, PrLookup::Unknown(_)) {
+        guards.pr = PrLookup::None;
+    }
+    let guard_verdict = decide_regular(&guards);
+    let mut blockers = if guard_verdict.remove {
+        Vec::new()
+    } else {
+        guard_verdict.reasons
+    };
+    if let Ok(git) = &facts.git {
+        if let Some(error) = &git.archive_error {
+            blockers.push(error.clone());
+            if !verdict.remove {
+                verdict.reasons.push(format!("cannot archive: {error}"));
+            }
+        }
+        if let Some(error) = &git.scratch_error {
+            blockers.push(error.clone());
+            verdict.remove = false;
+            verdict.reasons.push(error.clone());
+        }
+        if verdict.remove && !git.scratch.is_empty() {
+            verdict.scratch = git.scratch.clone();
+            verdict.reasons.push(format!(
+                "first saves {} agent scratch file{}",
+                git.scratch.len(),
+                plural(git.scratch.len())
+            ));
+        }
+        let unmerged = git.merged_into.is_none()
+            && git.patches_in.is_none()
+            && git.content_in.is_none()
+            && git.merged_pr_head.is_none()
+            && git.content_in_merged_pr.is_none();
+        if blockers.is_empty()
+            && unmerged
+            && git.on_remote.is_none()
+            && !matches!(facts.pr, PrLookup::Unknown(_))
+        {
+            verdict.remove = true;
+            verdict.archive_required = true;
+            verdict.reasons = vec!["unpushed and no dwarf in it: archived first".into()];
+        }
+    }
+    verdict.archivable = !verdict.remove && blockers.is_empty();
+    verdict.archive_blockers = blockers;
+    verdict
+}
+
+fn decide_regular(facts: &Facts) -> Verdict {
     let mut keep = Vec::new();
     if facts.is_main {
         keep.push("main checkout".to_owned());
@@ -599,6 +678,7 @@ pub fn decide(facts: &Facts) -> Verdict {
                 reasons,
                 notes: git.notes.clone(),
                 logs: git.logs.clone(),
+                ..Verdict::default()
             }
         }
         _ => Verdict::keep(keep),
@@ -1074,7 +1154,7 @@ impl Plan {
                     e.bytes.map_or("size ?".into(), format_bytes),
                     e.verdict.reasons.join("; ")
                 ));
-                if !e.verdict.notes.is_empty()
+                if (!e.verdict.notes.is_empty() || !e.verdict.scratch.is_empty())
                     && let Some(root) = notes_root()
                 {
                     out.push(format!("  notes go to {}", e.notes_dir(&root).display()));
@@ -1370,13 +1450,16 @@ pub fn git_facts(dir: &Path, base_ref: Option<&str>) -> Result<GitFacts, String>
             .filter(|(ok, _)| *ok)
             .and_then(|(_, n)| n.parse().ok())
     });
-    let (_, remotes) = git(&[
+    let (remote_ok, remotes) = git(&[
         "for-each-ref",
         "--contains",
         &head,
         "--format=%(refname:short)",
         "refs/remotes",
     ])?;
+    if !remote_ok {
+        return Err("remote-tracking refs unreadable".into());
+    }
     let on_remote = remotes
         .lines()
         .map(str::trim)
@@ -1400,8 +1483,23 @@ pub fn git_facts(dir: &Path, base_ref: Option<&str>) -> Result<GitFacts, String>
             }
         }
     }
-    let split = split_status(&status);
+    archive::check_supported(dir)?;
+    let mut split = split_status(&status);
+    let files = archive::untracked(dir)?;
+    let scratch: Vec<_> = files
+        .iter()
+        .filter(|p| archive::is_scratch(p))
+        .cloned()
+        .collect();
+    split.notes.retain(|p| !archive::is_scratch(p));
+    split.logs.retain(|p| !archive::is_scratch(p));
+    split.other.retain(|p| !archive::is_scratch(p));
+    let scratch_error = archive::measure(dir, &scratch, archive::SCRATCH_CAP).err();
+    let archive_error = archive::measure(dir, &files, archive::UNTRACKED_CAP).err();
     Ok(GitFacts {
+        scratch,
+        scratch_error,
+        archive_error,
         branch: Some(branch).filter(|b| !b.is_empty()),
         untracked: group_untracked(dir, &split.other),
         dirty: split.dirty,
@@ -1732,6 +1830,8 @@ pub struct Removal {
     /// Where its notes were saved before removal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes_saved_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_path: Option<String>,
     #[serde(flatten)]
     pub outcome: Outcome,
     pub at_ms: i64,
@@ -1779,7 +1879,7 @@ fn recheck(
     client: &OrcaClient,
     entry: &PlanEntry,
     now_ms: i64,
-) -> Result<(Worktree, Option<Repo>, Verdict), String> {
+) -> Result<(Worktree, Option<Repo>, Facts), String> {
     let list = client
         .worktree_list()
         .map_err(|e| format!("worktree list: {e}"))?;
@@ -1799,8 +1899,8 @@ fn recheck(
         ctx.prs.insert(id.to_owned(), prs);
     }
     ctx.pr_errors = errors;
-    let verdict = decide(&ctx.facts(&w));
-    Ok((w, repo, verdict))
+    let facts = ctx.facts(&w);
+    Ok((w, repo, facts))
 }
 
 /// Removes the plan's removable worktrees, re-checking each first, and logs every attempt to
@@ -1810,13 +1910,53 @@ pub fn execute(
     plan: &Plan,
     log: &Path,
     now_ms: impl Fn() -> i64,
+    progress: impl FnMut(&Removal),
+) -> Result<Vec<Removal>, String> {
+    execute_archives(client, plan, &HashSet::new(), log, now_ms, progress)
+}
+
+/// Explicit archive selections are checked against fresh facts just like ordinary removals.
+pub fn execute_archives(
+    client: &OrcaClient,
+    plan: &Plan,
+    archive_ids: &HashSet<String>,
+    log: &Path,
+    now_ms: impl Fn() -> i64,
     mut progress: impl FnMut(&Removal),
 ) -> Result<Vec<Removal>, String> {
-    let remover = client.clone().timeout(REMOVE_TIMEOUT);
     let marker = log.with_file_name(SWEEP_FILE);
-    let total = plan.removable().count();
+    if let Some(parent) = marker.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    // The sweep marker doubles as exclusion for app and MCP cleanup executions.
+    let marker_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marker)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists && running_sweep(&marker, now_ms()).is_none() {
+                format!("cleanup already running or interrupted: sweep marker appears stale or unreadable at {}. Confirm the previous cleanup has stopped, then delete only this marker and retry.", marker.display())
+            } else {
+                format!("cleanup already running or sweep marker unavailable ({}): {e}", marker.display())
+            }
+        })?;
+    struct SweepGuard(PathBuf);
+    impl Drop for SweepGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+    let _sweep = SweepGuard(marker.clone());
+    drop(marker_file);
+    let remover = client.clone().timeout(REMOVE_TIMEOUT);
+    let selected = || {
+        plan.entries
+            .iter()
+            .filter(|e| e.verdict.remove || archive_ids.contains(&e.id))
+    };
+    let total = selected().count();
     let mut done = Vec::new();
-    for entry in plan.removable() {
+    for entry in selected() {
         write_marker(
             &marker,
             &SweepMarker {
@@ -1837,6 +1977,7 @@ pub fn execute(
             bytes: entry.bytes,
             reason: entry.verdict.reasons.join("; "),
             notes_saved_to: None,
+            archive_path: None,
             outcome: Outcome::Removed,
             at_ms: 0,
         };
@@ -1844,12 +1985,54 @@ pub fn execute(
             Err(reason) => Outcome::Skipped {
                 reasons: vec![reason],
             },
-            Ok((w, repo, verdict)) => {
-                let tidied = if !verdict.remove {
+            Ok((w, repo, facts)) => {
+                let verdict = decide(&facts);
+                let wants_archive = archive_ids.contains(&entry.id) || verdict.archive_required;
+                let mut saved = None;
+                let tidied = if wants_archive
+                    && (verdict.archivable
+                        || verdict.archive_required
+                        || verdict.remove && verdict.archive_blockers.is_empty())
+                {
+                    let result = (|| -> Result<(), String> {
+                        let root = archive::root().ok_or("no home directory for archive")?;
+                        let mut recovery_entry = entry.clone();
+                        recovery_entry.verdict = decide_regular(&facts);
+                        let archived = archive::prepare(
+                            &recovery_entry,
+                            w.base_ref.as_deref(),
+                            &format!("{:?}", facts.pr),
+                            &root,
+                        )?;
+                        removal.archive_path = Some(archived.path.display().to_string());
+                        // Archive creation can take time: refresh activity and pinned state before mutation.
+                        let (_, _, fresh_facts) = recheck(client, entry, now_ms())?;
+                        let checked = decide(&fresh_facts);
+                        let allowed = if archive_ids.contains(&entry.id) {
+                            checked.archivable
+                                || checked.remove && checked.archive_blockers.is_empty()
+                        } else {
+                            checked.archive_required
+                        };
+                        if !allowed {
+                            return Err(format!(
+                                "archive saved, worktree kept: {}",
+                                checked.reasons.join("; ")
+                            ));
+                        }
+                        archived.clean(Path::new(&w.path))?;
+                        saved = Some(archived);
+                        Ok(())
+                    })();
+                    result.map_err(|error| Outcome::Failed { error })
+                } else if !verdict.remove || wants_archive {
                     Err(Outcome::Skipped {
                         reasons: verdict.reasons,
                     })
-                } else if verdict.notes.is_empty() && verdict.logs.is_empty() {
+                } else if verdict.notes.is_empty()
+                    && verdict.logs.is_empty()
+                    && verdict.scratch.is_empty()
+                {
                     Ok(())
                 } else {
                     match notes_root() {
@@ -1858,12 +2041,17 @@ pub fn execute(
                         }),
                         Some(root) => {
                             let dest = entry.notes_dir(&root);
-                            match save_notes(
-                                Path::new(&w.path),
-                                &dest,
-                                &verdict.notes,
-                                &verdict.logs,
-                            ) {
+                            let scratch_saved = if verdict.scratch.is_empty() {
+                                Ok(dest.clone())
+                            } else {
+                                archive::save_scratch(Path::new(&w.path), &dest, &verdict.scratch)
+                            };
+                            match scratch_saved.and_then(|saved_to| {
+                                if !verdict.scratch.is_empty() {
+                                    removal.notes_saved_to = Some(saved_to.display().to_string());
+                                }
+                                save_notes(Path::new(&w.path), &dest, &verdict.notes, &verdict.logs)
+                            }) {
                                 Ok(()) => {
                                     if !verdict.notes.is_empty() {
                                         removal.notes_saved_to = Some(dest.display().to_string());
@@ -1875,7 +2063,7 @@ pub fn execute(
                         }
                     }
                 };
-                match tidied {
+                let outcome = match tidied {
                     Err(outcome) => outcome,
                     Ok(()) if w.id.starts_with("git:") => match repo.as_ref() {
                         Some(repo) => remove_unlisted(repo, &w.path),
@@ -1889,6 +2077,14 @@ pub fn execute(
                             error: rm_error(&e),
                         },
                     },
+                };
+                if let Some(saved) = saved {
+                    match saved.retain_branch() {
+                        Ok(()) => outcome,
+                        Err(error) => Outcome::Failed { error },
+                    }
+                } else {
+                    outcome
                 }
             }
         };
@@ -1899,7 +2095,6 @@ pub fn execute(
         progress(&removal);
         done.push(removal);
     }
-    let _ = fs::remove_file(&marker);
     Ok(done)
 }
 

@@ -40,7 +40,7 @@ struct Sizes {
 }
 
 enum ExecMsg {
-    Progress(Removal),
+    Progress(Box<Removal>),
     Done(Result<Vec<Removal>, String>),
 }
 
@@ -52,6 +52,10 @@ enum Stage {
     Review {
         plan: Plan,
         chosen: BTreeSet<String>,
+    },
+    ArchiveConfirm {
+        plan: Plan,
+        id: String,
     },
     Running {
         rx: Receiver<ExecMsg>,
@@ -164,7 +168,7 @@ impl WorktreePanel {
                 let mut finished = None;
                 loop {
                     match rx.try_recv() {
-                        Ok(ExecMsg::Progress(r)) => done.push(r),
+                        Ok(ExecMsg::Progress(r)) => done.push(*r),
                         Ok(ExecMsg::Done(result)) => {
                             finished = Some(result);
                             break;
@@ -245,10 +249,16 @@ impl WorktreePanel {
         self.stage = Some(Stage::Evaluating(rx));
     }
 
-    fn start_removal(&mut self, plan: &Plan, chosen: &BTreeSet<String>) {
+    fn start_removal(&mut self, plan: &Plan, chosen: &BTreeSet<String>, archive: bool) {
         let mut plan = plan.clone();
-        plan.entries
-            .retain(|e| e.verdict.remove && chosen.contains(&e.id));
+        plan.entries.retain(|e| {
+            (e.verdict.remove || archive && e.verdict.archivable) && chosen.contains(&e.id)
+        });
+        let archive_ids = if archive {
+            chosen.iter().cloned().collect()
+        } else {
+            Default::default()
+        };
         let total = plan.entries.len();
         let queue = plan.entries.iter().map(|e| e.id.clone()).collect();
         let client = self.client.clone();
@@ -259,13 +269,14 @@ impl WorktreePanel {
             .spawn(move || {
                 let progress_tx = tx.clone();
                 let progress_ctx = ctx.clone();
-                let result = worktrees::execute(
+                let result = worktrees::execute_archives(
                     &client,
                     &plan,
+                    &archive_ids,
                     &worktrees::default_log_path(),
                     now_ms,
                     |r| {
-                        let _ = progress_tx.send(ExecMsg::Progress(r.clone()));
+                        let _ = progress_tx.send(ExecMsg::Progress(Box::new(r.clone())));
                         progress_ctx.request_repaint();
                     },
                 );
@@ -497,7 +508,21 @@ impl WorktreePanel {
             Some(Action::Remove) => {
                 if let Some(Stage::Review { plan, chosen }) = &self.stage {
                     let (plan, chosen) = (plan.clone(), chosen.clone());
-                    self.start_removal(&plan, &chosen);
+                    self.start_removal(&plan, &chosen, false);
+                }
+            }
+            Some(Action::Archive(id)) => {
+                if let Some(Stage::Review { plan, .. }) = &self.stage {
+                    self.stage = Some(Stage::ArchiveConfirm {
+                        plan: plan.clone(),
+                        id,
+                    });
+                }
+            }
+            Some(Action::ConfirmArchive) => {
+                if let Some(Stage::ArchiveConfirm { plan, id }) = &self.stage {
+                    let (plan, chosen) = (plan.clone(), BTreeSet::from([id.clone()]));
+                    self.start_removal(&plan, &chosen, true);
                 }
             }
             Some(Action::Retry) => self.start_evaluation(),
@@ -565,6 +590,8 @@ impl WorktreePanel {
 }
 
 enum Action {
+    Archive(String),
+    ConfirmArchive,
     Remove,
     Retry,
     Close,
@@ -594,6 +621,29 @@ fn stage_view(ui: &mut egui::Ui, stage: &mut Stage, max_height: f32) -> Option<A
             .inner
         }
         Stage::Review { plan, chosen } => review_view(ui, plan, chosen),
+        Stage::ArchiveConfirm { plan, id } => {
+            let entry = plan.entries.iter().find(|e| &e.id == id)?;
+            ui.label(format!("Archive & remove {}/{}?", entry.repo, entry.name));
+            ui.label("Saves the branch bundle, uncommitted and staged changes, untracked files, and restore instructions before removing the worktree. The local branch is retained.");
+            if let Some(root) = worktrees::archive::root() {
+                ui.monospace(
+                    worktrees::archive::destination(entry, &root)
+                        .display()
+                        .to_string(),
+                );
+                ui.weak("The timestamp is assigned when archiving starts. Nothing is pushed.");
+            }
+            ui.horizontal(|ui| {
+                if ui.button("Confirm archive & remove").clicked() {
+                    Some(Action::ConfirmArchive)
+                } else if ui.button("Cancel").clicked() {
+                    Some(Action::Retry)
+                } else {
+                    None
+                }
+            })
+            .inner
+        }
         Stage::Running { total, done, .. } => {
             ui.label(format!("Clearing worktrees… {}/{total}", done.len()));
             ui.add(egui::ProgressBar::new(
@@ -625,6 +675,7 @@ fn review_view(ui: &mut egui::Ui, plan: &Plan, chosen: &mut BTreeSet<String>) ->
         .filter(|e| chosen.contains(&e.id))
         .filter_map(|e| e.bytes)
         .sum();
+    let mut archive_action = None;
     let action = egui::Panel::bottom("worktree_review_actions")
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
@@ -667,10 +718,9 @@ fn review_view(ui: &mut egui::Ui, plan: &Plan, chosen: &mut BTreeSet<String>) ->
                 format_bytes(plan.kept_bytes())
             ));
             ui.weak(
-                "A worktree goes only if nothing runs in it, it has no uncommitted changes, untracked \
-                 files (other than notes and logs) or open PR, and its work is in the base or on \
-                 GitHub (merged, rebase- or squash-merged, or in a merged PR's head). Notes are saved \
-                 and logs deleted first. Each is checked again right before removal.",
+                "Active or protected worktrees stay. Idle unpushed work is archived before removal; \
+                 pushed unmerged work needs Archive & remove. Notes and agent scratch directories \
+                 are saved first. Every selection is checked again before removal.",
             );
             ui.add_space(4.0);
             egui::CollapsingHeader::new(format!("Clear ({})", removable.len()))
@@ -698,13 +748,13 @@ fn review_view(ui: &mut egui::Ui, plan: &Plan, chosen: &mut BTreeSet<String>) ->
                             }
                             ui.weak(e.bytes.map(format_bytes).unwrap_or_default());
                             let reasons = ui.weak(e.verdict.reasons.join("; "));
-                            if !e.verdict.notes.is_empty()
+                            if (!e.verdict.notes.is_empty() || !e.verdict.scratch.is_empty())
                                 && let Some(root) = worktrees::notes_root()
                             {
                                 reasons.on_hover_text(format!(
                                     "Notes go to {}:\n{}",
                                     e.notes_dir(&root).display(),
-                                    e.verdict.notes.join("\n")
+                                    e.verdict.notes.iter().chain(&e.verdict.scratch).cloned().collect::<Vec<_>>().join("\n")
                                 ));
                             }
                         });
@@ -722,6 +772,14 @@ fn review_view(ui: &mut egui::Ui, plan: &Plan, chosen: &mut BTreeSet<String>) ->
                             }
                             ui.weak(e.size_text());
                             ui.weak(e.verdict.reasons.join("; "));
+                            if e.verdict.archivable {
+                                if ui.button("Archive & remove").clicked() {
+                                    archive_action = Some(Action::Archive(e.id.clone()));
+                                }
+                            } else {
+                                ui.weak("Cannot archive")
+                                    .on_hover_text(e.verdict.archive_blockers.join("; "));
+                            }
                         });
                     }
                 });
@@ -738,7 +796,7 @@ fn review_view(ui: &mut egui::Ui, plan: &Plan, chosen: &mut BTreeSet<String>) ->
                 });
             }
         });
-    action
+    archive_action.or(action)
 }
 
 fn removal_list(ui: &mut egui::Ui, removals: &[Removal], max_height: f32) {
@@ -748,6 +806,9 @@ fn removal_list(ui: &mut egui::Ui, removals: &[Removal], max_height: f32) {
         .stick_to_bottom(true)
         .show(ui, |ui| {
             for r in removals {
+                if let Some(path) = &r.archive_path {
+                    ui.weak(format!("Archive: {path}"));
+                }
                 let name = format!("{}/{}", r.repo, r.name);
                 match &r.outcome {
                     Outcome::Removed => {

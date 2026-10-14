@@ -78,7 +78,11 @@ and sound through Stronghold, kept in his inbox and attributed to your terminal 
 selects your node and opens url). alerts lists his inbox; clan_status reports unread ones.
 
 Worktrees: clean_worktrees plans removing Orca worktrees nothing needs any more (dry run by \
-default; a real run takes the approved ids). ",
+default; a real run takes approved ids and/or archive_ids). Idle unpushed work is archived \
+before removal; pushed unmerged work needs explicit archive_ids. The plan marks archivable \
+entries and blockers. Archives contain a verified bundle, working/staged patches, untracked \
+files and restore instructions under ~/Documents/agents/archive/. Activity, pins, parked agents, \
+main checkouts, open PRs and the age gate always prevent archival removal. Nothing is pushed. ",
     notify::rules_text!(),
     "
 

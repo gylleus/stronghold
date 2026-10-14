@@ -25,5 +25,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         plan.entries.iter().filter(|entry| entry.unlisted).count(),
         plan.orphans.len(),
     );
+    for entry in &plan.entries {
+        if entry.verdict.archive_required || entry.verdict.archivable {
+            println!(
+                "{}: {}/{} [{}]",
+                if entry.verdict.archive_required {
+                    "Archive first"
+                } else {
+                    "Archivable"
+                },
+                entry.repo,
+                entry.name,
+                entry.id
+            );
+        }
+    }
     Ok(())
 }

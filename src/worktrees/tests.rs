@@ -74,10 +74,11 @@ fn uncommitted_changes_keep_it() {
 }
 
 #[test]
-fn unmerged_commits_keep_it() {
+fn unmerged_unpushed_commits_require_archive() {
     let mut f = clean();
     unmerged(&mut f);
-    kept_for(&f, "3 commits not merged into the base");
+    assert!(decide(&f).remove);
+    assert!(decide(&f).archive_required);
 }
 
 /// Unmerged commits pushed somewhere still keep it without a merged or closed PR.
@@ -145,14 +146,15 @@ fn closed_pr_with_pushed_head_is_removed() {
 
 /// Commits made after the PR merged exist only locally.
 #[test]
-fn merged_pr_with_local_only_commits_is_kept() {
+fn merged_pr_with_local_only_commits_requires_archive() {
     let mut f = clean();
     unmerged(&mut f);
     f.pr = PrLookup::Found {
         number: 7,
         state: PrState::Merged,
     };
-    kept_for(&f, "3 commits not on any remote");
+    assert!(decide(&f).remove);
+    assert!(decide(&f).archive_required);
 }
 
 /// Unmerged, local-only commits: the squash-aware checks all came back empty.
@@ -215,10 +217,11 @@ fn squash_checks_never_override_an_open_or_unknown_pr() {
 
 /// A commit that exists nowhere else keeps the worktree.
 #[test]
-fn local_only_commit_keeps_it() {
+fn local_only_commit_requires_archive() {
     let mut f = clean();
     local_only(&mut f);
-    kept_for(&f, "3 commits not merged into the base");
+    assert!(decide(&f).remove);
+    assert!(decide(&f).archive_required);
 }
 
 #[test]
@@ -240,14 +243,14 @@ fn notes_and_logs_alone_are_saved_then_removed() {
     assert_eq!(v.logs, vec!["tsall.log"]);
 }
 
-/// Notes don't make unmerged work removable.
+/// Local-only work is archived with its notes, rather than using notes-only cleanup.
 #[test]
-fn notes_on_unmerged_work_keep_it_and_are_not_planned() {
+fn notes_on_unmerged_work_are_archived() {
     let mut f = clean();
     local_only(&mut f);
     git_mut(&mut f).notes = vec!["PLAN.md".into()];
     let v = decide(&f);
-    assert!(!v.remove);
+    assert!(v.remove && v.archive_required);
     assert!(v.notes.is_empty());
 }
 
@@ -772,6 +775,7 @@ fn execution_summary_counts_outcomes() {
         bytes: Some(1024 * 1024),
         reason: "merged into main".into(),
         notes_saved_to: None,
+        archive_path: None,
         outcome,
         at_ms: 0,
     };
@@ -856,11 +860,11 @@ fn git_facts_reads_merged_ahead_and_dirty() {
     assert_eq!(f.ahead, Some(1));
     assert_eq!(f.on_remote, None);
     assert!(
-        !decide(&Facts {
+        decide(&Facts {
             git: Ok(f),
             ..clean()
         })
-        .remove
+        .archive_required
     );
 
     // Untracked files inside new directories are listed: notes, logs and the rest by folder.
@@ -974,7 +978,7 @@ fn git_facts_sees_cherry_picked_commits() {
     assert_eq!(f.patches_in.as_deref(), Some("main"));
 }
 
-/// A commit that exists nowhere else: every check comes back empty and the worktree is kept,
+/// A commit that exists nowhere else: every check comes back empty and archival is required,
 /// even when a merged PR exists for an earlier commit and main has part of the work.
 #[test]
 fn git_facts_keeps_a_commit_that_exists_nowhere_else() {
@@ -1004,8 +1008,8 @@ fn git_facts_keeps_a_commit_that_exists_nowhere_else() {
         },
         ..clean()
     });
-    assert!(!v.remove, "{v:?}");
-    assert!(v.reasons.iter().any(|r| r.contains("not on any remote")));
+    assert!(v.remove, "{v:?}");
+    assert!(v.archive_required);
 }
 
 #[test]
@@ -1048,6 +1052,82 @@ fn a_parked_agents_worktree_is_kept() {
     });
     assert!(!v.remove);
     assert!(v.reasons.iter().any(|r| r.contains("parked")));
+}
+
+#[test]
+fn archive_never_bypasses_activity_or_protection() {
+    let mut f = clean();
+    unmerged(&mut f);
+    for guard in 0..8 {
+        let mut guarded = f.clone();
+        match guard {
+            0 => guarded.terminals.push("live".into()),
+            1 => guarded.processes.push("live".into()),
+            2 => guarded.dispatches.push("live".into()),
+            3 => guarded.parked = true,
+            4 => guarded.pinned = true,
+            5 => guarded.is_main = true,
+            6 => {
+                guarded.age_ms = Some(0);
+                git_mut(&mut guarded).ahead = Some(0);
+            }
+            _ => {
+                guarded.pr = PrLookup::Found {
+                    number: 1,
+                    state: PrState::Open,
+                }
+            }
+        }
+        let v = decide(&guarded);
+        assert!(
+            !v.remove && !v.archivable && !v.archive_required,
+            "{guard}: {v:?}"
+        );
+        assert!(!v.archive_blockers.is_empty());
+    }
+}
+
+#[test]
+fn pushed_unmerged_and_unknown_pr_require_explicit_archive() {
+    let mut f = clean();
+    unmerged(&mut f);
+    git_mut(&mut f).on_remote = Some("origin/feature".into());
+    let v = decide(&f);
+    assert!(!v.remove && v.archivable && !v.archive_required);
+    git_mut(&mut f).on_remote = None;
+    f.pr = PrLookup::Unknown("offline".into());
+    let v = decide(&f);
+    assert!(!v.remove && v.archivable && !v.archive_required);
+}
+
+#[test]
+fn unreadable_git_and_archive_caps_block_archival() {
+    let mut f = clean();
+    f.git = Err("remote-tracking refs unreadable".into());
+    assert!(!decide(&f).archivable);
+    assert!(!decide(&f).remove);
+    let mut f = clean();
+    unmerged(&mut f);
+    git_mut(&mut f).archive_error = Some("archive cap exceeded".into());
+    assert!(!decide(&f).archivable);
+    assert!(!decide(&f).remove);
+    git_mut(&mut f).scratch_error = Some("scratch cap exceeded".into());
+    git_mut(&mut f).merged_into = Some("main".into());
+    assert!(!decide(&f).remove);
+}
+
+#[test]
+fn sweep_marker_refuses_concurrent_cleanup_before_calling_orca() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join(LOG_FILE);
+    fs::write(temp.path().join(SWEEP_FILE), "another cleanup").unwrap();
+    let err = execute(&OrcaClient::new(), &Plan::default(), &log, || 0, |_| {}).unwrap_err();
+    assert!(err.contains("cleanup already running"));
+    assert!(err.contains("Confirm the previous cleanup has stopped"));
+    assert_eq!(
+        fs::read(temp.path().join(SWEEP_FILE)).unwrap(),
+        b"another cleanup"
+    );
 }
 
 #[test]
@@ -1435,4 +1515,18 @@ fn unlisted_census_is_scoped_to_workspaces_but_listed_paths_are_preserved() {
     let without_root = all_worktrees(&listed, repos, None).unwrap();
     assert_eq!(without_root.len(), 1);
     assert_eq!(without_root[0].id, "r::listed");
+}
+
+#[test]
+fn archive_respects_detection_merge_proofs_and_nonempty_age_exception() {
+    let mut f = clean();
+    unmerged(&mut f);
+    f.age_ms = Some(0);
+    assert!(decide(&f).archive_required);
+    git_mut(&mut f).content_in_merged_pr = Some(42);
+    assert!(decide(&f).remove);
+    assert!(!decide(&f).archive_required);
+    git_mut(&mut f).ahead = Some(0);
+    assert!(!decide(&f).remove);
+    assert!(!decide(&f).archivable);
 }
