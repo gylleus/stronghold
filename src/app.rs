@@ -549,7 +549,7 @@ impl MyrstackApp {
         }
     }
 
-    /// Selects the king, opening his chat and details, and focuses the farm camera on him.
+    /// Selects the king, opening his chat and details, and pans to him at the current zoom.
     fn select_king(&mut self) {
         let id = NodeId::king();
         self.clan.set_selected(Some(&id));
@@ -557,7 +557,7 @@ impl MyrstackApp {
         self.selected = Some(id);
     }
 
-    /// Selects `id` in the app and the clan, and pans/zooms onto it unless it is filtered out.
+    /// Selects `id` in the app and clan, and pans to it at the current zoom unless filtered out.
     fn select_and_focus(&mut self, id: NodeId) {
         self.clan.set_selected(Some(&id));
         if self.clan.is_visible(&id) {

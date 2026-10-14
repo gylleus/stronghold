@@ -422,11 +422,18 @@ fn badge_counts_pending_replies_and_tasks_only() {
 fn focus_requests_reach_the_camera_and_keep_hit_testing_correct() {
     let mut h = Harness::new();
     let id = super::layout_tests::id("working");
-    h.clan.center_on(&id);
-    h.frame(vec![]);
-    assert!(h.farm.camera.zoom > 1.0);
-    assert!(FULL.contains(h.on_screen("working")));
-    assert_eq!(h.click(h.on_screen("working")).clicked, Some(id.clone()));
+    for zoom in [1.0, 2.5, MAX_ZOOM] {
+        h.farm.fit_to_screen();
+        h.farm.camera.zoom_at(FULL, FULL.center(), zoom);
+        for target in [id.clone(), crate::model::NodeId::king(), id.clone()] {
+            h.clan.set_selected(Some(&target));
+            h.clan.center_on(&target);
+            h.frame(vec![]);
+            assert_eq!(h.farm.camera.zoom, zoom, "focusing {target} changed zoom");
+        }
+        assert!(FULL.contains(h.on_screen("working")));
+        assert_eq!(h.click(h.on_screen("working")).clicked, Some(id.clone()));
+    }
     h.farm.fit_to_screen();
     assert_eq!(h.farm.camera, Camera::default());
 
