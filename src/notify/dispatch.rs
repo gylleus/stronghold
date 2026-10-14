@@ -29,6 +29,8 @@ pub const DUPLICATE_WINDOW_MS: i64 = 30 * 60_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Source {
+    /// A Lorekeeper run filed its report.
+    Lorekeeper,
     /// An Envoy draft or channel-health transition.
     Envoy,
     /// An agent's `notify` tool call (or the control API's `notify`).
@@ -48,6 +50,7 @@ impl Source {
         match self {
             Source::Agent => "agent",
             Source::Envoy => "envoy",
+            Source::Lorekeeper => "lorekeeper",
             Source::NeedsInput => "needs_input",
             Source::Escalation => "escalation",
             Source::Review => "review",

@@ -76,6 +76,7 @@ fn perform(root: &std::path::Path, job: Job) -> anyhow::Result<Reply> {
 #[derive(Default)]
 pub struct LedgerPane {
     pub open_requested: bool,
+    pub tend_requested: bool,
     query: String,
     mode: Mode,
     worker: Option<Worker>,
@@ -136,7 +137,70 @@ impl LedgerPane {
         }
     }
 
-    pub fn show(&mut self, ui: &mut Ui, shelf: &Shelf, now_ms: i64) {
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        shelf: &Shelf,
+        now_ms: i64,
+        tending: bool,
+        launch_error: Option<&str>,
+        report: Option<&crate::lorekeeper::report::SavedReport>,
+    ) {
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(!tending, egui::Button::new("Tend the Ledger"))
+                .clicked()
+            {
+                self.tend_requested = true;
+            }
+            if tending {
+                ui.label("Tending…");
+            } else if let Some(error) = launch_error {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            } else if let Some(saved) = report {
+                let mode = if saved.report.dry_run {
+                    " (dry run)"
+                } else {
+                    ""
+                };
+                let ago = crate::quota::format_duration(now_ms.saturating_sub(saved.at_ms).max(0));
+                ui.label(format!(
+                    "Last tended {ago} ago{mode}: {}",
+                    saved.report.counts()
+                ));
+            } else {
+                ui.weak("Not tended yet");
+            }
+        });
+        if let Some(saved) = report {
+            ui.collapsing("Last report details", |ui| {
+                ui.label(format!("Snapshot: {}", saved.snapshot.display()));
+                let mut items = saved
+                    .report
+                    .items
+                    .iter()
+                    .filter(|i| i.action != crate::lorekeeper::report::Action::Keep)
+                    .collect::<Vec<_>>();
+                items.sort_by_key(|i| i.action != crate::lorekeeper::report::Action::Flag);
+                egui::ScrollArea::vertical()
+                    .id_salt("lorekeeper_report")
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        for item in items {
+                            ui.label(format!(
+                                "{} · {}: {}",
+                                item.action.name(),
+                                item.path,
+                                item.reason
+                            ));
+                            if let Some(target) = &item.target {
+                                ui.weak(format!("→ {target}"));
+                            }
+                        }
+                    });
+            });
+        }
+        ui.separator();
         if self.worker.is_none() {
             let Some(root) = crate::ledger::default_dir() else {
                 ui.label("Ledger folder is unavailable");
@@ -297,5 +361,28 @@ mod tests {
         assert!(pane.error.is_none());
         pane.accept((2, Ok(Reply::Results(Results::default()))));
         assert!(!pane.busy);
+    }
+}
+
+#[cfg(test)]
+mod lorekeeper_tests {
+    use super::*;
+    use crate::ui::test_util::click_label;
+
+    #[test]
+    fn tend_button_raises_one_request_and_is_disabled_during_a_run() {
+        let (tx, _jobs) = unbounded();
+        let (_results, rx) = unbounded();
+        let mut pane = LedgerPane {
+            worker: Some(Worker { tx, rx }),
+            ..Default::default()
+        };
+        for busy in [false, true] {
+            pane.tend_requested = false;
+            click_label("Tend the Ledger", |ui| {
+                pane.show(ui, &Shelf::default(), 0, busy, None, None)
+            });
+            assert_eq!(pane.tend_requested, !busy);
+        }
     }
 }

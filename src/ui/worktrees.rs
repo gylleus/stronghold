@@ -204,7 +204,7 @@ impl WorktreePanel {
 
     pub fn tick_auto(&mut self, settings: automatic::Settings, now_ms: i64) {
         if self.auto_schedule.claim(
-            settings,
+            settings.period_ms(),
             now_ms,
             self.auto_last.as_ref().map(|r| r.at_ms),
             self.auto_busy(),
@@ -216,7 +216,7 @@ impl WorktreePanel {
     }
 
     fn finish_auto(&mut self, removals: &[Removal], error: Option<&str>) {
-        let run = automatic::Run::finished(now_ms(), removals, error);
+        let run = automatic::finished_run(now_ms(), removals, error);
         if let Err(error) = run.append(&self.auto_log) {
             log::warn!("auto-cleanup summary could not be saved: {error}");
         }
