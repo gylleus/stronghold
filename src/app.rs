@@ -157,6 +157,7 @@ pub struct StrongholdApp {
     envoy_session: crate::envoy::session::Session,
     pub envoy_core: envoy::AppEnvoy,
     envoy_panel: ui::envoy::DraftsPanel,
+    ledger_panel: ui::ledger::LedgerPane,
     /// Health checks for silent misconfigurations, and the badge showing them.
     health: health::AppHealth,
 }
@@ -261,6 +262,7 @@ impl StrongholdApp {
             review: review::AppReview::start(ctx),
             envoy_core: envoy::AppEnvoy::start(ctx),
             envoy_panel: ui::envoy::DraftsPanel::default(),
+            ledger_panel: ui::ledger::LedgerPane::default(),
             health: health::AppHealth::start(ctx),
         };
         app.talk_startup();

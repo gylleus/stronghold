@@ -29,6 +29,8 @@ pub enum Pane {
     Notifications,
     /// Pending Envoy drafts and delivery history.
     Envoy,
+    /// Search and read the clan knowledge store.
+    Ledger,
 }
 
 /// Panes that are always in the layout; the conversation and notifications can be taken out.
@@ -209,6 +211,16 @@ impl PaneLayout {
         self.activate(Pane::Envoy);
     }
 
+    /// Opens the Ledger beside the hold, or brings its existing tab forward.
+    pub fn open_ledger(&mut self) {
+        if !self.contains(Pane::Ledger) {
+            self.dock
+                .main_surface_mut()
+                .split_right(NodeIndex::root(), 0.6, vec![Pane::Ledger]);
+        }
+        self.activate(Pane::Ledger);
+    }
+
     /// The conversation's tab was closed in the dock; `before` is the layout that had it.
     pub fn closed_conversation(&mut self, before: PaneLayout) {
         self.stashed = Some(before.dock);
@@ -321,6 +333,7 @@ fn valid(dock: &DockState<Pane>) -> bool {
         && count(Pane::Conversation) <= 1
         && count(Pane::Notifications) <= 1
         && count(Pane::Envoy) <= 1
+        && count(Pane::Ledger) <= 1
 }
 
 /// Where the top bar's King quick actions line up: the conversation pane's left edge when it

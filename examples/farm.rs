@@ -719,6 +719,7 @@ fn clan() -> ClanSnapshot {
 /// A Ledger of a dozen entries, for the chamber's sign and hover text.
 fn demo_ledger() -> Shelf {
     let entry = |title: &str, folder: &str, kind: &str, age_min: i64| Entry {
+        path: format!("{folder}/{title}.md").into(),
         title: title.into(),
         folder: folder.into(),
         kind: Some(kind.into()),

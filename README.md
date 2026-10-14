@@ -20,6 +20,28 @@ Requires the `orca` CLI on `PATH`. Set `RUST_LOG=debug` for more logging. The ap
 `~/Library/Logs/Stronghold/stronghold.log` (rotated at 5 MB, three files kept); "Open log" in the command
 palette opens it in Console.
 
+## Ledger
+
+Click the Ledger chamber to search and read the clan's knowledge store. With the query
+empty, the pane lists the five newest entries. Enter a query and press Enter or Search;
+Auto searches by meaning, switching to text for IDs such as `VROOM-1299` and `myr-bas`.
+Meaning and Text can also be selected explicitly. Results show title, folder, note type,
+age and a snippet; selecting one renders its Markdown. Open in default editor opens the
+actual file with macOS `open`.
+
+Search uses the local basic-memory MCP service at `http://127.0.0.1:8643/mcp`, project
+`ledger`. If it is unavailable, the pane says so and searches local files for all the
+query's literal terms, ignoring case. Results are limited to 30. Reading uses the files in
+`~/Documents/agents/ledger`; the pane never writes or deletes entries. Searches and file
+reads run on a background thread. The HTTP transport uses `ureq`, without a CLI or shell
+PATH dependency, and accepts both JSON and SSE responses after MCP initialization.
+
+The optional live check (requires `ai.basic-memory.server` running) is:
+
+```bash
+cargo test real_ledger_search -- --ignored --nocapture
+```
+
 ## Install as a macOS app
 
 ```bash
