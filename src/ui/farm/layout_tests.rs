@@ -734,6 +734,7 @@ fn hovering_the_ledger_chamber_lists_its_newest_entries() {
     farm.set_ledger(crate::ledger::Shelf {
         count: 2,
         newest: vec![crate::ledger::Entry {
+            path: "stronghold/Setup gotchas.md".into(),
             title: "Setup gotchas".into(),
             folder: "stronghold".into(),
             kind: Some("finding".into()),
@@ -795,6 +796,83 @@ fn hovering_the_ledger_chamber_lists_its_newest_entries() {
         tooltip
             .starts_with("The Ledger: 2 entries\nNewest:\n• Setup gotchas (stronghold, finding, ")
     );
+}
+
+/// A chamber click opens one Ledger pane and never clears the dwarf selection.
+#[test]
+fn clicking_the_ledger_chamber_opens_its_pane() {
+    use crate::ui::dock::{Pane, PaneLayout};
+    use eframe::egui::{self, Event, PointerButton};
+
+    let snapshot = snapshot();
+    let mut clan = crate::ui::clan_view::ClanView::new();
+    clan.sync(&snapshot);
+    let mut farm = FarmView::new();
+    let mut panes = PaneLayout::default();
+    let ctx = egui::Context::default();
+    let mut time = 0.0;
+    let mut frame = |events: Vec<Event>, panes: &mut PaneLayout| {
+        time += 1.0 / 60.0;
+        let mut rect = Rect::NOTHING;
+        let mut clicked = false;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 800.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                rect = ui.available_rect_before_wrap();
+                let response = farm.show(ui, &snapshot, &mut clan);
+                if response.open_ledger {
+                    assert!(!response.clicked_empty);
+                    assert!(!response.open_envoy);
+                    assert!(response.clicked.is_none());
+                    panes.open_ledger();
+                    clicked = true;
+                }
+            },
+        );
+        output.textures_delta.clear();
+        (rect, clicked)
+    };
+    let (rect, _) = frame(vec![], &mut panes);
+    assert!(!panes.contains(Pane::Ledger));
+    let scene = layout(
+        &FarmInput {
+            snapshot: &snapshot,
+            hidden: &BTreeSet::new(),
+            pr_ready: &HashSet::new(),
+            building: &HashSet::new(),
+            now_ms: 0,
+        },
+        rect,
+    );
+    let target = scene
+        .ledger
+        .expect("visible chamber without Envoy at 1280×800")
+        .center();
+    for _ in 0..2 {
+        let button = |pressed| Event::PointerButton {
+            pos: target,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![Event::PointerMoved(target)], &mut panes);
+        frame(vec![button(true)], &mut panes);
+        assert!(frame(vec![button(false)], &mut panes).1);
+        assert!(panes.is_visible(Pane::Ledger));
+    }
+    let saved = panes.encode().unwrap();
+    let restored = PaneLayout::decode(&saved).expect("valid layout with just one Ledger tab");
+    assert!(restored.is_visible(Pane::Ledger));
+    let path = panes.dock_mut().find_tab(&Pane::Ledger).unwrap();
+    panes.dock_mut().remove_tab(path);
+    assert!(!panes.contains(Pane::Ledger));
+    panes.open_ledger();
+    assert!(panes.is_visible(Pane::Ledger));
 }
 
 /// Clicking a dwarf reports it, as clicking a node does in the clan; clicking soil reports

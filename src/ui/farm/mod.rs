@@ -145,6 +145,8 @@ pub struct FarmResponse {
     /// Empty ground was clicked (clears the selection, as in the clan).
     pub clicked_empty: bool,
     pub open_envoy: bool,
+    /// Open the read-only Ledger pane.
+    pub open_ledger: bool,
     pub hovered: Option<NodeId>,
     /// Dwarves inside a selection box dragged from empty ground, when it was released this
     /// frame, and whether Shift/Cmd was held (add to the selection rather than replace it).
@@ -712,7 +714,7 @@ impl FarmView {
             self.camera.transform(rect),
             painter.clip_rect(),
         );
-        if response.double_clicked() && hovered.is_none() && !tray_hovered {
+        if response.double_clicked() && hovered.is_none() && !tray_hovered && !ledger_hovered {
             self.camera = Camera::default();
         }
 
@@ -759,6 +761,7 @@ impl FarmView {
                 .map_or(0, |d| d.as_millis() as i64);
             response
                 .clone()
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text_at_pointer(crate::ledger::describe(&self.ledger, now_ms));
         }
         if let Some(heap) = &heap_hovered {
@@ -782,8 +785,10 @@ impl FarmView {
             clicked_empty: response.clicked()
                 && hovered.is_none()
                 && !tray_hovered
+                && !ledger_hovered
                 && heap_hovered.is_none(),
             open_envoy: response.clicked() && tray_hovered,
+            open_ledger: response.clicked() && ledger_hovered,
             hovered,
             close_requested: menu.close,
             whip_requested: menu.whip,

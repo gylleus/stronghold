@@ -1,6 +1,6 @@
 //! The Ledger, the clan's knowledge store, as the hold shows it: how many entries its folder
 //! holds and which changed last. basic-memory serves the same markdown files to the agents (the
-//! `ledger` MCP server); the app only reads the folder.
+//! `ledger` MCP server); the app searches the server and only reads the folder.
 
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -9,6 +9,8 @@ use std::time::{Duration, UNIX_EPOCH};
 use crossbeam_channel::{Receiver, Sender, bounded};
 
 use crate::quota::format_duration;
+
+pub mod search;
 
 /// How often the folder is read again.
 pub const INTERVAL: Duration = Duration::from_secs(10);
@@ -23,6 +25,8 @@ pub fn default_dir() -> Option<PathBuf> {
 /// One entry: a markdown file in the Ledger's folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
+    /// Actual file name relative to the Ledger, independent of the frontmatter title.
+    pub path: PathBuf,
     /// The frontmatter `title`, else the file name.
     pub title: String,
     /// The folder it is filed under (a repo's name, or `general`); empty at the top level.
@@ -64,6 +68,9 @@ fn collect(dir: &Path, out: &mut Vec<(PathBuf, i64)>) {
         if item.file_name().to_string_lossy().starts_with('.') {
             continue;
         }
+        if item.file_type().is_ok_and(|t| t.is_symlink()) {
+            continue;
+        }
         let Ok(meta) = item.metadata() else {
             continue;
         };
@@ -88,6 +95,7 @@ fn entry(dir: &Path, path: &Path, modified_ms: i64) -> Entry {
             .map_or_else(String::new, |s| s.to_string_lossy().into_owned())
     };
     Entry {
+        path: path.strip_prefix(dir).unwrap_or(path).to_owned(),
         title: frontmatter(&text, "title").unwrap_or_else(stem),
         folder: path
             .parent()
@@ -260,6 +268,7 @@ mod tests {
         let shelf = Shelf {
             count: 1,
             newest: vec![Entry {
+                path: "myrstack/Setup gotchas.md".into(),
                 title: "Setup gotchas".into(),
                 folder: "myrstack".into(),
                 kind: Some("finding".into()),
