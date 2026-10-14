@@ -3,7 +3,7 @@
 
 use eframe::egui;
 
-use super::MyrstackApp;
+use super::StrongholdApp;
 use crate::model::{ClanSnapshot, NodeId, NodeKind};
 use crate::review::mark::Origin;
 use crate::traffic::beam::{Beam, BeamKind, ToolCall};
@@ -15,7 +15,7 @@ const SPAWN_WAIT_S: f64 = 20.0;
 /// How long other tool calls wait for their ends (the first clan data, say).
 const CALL_WAIT_S: f64 = 3.0;
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// An agent reaching Karl: from the caller at `origin`, else from the node `about`.
     pub(super) fn traffic_to_karl(&self, origin: &Origin, about: Option<&str>, kind: MessageKind) {
         let from = self
@@ -58,7 +58,7 @@ impl MyrstackApp {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// Pops the agents whose state change just settled in both views, with a soft sound for
     /// the done and the waiting when Karl turned it on.
     pub(super) fn poll_state_pops(&mut self, ctx: &egui::Context) {
@@ -81,6 +81,21 @@ impl MyrstackApp {
         }
         self.pop_sound(cues.iter().map(|(_, cue)| *cue));
         ctx.request_repaint();
+    }
+
+    pub(super) fn bonk_sound(&self) {
+        let settings = self.whip_window.notifications();
+        if !settings.pop_sounds || settings.quiet {
+            return;
+        }
+        if let Some(path) = crate::notify::Sound::System("Pop".into()).path()
+            && let Err(e) = crate::notify::play_sound(
+                &path,
+                f32::from(settings.volume_percent.min(100)) / 100.0,
+            )
+        {
+            log::warn!("bonk sound: {e:#}");
+        }
     }
 
     /// One sound for a batch of pops, the most urgent cue's.
@@ -135,6 +150,10 @@ impl MyrstackApp {
         }
         let still = crate::ui::farm::death::reduce_motion();
         for beam in beams {
+            // King closes are drawn from the pre-close hook as tools when the target leaves.
+            if beam.kind == BeamKind::Kill && beam.from == Endpoint::Node(NodeId::king()) {
+                continue;
+            }
             log::debug!("beam: {:?}", beam);
             self.farm.beam(beam, now_s, still);
         }

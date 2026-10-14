@@ -21,6 +21,7 @@ pub struct UnreadBadge {
 /// Applied by the farm once its current rooms and figures have been laid out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Focus {
+    /// Pan to these nodes without changing the user's zoom.
     Nodes(Vec<NodeId>),
     Run(String),
     Repo(String),

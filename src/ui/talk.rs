@@ -1,5 +1,5 @@
 //! Talk-to-the-King UI: the pill inside the window (with buttons) and the small always-on-top
-//! overlay window shown while Myrstack is in the background ("● Listening…" with a level
+//! overlay window shown while Stronghold is in the background ("● Listening…" with a level
 //! meter, then transcribing, thinking and speaking). The overlay never takes focus or clicks.
 
 use std::time::Duration;
@@ -245,7 +245,7 @@ pub fn overlay_position(monitor: Option<egui::Vec2>) -> egui::Pos2 {
 pub fn overlay(ctx: &egui::Context, view: &TalkView<'_>) {
     let monitor = ctx.input(|i| i.viewport().monitor_size);
     let builder = egui::ViewportBuilder::default()
-        .with_title("Myrstack: talking to the King")
+        .with_title("Stronghold: talking to the King")
         .with_decorations(false)
         .with_always_on_top()
         .with_active(false)

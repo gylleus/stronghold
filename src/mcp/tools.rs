@@ -18,7 +18,7 @@ use crate::review::mark::Origin;
 /// Agents `list_agents` returns by default, and at most.
 pub const DEFAULT_LIST_LIMIT: usize = 50;
 pub const MAX_LIST_LIMIT: usize = 500;
-/// Runs `fleet_status` lists in its text.
+/// Runs `clan_status` lists in its text.
 const RUNS_SHOWN: usize = 15;
 /// Whip log entries `whip_status` shows by default.
 const DEFAULT_WHIP_LOG: usize = 10;
@@ -29,8 +29,8 @@ const CHILDREN_SHOWN: usize = 10;
 /// Longest screen row `get_agent` shows.
 const SCREEN_LINE_CHARS: usize = 240;
 
-const FALLBACK_NOTE: &str = "Note: Myrstack isn't running, so this comes from one direct poll \
-of Orca: no whip, Claude subagent, prompt detection or dashboard data. Start it with `myrstack` \
+const FALLBACK_NOTE: &str = "Note: Stronghold isn't running, so this comes from one direct poll \
+of Orca: no whip, Claude subagent, prompt detection or dashboard data. Start it with `stronghold` \
 for the full picture.";
 
 /// A tool's answer.
@@ -175,7 +175,7 @@ fn one_or_many(values: &[&str], description: &str) -> Value {
 pub fn definitions() -> Vec<Value> {
     vec![
         tool(
-            "fleet_status",
+            "clan_status",
             "Clan status",
             "The King's view of the whole clan: its state, agent counts, every run with its \
              objective, coordinator and task counts, who needs Karl's input, stalled or \
@@ -270,7 +270,7 @@ pub fn definitions() -> Vec<Value> {
             "park_agents",
             "Park or wake agents",
             "Parks agents in the resting area: a dwarf that finished but that Karl wants to \
-             keep for later. A parked agent leaves the live clan (its own room in the farm, \
+             keep for later. A parked agent leaves the live clan (its own room in the hold, \
              out of clan state, stalled and needs-input counts), the whip \
              never nudges it, and no cleanup closes it or removes its worktree unless named \
              explicitly; its terminal, session and worktree stay, so it can continue later. \
@@ -332,7 +332,7 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "whip_agents",
             "Whip agents now",
-            "Sends Myrstack nudges now: with ids, each agent gets the nudge the whip would send \
+            "Sends Stronghold nudges now: with ids, each agent gets the nudge the whip would send \
              when it stalls (a worker about its task on the bus, a coordinator about its run, a \
              loose terminal typed into), live even when the automatic whip is in dry-run and \
              ignoring threshold and cooldown. The King, subagents, released workers and dead \
@@ -372,11 +372,11 @@ pub fn definitions() -> Vec<Value> {
              After an interrupted or rejected spawn_session, run list_agents for that repo \
              before trying again: if the session started, use send_to_agent. Give every \
              session a label: a short human name (2-4 words, e.g. \"Checkout retries\") that \
-             Myrstack shows on its node and dwarf. It becomes the worktree's Orca name (all \
+             Stronghold shows on its node and dwarf. It becomes the worktree's Orca name (all \
              agents in that worktree go by it) or, for a worker, its task's display name. To \
              rename an agent later, run `orca worktree set --worktree path:<path> \
              --display-name <name>`. A Claude dwarf started without a model gets the Dwarves \
-             default model and effort from Myrstack's Settings (King section), which Karl \
+             default model and effort from Stronghold's Settings (King section), which Karl \
              uses to move the whole clan to one model; the result names the model used. An \
              explicit model wins; Codex dwarves keep Codex's default.",
             object(
@@ -390,9 +390,9 @@ pub fn definitions() -> Vec<Value> {
                     "run_id": { "type": "string", "description": "Run to add a worker to (worker mode)." },
                     "terminal": { "type": "string", "description": "Worker mode: agent id, handle or label of a live agent terminal to run the task in." },
                     "title": { "type": "string", "description": "Worker task title (default: the prompt's first line)." },
-                    "label": { "type": "string", "description": "Short human name for the agent (2-4 words), shown in Myrstack's dwarf farm. Sets the worktree's Orca display name, or a worker's task display name." },
+                    "label": { "type": "string", "description": "Short human name for the agent (2-4 words), shown on its dwarf in the hold. Sets the worktree's Orca display name, or a worker's task display name." },
                     "agent": { "type": "string", "enum": ["claude", "codex"], "default": "claude" },
-                    "model": { "type": "string", "description": "Model alias or id, e.g. fable, opus, sonnet, gpt-6-astra. Default: the Dwarves default in Myrstack's Settings for a Claude dwarf, else the agent's own." },
+                    "model": { "type": "string", "description": "Model alias or id, e.g. fable, opus, sonnet, gpt-6-astra. Default: the Dwarves default in Stronghold's Settings for a Claude dwarf, else the agent's own." },
                     "effort": { "type": "string", "enum": ["low", "medium", "high", "xhigh", "max"], "description": "Claude only, with a model: --effort level (default: the Dwarves default's effort when the model is the default too, else the CLI's)." },
                     "allow_suffix": { "type": "boolean", "default": false, "description": "New worktree: when the name or branch is taken, let Orca add a suffix (name-2) instead of failing. Only for a deliberate second copy." },
                 }),
@@ -403,12 +403,12 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "focus_agent",
             "Focus an agent",
-            "Selects the agent and zooms the farm camera onto it. Pass \
+            "Selects the agent and pans the hold's camera to it, keeping the current zoom. Pass \
              id \"king\" for the King.",
             object(
                 json!({
                     "id": id_prop(),
-                    "raise_window": { "type": "boolean", "default": false, "description": "Also bring the Myrstack window to the front." },
+                    "raise_window": { "type": "boolean", "default": false, "description": "Also bring the Stronghold window to the front." },
                 }),
                 &["id"],
             ),
@@ -444,7 +444,7 @@ pub fn definitions() -> Vec<Value> {
             "alerts",
             "Alerts",
             "Karl's notification inbox, newest first: what agents sent him with notify and what \
-             Myrstack raised itself (needs input, stalls, PRs ready), with severity, agent, \
+             Stronghold raised itself (needs input, stalls, PRs ready), with severity, agent, \
              link, read state and how many repeats were collapsed.",
             object(
                 json!({
@@ -465,7 +465,7 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "health",
             "Health",
-            "Myrstack's health doctor: whether the whip is live or in dry run, `orca` and `gh` \
+            "Stronghold's health doctor: whether the whip is live or in dry run, `orca` and `gh` \
              are found (with versions) and Orca's runtime is reachable, the King is running, \
              the Claude session hook is installed, notifications are allowed and the Slack \
              reply bridge's heartbeat is fresh. Each problem comes with a one-line fix.",
@@ -487,12 +487,12 @@ pub fn call(
 ) -> Option<ToolOutput> {
     let p = Params::new(args);
     let result = match name {
-        "fleet_status" => fleet_status(control),
+        "clan_status" => clan_status(control),
         "list_agents" => list_agents(control, &p),
         "get_agent" => get_agent(control, &p),
         "send_to_agent" => send_to_agent(control, origin, &p),
         "press_key" => press_key(control, &p),
-        "close_agents" => close_agents(control, &p),
+        "close_agents" => close_agents(control, origin, &p),
         "park_agents" => park_agents(control, &p),
         "broadcast_to_coordinators" => broadcast(control, &p),
         "whip_status" => whip_status(control, &p),
@@ -518,7 +518,7 @@ fn error_text(e: Error) -> String {
     match e {
         Error::Args(m) => format!("Invalid arguments: {m}"),
         Error::Call(CallError::NotRunning) => NOT_RUNNING.into(),
-        Error::Call(CallError::Transport(m)) => format!("Couldn't talk to Myrstack: {m}"),
+        Error::Call(CallError::Transport(m)) => format!("Couldn't talk to Stronghold: {m}"),
         Error::Call(CallError::Control(e)) => match e.code {
             ErrorCode::NotFound => {
                 format!(
@@ -526,11 +526,11 @@ fn error_text(e: Error) -> String {
                     e.message
                 )
             }
-            ErrorCode::Unavailable => format!("Myrstack isn't ready: {}", e.message),
+            ErrorCode::Unavailable => format!("Stronghold isn't ready: {}", e.message),
             ErrorCode::Refused => format!("Refused: {}", e.message),
             ErrorCode::InvalidParams => format!("Invalid arguments: {}", e.message),
-            ErrorCode::Timeout => format!("Myrstack didn't answer in time: {}", e.message),
-            _ => format!("Myrstack error: {e}"),
+            ErrorCode::Timeout => format!("Stronghold didn't answer in time: {}", e.message),
+            _ => format!("Stronghold error: {e}"),
         },
     }
 }
@@ -571,7 +571,7 @@ struct Status {
     quotas: Option<QuotasView>,
 }
 
-fn fleet_status(control: &mut dyn Control) -> ToolResult {
+fn clan_status(control: &mut dyn Control) -> ToolResult {
     let (s, fallback) = with_fallback(control, |c| {
         let status = c.call("status", Value::Null)?;
         let clan: ClanSummary = parse(status.get("clan").unwrap_or(&Value::Null))?;
@@ -627,7 +627,7 @@ fn clan_text(s: &Status, fallback: bool, now: i64) -> String {
         out.push(String::new());
     }
     if s.status.get("ready").and_then(Value::as_bool) != Some(true) {
-        out.push("Myrstack has not polled Orca yet; try again in a few seconds.".into());
+        out.push("Stronghold has not polled Orca yet; try again in a few seconds.".into());
         return out.join("\n");
     }
     let f = &s.clan;
@@ -698,7 +698,7 @@ fn clan_text(s: &Status, fallback: bool, now: i64) -> String {
 
     out.push(String::new());
     if fallback {
-        out.push("Whip: unknown (Myrstack isn't running)".into());
+        out.push("Whip: unknown (Stronghold isn't running)".into());
     } else if let Some(w) = s.status.get("whip") {
         out.push(whip_line(w, now));
     }
@@ -1101,7 +1101,7 @@ fn get_agent(control: &mut dyn Control, p: &Params) -> ToolResult {
     Ok(ToolOutput::ok(out.join("\n"), result))
 }
 
-/// Sends as `origin`, so Myrstack draws the message from the caller.
+/// Sends as `origin`, so Stronghold draws the message from the caller.
 fn send_to_agent(control: &mut dyn Control, origin: &Origin, p: &Params) -> ToolResult {
     let id = p.required_str("id")?;
     let text = p
@@ -1148,14 +1148,14 @@ fn press_key(control: &mut dyn Control, p: &Params) -> ToolResult {
     ))
 }
 
-fn close_agents(control: &mut dyn Control, p: &Params) -> ToolResult {
+fn close_agents(control: &mut dyn Control, origin: &Origin, p: &Params) -> ToolResult {
     let ids = p
         .strings("ids")?
         .filter(|ids| !ids.is_empty())
         .ok_or_else(|| Error::Args("missing \"ids\"".into()))?;
     let whole_tab = p.bool("whole_tab")?.unwrap_or(false);
     let dry_run = p.bool("dry_run")?.unwrap_or(true);
-    let mut params = json!({ "whole_tab": whole_tab, "dry_run": dry_run });
+    let mut params = json!({ "whole_tab": whole_tab, "dry_run": dry_run, "origin": origin });
     match ids.as_slice() {
         [one] => params["id"] = json!(one),
         _ => params["ids"] = json!(ids),
@@ -1456,7 +1456,7 @@ fn manual_whip_text(result: &Value) -> String {
     let n = |k: &str| result.get(k).and_then(Value::as_u64).unwrap_or(0);
     let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("?").to_owned();
     let mut out = vec![format!(
-        "Sent {} Myrstack nudge{} ({} failed).",
+        "Sent {} Stronghold nudge{} ({} failed).",
         n("sent"),
         if n("sent") == 1 { "" } else { "s" },
         n("failed")
@@ -1503,7 +1503,7 @@ fn manual_whip_text(result: &Value) -> String {
 
 fn whip_pass_text(result: &Value) -> String {
     if result.get("ran").and_then(Value::as_bool) == Some(false) {
-        return "The whip pass did not run: Myrstack has no clan data yet.".into();
+        return "The whip pass did not run: Stronghold has no clan data yet.".into();
     }
     let dry_run = result.get("dry_run").and_then(Value::as_bool) == Some(true);
     let actions = result
@@ -1540,7 +1540,7 @@ fn focus_agent(control: &mut dyn Control, p: &Params) -> ToolResult {
     let raise = p.bool("raise_window")?.unwrap_or(false);
     let result = control.call("focus", json!({ "id": id, "raise": raise }))?;
     let selected = result.get("selected").and_then(Value::as_str).unwrap_or(id);
-    let mut text = format!("Focused {selected} in the farm.");
+    let mut text = format!("Focused {selected} in the hold.");
     if result.get("hidden_by_filter").and_then(Value::as_bool) == Some(true) {
         text.push_str(
             " It is selected but hidden by the current filter (set_filter clear=true shows it).",

@@ -553,7 +553,7 @@ fn names_titles_and_models() {
     assert!(valid_model("sonnet[1m]"));
     assert!(!valid_model("a b"));
     assert_eq!(title_from("\n  Short one\nmore"), "Short one");
-    assert_eq!(title_from(""), "Task from Myrstack");
+    assert_eq!(title_from(""), "Task from Stronghold");
     assert_eq!(title_from(&"x".repeat(100)).chars().count(), 60);
 }
 
@@ -768,7 +768,7 @@ fn codex_launch_with_approvals_on_ends_verify_with_a_warning() {
 #[test]
 fn worker_and_bare_launches_use_looser_expectations() {
     let claude = Agent::Claude;
-    // A worker's preamble is text Myrstack didn't write: typed but unsent → parked.
+    // A worker's preamble is text Stronghold didn't write: typed but unsent → parked.
     let parked = screen!("spawn_claude_parked_synthetic.txt");
     assert_eq!(
         classify_screen(&parked, claude, &Expect::AnyInput),
@@ -1784,7 +1784,7 @@ fn interrupted_spawns_are_recorded_shown_and_pruned() {
     };
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("interrupted.json");
-    let args = json!({"mode": "new_worktree", "repo": "myrstack", "name": "agent-notify-tool", "prompt": "Add a notify tool\nmore"});
+    let args = json!({"mode": "new_worktree", "repo": "stronghold", "name": "agent-notify-tool", "prompt": "Add a notify tool\nmore"});
     let result = json!({"node": "term:term_a", "handle": "term_a", "worktree_path": "/wt/agent-notify-tool"});
     let now = 10 * MAX_AGE_MS;
     let entry = InterruptedSpawn::new("cancelled", now, &args, &result);
@@ -1884,7 +1884,7 @@ fn envoy_preflight_refuses_a_live_home_agent_without_a_saved_identity() {
     let catalog = Catalog {
         repos: vec![crate::orca::spawn::Repo {
             id: "repo".into(),
-            path: "/repo/myrstack".into(),
+            path: "/repo/stronghold".into(),
             ..Default::default()
         }],
         worktrees: vec![crate::orca::spawn::Worktree {

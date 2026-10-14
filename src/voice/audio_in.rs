@@ -33,7 +33,7 @@ pub enum RecordError {
 pub fn permission_help() -> &'static str {
     "No sound from the microphone: macOS may be blocking access. Allow it in System Settings › \
      Privacy & Security › Microphone. Run from a terminal, macOS asks for the terminal app's \
-     permission; the bundled Myrstack.app asks for its own."
+     permission; the bundled Stronghold.app asks for its own."
 }
 
 /// A finished recording, resampled to [`TARGET_RATE`] mono.

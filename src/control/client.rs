@@ -1,4 +1,4 @@
-//! Client side of the control socket, and the `myrstack ctl` debugging subcommand.
+//! Client side of the control socket, and the `stronghold ctl` debugging subcommand.
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -51,7 +51,7 @@ impl ControlClient {
     }
 }
 
-/// `myrstack ctl <method> [params]`: prints the response; `None` for other subcommands.
+/// `stronghold ctl <method> [params]`: prints the response; `None` for other subcommands.
 pub fn run_cli(args: &[String]) -> Option<Result<()>> {
     let (cmd, rest) = args.split_first()?;
     (cmd == "ctl").then(|| ctl(rest))
@@ -60,15 +60,15 @@ pub fn run_cli(args: &[String]) -> Option<Result<()>> {
 fn ctl(args: &[String]) -> Result<()> {
     let Some((method, rest)) = args.split_first() else {
         bail!(
-            "usage: myrstack ctl <method> [json params | id]\n\
-             e.g. myrstack ctl status; myrstack ctl agent term:abc; \
-             myrstack ctl agents '{{\"state\":\"needs_input\"}}'"
+            "usage: stronghold ctl <method> [json params | id]\n\
+             e.g. stronghold ctl status; stronghold ctl agent term:abc; \
+             stronghold ctl agents '{{\"state\":\"needs_input\"}}'"
         );
     };
     let params = cli_params(rest)?;
     let path = crate::control::socket_path();
     let mut client = ControlClient::connect(&path)
-        .with_context(|| format!("connecting to {} (is Myrstack running?)", path.display()))?;
+        .with_context(|| format!("connecting to {} (is Stronghold running?)", path.display()))?;
     let response = client.call(&Request::new(method.as_str(), params))?;
     println!("{}", serde_json::to_string_pretty(&response)?);
     if !response.ok {

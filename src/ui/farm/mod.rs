@@ -13,7 +13,7 @@ pub(crate) mod hammer;
 pub mod layout;
 #[cfg(test)]
 mod layout_tests;
-mod library;
+mod ledger;
 pub mod mail;
 pub mod motion;
 pub mod nature;
@@ -27,6 +27,7 @@ pub mod rubble;
 mod rubble_tests;
 pub mod scenery;
 pub mod sprites;
+mod tool_throw;
 mod world;
 pub mod zoom;
 #[cfg(test)]
@@ -145,6 +146,10 @@ pub struct FarmResponse {
     /// Empty ground was clicked (clears the selection, as in the clan).
     pub clicked_empty: bool,
     pub open_envoy: bool,
+    /// Open the read-only Ledger pane.
+    pub open_ledger: bool,
+    /// A thrown tool hit this frame.
+    pub bonk: bool,
     pub hovered: Option<NodeId>,
     /// Dwarves inside a selection box dragged from empty ground, when it was released this
     /// frame, and whether Shift/Cmd was held (add to the selection rather than replace it).
@@ -198,6 +203,7 @@ pub struct FarmView {
     ripples: Vec<Ripple>,
     /// Dwarves that left the clan, falling to the bottom.
     falls: Vec<Fall>,
+    throws: tool_throw::Throws,
     /// The King is working on something (his chat turn runs): he hops about.
     king_busy: bool,
     /// His chat is the conversation shown: he gets the selection ring.
@@ -205,6 +211,8 @@ pub struct FarmView {
     envoy_health: Option<crate::envoy::EnvoyHealth>,
     envoy_pending: usize,
     envoy_receipt: crate::ui::envoy_receipt::ReceiptCue,
+    /// What the Ledger holds: its count on the chamber's sign, the newest entries on hover.
+    ledger: crate::ledger::Shelf,
     /// Messages carried between dwarves; see [`mail`].
     mail: crate::ui::envelope::Flights,
     /// Tool calls beaming from their callers; see [`beams`].
@@ -309,6 +317,7 @@ struct FrameShape {
     throne_hall: Rect,
     storage: Rect,
     comms: Option<layout::CommsRoom>,
+    ledger: Option<Rect>,
 }
 
 impl FrameShape {
@@ -321,6 +330,7 @@ impl FrameShape {
             throne_hall: scene.throne_hall,
             storage: scene.storage,
             comms: scene.comms,
+            ledger: scene.ledger,
         }
     }
 
@@ -344,6 +354,10 @@ impl FrameShape {
                 }),
                 (_, to) => to,
             },
+            ledger: match (self.ledger, to.ledger) {
+                (Some(a), Some(b)) => Some(rect(a, b)),
+                (_, to) => to,
+            },
         }
     }
 
@@ -360,6 +374,7 @@ impl FrameShape {
         scene.throne_hall = self.throne_hall;
         scene.storage = self.storage;
         scene.comms = self.comms;
+        scene.ledger = self.ledger;
     }
 }
 
@@ -417,6 +432,11 @@ impl FarmView {
 
     pub fn set_envoy_receipt(&mut self, receipt: crate::ui::envoy_receipt::ReceiptCue) {
         self.envoy_receipt = receipt;
+    }
+
+    /// What the Ledger holds, for its chamber.
+    pub fn set_ledger(&mut self, shelf: crate::ledger::Shelf) {
+        self.ledger = shelf;
     }
 
     /// The room plan, to save between launches.
@@ -487,7 +507,10 @@ impl FarmView {
             }
         }
         if bounds.is_finite() && bounds.is_positive() {
-            self.camera.focus(scene.rect, bounds);
+            match focus {
+                Focus::Nodes(_) => self.camera.pan_to(scene.rect, bounds.center()),
+                Focus::Run(_) | Focus::Repo(_) => self.camera.focus(scene.rect, bounds),
+            }
         }
     }
 
@@ -506,6 +529,19 @@ impl FarmView {
     /// Reduce motion.
     pub fn pop(&mut self, node: NodeId, cue: crate::ui::state_pop::Cue, now_s: f64, still: bool) {
         self.pops.push(node, cue, now_s, still);
+    }
+
+    /// Marks only visible targets of an accepted King close. Their bodies are held when
+    /// the snapshot removes them; no change to process shutdown or the snapshot itself.
+    pub fn prepare_king_close(&mut self, ids: impl Iterator<Item = NodeId>, now_s: f64) {
+        if self.last_frame_s.is_none_or(|last| now_s - last > AWAY_S) {
+            return;
+        }
+        for id in ids {
+            if let Some(body) = self.tracks.get(&id).and_then(|t| t.body) {
+                self.throws.prepare(id, body, now_s);
+            }
+        }
     }
 
     /// Draws the farm filling the available space and handles clicks, hover and the context
@@ -543,6 +579,19 @@ impl FarmView {
             .retain(|r| now_s - r.start_s < RIPPLE_S + ECHO_S + ARRIVAL_S);
         self.births.retain(|t| now_s - t < BIRTH_GLOW_S);
         self.falls.retain(|f| now_s - f.start_s < f.duration());
+        if away {
+            self.throws.clear();
+        }
+        let from = scene
+            .dwarf(&NodeId::king())
+            .map(|d| motion::to_unit(d.pos, scene.rect));
+        let bonk = self.throws.tick(
+            now_s,
+            from,
+            self.still(),
+            |id| snapshot.node(id).is_some(),
+            |id| self.tracks.get(id).and_then(|t| t.body),
+        );
         self.bury(&scene, snapshot, now_s, death::reduce_motion);
         let placed = self.advance(&scene, now_s);
         let still = self.still();
@@ -579,6 +628,9 @@ impl FarmView {
             .filter(|_| !tray_hovered && hovered.is_none())
             .and_then(|p| rubble::hit(&heaps, p))
             .cloned();
+        let ledger_hovered = pointer
+            .filter(|_| !tray_hovered && hovered.is_none() && heap_hovered.is_none())
+            .is_some_and(|p| scene.ledger.is_some_and(|room| room.contains(p)));
         let portal_frame = world::portal_frame(
             now_s,
             mail::portal_flare(self.mail.tick(now_s), now_s),
@@ -594,6 +646,7 @@ impl FarmView {
             portal_frame,
             &self.rubble,
             &heaps,
+            self.ledger.count,
         );
 
         self.envoy_receipt.repaint(ui.ctx());
@@ -671,6 +724,7 @@ impl FarmView {
             now_s,
         );
         beams::paint(&painter, &scene, &placed, self.beams.tick(now_s), now_s);
+        self.throws.paint(&painter, &mut figures, &scene, now_s);
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
         comms::tray(
             &painter,
@@ -691,7 +745,7 @@ impl FarmView {
             self.camera.transform(rect),
             painter.clip_rect(),
         );
-        if response.double_clicked() && hovered.is_none() && !tray_hovered {
+        if response.double_clicked() && hovered.is_none() && !tray_hovered && !ledger_hovered {
             self.camera = Camera::default();
         }
 
@@ -700,6 +754,7 @@ impl FarmView {
             || !self.ripples.is_empty()
             || !self.births.is_empty()
             || !self.falls.is_empty()
+            || self.throws.animating()
             || !self.mail.is_empty()
             || !self.beams.is_empty()
             || !self.pops.is_empty()
@@ -732,6 +787,15 @@ impl FarmView {
                 .clone()
                 .on_hover_ui_at_pointer(|ui| clan.node_tooltip_ui(ui, id));
         }
+        if ledger_hovered {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as i64);
+            response
+                .clone()
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text_at_pointer(crate::ledger::describe(&self.ledger, now_ms));
+        }
         if let Some(heap) = &heap_hovered {
             response
                 .clone()
@@ -749,12 +813,15 @@ impl FarmView {
             None => Default::default(),
         };
         FarmResponse {
+            bonk,
             clicked: response.clicked().then(|| hovered.clone()).flatten(),
             clicked_empty: response.clicked()
                 && hovered.is_none()
                 && !tray_hovered
+                && !ledger_hovered
                 && heap_hovered.is_none(),
             open_envoy: response.clicked() && tray_hovered,
+            open_ledger: response.clicked() && ledger_hovered,
             hovered,
             close_requested: menu.close,
             whip_requested: menu.whip,
@@ -939,6 +1006,7 @@ impl FarmView {
         let mut still = None;
         for (id, track) in &self.tracks {
             if let Some(body) = track.body
+                && !self.throws.contains(id)
                 && scene.dwarf(id).is_none()
                 && !snapshot.nodes.iter().any(|n| &n.id == id)
             {
@@ -1108,6 +1176,7 @@ fn paint_ground(
     portal_frame: u8,
     rubble_view: &rubble::RubbleView,
     heaps: &rubble::Rubble,
+    ledger_count: usize,
 ) {
     let px = scene.px;
     let a = scene.cell();
@@ -1175,7 +1244,7 @@ fn paint_ground(
     for plant in &plants {
         sprites.deco(painter, plant.deco, plant.foot, px, 1.0);
     }
-    library::paint(painter, sprites, scene);
+    ledger::paint(painter, sprites, scene, ledger_count);
     sprites.masonry(painter, scene.throne_hall);
     sprites.throne_hall(painter, scene.throne_hall, px);
     sprites.masonry(painter, scene.storage);

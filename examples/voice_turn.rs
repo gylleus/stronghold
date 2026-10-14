@@ -5,12 +5,12 @@
 //!
 //! ```text
 //! say -o /tmp/q.wav --data-format=LEI16@16000 "How many agents need input?"
-//! MYRSTACK_DATA_DIR=<scratch> cargo run --release --example voice_turn -- /tmp/q.wav reply.wav
+//! STRONGHOLD_DATA_DIR=<scratch> cargo run --release --example voice_turn -- /tmp/q.wav reply.wav
 //! ```
 //!
-//! Nothing is downloaded: Kokoro must already be in `$MYRSTACK_DATA_DIR/speech-models` and
+//! Nothing is downloaded: Kokoro must already be in `$STRONGHOLD_DATA_DIR/speech-models` and
 //! Parakeet there or in Orca's data dir. The chat is a real `claude` King session in
-//! `$MYRSTACK_DATA_DIR/chat` (use a scratch data dir: with no Myrstack app on its control
+//! `$STRONGHOLD_DATA_DIR/chat` (use a scratch data dir: with no Stronghold app on its control
 //! socket his actions are refused, and permission cards are denied); `--fake-chat` streams a
 //! canned reply instead.
 
@@ -19,18 +19,18 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
-use myrstack::chat::settings::KingSettings;
-use myrstack::chat::transcript::Decision;
-use myrstack::chat::{ChatConfig, ChatSession, SessionState, SpeechEvent};
-use myrstack::voice::audio_in::{
+use stronghold::chat::settings::KingSettings;
+use stronghold::chat::transcript::Decision;
+use stronghold::chat::{ChatConfig, ChatSession, SessionState, SpeechEvent};
+use stronghold::voice::audio_in::{
     CaptureGuard, InputSource, RecordError, Recorder, SampleSink, read_wav, resample,
 };
-use myrstack::voice::audio_out::{AudioSink, BufferSink, write_wav};
-use myrstack::voice::dictation::Dictation;
-use myrstack::voice::models::kokoro;
-use myrstack::voice::stt::Transcriber;
-use myrstack::voice::talk::{KingChat, Talk, TalkEvent};
-use myrstack::voice::tts::{
+use stronghold::voice::audio_out::{AudioSink, BufferSink, write_wav};
+use stronghold::voice::dictation::Dictation;
+use stronghold::voice::models::kokoro;
+use stronghold::voice::stt::Transcriber;
+use stronghold::voice::talk::{KingChat, Talk, TalkEvent};
+use stronghold::voice::tts::{
     BackendFactory, DEFAULT_VOICE, KokoroSynth, Speaker, SpeakerStatus, Synthesizer, Voice,
 };
 
@@ -147,8 +147,8 @@ fn main() -> anyhow::Result<()> {
         bail!("usage: voice_turn <question.wav> [reply.wav] [--fake-chat]");
     };
     let output = PathBuf::from(files.get(1).map_or("reply.wav", |s| s.as_str()));
-    if std::env::var_os("MYRSTACK_DATA_DIR").is_none() {
-        bail!("set MYRSTACK_DATA_DIR to a scratch data dir");
+    if std::env::var_os("STRONGHOLD_DATA_DIR").is_none() {
+        bail!("set STRONGHOLD_DATA_DIR to a scratch data dir");
     }
 
     // The question, as the microphone would hear it.
@@ -160,8 +160,9 @@ fn main() -> anyhow::Result<()> {
 
     // His voice, rendered into a buffer. Loaded up front, as the app does at start.
     let root = kokoro::speech_models_dir();
-    let paths = kokoro::installed(&root, &kokoro::DEFAULT)
-        .context("Kokoro is not installed in $MYRSTACK_DATA_DIR/speech-models (not downloading)")?;
+    let paths = kokoro::installed(&root, &kokoro::DEFAULT).context(
+        "Kokoro is not installed in $STRONGHOLD_DATA_DIR/speech-models (not downloading)",
+    )?;
     let voices: Vec<Voice> = kokoro::read_speaker_names(&paths.model)?
         .into_iter()
         .enumerate()
@@ -286,7 +287,7 @@ fn main() -> anyhow::Result<()> {
 
     let show = |d: Option<Duration>| d.map_or("never".into(), ms);
     println!("reply text: {reply:?}");
-    let say = myrstack::chat::say::split_say(&reply).say;
+    let say = stronghold::chat::say::split_say(&reply).say;
     println!(
         "say-line: {}",
         say.as_deref()

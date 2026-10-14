@@ -723,6 +723,158 @@ fn a_resize_moves_dwarves_without_walking() {
     );
 }
 
+/// Hovering the Ledger's chamber shows its count and newest entries.
+#[test]
+fn hovering_the_ledger_chamber_lists_its_newest_entries() {
+    use eframe::egui::{self, Event};
+    let s = snapshot();
+    let mut clan = crate::ui::clan_view::ClanView::new();
+    clan.sync(&s);
+    let mut farm = FarmView::new();
+    farm.set_ledger(crate::ledger::Shelf {
+        count: 2,
+        newest: vec![crate::ledger::Entry {
+            path: "stronghold/Setup gotchas.md".into(),
+            title: "Setup gotchas".into(),
+            folder: "stronghold".into(),
+            kind: Some("finding".into()),
+            modified_ms: 0,
+        }],
+    });
+    let ctx = egui::Context::default();
+    let mut time = 0.0;
+    let mut frame = |events: Vec<Event>, farm: &mut FarmView| {
+        time += 0.25;
+        let input = egui::RawInput {
+            screen_rect: Some(RECT),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        let mut rect = Rect::NOTHING;
+        let mut output = ctx.run_ui(input, |ui| {
+            rect = ui.available_rect_before_wrap();
+            farm.show(ui, &s, &mut clan);
+        });
+        output.textures_delta.clear();
+        (rect, output)
+    };
+    let texts = |output: &egui::FullOutput| {
+        fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        output.shapes.iter().for_each(|c| walk(&c.shape, &mut out));
+        out
+    };
+    let (rect, output) = frame(vec![], &mut farm);
+    assert!(texts(&output).iter().any(|t| t == "LEDGER · 2"));
+    let pr_ready = HashSet::new();
+    let hidden = BTreeSet::new();
+    let input = FarmInput {
+        snapshot: &s,
+        hidden: &hidden,
+        pr_ready: &pr_ready,
+        building: &HashSet::new(),
+        now_ms: 0,
+    };
+    let room = layout(&input, rect).ledger.unwrap();
+    frame(vec![Event::PointerMoved(room.center())], &mut farm);
+    let mut shown = Vec::new();
+    for _ in 0..6 {
+        shown = texts(&frame(vec![], &mut farm).1);
+    }
+    let tooltip = shown
+        .iter()
+        .find(|t| t.starts_with("The Ledger:"))
+        .expect("the chamber's tooltip");
+    assert!(
+        tooltip
+            .starts_with("The Ledger: 2 entries\nNewest:\n• Setup gotchas (stronghold, finding, ")
+    );
+}
+
+/// A chamber click opens one Ledger pane and never clears the dwarf selection.
+#[test]
+fn clicking_the_ledger_chamber_opens_its_pane() {
+    use crate::ui::dock::{Pane, PaneLayout};
+    use eframe::egui::{self, Event, PointerButton};
+
+    let snapshot = snapshot();
+    let mut clan = crate::ui::clan_view::ClanView::new();
+    clan.sync(&snapshot);
+    let mut farm = FarmView::new();
+    let mut panes = PaneLayout::default();
+    let ctx = egui::Context::default();
+    let mut time = 0.0;
+    let mut frame = |events: Vec<Event>, panes: &mut PaneLayout| {
+        time += 1.0 / 60.0;
+        let mut rect = Rect::NOTHING;
+        let mut clicked = false;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 800.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                rect = ui.available_rect_before_wrap();
+                let response = farm.show(ui, &snapshot, &mut clan);
+                if response.open_ledger {
+                    assert!(!response.clicked_empty);
+                    assert!(!response.open_envoy);
+                    assert!(response.clicked.is_none());
+                    panes.open_ledger();
+                    clicked = true;
+                }
+            },
+        );
+        output.textures_delta.clear();
+        (rect, clicked)
+    };
+    let (rect, _) = frame(vec![], &mut panes);
+    assert!(!panes.contains(Pane::Ledger));
+    let scene = layout(
+        &FarmInput {
+            snapshot: &snapshot,
+            hidden: &BTreeSet::new(),
+            pr_ready: &HashSet::new(),
+            building: &HashSet::new(),
+            now_ms: 0,
+        },
+        rect,
+    );
+    let target = scene
+        .ledger
+        .expect("visible chamber without Envoy at 1280×800")
+        .center();
+    for _ in 0..2 {
+        let button = |pressed| Event::PointerButton {
+            pos: target,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![Event::PointerMoved(target)], &mut panes);
+        frame(vec![button(true)], &mut panes);
+        assert!(frame(vec![button(false)], &mut panes).1);
+        assert!(panes.is_visible(Pane::Ledger));
+    }
+    let saved = panes.encode().unwrap();
+    let restored = PaneLayout::decode(&saved).expect("valid layout with just one Ledger tab");
+    assert!(restored.is_visible(Pane::Ledger));
+    let path = panes.dock_mut().find_tab(&Pane::Ledger).unwrap();
+    panes.dock_mut().remove_tab(path);
+    assert!(!panes.contains(Pane::Ledger));
+    panes.open_ledger();
+    assert!(panes.is_visible(Pane::Ledger));
+}
+
 /// Clicking a dwarf reports it, as clicking a node does in the clan; clicking soil reports
 /// an empty click.
 #[test]
@@ -1701,4 +1853,49 @@ fn portal_stone_threshold_meets_the_surface_in_every_outline() {
             "{outline:?}: buried plate"
         );
     }
+}
+
+#[test]
+fn king_close_holds_target_in_view_and_bonks_once_instead_of_falling() {
+    use eframe::egui;
+    let mut snapshot = snapshot();
+    snapshot.add_king();
+    let mut clan = crate::ui::clan_view::ClanView::new();
+    let mut farm = FarmView::new();
+    farm.reduce_motion = Some(false);
+    let ctx = egui::Context::default();
+    let mut frame = |farm: &mut FarmView, snapshot: &ClanSnapshot, time: f64| {
+        clan.sync(snapshot);
+        let mut response = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(RECT),
+                time: Some(time),
+                ..Default::default()
+            },
+            |ui| response = Some(farm.show(ui, snapshot, &mut clan)),
+        );
+        output.textures_delta.clear();
+        response.unwrap()
+    };
+    frame(&mut farm, &snapshot, 0.0);
+    farm.prepare_king_close([id("loose")].into_iter(), 0.01);
+    assert!(farm.throws.contains(&id("loose")));
+    // The close request itself must not remove or hit a still-live dwarf.
+    frame(&mut farm, &snapshot, 0.02);
+    assert!(!farm.throws.animating());
+    snapshot.nodes.retain(|n| n.id != id("loose"));
+    snapshot.add_king();
+    assert!(!frame(&mut farm, &snapshot, 0.03).bonk);
+    assert!(farm.throws.animating());
+    assert!(
+        farm.falls.is_empty(),
+        "the regular death must wait for the tool"
+    );
+    assert!(!frame(&mut farm, &snapshot, 0.30).bonk);
+    assert!(frame(&mut farm, &snapshot, 0.59).bonk);
+    assert!(!frame(&mut farm, &snapshot, 0.60).bonk);
+    frame(&mut farm, &snapshot, 0.90);
+    assert!(!farm.throws.contains(&id("loose")));
+    assert!(farm.falls.is_empty());
 }

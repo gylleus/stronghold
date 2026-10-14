@@ -12,7 +12,9 @@ use crate::playbook::fetches;
 use crate::playbook::source::{self, Template};
 use crate::playbook::{Playbook, Role, STANDING_RULES, Target};
 
-pub const URI_PREFIX: &str = "myrstack://playbook/";
+pub const URI_PREFIX: &str = "stronghold://playbook/";
+/// The prefix until 2026-10-13, still read: older kickoff specs and notes link to it.
+const OLD_URI_PREFIX: &str = "myrstack://playbook/";
 pub const INTERNAL_ERROR: i64 = -32603;
 /// MCP's "resource not found".
 pub const RESOURCE_NOT_FOUND: i64 = -32002;
@@ -24,7 +26,7 @@ pub const TOOLS: [&str; 4] = [
     "kickoff",
 ];
 
-/// The templates Myrstack fills, as prompts and tools.
+/// The templates Stronghold fills, as prompts and tools.
 pub const TEMPLATES: [Template; 2] = [Template::AttendantBrief, Template::Kickoff];
 
 type RpcResult = Result<Value, (i64, String)>;
@@ -139,7 +141,7 @@ pub fn prompts_get(
             "role": "user",
             "content": { "type": "text", "text": format!("{STANDING_RULES}\n\n{}", served.text()) },
         }],
-        "_meta": { "myrstack/playbook": served.to_json() },
+        "_meta": { "stronghold/playbook": served.to_json() },
     }))
 }
 
@@ -220,7 +222,7 @@ fn template_prompt(
             "role": "user",
             "content": { "type": "text", "text": filled.text() },
         }],
-        "_meta": { "myrstack/template": filled.to_json() },
+        "_meta": { "stronghold/template": filled.to_json() },
     }))
 }
 
@@ -248,7 +250,10 @@ pub fn resources_read(
         .get("uri")
         .and_then(Value::as_str)
         .ok_or((INVALID_PARAMS, "missing uri".to_owned()))?;
-    let file = uri.strip_prefix(URI_PREFIX).ok_or_else(|| {
+    let file = uri
+        .strip_prefix(URI_PREFIX)
+        .or_else(|| uri.strip_prefix(OLD_URI_PREFIX));
+    let file = file.ok_or_else(|| {
         (
             RESOURCE_NOT_FOUND,
             format!("resource not found: {uri} (expected {URI_PREFIX}<file>)"),
@@ -267,7 +272,7 @@ pub fn resources_read(
             "uri": uri,
             "mimeType": "text/markdown",
             "text": served.text(),
-            "_meta": { "myrstack/playbook": served.to_json() },
+            "_meta": { "stronghold/playbook": served.to_json() },
         }],
     }))
 }

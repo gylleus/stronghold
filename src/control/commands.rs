@@ -111,7 +111,7 @@ pub enum ControlCommand {
     SelectMany {
         agents: Vec<String>,
     },
-    /// Select a node and pan/zoom the farm onto it; `raise` also brings the window forward.
+    /// Select a node and pan to it at the current zoom; `raise` also brings the window forward.
     Focus {
         agent: String,
         raise: bool,
@@ -124,6 +124,8 @@ pub enum ControlCommand {
         agents: Vec<String>,
         whole_tab: bool,
         dry_run: bool,
+        /// Present for MCP closes; distinguishes the King from direct UI/API closes.
+        origin: Option<crate::review::mark::Origin>,
     },
     /// Park `agents` in the resting area ([`crate::park`]), or with `park` false wake them.
     Park {
@@ -142,7 +144,7 @@ pub enum ControlCommand {
     Spawn(crate::spawn::SpawnArgs),
     /// A notification from an agent to Karl, through the app's dispatcher.
     Notify(crate::notify::agent::AgentNotice),
-    /// An agent's question to Karl (`ask_karl`): notifies him and shows the agent waiting.
+    /// An agent's question to Karl (`ask_karl`): notifies him; all but Envoy show waiting.
     Ask(crate::ask::AskRequest),
     /// An agent ending its own session (`finish_session`), or with `dry_run` checking whether
     /// it may.
@@ -260,6 +262,10 @@ impl ControlCommand {
                     agents,
                     whole_tab: p.bool("whole_tab")?.unwrap_or(false),
                     dry_run: p.bool("dry_run")?.unwrap_or(false),
+                    origin: params
+                        .get("origin")
+                        .map(|_| crate::finish::origin_of(params))
+                        .transpose()?,
                 })
             })(),
             "park" => (|| {

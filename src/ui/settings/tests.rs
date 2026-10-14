@@ -10,8 +10,8 @@ const SEC: i64 = 1_000;
 
 fn general() -> GeneralInfo {
     GeneralInfo {
-        data_dir: PathBuf::from("/data/myrstack"),
-        socket_path: PathBuf::from("/data/myrstack/control.sock"),
+        data_dir: PathBuf::from("/data/stronghold"),
+        socket_path: PathBuf::from("/data/stronghold/control.sock"),
         socket_listening: true,
         version: "0.1.0",
         commit: Some("abc1234"),
@@ -107,7 +107,7 @@ fn each_section_renders_headless() {
             &[
                 "Quiet mode (do not disturb)",
                 "macOS notifications",
-                "Pop-ups in the Myrstack window",
+                "Pop-ups in the Stronghold window",
                 "Play sounds from",
                 "Tink",
                 "Glass",
@@ -133,8 +133,8 @@ fn each_section_renders_headless() {
             Section::General,
             &[
                 general::FOCUS_NEW_LABEL,
-                "/data/myrstack",
-                "/data/myrstack/control.sock",
+                "/data/stronghold",
+                "/data/stronghold/control.sock",
                 "● listening",
                 "0.1.0 (abc1234)",
                 "/pb",
@@ -169,7 +169,7 @@ fn king_section_shows_the_env_override() {
         running_model: None,
         env_model: Some("haiku"),
     };
-    let text = "Overridden by env: MYRSTACK_CHAT_MODEL=haiku. The King runs haiku; the model \
+    let text = "Overridden by env: STRONGHOLD_CHAT_MODEL=haiku. The King runs haiku; the model \
                 above applies once the variable is unset.";
     assert_eq!(
         drawn(&mut pane, &cx(&status, &info, king), &[text]),

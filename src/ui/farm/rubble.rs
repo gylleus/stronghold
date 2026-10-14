@@ -1,8 +1,8 @@
 //! Excavation spoil on the mountainside: one heap per linked worktree, oldest first.
 //! Fresh stone and a small survey pennant mark active work; abandoned heaps are weathered.
-//! Cleanup strikes with a hammer, then the removed heap crumbles and fades.
+//! Cleanup strikes with a hammer, then the removed heap bursts into scattered stone.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Vec2, pos2, vec2};
 
@@ -14,10 +14,10 @@ use super::world::{
 use crate::model::{Node, NodeState};
 use crate::orca::spawn::Worktree;
 
-/// How long a cleared heap takes to collapse, settle and fade, in seconds.
-const CRUMBLE_S: f64 = 1.0;
-const SETTLE_S: f64 = 0.9;
-const FADE_S: f64 = 0.8;
+/// Chunk flight and fade duration, in seconds.
+pub(super) const BREAK_S: f64 = 1.35;
+/// Bound simultaneous bursts even when a poll removes many worktrees at once.
+pub(super) const MAX_BURSTS: usize = 24;
 /// Worktrees that fill the surface's strip end to end: the rubble grows from the left like
 /// a loading bar, and past this many it only gets denser.
 pub const FILL_AT: usize = 40;
@@ -78,7 +78,7 @@ pub struct CleanupJob {
     pub total: usize,
     /// Id of the worktree being removed now.
     pub current: Option<String>,
-    /// Ids removed so far: their heaps crumble right away, before the next poll drops them.
+    /// Ids removed so far: their heaps burst right away, before the next poll drops them.
     pub cleared: Vec<String>,
 }
 
@@ -261,32 +261,30 @@ fn hash(id: &str) -> u32 {
     })
 }
 
-/// A heap broken down (or whose worktree closed), crumbling where it stood.
+/// A heap broken down (or whose worktree closed), scattering where it stood.
 #[derive(Debug, Clone)]
 struct Cleared {
     heap: Heap,
     start_s: f64,
-    /// 1 throws chips to the right.
-    dir: f32,
 }
 
 impl Cleared {
     fn over(&self, now_s: f64) -> bool {
-        now_s - self.start_s >= CRUMBLE_S + SETTLE_S + FADE_S
+        now_s - self.start_s >= BREAK_S
     }
 }
 
-/// The rubble across frames: what the app last told it, and the heaps crumbling.
+/// The rubble across frames: what the app last told it, and the heaps scattering.
 #[derive(Default)]
 pub struct RubbleView {
     sites: Vec<Site>,
     hammer: Option<CleanupJob>,
     /// Last frame's heaps by worktree id.
-    shown: HashMap<String, Heap>,
+    shown: BTreeMap<String, Heap>,
     cleared: Vec<Cleared>,
     /// The heap whose name was clicked to stay up.
     pinned: Option<String>,
-    /// Reduce motion: no shiver, collapse or hammer swing.
+    /// Reduce motion: no shiver, debris or hammer swing.
     still: bool,
 }
 
@@ -297,7 +295,7 @@ impl RubbleView {
     }
 
     /// This frame's heaps, without those the hammer has cleared. Heaps gone since the last frame
-    /// start crumbling (not after a gap, `away`, when the farm was off screen).
+    /// start scattering (not after a gap, `away`, when the farm was off screen).
     pub fn layout(&mut self, scene: &Scene, now_s: f64, away: bool, still: bool) -> Rubble {
         self.still = still;
         let cleared: HashSet<&str> = self
@@ -313,22 +311,22 @@ impl RubbleView {
             .collect();
         let rubble = place(scene, &sites);
         let alive: HashSet<&str> = sites.iter().map(|g| g.id.as_str()).collect();
-        if !away {
+        if away || still {
+            self.cleared.clear();
+        } else {
             for (id, heap) in &self.shown {
                 if !alive.contains(id.as_str()) {
                     self.cleared.push(Cleared {
                         heap: heap.clone(),
                         start_s: now_s,
-                        dir: if hash(id).is_multiple_of(2) {
-                            1.0
-                        } else {
-                            -1.0
-                        },
                     });
                 }
             }
         }
         self.cleared.retain(|f| !f.over(now_s));
+        if self.cleared.len() > MAX_BURSTS {
+            self.cleared.drain(..self.cleared.len() - MAX_BURSTS);
+        }
         self.shown = rubble
             .heaps
             .iter()
@@ -344,9 +342,14 @@ impl RubbleView {
         rubble
     }
 
-    /// Whether anything moves: a heap crumbles or the hammer swings.
+    /// Whether anything moves: a heap scatters or the hammer swings.
     pub fn animating(&self) -> bool {
         !self.cleared.is_empty() || self.hammer.is_some()
+    }
+
+    #[cfg(test)]
+    pub(super) fn burst_count(&self) -> usize {
+        self.cleared.len()
     }
 
     /// Pins the clicked heap's name up, or takes it down.
@@ -355,7 +358,7 @@ impl RubbleView {
         self.pinned = (self.pinned.as_ref() != Some(id)).then(|| id.clone());
     }
 
-    /// The heaps, the crumbling ones and the "+N" sign: behind everything else on the surface.
+    /// The heaps, the scattering chunks and the "+N" sign: behind everything else on the surface.
     pub fn paint_heaps(
         &self,
         painter: &egui::Painter,
@@ -390,7 +393,7 @@ impl RubbleView {
             );
         }
         for f in &self.cleared {
-            paint_cleared(painter, sprites, f, now_s, still);
+            paint_cleared(painter, f, now_s);
         }
         if let Some(at) = rubble.sign {
             paint_sign(painter, scene, at, rubble.more, palette);
@@ -457,19 +460,15 @@ impl RubbleView {
     }
 }
 
-fn paint_cleared(painter: &egui::Painter, sprites: &Sprites, f: &Cleared, now_s: f64, still: bool) {
-    let t = now_s - f.start_s;
-    let fade = (1.0 - ((t - CRUMBLE_S - SETTLE_S) / FADE_S).clamp(0.0, 1.0)) as f32;
-    let u = if still {
-        1.0
+fn paint_cleared(painter: &egui::Painter, f: &Cleared, now_s: f64) {
+    let age = now_s - f.start_s;
+    let tint = if f.heap.back {
+        f32::from(BACK_TINT) / 255.0
     } else {
-        (t / CRUMBLE_S).clamp(0.0, 1.0) as f32
+        1.0
     };
-    let size = f.heap.rect().size() * vec2(1.0 + 0.18 * u, 1.0 - 0.78 * u);
-    let rect = Rect::from_min_size(f.heap.foot - vec2(size.x / 2.0, size.y), size);
-    sprites.prop(painter, f.heap.prop(), rect, fade);
-    if !still && u < 1.0 {
-        paint_chips(painter, f.heap.impact(), f.heap.k, u, f.dir);
+    for particle in break_particles(age, hash(&f.heap.site.id)) {
+        paint_particle(painter, f.heap.impact(), f.heap.k, particle, tint);
     }
 }
 
@@ -509,7 +508,7 @@ fn paint_hammer(
     painter: &egui::Painter,
     sprites: &Sprites,
     scene: &Scene,
-    (cut, _k): (Pos2, f32),
+    (cut, k): (Pos2, f32),
     job: &CleanupJob,
     now_s: f64,
     still: bool,
@@ -518,8 +517,11 @@ fn paint_hammer(
     let scale = scene.px * 0.9;
     let (rect, turn) = super::hammer::placement(cut, scale, phase);
     sprites.prop_turned(painter, Prop::CleanupHammer, rect, turn, 1.0);
-    if !still && phase >= 0.68 {
-        paint_chips(painter, cut, scene.px, (phase - 0.68) / 0.32, 1.0);
+    if !still {
+        let seed = job.current.as_deref().map_or(0, hash);
+        for particle in impact_particles(phase, seed) {
+            paint_particle(painter, cut, k, particle, 1.0);
+        }
     }
     super::label(
         painter,
@@ -533,24 +535,140 @@ fn paint_hammer(
     );
 }
 
-/// Broken granite and a couple of pale impact flecks, following one ballistic burst.
-fn paint_chips(painter: &egui::Painter, cut: Pos2, s: f32, life: f32, dir: f32) {
-    for i in 0..10 {
-        let seed = (i as f32 * 2.7).sin();
-        let vx = seed * 16.0 * s * dir;
-        let vy = -(6.0 + (seed * 1.5).abs()) * s;
-        let at = cut + vec2(vx * life, vy * life + 12.0 * s * life * life);
-        let color = if i < 2 { STONE_LIGHT } else { STONE };
-        painter.rect_filled(
-            Rect::from_center_size(at, Vec2::splat(s * 1.1)),
-            0.0,
-            color.gamma_multiply(1.0 - life),
-        );
+/// Samples are in heap texels. No particle pool, RNG or frame-by-frame integration.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Particle {
+    pub offset: Vec2,
+    pub size: f32,
+    pub angle: f32,
+    pub alpha: f32,
+    pub kind: ParticleKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ParticleKind {
+    Dust,
+    Chip,
+    Spark,
+    Chunk,
+}
+
+fn variation(seed: u32, i: usize) -> f32 {
+    let n = seed.wrapping_add((i as u32).wrapping_mul(0x9e37_79b9));
+    let n = (n ^ (n >> 16)).wrapping_mul(0x85eb_ca6b);
+    ((n ^ (n >> 13)) & 0xffff) as f32 / 65535.0
+}
+
+/// One bounded burst per stroke, starting exactly when the hammer contacts the heap.
+pub(super) fn impact_particles(phase: f32, seed: u32) -> impl Iterator<Item = Particle> {
+    let life = (phase - 0.68) / 0.32;
+    (0..28).filter_map(move |i| {
+        if !(0.0..1.0).contains(&life) {
+            return None;
+        }
+        let r = variation(seed, i);
+        let side = if i % 2 == 0 { -1.0 } else { 1.0 };
+        let kind = if i < 8 {
+            ParticleKind::Dust
+        } else if i < 22 {
+            ParticleKind::Chip
+        } else {
+            ParticleKind::Spark
+        };
+        let (speed, lift, size, alpha) = match kind {
+            ParticleKind::Dust => (9.0 + r * 12.0, 3.0 + r * 5.0, 2.0 + life * 4.0, 0.35),
+            ParticleKind::Spark => (16.0 + r * 18.0, 8.0 + r * 12.0, 0.7, 1.0),
+            _ => (8.0 + r * 20.0, 10.0 + r * 10.0, 0.8 + r * 1.2, 1.0),
+        };
+        Some(Particle {
+            offset: vec2(side * speed * life, -lift * life + 14.0 * life * life),
+            size,
+            angle: side * life * 5.0,
+            alpha: alpha * (1.0 - life),
+            kind,
+        })
+    })
+}
+
+/// A heap becomes nine solid chunks immediately, then scatters in arcs and fades.
+pub(super) fn break_particles(age: f64, seed: u32) -> impl Iterator<Item = Particle> {
+    let life = (age / BREAK_S) as f32;
+    let chunks = (0..9).filter_map(move |i| {
+        if !(0.0..1.0).contains(&life) {
+            return None;
+        }
+        let r = variation(seed, i);
+        let side = if i % 2 == 0 { -1.0 } else { 1.0 };
+        let start = vec2((i as f32 - 4.0) * 2.6, (i % 3) as f32 * 3.0);
+        let lift = 12.0 + r * 16.0;
+        Some(Particle {
+            offset: start
+                + vec2(
+                    side * (18.0 + r * 25.0) * life,
+                    -4.0 * lift * life * (1.0 - life) + (12.0 - start.y) * life,
+                ),
+            size: 2.2 + r * 2.2,
+            angle: side * (r + life * (4.0 + r * 4.0)),
+            alpha: (1.0 - ((life - 0.45) / 0.55).max(0.0)).clamp(0.0, 1.0),
+            kind: ParticleKind::Chunk,
+        })
+    });
+    // Dust and smaller splinters dissipate before the large pieces finish their flight.
+    let debris = impact_particles(0.68 + (age / 0.65) as f32 * 0.32, seed);
+    chunks.chain(debris)
+}
+
+fn paint_particle(painter: &egui::Painter, cut: Pos2, k: f32, p: Particle, tint: f32) {
+    let at = cut + p.offset * k;
+    let alpha = p.alpha * tint;
+    let size = p.size * k;
+    match p.kind {
+        ParticleKind::Dust => {
+            painter.rect_filled(
+                Rect::from_center_size(at, vec2(size * 1.5, size)),
+                0.0,
+                rgb(0x9c8c75).gamma_multiply(alpha),
+            );
+        }
+        ParticleKind::Spark => {
+            let trail = vec2(-p.offset.x.signum() * 2.5, 1.5) * k;
+            painter.line_segment(
+                [at, at + trail],
+                egui::Stroke::new(size, GOLD.gamma_multiply(alpha)),
+            );
+            painter.rect_filled(
+                Rect::from_center_size(at, Vec2::splat(size)),
+                0.0,
+                STONE_LIGHT.gamma_multiply(alpha),
+            );
+        }
+        ParticleKind::Chip | ParticleKind::Chunk => {
+            let turn = egui::emath::Rot2::from_angle(p.angle);
+            let points = [
+                vec2(-1.0, 0.0),
+                vec2(-0.6, -0.8),
+                vec2(0.3, -1.0),
+                vec2(1.0, -0.1),
+                vec2(0.6, 0.7),
+                vec2(-0.5, 0.6),
+            ]
+            .map(|v| at + turn * v * size);
+            painter.add(egui::Shape::convex_polygon(
+                points.to_vec(),
+                STONE_DARK.gamma_multiply(alpha),
+                egui::Stroke::NONE,
+            ));
+            painter.add(egui::Shape::convex_polygon(
+                vec![points[0], points[1], points[2], at],
+                STONE_LIGHT.gamma_multiply(alpha),
+                egui::Stroke::NONE,
+            ));
+        }
     }
 }
 
 /// Soil, freshly fractured granite, snapped roots and discarded shoring. Variants share
-/// their silhouette bounds so the worktree hit target and collapse remain stable.
+/// their silhouette bounds so the worktree hit target and break origin remain stable.
 pub(super) fn draw(c: &mut Canvas, health: u8, seed: u8) {
     let shift = f32::from(seed % 4);
     let earth = rgb(0x695442);

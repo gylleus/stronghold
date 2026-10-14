@@ -1,6 +1,6 @@
 //! Day and night by the local clock, for the farm's sky. The app's panels keep following the system theme.
 //!
-//! [`DAWN_H`], [`DUSK_H`] and [`FADE_H`] are the knobs. `MYRSTACK_HOUR` (a local hour such
+//! [`DAWN_H`], [`DUSK_H`] and [`FADE_H`] are the knobs. `STRONGHOLD_HOUR` (a local hour such
 //! as `21.5`) fakes the clock, to check both looks.
 
 use std::time::Duration;
@@ -33,12 +33,9 @@ fn smoothstep(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// The local hour now, or `MYRSTACK_HOUR` when set.
+/// The local hour now, or `STRONGHOLD_HOUR` when set.
 pub fn local_hour() -> f32 {
-    if let Some(hour) = std::env::var("MYRSTACK_HOUR")
-        .ok()
-        .and_then(|h| h.parse::<f32>().ok())
-    {
+    if let Some(hour) = crate::legacy::env("STRONGHOLD_HOUR").and_then(|h| h.parse::<f32>().ok()) {
         return hour.rem_euclid(24.0);
     }
     let now = jiff::Zoned::now();

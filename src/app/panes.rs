@@ -4,13 +4,13 @@ use eframe::egui;
 use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::{DockArea, TabViewer};
 
-use super::MyrstackApp;
+use super::StrongholdApp;
 use crate::ui;
 use crate::ui::dock::Pane;
 
 /// Draws the panes for one frame.
 struct Panes<'a> {
-    app: &'a mut MyrstackApp,
+    app: &'a mut StrongholdApp,
     now_ms: i64,
 }
 
@@ -24,11 +24,12 @@ impl TabViewer for Panes<'_> {
     fn title(&mut self, tab: &mut Pane) -> egui::WidgetText {
         match tab {
             Pane::Sidebar => "Clan".into(),
-            Pane::Farm => "Dwarf farm".into(),
+            Pane::Farm => "Hold".into(),
             Pane::Details => "Details".into(),
             Pane::Conversation => self.app.conversation_title().into(),
             Pane::Notifications => self.app.notifications_title().into(),
             Pane::Envoy => "Envoy".into(),
+            Pane::Ledger => "Ledger".into(),
         }
     }
 
@@ -44,11 +45,18 @@ impl TabViewer for Panes<'_> {
             }
             Pane::Notifications => self.app.notifications_pane(ui, now_ms),
             Pane::Envoy => self.app.envoy_pane(ui),
+            Pane::Ledger => self
+                .app
+                .ledger_panel
+                .show(ui, self.app.ledger.poll(), now_ms),
         }
     }
 
     fn is_closeable(&self, tab: &Pane) -> bool {
-        matches!(tab, Pane::Conversation | Pane::Notifications | Pane::Envoy)
+        matches!(
+            tab,
+            Pane::Conversation | Pane::Notifications | Pane::Envoy | Pane::Ledger
+        )
     }
 
     /// Closing the conversation hides it as ⌘J does; it returns with the next selection.
@@ -70,7 +78,7 @@ impl TabViewer for Panes<'_> {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// The dock filling the window below the top bar.
     pub(super) fn panes(&mut self, ui: &mut egui::Ui, now_ms: i64) {
         if std::mem::take(&mut self.envoy_core.open_request) {
@@ -78,9 +86,13 @@ impl MyrstackApp {
             self.envoy_panel.open(self.envoy_core.drafts());
             self.panes.open_envoy();
         }
+        if std::mem::take(&mut self.ledger_panel.open_requested) {
+            self.panes.open_ledger();
+        }
         self.panes.set_conversation(self.has_conversation());
         self.panes.sync_notifications();
         self.notifications_strip(ui);
+        self.worktrees.show(ui);
         if let Some(pane) = self.bring_forward.take() {
             self.panes.activate(pane);
         }
@@ -222,8 +234,16 @@ impl MyrstackApp {
                 self.farm.set_envoy_pending(self.envoy_core.pending_count());
                 let sites = ui::farm::rubble::sites(&data.worktrees, &snapshot.nodes);
                 self.farm.set_rubble(sites, self.worktrees.cleanup_job());
+                self.farm.set_ledger(self.ledger.poll().clone());
                 let response = self.farm.show(ui, snapshot, &mut self.clan);
                 self.cleanup_in_farm = true;
+                if response.open_ledger {
+                    self.ledger_panel.open_requested = true;
+                    ui.ctx().request_repaint();
+                }
+                if response.bonk {
+                    self.bonk_sound();
+                }
                 if response.open_envoy {
                     self.envoy_core.open_request = true;
                 }

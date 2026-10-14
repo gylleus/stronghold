@@ -1,7 +1,7 @@
 //! The review queue: PRs agents finished and marked ready, shown in the King panel with their
 //! GitHub state until Karl reviews them or they merge.
 //!
-//! Marks come from the `mark_pr_ready` MCP tool and `myrstack pr-ready` (both carry the
+//! Marks come from the `mark_pr_ready` MCP tool and `stronghold pr-ready` (both carry the
 //! caller's Orca identity). Only coordinators and standalone terminals may mark PRs; worker
 //! `merge_ready` messages go to their coordinators. The app reads each PR with
 //! `gh pr view` (read-only). Docs: `docs/control-api.md` (`pr_ready`, `review_queue`),
@@ -24,11 +24,11 @@ pub use pr::PrRef;
 pub use queue::{Entry, ReviewQueue};
 pub use view::{AgentRef, ReviewRow};
 
-const USAGE: &str = "usage: myrstack pr-ready <pr url> [--title <title>] [--summary <text>]\n\
-Marks a PR ready for review in Myrstack's review queue, attributed to this Orca terminal. \
+const USAGE: &str = "usage: stronghold pr-ready <pr url> [--title <title>] [--summary <text>]\n\
+Marks a PR ready for review in Stronghold's review queue, attributed to this Orca terminal. \
 It only records locally; nothing is sent to GitHub.";
 
-/// `myrstack pr-ready <url> [--title …] [--summary …]`; `None` for other subcommands.
+/// `stronghold pr-ready <url> [--title …] [--summary …]`; `None` for other subcommands.
 pub fn run_cli(args: &[String]) -> Option<Result<()>> {
     let (cmd, rest) = args.split_first()?;
     (cmd == "pr-ready").then(|| pr_ready_cli(rest))
@@ -101,7 +101,7 @@ pub fn submitted_text(mark: &ReadyMark, submitted: &Submitted) -> String {
                 .map(|l| format!(", shown under {l}"))
                 .unwrap_or_default();
             format!(
-                "Marked {} ready for review{who}{agent}. Myrstack's review queue now lists {}.",
+                "Marked {} ready for review{who}{agent}. Stronghold's review queue now lists {}.",
                 mark.pr,
                 listed.map_or_else(
                     || "it".to_owned(),
@@ -110,7 +110,7 @@ pub fn submitted_text(mark: &ReadyMark, submitted: &Submitted) -> String {
             )
         }
         Submitted::Queued(path) => format!(
-            "Marked {} ready for review{who}. Myrstack isn't running; the mark waits in {} and \
+            "Marked {} ready for review{who}. Stronghold isn't running; the mark waits in {} and \
              shows when it starts.",
             mark.pr,
             path.display()
@@ -164,7 +164,7 @@ mod tests {
         let app = Submitted::App(json!({"count": 2, "agent": {"label": "worker 3"}}));
         assert_eq!(
             submitted_text(&mark, &app),
-            "Marked o/r#1 ready for review from term_a, shown under worker 3. Myrstack's \
+            "Marked o/r#1 ready for review from term_a, shown under worker 3. Stronghold's \
              review queue now lists 2 PRs."
         );
         mark.origin = Origin::default();

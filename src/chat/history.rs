@@ -28,6 +28,7 @@ pub enum HistoryRecord {
     },
     /// A prompt: typed by the user or sent by another agent.
     Prompt(String),
+    Ant(Box<crate::queen_inbox::AntMessage>),
     /// A prompt Karl spoke to the King.
     VoicePrompt(String),
     /// An assistant message or tool results, as the CLI streams them.
@@ -127,7 +128,7 @@ fn user_records(record: &Value) -> Vec<HistoryRecord> {
 }
 
 /// What a user text shows as: harness-injected text is dropped, command and task wrappers
-/// become short system lines, Myrstack's notes to the King are taken off.
+/// become short system lines, Stronghold's notes to the King are taken off.
 fn prompt_record(text: &str) -> Option<HistoryRecord> {
     let text = text.trim();
     if text.is_empty()
@@ -159,6 +160,9 @@ fn prompt_record(text: &str) -> Option<HistoryRecord> {
     if text.is_empty() {
         return None;
     }
+    if let Some(message) = crate::queen_inbox::AntMessage::from_prompt(text) {
+        return Some(HistoryRecord::Ant(Box::new(message)));
+    }
     Some(if voice {
         HistoryRecord::VoicePrompt(text.to_owned())
     } else {
@@ -166,7 +170,7 @@ fn prompt_record(text: &str) -> Option<HistoryRecord> {
     })
 }
 
-/// `text` without the notes Myrstack puts before the King's messages; true when one said
+/// `text` without the notes Stronghold puts before the King's messages; true when one said
 /// the message was spoken.
 fn strip_notes(mut text: &str) -> (bool, &str) {
     let mut voice = false;
@@ -251,6 +255,7 @@ impl Transcript {
         }
         match record {
             HistoryRecord::Timed { .. } => unreachable!(),
+            HistoryRecord::Ant(message) => self.push_ant(message),
             HistoryRecord::Prompt(text) => self.items.push(super::ChatItem::User(text.clone())),
             HistoryRecord::VoicePrompt(text) => {
                 self.items.push(super::ChatItem::VoiceUser(text.clone()));

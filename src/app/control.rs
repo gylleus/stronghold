@@ -7,7 +7,7 @@ use crossbeam_channel::Receiver;
 use eframe::egui;
 use serde_json::{Value, json};
 
-use super::{MyrstackApp, now_ms, repaint_once};
+use super::{StrongholdApp, now_ms, repaint_once};
 use crate::actions::{Action, ActionId, ActionResult, Key};
 use crate::broadcast::{BroadcastSelection, plan_broadcast};
 use crate::close::{CloseOptions, ClosePlan, plan_bulk_close, plan_close};
@@ -26,7 +26,7 @@ use crate::whip::WhipSettings;
 
 /// The control server, the published view and commands in flight.
 pub(super) struct AppControl {
-    /// `None` when the socket could not be bound (e.g. another Myrstack is running).
+    /// `None` when the socket could not be bound (e.g. another Stronghold is running).
     _server: Option<ControlServer>,
     status: SharedStatus,
     commands: Receiver<PendingCommand>,
@@ -111,7 +111,7 @@ impl AppControl {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     fn control_fingerprint(&self) -> Fingerprint {
         Fingerprint {
             built_at_ms: self.snapshot.as_ref().map(|s| s.built_at_ms),
@@ -320,7 +320,19 @@ impl MyrstackApp {
                 agents,
                 whole_tab,
                 dry_run,
-            } => return self.control_close(&agents, whole_tab, dry_run, reply),
+                origin,
+            } => {
+                let king = origin
+                    .as_ref()
+                    .is_some_and(|o| o.terminal_handle.is_none() && o.pane_key.is_none());
+                return self.control_close(
+                    &agents,
+                    whole_tab,
+                    dry_run,
+                    king.then(|| ctx.input(|i| i.time)),
+                    reply,
+                );
+            }
             ControlCommand::Park { agents, park } => self.control_park(&agents, park),
             ControlCommand::Whip { agents, stalled } => {
                 return self.control_whip(&agents, stalled, reply);
@@ -550,12 +562,13 @@ impl ActionGroup {
 }
 
 /// Closing sessions for the API: the same plans the "Close session" dialog confirms.
-impl MyrstackApp {
+impl StrongholdApp {
     fn control_close(
         &mut self,
         agents: &[String],
         whole_tab: bool,
         dry_run: bool,
+        king_close_s: Option<f64>,
         reply: Reply,
     ) -> Result<(), ControlError> {
         let plan = self.control_close_plan(agents, whole_tab);
@@ -579,6 +592,10 @@ impl MyrstackApp {
             let e = ControlError::new(ErrorCode::Refused, reason);
             reply.send(Err(e.clone()));
             return Err(e);
+        }
+        if let Some(now_s) = king_close_s {
+            self.farm
+                .prepare_king_close(plan.targets.iter().map(|t| t.id.clone()), now_s);
         }
         log::info!("control API: closing sessions: {:?}", plan.steps);
         let ids = self.submit_control_actions(

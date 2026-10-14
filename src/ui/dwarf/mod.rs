@@ -172,6 +172,36 @@ impl Tool {
     pub const DIGGING: [Tool; 3] = [Tool::Pickaxe, Tool::Hammer, Tool::Shovel];
 }
 
+/// A fresh throw uses its own random seed, unrelated to either dwarf's appearance.
+pub fn thrown_tool(seed: u64) -> Tool {
+    Rng(seed).pick(&[
+        Tool::Pickaxe,
+        Tool::Hammer,
+        Tool::Shovel,
+        Tool::Lantern,
+        Tool::Staff,
+    ])
+}
+
+/// Draw the same tool a dwarf carries, centred on `at` and spinning about its centre.
+pub fn draw_tool(at: Pos2, size: f32, angle: f32, tool: Tool) -> Vec<Shape> {
+    let mut piece = cutout::Piece::default();
+    parts::tool(&mut piece, tool, false);
+    let (centre, span) = if tool == Tool::Staff {
+        (pos2(SHOULDER.x, -46.0), 94.0)
+    } else {
+        (pos2(SHOULDER.x, -12.0), 44.0)
+    };
+    let k = size / span;
+    let xf = Xf::translate(at.to_vec2())
+        .then(Xf::rotate(angle))
+        .then(Xf::scale(k, k))
+        .then(Xf::translate(-centre.to_vec2()));
+    let mut shapes = Vec::new();
+    cutout::draw(&mut shapes, &piece, xf, &Finish::INK);
+    shapes
+}
+
 /// Small things a dwarf may have about him.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Extras {

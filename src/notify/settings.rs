@@ -155,7 +155,7 @@ impl SeveritySounds {
 pub struct NotifySettings {
     /// macOS notification banners.
     pub native_popups: bool,
-    /// Pop-ups in Myrstack's window (top right), also when macOS notifications are off.
+    /// Pop-ups in Stronghold's window (top right), also when macOS notifications are off.
     pub in_app_popups: bool,
     /// Lowest severity that pops up (natively and in the app).
     pub popup_min: Severity,

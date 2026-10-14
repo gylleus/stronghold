@@ -14,28 +14,32 @@
 //! flips between working and waiting on Karl, so dwarves walk; B broadcasts, S asks for a status
 //! report, N hatches a new worker, M sends a burst of messages between dwarves, T toggles the
 //! King thinking, R delivers a message to the Envoy (he casts) and X closes a worktree (its heap
-//! crumbles). With `--shot`, it saves a
+//! bursts). With `--shot`, it saves a
 //! screenshot once settled and another while a worker walks, a new one emerges, a broadcast
-//! ripples, messages fly and a heap crumbles (`-walk`), then exits.
+//! ripples and messages fly (`-walk`), plus rubble burst (`-break`) and cleared
+//! (`-cleared`) frames, then exits. With `--hammer`, the first shot waits for impact.
+//! K closes a synthetic dwarf with the King's tool throw; `--king-throw --shot out.png`
+//! captures its flight and impact.
 //! `--pixels farm|HEIGHT` and `--palette NAME` select dwarf rendering.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use myrstack::model::{
+use stronghold::ledger::{Entry, Shelf};
+use stronghold::model::{
     ClanSnapshot, Edge, EdgeKind, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
 };
-use myrstack::orca::AgentIdentity;
-use myrstack::orca::spawn::Worktree;
-use myrstack::traffic::{AgentMessage, MessageKind};
-use myrstack::ui::clan_view::ClanView;
-use myrstack::ui::envoy_receipt::ReceiptCue;
-use myrstack::ui::farm::art::{ArtSettings, Pixels};
-use myrstack::ui::farm::rubble;
-use myrstack::ui::farm::{FarmView, Pulse};
-use myrstack::ui::worktrees::WorktreePanel;
-use myrstack::worktrees::SweepMarker;
+use stronghold::orca::AgentIdentity;
+use stronghold::orca::spawn::Worktree;
+use stronghold::traffic::{AgentMessage, MessageKind};
+use stronghold::ui::clan_view::ClanView;
+use stronghold::ui::envoy_receipt::ReceiptCue;
+use stronghold::ui::farm::art::{ArtSettings, Pixels};
+use stronghold::ui::farm::rubble;
+use stronghold::ui::farm::{FarmView, Pulse};
+use stronghold::ui::worktrees::WorktreePanel;
+use stronghold::worktrees::SweepMarker;
 
 const WINDOW: [f32; 2] = [1280.0, 800.0];
 const FLIP_EVERY: Duration = Duration::from_secs(3);
@@ -49,13 +53,13 @@ fn main() -> eframe::Result {
     let light = args.iter().any(|a| a == "--light");
     let scrying = args.iter().any(|a| a == "--scrying");
     let health = if args.iter().any(|a| a == "--stopped") {
-        myrstack::envoy::EnvoyHealth::Stopped
+        stronghold::envoy::EnvoyHealth::Stopped
     } else if args.iter().any(|a| a == "--bridge-down") {
-        myrstack::envoy::EnvoyHealth::BridgeDown
+        stronghold::envoy::EnvoyHealth::BridgeDown
     } else if args.iter().any(|a| a == "--approval") {
-        myrstack::envoy::EnvoyHealth::AwaitingApproval
+        stronghold::envoy::EnvoyHealth::AwaitingApproval
     } else {
-        myrstack::envoy::EnvoyHealth::Listening
+        stronghold::envoy::EnvoyHealth::Listening
     };
     let receipt_at_ms = args.iter().position(|a| a == "--receipt-at-ms").map(|i| {
         args[i + 1]
@@ -82,9 +86,9 @@ fn main() -> eframe::Result {
         },
         palette: value("--palette").unwrap_or_default(),
         outline: match value("--outline").as_deref() {
-            None | Some("fine") => myrstack::ui::dwarf::cutout::Outline::Fine,
-            Some("regular") => myrstack::ui::dwarf::cutout::Outline::Regular,
-            Some("bold") => myrstack::ui::dwarf::cutout::Outline::Bold,
+            None | Some("fine") => stronghold::ui::dwarf::cutout::Outline::Fine,
+            Some("regular") => stronghold::ui::dwarf::cutout::Outline::Regular,
+            Some("bold") => stronghold::ui::dwarf::cutout::Outline::Bold,
             _ => panic!("--outline fine, regular or bold"),
         },
     };
@@ -99,7 +103,7 @@ fn main() -> eframe::Result {
             ..Default::default()
         },
         Box::new(move |cc| {
-            myrstack::ui::theme::install(&cc.egui_ctx);
+            stronghold::ui::theme::install(&cc.egui_ctx);
             cc.egui_ctx.set_theme(if light {
                 egui::Theme::Light
             } else {
@@ -114,7 +118,13 @@ fn main() -> eframe::Result {
             }
             if parked {
                 for name in ["sleepy", "dozy", "napper"] {
-                    let mut n = node(name, NodeKind::Terminal, None, NodeState::Idle, "myrstack");
+                    let mut n = node(
+                        name,
+                        NodeKind::Terminal,
+                        None,
+                        NodeState::Idle,
+                        "stronghold",
+                    );
                     n.parked_at_ms = Some(1);
                     snapshot.nodes.push(n);
                 }
@@ -154,12 +164,14 @@ fn main() -> eframe::Result {
                     farm.set_reduce_motion(reduced_motion);
                     farm.set_king_focused(true);
                     farm.set_envoy_health(health);
-                    if health == myrstack::envoy::EnvoyHealth::AwaitingApproval {
+                    if health == stronghold::envoy::EnvoyHealth::AwaitingApproval {
                         farm.set_envoy_pending(2);
                     }
                     farm
                 },
                 shot,
+                king_throw: args.iter().any(|a| a == "--king-throw"),
+                captures: Vec::new(),
                 receipt_at_ms,
                 received: None,
                 reduced_motion,
@@ -179,6 +191,9 @@ struct Demo {
     clan: ClanView,
     farm: FarmView,
     shot: Option<String>,
+    king_throw: bool,
+    /// Encode after capturing all frames so PNG compression cannot skip short effects.
+    captures: Vec<(std::sync::Arc<egui::ColorImage>, &'static str)>,
     receipt_at_ms: Option<i64>,
     /// When R last delivered a message to the Envoy.
     received: Option<Instant>,
@@ -186,7 +201,7 @@ struct Demo {
     started: Instant,
     flipped_at: Instant,
     thinking: bool,
-    /// 0 settling, 1 waiting for the settled shot, 2 walking, 3 waiting for the walk shot.
+    /// Alternating screenshot requests and captures: settled, break, walk, cleared.
     stage: u8,
     /// The cleanup panel running the hammer, and the temporary data dir holding its marker.
     hammer: Option<(WorktreePanel, tempfile::TempDir)>,
@@ -208,9 +223,12 @@ fn worktrees(snapshot: &ClanSnapshot, count: Option<usize>) -> Vec<Worktree> {
     out.truncate(count);
     for i in 0..count.saturating_sub(out.len()) {
         out.push(worktree(&format!(
-            "/x/orca/workspaces/myrstack/{}",
+            "/x/orca/workspaces/stronghold/{}",
             STALE[i % STALE.len()]
         )));
+    }
+    for (i, tree) in out.iter_mut().enumerate() {
+        tree.created_at = Some(i as i64);
     }
     if let Some(i) = out
         .iter()
@@ -234,7 +252,7 @@ const STALE: [&str; 6] = [
 fn worktree(path: &str) -> Worktree {
     let name = path.rsplit('/').next().unwrap_or(path);
     Worktree {
-        id: format!("myrstack::{name}"),
+        id: format!("stronghold::{name}"),
         path: path.into(),
         branch: Some(format!("refs/heads/gylleus/{name}")),
         ..Worktree::default()
@@ -245,7 +263,7 @@ fn worktree(path: &str) -> Worktree {
 fn sweep_marker() -> tempfile::TempDir {
     let data = tempfile::tempdir().expect("temp dir");
     // SAFETY: set before any thread starts.
-    unsafe { std::env::set_var("MYRSTACK_DATA_DIR", data.path()) };
+    unsafe { std::env::set_var("STRONGHOLD_DATA_DIR", data.path()) };
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64);
@@ -255,10 +273,10 @@ fn sweep_marker() -> tempfile::TempDir {
         total: 4,
         done: 1,
         current: Some("graph-trackpad-pan".into()),
-        current_id: Some("myrstack::graph-trackpad-pan".into()),
+        current_id: Some("stronghold::graph-trackpad-pan".into()),
     };
     std::fs::write(
-        myrstack::worktrees::default_marker_path(),
+        stronghold::worktrees::default_marker_path(),
         serde_json::to_vec(&marker).unwrap(),
     )
     .unwrap();
@@ -266,6 +284,24 @@ fn sweep_marker() -> tempfile::TempDir {
 }
 
 impl Demo {
+    fn throw_tool(&mut self, now_s: f64) {
+        let Some(target) = self
+            .snapshot
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Terminal)
+            .map(|n| n.id.clone())
+        else {
+            return;
+        };
+        self.farm
+            .prepare_king_close(std::iter::once(target.clone()), now_s);
+        self.snapshot.nodes.retain(|n| n.id != target);
+        self.snapshot.add_king();
+        self.clan.sync(&self.snapshot);
+        self.flipped_at = Instant::now();
+    }
+
     /// A new worker in run 2, emerging from the King.
     fn hatch(&mut self) {
         let n = self.snapshot.nodes.len();
@@ -274,7 +310,7 @@ impl Demo {
             NodeKind::Worker,
             Some("run2"),
             NodeState::Working,
-            "myrstack",
+            "stronghold",
         );
         worker.label = "Fresh hatchling".into();
         self.snapshot.nodes.push(worker);
@@ -284,6 +320,8 @@ impl Demo {
     /// One message of each kind, plus a repeat that joins its envelope.
     fn mail(&mut self, now_s: f64) {
         for (from, to, kind) in [
+            ("ledger", "run1-coord", MessageKind::Ledger),
+            ("run0-w1", "ledger", MessageKind::Ledger),
             ("run0-w1", "run0-coord", MessageKind::MergeReady),
             ("run2-w2", "run2-coord", MessageKind::Ask),
             ("run2-w2", "run2-coord", MessageKind::Ask),
@@ -304,9 +342,18 @@ impl Demo {
         }
     }
 
-    /// Closes the newest worktree: its heap crumbles.
+    /// Closes the hammer's target (or newest worktree): its heap bursts.
     fn clear_heap(&mut self) {
-        self.worktrees.pop();
+        let target = self
+            .hammer
+            .as_ref()
+            .and_then(|(panel, _)| panel.cleanup_job())
+            .and_then(|job| job.current);
+        if let Some(index) = target.and_then(|id| self.worktrees.iter().position(|w| w.id == id)) {
+            self.worktrees.remove(index);
+        } else {
+            self.worktrees.pop();
+        }
     }
 
     fn flip(&mut self) {
@@ -348,6 +395,7 @@ impl eframe::App for Demo {
                 ReceiptCue::at(Some(0), elapsed, self.reduced_motion)
             });
         self.farm.set_envoy_receipt(receipt);
+        self.farm.set_ledger(demo_ledger());
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
@@ -368,6 +416,9 @@ impl eframe::App for Demo {
         if self.shot.is_none() {
             if self.flipped_at.elapsed() >= FLIP_EVERY {
                 self.flip();
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::K)) {
+                self.throw_tool(ui.input(|i| i.time));
             }
             if ui.input(|i| i.key_pressed(egui::Key::R)) {
                 self.received = Some(Instant::now());
@@ -412,40 +463,86 @@ impl eframe::App for Demo {
         ui.ctx().request_repaint_after(Duration::from_millis(30));
         let image = ui.ctx().input(|i| {
             i.raw.events.iter().find_map(|e| match e {
-                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                egui::Event::Screenshot {
+                    image, user_data, ..
+                } if user_data
+                    .data
+                    .as_ref()
+                    .and_then(|data| data.downcast_ref::<u8>())
+                    == Some(&self.stage) =>
+                {
+                    Some(image.clone())
+                }
                 _ => None,
             })
         });
-        let shoot = |ctx: &egui::Context| {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()))
-        };
+        let captured = image.is_some();
         match self.stage {
-            0 if self.started.elapsed() >= Duration::from_secs(1) => {
-                shoot(ui.ctx());
+            0 if self.started.elapsed() >= Duration::from_secs(1)
+                && (self.hammer.is_none()
+                    || (0.78..0.84)
+                        .contains(&((ui.input(|i| i.time) / 1.2).rem_euclid(1.0) as f32))) =>
+            {
                 self.stage = 1;
             }
             1 => {
                 if let Some(image) = image {
-                    self.save_shot(&image, "");
-                    self.flip();
-                    self.hatch();
-                    self.farm.pulse(Pulse::Broadcast);
-                    self.mail(ui.input(|i| i.time));
-                    self.clear_heap();
+                    self.captures.push((image, ""));
+                    if self.king_throw {
+                        self.throw_tool(ui.input(|i| i.time));
+                    } else {
+                        self.flip();
+                        self.hatch();
+                        self.farm.pulse(Pulse::Broadcast);
+                        self.mail(ui.input(|i| i.time));
+                        self.clear_heap();
+                    }
+                    self.hammer = None;
                     self.stage = 2;
                 }
             }
-            2 if self.flipped_at.elapsed() >= Duration::from_millis(700) => {
-                shoot(ui.ctx());
+            2 if self.flipped_at.elapsed() >= Duration::from_millis(180) => {
                 self.stage = 3;
             }
             3 => {
                 if let Some(image) = image {
-                    self.save_shot(&image, "walk");
+                    self.captures
+                        .push((image, if self.king_throw { "flight" } else { "break" }));
+                    self.stage = 4;
+                }
+            }
+            4 if self.flipped_at.elapsed()
+                >= Duration::from_millis(if self.king_throw { 570 } else { 700 }) =>
+            {
+                self.stage = 5;
+            }
+            5 => {
+                if let Some(image) = image {
+                    self.captures
+                        .push((image, if self.king_throw { "impact" } else { "walk" }));
+                    self.stage = 6;
+                }
+            }
+            6 if self.flipped_at.elapsed() >= Duration::from_millis(1500) => {
+                self.stage = 7;
+            }
+            7 => {
+                if let Some(image) = image {
+                    self.captures.push((image, "cleared"));
+                    for (image, suffix) in &self.captures {
+                        self.save_shot(image, suffix);
+                    }
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
             _ => {}
+        }
+        // Keep requesting until the renderer replies; stage tags discard late captures.
+        if self.stage % 2 == 1 && !captured {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(
+                    self.stage,
+                )));
         }
     }
 }
@@ -482,7 +579,7 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState, repo: &
         dispatch_id: None,
         agent: if matches!(kind, NodeKind::King | NodeKind::Envoy) {
             None
-        } else if myrstack::ui::dwarf::seed_of(name).is_multiple_of(2) {
+        } else if stronghold::ui::dwarf::seed_of(name).is_multiple_of(2) {
             Some(AgentIdentity::Claude)
         } else {
             Some(AgentIdentity::Codex)
@@ -537,7 +634,7 @@ fn taskmasters(s: &mut ClanSnapshot) {
         NodeKind::Coordinator,
         Some("run0"),
         NodeState::Idle,
-        "myrstack",
+        "stronghold",
     );
     parked.parked_at_ms = Some(1);
     s.nodes.push(parked);
@@ -546,7 +643,7 @@ fn taskmasters(s: &mut ClanSnapshot) {
         NodeKind::Attendant,
         Some("run0"),
         NodeState::Working,
-        "myrstack",
+        "stronghold",
     ));
 }
 
@@ -554,7 +651,13 @@ fn taskmasters(s: &mut ClanSnapshot) {
 /// subagents under a worker and a terminal.
 fn clan() -> ClanSnapshot {
     let mut s = ClanSnapshot::default();
-    let mut envoy = node("envoy", NodeKind::Envoy, None, NodeState::Idle, "myrstack");
+    let mut envoy = node(
+        "envoy",
+        NodeKind::Envoy,
+        None,
+        NodeState::Idle,
+        "stronghold",
+    );
     envoy.label = "Envoy · listening".into();
     s.nodes.push(envoy);
     s.nodes
@@ -599,12 +702,12 @@ fn clan() -> ClanSnapshot {
             NodeKind::Coordinator,
             Some(&run),
             coord_state,
-            "myrstack",
+            "stronghold",
         ));
         for w in 0..(3 + r % 3) {
             let name = format!("{run}-w{w}");
             let state = states[(w + r) % states.len()];
-            let mut worker = node(&name, NodeKind::Worker, Some(&run), state, "myrstack");
+            let mut worker = node(&name, NodeKind::Worker, Some(&run), state, "stronghold");
             worker.label = TASKS[(r * 5 + w) % TASKS.len()].into();
             if w == 0 {
                 worker.label = format!("{} and tidy the follow-ups", worker.label);
@@ -644,4 +747,41 @@ fn clan() -> ClanSnapshot {
         });
     }
     s
+}
+
+/// A Ledger of a dozen entries, for the chamber's sign and hover text.
+fn demo_ledger() -> Shelf {
+    let entry = |title: &str, folder: &str, kind: &str, age_min: i64| Entry {
+        path: format!("{folder}/{title}.md").into(),
+        title: title.into(),
+        folder: folder.into(),
+        kind: Some(kind.into()),
+        modified_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as i64)
+            - age_min * 60_000,
+    };
+    Shelf {
+        count: 12,
+        newest: vec![
+            entry(
+                "Reranker eval needs the warm cache",
+                "recommendations",
+                "finding",
+                4,
+            ),
+            entry(
+                "Billing invoices migrate per market",
+                "billing",
+                "decision",
+                55,
+            ),
+            entry(
+                "Run the flaky poller test alone",
+                "stronghold",
+                "how-to",
+                180,
+            ),
+        ],
+    }
 }

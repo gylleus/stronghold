@@ -22,6 +22,7 @@ use crate::codex::{CodexSession, CodexTracker, default_sessions_root};
 use crate::orca::Terminal;
 use crate::poller::Repaint;
 use crate::traffic::AgentMessage;
+use crate::traffic::ledger::LedgerWatch;
 
 /// Outputs buffered for the UI; when full, new ones are dropped until the UI catches up.
 const OUTPUT_BUFFER: usize = 4;
@@ -160,8 +161,8 @@ impl ClaudeWorker {
         self.data.try_iter().last()
     }
 
-    /// The `orca terminal send`s Claude terminals ran since the last call, as traffic (see
-    /// [`SendWatch`]).
+    /// The `orca terminal send`s Claude terminals ran and the Ledger calls Claude and Codex
+    /// terminals made since the last call, as traffic (see [`SendWatch`] and [`LedgerWatch`]).
     pub fn terminal_sends(&self) -> Vec<AgentMessage> {
         self.sends.try_iter().collect()
     }
@@ -255,6 +256,7 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
     let mut codex = CodexTracker::new(&config.codex_sessions_root);
     let mut forwards = ForwardScanner::new();
     let mut send_watch = SendWatch::new();
+    let mut ledger_watch = LedgerWatch::new();
     let mut forward_handles: BTreeSet<String> = BTreeSet::new();
     let mut terminals: Option<Vec<Terminal>> = None;
     let mut handles: BTreeSet<String> = BTreeSet::new();
@@ -280,7 +282,8 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
                 );
                 data.codex = codex.refresh(terms, now_ms);
                 data.forwards = forwards.refresh(&forward_transcripts(&data, &forward_handles));
-                let sends = send_watch.refresh(&sender_transcripts(&data), now_ms);
+                let mut sends = send_watch.refresh(&sender_transcripts(&data), now_ms);
+                sends.extend(ledger_watch.refresh(&ledger_transcripts(&data), now_ms));
                 (data, sends)
             }));
             match result {
@@ -399,6 +402,19 @@ fn sender_transcripts(data: &ClaudeData) -> BTreeMap<String, PathBuf> {
             Some((handle.clone(), path.clone()))
         })
         .collect()
+}
+
+/// What [`LedgerWatch`] reads: the Claude transcripts of [`sender_transcripts`], and each Codex
+/// terminal's rollout unless it is only a guess among terminals sharing a worktree.
+fn ledger_transcripts(data: &ClaudeData) -> BTreeMap<String, PathBuf> {
+    let mut out = sender_transcripts(data);
+    out.extend(
+        data.codex
+            .iter()
+            .filter(|(_, s)| !s.rollout.ambiguous)
+            .map(|(handle, s)| (handle.clone(), s.rollout.rollout.path.clone())),
+    );
+    out
 }
 
 /// Reads what was appended to the watched transcript when its size or mtime changed; `false`
@@ -694,6 +710,44 @@ mod tests {
                 "term_b",
                 crate::traffic::MessageKind::Message
             )]
+        );
+    }
+
+    #[test]
+    fn worker_reports_ledger_calls_made_after_it_started() {
+        let tree = Tree::new();
+        let transcript = tree
+            .root()
+            .join(encode_project_dir(Path::new(CWD)))
+            .join(format!("{SESSION}.jsonl"));
+        let call = |id: &str, tool: &str| {
+            let at = jiff::Timestamp::now().to_string();
+            json!({"type": "assistant", "timestamp": at, "message": {"content": [
+                {"type": "tool_use", "id": id, "name": format!("mcp__ledger__{tool}"),
+                    "input": {}}]}})
+        };
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        writeln!(f, "{}", call("toolu_old", "search_notes")).unwrap();
+        f.flush().unwrap();
+
+        let worker = ClaudeWorker::spawn_with(config(&tree), None);
+        worker.send_terminals(vec![claude_terminal("term_a")]);
+        wait_for(|| worker.latest());
+        assert!(worker.terminal_sends().is_empty(), "history is not traffic");
+
+        writeln!(f, "{}", call("toolu_1", "search_notes")).unwrap();
+        writeln!(f, "{}", call("toolu_2", "write_note")).unwrap();
+        f.flush().unwrap();
+        let sent = wait_for(|| Some(worker.terminal_sends()).filter(|s| s.len() >= 2));
+        assert_eq!(
+            sent,
+            [
+                crate::traffic::ledger::message("term_a", "search_notes"),
+                crate::traffic::ledger::message("term_a", "write_note"),
+            ]
         );
     }
 }

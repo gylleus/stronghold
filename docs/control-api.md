@@ -1,19 +1,19 @@
-# Myrstack control API
+# Stronghold control API
 
-A local API for reading the clan status and controlling the dashboard while Myrstack is
+A local API for reading the clan status and controlling the dashboard while Stronghold is
 running. It is meant for the MCP server (which proxies to it) and for debugging with
-`myrstack ctl`.
+`stronghold ctl`.
 
 ## Transport
 
 - **Unix domain socket** at `<data dir>/control.sock`. The data dir is
-  `~/Library/Application Support/Myrstack`, or `$MYRSTACK_DATA_DIR` when set.
-  `$MYRSTACK_CONTROL_SOCKET` overrides the full socket path. A relative path resolves against
+  `~/Library/Application Support/Stronghold`, or `$STRONGHOLD_DATA_DIR` when set.
+  `$STRONGHOLD_CONTROL_SOCKET` overrides the full socket path. A relative path resolves against
   the working directory, which helps when the data dir is too deep for the ~104-byte limit on
   socket paths.
 - The socket is created with mode `0600`: it is bound under a temporary name, restricted, then
   renamed into place. There is no TCP listener.
-- On start, a leftover socket that nobody listens on is removed. If another Myrstack is serving
+- On start, a leftover socket that nobody listens on is removed. If another Stronghold is serving
   the socket, the new instance runs without the API and logs a warning.
 - **Framing: newline-delimited JSON.** Send one request object per line and read one response
   line for each request, in order. A connection can carry any number of requests. Blank lines
@@ -75,7 +75,7 @@ Methods that take an agent `id` accept any of these:
 
 Input matching is loose, so `NeedsInput` and `needs-input` also work.
 
-The **King** sits in the farm's throne hall and stands for the whole clan. It is not an agent, so
+The **King** sits in the hold's throne hall and stands for the whole clan. It is not an agent, so
 `agents` never lists it and `status` reports its state as `clan.state`. `select` and `focus`
 accept `king`.
 
@@ -131,7 +131,7 @@ first poll, with `ready: false`.
 now. `current` is `null` until the app has read the fetch log.
 
 `dashboard.selected` is the primary selected node (whose panel is shown); `dashboard.selection`
-lists every node selected in the farm, several after a box select or Shift/Cmd-click.
+lists every node selected in the hold, several after a box select or Shift/Cmd-click.
 
 ### `agents`
 
@@ -224,7 +224,7 @@ Returns the health doctor's report, the list the top bar's health badge shows. T
 whether the whip is live (or off, or in dry run), whether `orca` and `gh` are found from the
 app's `PATH` (with versions) and Orca's runtime is reachable, whether the King's chat
 process runs, whether the Claude `SessionStart` hook is installed, whether macOS allows
-notifications (only from `Myrstack.app`), and how old the Slack reply bridge's heartbeat is
+notifications (only from `Stronghold.app`), and how old the Slack reply bridge's heartbeat is
 (`off` when `~/.claude/slack-subscriptions/` doesn't exist). The slow checks run at startup and
 every 3 minutes; `checked_at_ms` is `null` until their first run finished, and until then only
 the whip and the King are listed.
@@ -253,7 +253,7 @@ report's `level` is the worst of them, with `off` counting as `ok`. `fix` is a o
 ### `alerts`
 
 Returns the notification inbox, newest first: what agents sent with `notify` and what
-Myrstack raised itself. `node` is the node each alert is about, if that node is still in the
+Stronghold raised itself. `node` is the node each alert is about, if that node is still in the
 clan; `count` is how many identical notifications were collapsed into it. `status` carries
 the unread count and the newest unread ones under `notifications`.
 
@@ -268,7 +268,7 @@ the unread count and the newest unread ones under `notifications`.
 
 The last poll's raw Orca data: `{polled_at_ms, terminals, runs, workers, tasks: {run_id: [...]},
 inbox}` in Orca's own field names, without terminal previews or message bodies. Filled playbook
-templates (`myrstack playbook attendant-brief`, MCP `attendant_brief`/`kickoff`) read it.
+templates (`stronghold playbook attendant-brief`, MCP `attendant_brief`/`kickoff`) read it.
 `unavailable` before the first poll.
 
 ### `review_queue`
@@ -332,7 +332,7 @@ Sends one key to the agent's terminal: Enter, Escape or Ctrl-C. The only param i
 
 ### `broadcast`
 
-Sends a `Myrstack: `-prefixed bus message to the live coordinators of some runs, as the
+Sends a `Stronghold: `-prefixed bus message to the live coordinators of some runs, as the
 Broadcast window does. Give either `runs` (a list of run ids) or `"all": true`.
 
 ```json
@@ -348,7 +348,7 @@ skipped runs.
 ### `whip_settings`
 
 Changes the whip's `enabled`, `dry_run` or `notify` setting (all optional bools). The change
-is saved to the settings file (`$MYRSTACK_SETTINGS` or the default path) and applied, the same
+is saved to the settings file (`$STRONGHOLD_SETTINGS` or the default path) and applied, the same
 way the settings window saves.
 
 ```json
@@ -360,7 +360,7 @@ When a setting changes, the result has `"changed":true` and `"message":"Saved."`
 
 ### `select`
 
-Selects a node without moving the farm. Pass `"id": null` to clear the selection.
+Selects a node without moving the hold's camera. Pass `"id": null` to clear the selection.
 
 ```json
 {"v":1,"method":"select","params":{"id":"term:term_…"}}
@@ -368,7 +368,7 @@ Selects a node without moving the farm. Pass `"id": null` to clear the selection
 ```
 
 Pass `"ids"` (a list, after `id` if both are given) to select several nodes at once, as a box
-select in the farm does; the first is the primary (`selected`). Nodes hidden by the filter
+select in the hold does; the first is the primary (`selected`). Nodes hidden by the filter
 can't be part of a multi-selection: they are listed in `hidden_by_filter` and left out of
 `selection`. An empty `ids` clears the selection.
 
@@ -380,9 +380,9 @@ can't be part of a multi-selection: they are listed in `hidden_by_filter` and le
 
 ### `focus`
 
-Selects the agent and pans and zooms the farm camera onto it. With `"raise": true` it
-also brings the Myrstack window to the front. `hidden_by_filter` means the node is selected
-but the current filter hides it, so the farm did not move.
+Selects the agent and pans and zooms the hold's camera onto it. With `"raise": true` it
+also brings the Stronghold window to the front. `hidden_by_filter` means the node is selected
+but the current filter hides it, so the camera did not move.
 
 ```json
 {"v":1,"method":"focus","params":{"id":"term:term_…"}}
@@ -485,7 +485,7 @@ read method above.
 Give either agents or `stalled: true`, not both.
 
 **Manual whip** (`ids`): each agent gets the nudge the automatic whip sends when it stalls,
-with the same texts and sender (`myrstack-whip`):
+with the same texts and sender (`stronghold-whip`):
 
 - a worker with a live dispatched task: a bus message to `dispatch:<id>` about the task;
 - a coordinator: a bus message to its terminal handle with `--run`;
@@ -506,9 +506,9 @@ NeedsInput targets and for 5 or more targets.
 → {"ok":true,"result":{"mode":"manual","sent":1,"failed":0,"automatic_dry_run":true,
    "nudges":[{"id":"term:term_12…","label":"Fix login","handle":"term_12…",
               "via":{"bus":"dispatch:ctx_…","run":"run_…"},"target":"worker term_12… task t1",
-              "text":"Myrstack: no progress on task …","ok":true,"outcome":"sent",
+              "text":"Stronghold: no progress on task …","ok":true,"outcome":"sent",
               "warning":null,"seq":14}],
-   "skipped":[{"id":"king","label":"King","reason":"the King is Myrstack itself"}]}}
+   "skipped":[{"id":"king","label":"King","reason":"the King is Stronghold itself"}]}}
 ```
 
 `via` is `{"bus": <to>, "run": <run id>}` or `{"terminal": <handle>}`. An unknown agent is a
@@ -531,10 +531,10 @@ the automatic whip's dry-run setting. The next periodic tick comes one period la
 
 Records that a PR is ready for review. Coordinators (after verifying the gate) and standalone
 terminals call it through the `mark_pr_ready` MCP tool or
-`myrstack pr-ready`, which fill in `origin` from the caller's Orca environment
+`stronghold pr-ready`, which fill in `origin` from the caller's Orca environment
 (`ORCA_TERMINAL_HANDLE`, `ORCA_PANE_KEY`, `ORCA_TAB_ID`, `ORCA_TASK_ID`, `ORCA_DISPATCH_ID`).
 Callers with a task or dispatch ID, or whose identity resolves to a worker node, are refused
-and told to send `merge_ready` to their coordinator instead. It only records in Myrstack;
+and told to send `merge_ready` to their coordinator instead. It only records in Stronghold;
 nothing goes to GitHub or the bus.
 
 | param | type | meaning |
@@ -577,7 +577,7 @@ dispatcher like every notification; see [Notifications](#notifications).
 
 `outcome` is `delivered` (possibly silently: below Karl's thresholds or quiet mode, see
 `delivery` and `quiet`), `collapsed` (identical to one the agent sent in the last 30 min;
-`count` says how many), `folded` (a handover about a PR that Myrstack announced as ready for
+`count` says how many), `folded` (a handover about a PR that Stronghold announced as ready for
 review in the last 10 min: its text replaces that entry's, so Karl gets one notification; a
 review announcement after an agent's handover about the same PR is dropped likewise), or
 `rate_limited` (at most 5 per agent per 10 min;
@@ -612,10 +612,10 @@ the terminal after `closing_in_ms` with the `plan` returned.
 ### `agent_message`
 
 `{"from", "to", "kind"?}`. Draws a message between agents, which happened elsewhere, as an
-envelope flying from `from` to `to` in the farm; nothing is sent. Each end
+envelope flying from `from` to `to` in the hold; nothing is sent. Each end
 is a node id, a terminal handle, `run:<id>` (its coordinator), `dispatch:<id>`, `king`,
 `envoy` (the live Envoy session), `karl` or `slack` (the outside world: the landing mound
-in the farm). `kind` picks the look: `instruction`, `message` (default), `ask` (or `question`,
+in the hold). `kind` picks the look: `instruction`, `message` (default), `ask` (or `question`,
 `escalation`), `merge_ready`, `relay` (or `slack`, `envoy`), `nudge` or `status`. Unknown ends
 are ignored. Bus messages, `send`, `notify`, `ask`, whip nudges and Karl's typing are drawn
 already; this is for traffic the app can't see, such as the Envoy's relays.
@@ -647,7 +647,7 @@ are ignored.
 
 Every notification goes through one dispatcher in the app: agents' `notify`, nodes entering
 NeedsInput, whip escalations and long waits, PRs marked ready, and the Settings window's tests.
-It drops Myrstack's own repeats about one target within 10 minutes, collapses an agent's
+It drops Stronghold's own repeats about one target within 10 minutes, collapses an agent's
 identical notifications, rate limits each agent, and records the rest in the inbox
 (`<data dir>/notifications.json`, 0600, newest 200). Delivery follows the Notifications
 settings (`notifications` in `settings.json`): macOS and in-app pop-ups from a minimum
@@ -668,31 +668,31 @@ leave after 5 minutes. The queue is saved in `<data dir>/review-queue.json` (060
 
 Legacy bus marks are ignored on load. Existing worker-made tool/CLI marks without task or
 dispatch IDs cannot reliably be identified once their worker node is gone. Dismiss those
-through the review queue or `myrstack ctl review_dismiss '{"url":"<PR URL>"}'`; the
+through the review queue or `stronghold ctl review_dismiss '{"url":"<PR URL>"}'`; the
 coordinator can call `mark_pr_ready` after verifying the gate to replace the attribution and
 show the PR again.
 
-## `myrstack ctl`
+## `stronghold ctl`
 
 ```
-myrstack ctl <method> [json params | id]
+stronghold ctl <method> [json params | id]
 ```
 
 This prints the pretty-printed response and exits 1 when `ok` is false. A single argument that
 does not start with `{` is sent as `{"id": <arg>}`:
 
 ```
-myrstack ctl status
-myrstack ctl agents '{"state":"needs_input"}'
-myrstack ctl agent term:term_2574…
-myrstack ctl focus term:term_2574…
-myrstack ctl close '{"id":"term:term_2574…","dry_run":true}'
-myrstack ctl whip '{"stalled":true}'
+stronghold ctl status
+stronghold ctl agents '{"state":"needs_input"}'
+stronghold ctl agent term:term_2574…
+stronghold ctl focus term:term_2574…
+stronghold ctl close '{"id":"term:term_2574…","dry_run":true}'
+stronghold ctl whip '{"stalled":true}'
 ```
 
-The command honours `MYRSTACK_DATA_DIR` and `MYRSTACK_CONTROL_SOCKET`, just as the app does.
+The command honours `STRONGHOLD_DATA_DIR` and `STRONGHOLD_CONTROL_SOCKET`, just as the app does.
 To script the API without the binary, use a raw socket:
 
 ```
-printf '{"v":1,"method":"status"}\n' | nc -U ~/Library/Application\ Support/Myrstack/control.sock
+printf '{"v":1,"method":"status"}\n' | nc -U ~/Library/Application\ Support/Stronghold/control.sock
 ```
