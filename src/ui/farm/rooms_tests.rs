@@ -86,6 +86,16 @@ fn assert_kept(before: &Scene, after: &Scene) {
 /// its dwarves.
 fn assert_laid_out(scene: &Scene) {
     let tunnels = &scene.tunnels;
+    for gallery in scene.work_galleries() {
+        assert_eq!(
+            tunnels
+                .iter()
+                .filter(|t| t.chamber.intersects(gallery))
+                .count(),
+            1,
+            "a gallery must stay within one workspace during growth and rearrangement"
+        );
+    }
     for (i, t) in tunnels.iter().enumerate() {
         assert!(
             scene.rect.contains_rect(t.chamber),
@@ -385,4 +395,28 @@ fn an_dwarf_leaving_its_room_moves_no_room() {
     let after = frame(&s, &mut plan, 1_000);
     assert_kept(&before, &after);
     assert_eq!(plan.rearranges, 1);
+}
+
+#[test]
+fn saved_column_plans_are_refitted_as_workspace_bands() {
+    let s = clan(3, 2);
+    let mut plan = RoomPlan::default();
+    let expected = frame(&s, &mut plan, 0);
+    let mut saved = serde_json::to_value(&plan).unwrap();
+    saved.as_object_mut().unwrap().remove("workspace_bands");
+    saved["fitted"] = serde_json::json!({
+        "px": 3.0, "levels": 1, "widths": [400.0, 400.0, 480.0], "depths": [1, 1, 1]
+    });
+    for (col, room) in saved["rooms"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .enumerate()
+    {
+        room["level"] = 0.into();
+        room["col"] = col.into();
+    }
+    let mut restored: RoomPlan = serde_json::from_value(saved).unwrap();
+    assert_eq!(frame(&s, &mut restored, 0), expected);
+    assert_eq!(restored.rearranges, 1);
 }

@@ -7,6 +7,7 @@
 //! `--scrying` shows the working rune priest; `--stopped` darkens the rune stone.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
 //! terminals in the resting area; `--dwarves N` keeps only the first N agents.
+//! `--workspace-counts 1,3,9` previews uneven workspace groups; `--size 600x800` resizes the view.
 //! `--taskmasters` shows coordinators in every state, plus a parked coordinator and attendant.
 //! The surface carries a heap per worktree: the
 //! agents' own and a few with nobody in them, or `--heaps N` of them; `--hammer` runs the worktree
@@ -96,10 +97,21 @@ fn main() -> eframe::Result {
         .iter()
         .position(|a| a == "--dwarves")
         .map(|i| args[i + 1].parse::<usize>().expect("a number of dwarves"));
+    let workspace_counts = value("--workspace-counts");
+    let window = value("--size").map_or(WINDOW, |size| {
+        let (w, h) = size.split_once('x').expect("--size WIDTHxHEIGHT");
+        [
+            w.parse().expect("window width"),
+            h.parse().expect("window height"),
+        ]
+    });
     eframe::run_native(
         "farm",
         eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size(WINDOW),
+            viewport: egui::ViewportBuilder::default()
+                .with_app_id(format!("stronghold-farm-{}x{}", window[0], window[1]))
+                .with_inner_size(window),
+            persist_window: false,
             ..Default::default()
         },
         Box::new(move |cc| {
@@ -109,7 +121,11 @@ fn main() -> eframe::Result {
             } else {
                 egui::Theme::Dark
             });
-            let mut snapshot = clan();
+            let mut snapshot = if let Some(counts) = workspace_counts {
+                workspace_clan(&counts)
+            } else {
+                clan()
+            };
             if args.iter().any(|a| a == "--taskmasters") {
                 taskmasters(&mut snapshot);
             }
@@ -335,10 +351,9 @@ impl Demo {
             ("run4-coord", "run5-coord", MessageKind::Message),
         ] {
             let message = AgentMessage::new(from, to, kind);
-            let flight = message
-                .resolve(&self.snapshot)
-                .expect("both ends in the clan");
-            self.farm.message(flight, now_s, self.reduced_motion);
+            if let Some(flight) = message.resolve(&self.snapshot) {
+                self.farm.message(flight, now_s, self.reduced_motion);
+            }
         }
     }
 
@@ -775,4 +790,47 @@ fn demo_ledger() -> Shelf {
             ),
         ],
     }
+}
+
+/// Uneven groups in distinct repos, with a shared worktree within each group.
+fn workspace_clan(counts: &str) -> ClanSnapshot {
+    let mut s = clan();
+    s.nodes
+        .retain(|n| matches!(n.kind, NodeKind::King | NodeKind::Envoy));
+    s.runs.clear();
+    s.edges.clear();
+    for (r, count) in counts.split(',').enumerate() {
+        let count: usize = count.parse().expect("comma-separated dwarf counts");
+        assert!(count > 0, "each workspace needs a dwarf");
+        let run = format!("run{r}");
+        let repo = format!("workspace-{}", r + 1);
+        s.runs.push(RunSummary {
+            id: run.clone(),
+            objective: Some(format!("{repo} · {count} dwarves")),
+            coordinator: None,
+            task_counts: None,
+        });
+        for w in 0..count {
+            let coordinator = count > 1 && w == count - 1;
+            let name = if coordinator {
+                format!("{run}-coord")
+            } else {
+                format!("{run}-w{w}")
+            };
+            let mut dwarf = node(
+                &name,
+                if coordinator {
+                    NodeKind::Coordinator
+                } else {
+                    NodeKind::Worker
+                },
+                Some(&run),
+                NodeState::Working,
+                &repo,
+            );
+            dwarf.worktree_path = Some(format!("/x/orca/workspaces/{repo}/main"));
+            s.nodes.push(dwarf);
+        }
+    }
+    s
 }

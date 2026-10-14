@@ -4,7 +4,7 @@
 //! The farm is a side view: sky above the surface, the "the user" landing on the surface at the
 //! left, the throne hall under the surface in the middle, the storage chamber at the
 //! right, and horizontal working galleries cut into the rock below. Runs and repos keep
-//! their rooms in a fitted grid, with a shared ladder at the left joining every work row.
+//! separate horizontal bands, with a shared ladder at the left joining every work row.
 //! Parked agents sleep in the resting area's beds; coordinators stand at their room's mouth.
 
 use std::borrow::Cow;
@@ -270,7 +270,7 @@ impl Scene {
         )
     }
 
-    /// Excavated horizontal rows, merged across adjacent rooms on the same level.
+    /// Excavated horizontal rows, each belonging to one workspace band.
     pub fn work_galleries(&self) -> Vec<Rect> {
         let a = self.cell();
         let mut rows: Vec<Rect> = Vec::new();
@@ -282,11 +282,7 @@ impl Scene {
                     pos2(left, top),
                     pos2(t.chamber.right(), (top + 1.4 * a).min(t.chamber.bottom())),
                 );
-                if let Some(existing) = rows.iter_mut().find(|r| (r.top() - top).abs() < self.px) {
-                    *existing = existing.union(row);
-                } else {
-                    rows.push(row);
-                }
+                rows.push(row);
                 top += ROW * a;
             }
         }
@@ -825,13 +821,10 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         )),
     };
 
-    // Rooms retain their cells and grow downwards. Every room on a level starts at
-    // the same height, so its rows join continuous horizontal galleries.
+    // Each workspace owns its horizontal band; wrapped rows stay beneath its label.
     let dwarves_of: HashMap<&TunnelKey, &Vec<&Node>> = keys.iter().zip(&chamber_nodes).collect();
     let none = Vec::new();
-    let band_top = |level: usize| {
-        rect.top() + ground.below_top + level as f32 * (ground.band_h + LABEL_GAP * a)
-    };
+    let band_top = |level: usize| rect.top() + ground.band_top(level);
     let mut room_nodes: Vec<&Vec<&Node>> = Vec::new();
     let mut packed: Vec<(Vec<(usize, usize)>, usize)> = Vec::new();
     let mut slot_ws: Vec<f32> = Vec::new();
