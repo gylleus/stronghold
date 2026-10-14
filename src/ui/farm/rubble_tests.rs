@@ -178,10 +178,10 @@ fn hovering_finds_the_heap() {
     assert!(rubble::hit(&rubble, scene.throne_hall.center()).is_none());
 }
 
-/// A heap whose worktree closes crumbles; the hammer clears its heaps before the next poll; a gap
+/// A heap whose worktree closes bursts; the hammer clears its heaps before the next poll; a gap
 /// (the farm off screen) clears nothing.
 #[test]
-fn closed_worktrees_crumble() {
+fn closed_worktrees_scatter() {
     let scene = farm();
     let mut view = RubbleView::default();
     view.set(sites(3), None);
@@ -189,7 +189,7 @@ fn closed_worktrees_crumble() {
     assert!(!view.animating());
     view.set(sites(2), None);
     assert_eq!(view.layout(&scene, 1.0, false, false).heaps.len(), 2);
-    assert!(view.animating(), "the closed one crumbles");
+    assert!(view.animating(), "the closed one scatters");
     assert!(!{
         view.layout(&scene, 10.0, false, false);
         view.animating()
@@ -215,4 +215,124 @@ fn closed_worktrees_crumble() {
     away.set(sites(1), None);
     away.layout(&scene, 60.0, true, false);
     assert!(!away.animating());
+}
+
+#[test]
+fn each_hammer_contact_emits_dust_chips_and_sparks() {
+    use rubble::{ParticleKind, impact_particles};
+    for phase in [0.0, 0.48, 0.679, 1.0] {
+        assert_eq!(impact_particles(phase, 17).count(), 0, "outside contact");
+    }
+    for cycle in [0.0, 1.2, 2.4] {
+        let phase = super::hammer::phase(cycle + 0.9, false);
+        let particles: Vec<_> = impact_particles(phase, 17).collect();
+        assert_eq!(particles.len(), 28, "bounded on every stroke");
+        for kind in [ParticleKind::Dust, ParticleKind::Chip, ParticleKind::Spark] {
+            assert!(particles.iter().any(|p| p.kind == kind));
+        }
+        assert!(particles.iter().any(|p| p.offset.x < -1.0));
+        assert!(particles.iter().any(|p| p.offset.x > 1.0));
+        assert!(particles.iter().any(|p| p.offset.y < -1.0));
+    }
+    let early: Vec<_> = impact_particles(0.72, 17).collect();
+    let late: Vec<_> = impact_particles(0.96, 17).collect();
+    assert!(early.iter().zip(&late).all(|(a, b)| b.alpha < a.alpha));
+    assert_eq!(early, impact_particles(0.72, 17).collect::<Vec<_>>());
+    assert_ne!(early, impact_particles(0.72, 18).collect::<Vec<_>>());
+}
+
+#[test]
+fn broken_heap_scatters_solid_chunks_then_fades_without_shrinking() {
+    use rubble::{ParticleKind, break_particles};
+    let chunks = |age| {
+        break_particles(age, 42)
+            .filter(|p| p.kind == ParticleKind::Chunk)
+            .collect::<Vec<_>>()
+    };
+    let start = chunks(0.0);
+    let flying = chunks(0.4);
+    let fading = chunks(1.2);
+    assert_eq!(start.len(), 9);
+    assert_eq!(flying.len(), 9);
+    assert_eq!(fading.len(), 9);
+    assert_eq!(
+        flying,
+        chunks(0.4),
+        "sampling does not depend on frame history"
+    );
+    assert!(flying.iter().any(|p| p.offset.x < -15.0));
+    assert!(flying.iter().any(|p| p.offset.x > 15.0));
+    for ((a, b), c) in start.iter().zip(&flying).zip(&fading) {
+        assert!(b.offset.y < a.offset.y, "chunks fly upward first");
+        assert!(c.offset.y > b.offset.y, "gravity brings them back down");
+        assert_ne!(a.angle, b.angle, "chunks tumble");
+        assert_eq!(a.size, c.size, "solid pieces never shrink away");
+        assert_eq!(b.alpha, 1.0);
+        assert!(c.alpha > 0.0 && c.alpha < b.alpha);
+    }
+    assert!(break_particles(0.2, 42).count() <= 37);
+    assert_eq!(break_particles(-0.1, 42).count(), 0);
+    assert_eq!(break_particles(rubble::BREAK_S, 42).count(), 0);
+    assert_eq!(break_particles(10.0, 42).count(), 0);
+}
+
+#[test]
+fn cleared_heap_bursts_once_and_expires_even_while_cleanup_is_reported() {
+    let scene = farm();
+    let mut view = RubbleView::default();
+    view.set(sites(1), None);
+    view.layout(&scene, 0.0, false, false);
+    view.set(
+        sites(1),
+        Some(CleanupJob {
+            cleared: vec![site("wt-0").id],
+            ..CleanupJob::default()
+        }),
+    );
+    assert!(view.layout(&scene, 1.0, false, false).heaps.is_empty());
+    view.layout(&scene, 1.0 + rubble::BREAK_S, false, false);
+    view.set(Vec::new(), None);
+    view.layout(&scene, 3.0, false, false);
+    assert!(!view.animating(), "poll must not spawn a second burst");
+}
+
+#[test]
+fn reduced_motion_and_leaving_the_farm_discard_break_effects() {
+    let scene = farm();
+    for (away, still) in [(true, false), (false, true)] {
+        let mut view = RubbleView::default();
+        view.set(sites(3), None);
+        view.layout(&scene, 0.0, false, false);
+        view.set(sites(2), None);
+        view.layout(&scene, 0.1, false, false);
+        assert!(view.animating());
+        view.set(sites(1), None);
+        view.layout(&scene, 0.2, away, still);
+        assert!(
+            !view.animating(),
+            "discard existing and newly cleared effects"
+        );
+        view.layout(&scene, 0.3, false, false);
+        assert!(!view.animating(), "never replay suppressed bursts");
+    }
+}
+
+#[test]
+fn bulk_cleanup_caps_bursts_and_drops_them_after_the_fade() {
+    let scene = farm();
+    let mut view = RubbleView::default();
+    view.set(sites(rubble::MAX_HEAPS), None);
+    view.layout(&scene, 0.0, false, false);
+    view.set(Vec::new(), None);
+    view.layout(&scene, 1.0, false, false);
+    assert_eq!(view.burst_count(), rubble::MAX_BURSTS);
+    view.layout(&scene, 1.1, false, false);
+    assert_eq!(
+        view.burst_count(),
+        rubble::MAX_BURSTS,
+        "no duplicate bursts"
+    );
+    view.layout(&scene, 1.0 + rubble::BREAK_S, false, false);
+    assert_eq!(view.burst_count(), 0);
+    assert!(!view.animating(), "no repaint needed after the fade");
 }

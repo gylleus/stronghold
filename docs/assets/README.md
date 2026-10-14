@@ -101,8 +101,15 @@ broken shoring, bent nails and roots. Active heaps have fresh stone and a gold s
 pennant; resting heaps have a faded pennant; empty heaps are weathered, with no flag.
 Hover/click labels, oldest-first placement, overflow counts and cleanup eligibility retain
 their worktree meaning. Adjust `draw` for materials and debris, `FULL` for heap size and
-`FILL_AT` for surface density. A removed heap collapses and fades; a cleanup's hammer
-swings every 1.2 seconds, with chips only after contact. Reduced motion freezes the tool.
+`FILL_AT` for surface density. A removed heap bursts into nine tumbling, faceted granite chunks that scatter and fade
+without shrinking. The cleanup hammer swings every 1.2 seconds; contact emits dust, chips
+and short gold sparks. Effects use fixed counts and seeded, time-sampled paths, with at most
+24 simultaneous break bursts. Reduced motion freezes the tool and removes cleared heaps
+immediately without debris. No new raster assets are needed (bead `myr-2vw`).
+
+The farm screenshot harness captures impact with `--hammer`, then saves `-break`, `-walk`
+and `-cleared` frames to check chunk flight, fade and expiry. Add `--reduced-motion` to
+check that debris is suppressed.
 
 The generated source is [`assets/art/tools/cleanup_hammer.png`](../../assets/art/tools/cleanup_hammer.png).
 It was created with the built-in image generation tool, transparent background, using
