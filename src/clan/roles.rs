@@ -31,7 +31,7 @@ pub enum AttendantSignal {
 pub struct RunRoles {
     /// `coordinator_handle` as Orca reports it (the terminal that ran `run-create`).
     pub declared: Option<String>,
-    /// The live terminal coordinating the Run, the one Karl talks to.
+    /// The live terminal coordinating the Run, the one the user talks to.
     pub coordinator: Option<String>,
     /// The live declared terminal when it is an attendant forwarding to the coordinator.
     pub attendant: Option<String>,

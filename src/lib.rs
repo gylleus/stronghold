@@ -1,4 +1,4 @@
-//! Stronghold: a live farm view of the Orca agent clan.
+//! Stronghold: the Orca agent clan as dwarves in a live hold.
 
 // Stub modules are filled in by later milestones.
 #![allow(dead_code)]
@@ -37,6 +37,7 @@ pub mod spawn;
 pub mod stale;
 pub mod traffic;
 pub mod ui;
+pub mod user;
 pub mod voice;
 pub mod whip;
 pub mod worktrees;

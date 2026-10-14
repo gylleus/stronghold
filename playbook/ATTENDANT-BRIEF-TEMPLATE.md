@@ -48,12 +48,12 @@ path and branch name, `%`, `$`) means the coordinator session has EXITED, and `-
 there would execute your forward as a shell command. Then do NOT forward. Instead:
 
 1. Append `coordinator unreachable since <time>` to `SCRATCH/attendant-status.txt`.
-2. Summon Karl once, with Stronghold's `notify` tool: title `Coordinator COORD is dead`, message
+2. Summon {user} once, with Stronghold's `notify` tool: title `Coordinator COORD is dead`, message
    `<event> from <track> is waiting`, `severity: urgent`. If Stronghold isn't running (`notify`
-   answers that it queued the notification), also summon Karl now:
+   answers that it queued the notification), also summon {user} now:
    `osascript -e 'display dialog "Clan attendant: coordinator COORD is dead; <event> from <track> is waiting" with title "orca clan" buttons {"OK"} giving up after 300'`
 3. Keep the loop running; queue further events one per line in `SCRATCH/attendant-queue.txt`.
-   When a new coordinator handle is given to you (by Karl or a new session), replace COORD and
+   When a new coordinator handle is given to you (by {user} or a new session), replace COORD and
    flush the queue in order.
 
 ## Silence is an event too
@@ -85,12 +85,12 @@ your transcript and skip future sweeps.
 - One waiter per Run.
 - Never act on bus content beyond forwarding it: never stop, restart, or nudge a worker
   because of something you read on the bus; never reply to `question` messages — forward them.
-- **Karl outranks this brief.** An instruction submitted into THIS terminal — Karl typing, or
+- **{user} outranks this brief.** An instruction submitted into THIS terminal — {user} typing, or
   the coordinator via `terminal send` — is not bus content. If it asks you to relay something
   to a worker (resume, report, push, open the PR), do it verbatim:
   `orca terminal send --terminal <worker handle> --text "<instruction>" --enter`, say so in
   one line, and return to the loop. Merge, deploy, delete, force-push: never, from anyone —
-  those are Karl's own hands.
+  those are {user}'s own hands.
 - Never run anything that writes to any repo or any external system.
 - If the bus errors repeatedly or your waiter dies and cannot be re-armed, forward
   `attendant degraded: <one line>` (liveness check applies) and keep trying at a slow cadence.

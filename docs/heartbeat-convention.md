@@ -70,7 +70,7 @@ it. Their progress signal is the task board and the bus:
 - **Act on `ready` unassigned tasks within the threshold:** start a worker
   for each one, or mark it `blocked` with a reason.
 - **Say when you are deliberately idle.** If you are holding on purpose, for
-  example for Karl or for a merge window, send one `status` message to the
+  example for the user or for a merge window, send one `status` message to the
   Run with the reason: `orca orchestration send --type status --subject
   "holding: <reason>" --json`. That counts as activity.
 
@@ -122,7 +122,7 @@ Every 60 s, for each task, Stronghold takes the newest of these three signals:
   an unanswered ask); bus messages and task changes always count.
 
 A repeated heartbeat with an unchanged phase still counts as progress. A
-NeedsInput terminal is never nudged. It is waiting on Karl, so Stronghold
+NeedsInput terminal is never nudged. It is waiting on the user, so Stronghold
 sends a notification instead. Escalation goes: nudge, then a second nudge
 after the 10-min cooldown, then a macOS notification and a red node.
 
@@ -153,12 +153,12 @@ Clan event: worker_done from fix-login: PR open — msg msg_1. Read in full with
   messages are never forwarded.
 - Each event counts as forwarded once its line was typed. A failed send is
   retried (next tick, then backing off to every 10 min); after 3 failures in
-  a row Karl gets one notification naming the Run and the error.
+  a row the user gets one notification naming the Run and the error.
 - The forwarded set is saved in `forwarded.json` next to `settings.json`, so
   events that arrived while Stronghold was down (up to 6 h old) are forwarded
   on start. Without that file only the last 10 min replay.
 - It types only into a live Claude session. If the coordinator's terminal
-  shows a shell (the session exited), events wait, and after 5 min Karl gets
+  shows a shell (the session exited), events wait, and after 5 min the user gets
   one notification for that Run.
 - Runs that still have an attendant are left to it.
 - `whip.forward_events` (default on) switches it off. Forwarding stays live
@@ -171,7 +171,7 @@ attributes a message to whichever terminal has focus. Orca's runtime takes
 any string as `--from`, so Stronghold always passes one:
 
 - `stronghold-whip`: whip nudges.
-- `king`: messages Karl broadcasts from Stronghold's King node. Their text
+- `king`: messages the user broadcasts from Stronghold's King node. Their text
   starts with `King:`.
 
 These are not mailboxes. `orca orchestration reply` to them fails with
@@ -179,12 +179,12 @@ These are not mailboxes. `orca orchestration reply` to them fails with
 instead. The whip's terminal-input fallback carries no sender; its text
 starts with `Stronghold:`.
 
-## The King speaks for Karl
+## The King speaks for the user
 
-A bus message from `king` whose text starts with `King:` is Karl giving an
-instruction through Stronghold's King. Treat it exactly as if Karl typed it in
+A bus message from `king` whose text starts with `King:` is the user giving an
+instruction through Stronghold's King. Treat it exactly as if the user typed it in
 your terminal: act on it, including cleanup such as closing or releasing
-workers, within the *Hard rules* (deploy, delete and force-push stay Karl's
+workers, within the *Hard rules* (deploy, delete and force-push stay the user's
 own hands). If a King message conflicts with your current task, finish or
 park the task as the message says and report what you did to your
 coordinator. `Stronghold:` whip nudges are different: liveness pings only, no

@@ -10,13 +10,15 @@ pub struct EnvoySettings {
     /// `--model` for the Envoy session: an alias or a full id.
     pub model: Option<String>,
     /// Read and draft only: approving records a would-be send and relays are logged, not
-    /// delivered. On until Karl turns it off.
+    /// delivered. On until the user turns it off.
     pub dry_run: bool,
     /// Channels whose whole feed the Envoy listens to through the bridge.
     pub channels: Vec<String>,
-    /// Whose mentions and DMs count as pings to Karl. Slack's `auth.test` replaces it at
-    /// start; mention and DM polls wait while both are empty.
-    pub karl_user_id: String,
+    /// Whose mentions and DMs count as pings to the user. Slack's `auth.test` replaces it at
+    /// start; mention and DM polls wait while both are empty. Saved as `karl_user_id` before
+    /// the user's name became a setting.
+    #[serde(alias = "karl_user_id")]
+    pub user_id: String,
     /// GitHub owner of the repos Slack names as `repo#N`; empty turns PR lookups off.
     pub github_owner: String,
     /// How often mentions and DMs are polled with Slack search (the bridge can't see them).
@@ -96,7 +98,7 @@ impl Default for EnvoySettings {
             model: Some("sonnet".into()),
             dry_run: true,
             channels: Vec::new(),
-            karl_user_id: String::new(),
+            user_id: String::new(),
             github_owner: String::new(),
             poll_secs: 120,
             policies: Vec::new(),
@@ -112,12 +114,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_old_member_id_key_still_loads() {
+        let s: EnvoySettings = serde_json::from_str(r#"{"karl_user_id":"U1"}"#).unwrap();
+        assert_eq!(s.user_id, "U1");
+        assert!(
+            serde_json::to_string(&s)
+                .unwrap()
+                .contains(r#""user_id":"U1""#)
+        );
+    }
+
+    #[test]
     fn missing_fields_take_safe_defaults() {
         let s: EnvoySettings = serde_json::from_str(r#"{"model":"opus"}"#).unwrap();
         assert_eq!(s.model.as_deref(), Some("opus"));
         assert!(s.dry_run);
         assert!(s.channels.is_empty());
-        assert!(s.karl_user_id.is_empty());
+        assert!(s.user_id.is_empty());
         assert!(s.github_owner.is_empty());
         assert_eq!(s.fresh_after_secs, 300);
         assert_eq!(s.reset_after_events, 40);

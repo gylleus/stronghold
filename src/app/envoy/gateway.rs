@@ -34,11 +34,11 @@ impl AppEnvoy {
             "reach_out" => {
                 let args: ReachOut = serde_json::from_value(command.args.clone())
                     .map_err(|e| format!("Invalid reach_out: {e}"))?;
-                let karl = self.settings.karl_user_id.clone();
+                let user_id = self.settings.user_id.clone();
                 Ok(json!(self.requests_mut()?.submit(
                     who,
                     args,
-                    &karl,
+                    &user_id,
                     now_ms()
                 )?))
             }
@@ -65,7 +65,7 @@ impl AppEnvoy {
     ) -> Result<Value, String> {
         let conversation = destination.conversation.as_str();
         self.reconcile_requests()?;
-        crate::envoy::requests::refuse_karl(conversation, &self.settings.karl_user_id)?;
+        crate::envoy::requests::refuse_user(conversation, &self.settings.user_id)?;
         crate::envoy::slack::validate_conversation(conversation)?;
         let request = self.requests_mut()?.get(required(args, "id")?)?.clone();
         let turn = request.next_turn(turn_id(args)?)?;

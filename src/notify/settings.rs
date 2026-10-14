@@ -1,4 +1,4 @@
-//! The `notifications` section of `settings.json`: how a notification reaches Karl (a macOS
+//! The `notifications` section of `settings.json`: how a notification reaches the user (a macOS
 //! pop-up, an in-app pop-up, a sound), from which severity on, and quiet mode. Edited in the
 //! Settings window's Notifications section (`crate::ui::settings::notifications`).
 //!
@@ -38,9 +38,9 @@ pub enum Severity {
     /// Worth knowing: something finished, a PR is ready.
     #[default]
     Info,
-    /// Needs Karl soon: an agent waits on input or a decision.
+    /// Needs the user soon: an agent waits on input or a decision.
     Warn,
-    /// Needs Karl now; gets through quiet mode.
+    /// Needs the user now; gets through quiet mode.
     Urgent,
 }
 

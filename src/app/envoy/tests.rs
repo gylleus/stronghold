@@ -206,7 +206,7 @@ fn wait_for(core: &mut AppEnvoy, ready: impl Fn(&AppEnvoy) -> bool) {
 
 #[test]
 fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
-    use crate::envoy::drafts::ATTRIBUTION;
+    use crate::envoy::drafts::attribution;
     use crate::review::mark::Origin;
     use crate::ui::envoy::{DraftAction, DraftsPanel};
     for (dry_run, secret) in [(true, false), (false, false), (false, true)] {
@@ -325,7 +325,7 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
         let sends = sent.lock().unwrap();
         assert_eq!(sends.len(), usize::from(!dry_run && !secret));
         if let Some(message) = sends.first() {
-            assert_eq!(message.text, format!("{edited}\n\n{ATTRIBUTION}"));
+            assert_eq!(message.text, format!("{edited}\n\n{}", attribution()));
             assert_eq!(message.conversation, "C123");
         }
         let outsider = EnvoyCommand {
@@ -377,7 +377,7 @@ fn refused_prompt_relays_do_not_spend_budget_and_text_stays_one_line() {
         .unwrap();
     assert_eq!(core.relays().len(), 1);
     let text = record.request.text();
-    assert!(text.starts_with(crate::envoy::relay::RELAY_PREFIX));
+    assert!(text.starts_with(&crate::envoy::relay::relay_prefix()));
     assert!(!text.chars().any(char::is_control));
 }
 
@@ -1463,8 +1463,8 @@ fn batches_say_who_each_event_is_for() {
     let mut core = AppEnvoy::load(dir.path().into());
     core.handle = Some("term_envoy".into());
     let now = 1_791_300_000_000;
-    core.settings.karl_user_id = "U0KARL0001".into();
-    let karl = core.karl().to_owned();
+    core.settings.user_id = "U0KARL0001".into();
+    let karl = core.user_id().to_owned();
     assert_eq!(karl, "U0KARL0001");
     let mut dwarf_root = receipt_event("1791299800.000001");
     dwarf_root.text = "Request from Recs rollout: who owns the wheat index?".into();
@@ -1472,8 +1472,8 @@ fn batches_say_who_each_event_is_for() {
     envoy_root.text = "Anyone know the recs rollout status?".into();
     let mut tagged_other = receipt_event("1791299900.000001");
     tagged_other.text = "<@U000COWORK1> can your search agent reindex wheat?".into();
-    let mut tagged_karl = receipt_event("1791299910.000001");
-    tagged_karl.text = format!("<@{karl}> is api#694 ready?");
+    let mut tagged_user = receipt_event("1791299910.000001");
+    tagged_user.text = format!("<@{karl}> is api#694 ready?");
     let mut in_dwarf_thread = receipt_event("1791299920.000001");
     in_dwarf_thread.thread_ts = Some(dwarf_root.ts.clone());
     in_dwarf_thread.text = "<@U000COWORK1> your agent should answer this".into();
@@ -1488,7 +1488,7 @@ fn batches_say_who_each_event_is_for() {
     }
     let batch = vec![
         tagged_other,
-        tagged_karl,
+        tagged_user,
         in_dwarf_thread,
         in_envoy_thread,
         chatter,
@@ -1562,9 +1562,9 @@ fn karls_id_comes_from_slack_when_it_answers() {
         ..FakeSlack::default()
     };
     let mut core = AppEnvoy::at(dir.path().into(), &egui::Context::default(), fake, bridge);
-    core.settings.karl_user_id = "U0KARL0001".into();
+    core.settings.user_id = "U0KARL0001".into();
     assert_eq!(
-        core.karl(),
+        core.user_id(),
         "U0KARL0001",
         "the settings' id until Slack answers"
     );
@@ -1576,7 +1576,7 @@ fn karls_id_comes_from_slack_when_it_answers() {
         },
     )
     .unwrap();
-    wait_for(&mut core, |c| c.karl() == "W0RESOLVED");
+    wait_for(&mut core, |c| c.user_id() == "W0RESOLVED");
 }
 
 #[test]

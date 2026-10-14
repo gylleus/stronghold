@@ -1,8 +1,8 @@
 # Playbook proposal: the review queue
 
-Proposed insertions to Karl's clan docs so that ready PRs reach Stronghold's review queue
+Proposed insertions to the user's clan docs so that ready PRs reach Stronghold's review queue
 (the "Ready for review" section of the King panel, `docs/control-api.md` *Review queue*).
-Nothing here has been applied. Karl approves and applies them.
+Nothing here has been applied. The user approves and applies them.
 
 - **`_AGENT_PROTOCOL.md`**: 1 block (insert A).
 - **`AGENT-FLEET-PLAYBOOK.md`**: 3 blocks (inserts B–D).
@@ -13,7 +13,7 @@ what the bus can't: PRs from agents outside a Run (loose terminals, Codex), the 
 and a one-line summary, and the marking terminal's identity when the sender handle is stale.
 
 A worker's mark is a hand-off, not the ready marker. The queue shows each PR's marker
-(`✅`/`⏸`/none) and whether Ankra and the marker are on the head, so Karl sees at a glance
+(`✅`/`⏸`/none) and whether Ankra and the marker are on the head, so the user sees at a glance
 which ones the coordinator has gated. Insert A keeps the existing "never mark the PR ready
 yourself" rule intact by saying the tool call is not that.
 
@@ -64,7 +64,7 @@ Add after the bullet `- Read the current body first and edit with gh pr edit …
 
 ```markdown
 - Right after setting `✅`, call `mark_pr_ready` with the PR URL and the marker's one line as
-  `summary` (or `stronghold pr-ready <url> --summary "<one line>"`). The PR then heads Karl's
+  `summary` (or `stronghold pr-ready <url> --summary "<one line>"`). The PR then heads the user's
   review queue in Stronghold with a notification. After `⏸`, don't: the queue already shows it
   from the worker's hand-off, with the ⏸.
 ```
@@ -74,14 +74,14 @@ Add after the bullet `- Read the current body first and edit with gh pr edit …
 Replace the Stronghold line:
 
 ```
- └─ Stronghold: Karl's desktop view of the whole clan (graph, terminals, alerts). Its whip
+ └─ Stronghold: the user's desktop view of the whole clan (graph, terminals, alerts). Its whip
     nudges stalled tasks (`Stronghold:` messages from `stronghold-whip`).
 ```
 
 with:
 
 ```
- └─ Stronghold: Karl's desktop view of the whole clan (graph, terminals, alerts, the review
+ └─ Stronghold: the user's desktop view of the whole clan (graph, terminals, alerts, the review
     queue of ready PRs). Its whip nudges stalled tasks (`Stronghold:` messages from
     `stronghold-whip`).
 ```

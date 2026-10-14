@@ -193,8 +193,9 @@ pub fn plan_close(
     }
     if node.is_parked() {
         plan.warnings.push(format!(
-            "{} is parked: Karl kept it to continue later, and closing ends its session for good",
-            node.label
+            "{} is parked: {user} kept it to continue later, and closing ends its session for good",
+            node.label,
+            user = crate::user::name()
         ));
     }
     if node.kind == NodeKind::Coordinator {

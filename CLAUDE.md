@@ -4,7 +4,7 @@ This file provides instructions and context for AI coding agents working on this
 
 ## Finishing work in the Stronghold repo
 
-Karl's rule for every agent working in this repo. It is the repository's explicit opt-in, so
+The maintainer's rule for every agent working in this repo. It is the repository's explicit opt-in, so
 it overrides the "Conservative" default below for commits and the local merge (not for pushes):
 
 1. Work on your own branch in your worktree; commit there.
@@ -15,7 +15,7 @@ it overrides the "Conservative" default below for commits and the local merge (n
    files there (such as `.beads/issues.jsonl`) alone; don't stash, reset or commit them. If the
    merge conflicts, merge `main` into your branch in your worktree, fix, rerun the gates, then
    retry.
-4. Report a short summary (what changed; Karl gets it with `just install` and reopening
+4. Report a short summary (what changed; the user gets it with `just install` and reopening
    Stronghold), then exit your session.
 
 There is no GitHub remote: no push, no PR, no `mark_pr_ready`.

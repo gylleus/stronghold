@@ -24,7 +24,7 @@ pub enum Badge {
     Nudge,
     Escalate,
     NeedsInput,
-    /// Sent because Karl asked ("Whip"), not by a tick.
+    /// Sent because the user asked ("Whip"), not by a tick.
     Manual,
     DryRun,
     Failed,

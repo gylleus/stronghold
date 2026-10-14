@@ -298,7 +298,8 @@ fn envoy_system_prompt_is_the_served_envoy_role_under_its_version() {
     let served = pb.get(&Target::Role(Role::Envoy), None).unwrap();
     assert!(text.starts_with("# Envoy standing rules\n\n"));
     assert!(text.contains(&served.version.header()));
-    assert!(text.ends_with(&served.body));
+    assert!(text.ends_with(&crate::user::fill(&served.body)));
+    assert!(!text.contains("{user}"));
 }
 
 #[test]

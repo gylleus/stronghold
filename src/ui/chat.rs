@@ -94,7 +94,7 @@ pub enum ChatAction {
     Compact,
     Retry,
     SelectNode(NodeId),
-    /// Karl flipped the Auto switch.
+    /// The user flipped the Auto switch.
     SetAutoMode(bool),
 }
 
@@ -600,7 +600,9 @@ fn item_ui(
                 if let Some(url) = &message.url {
                     ui.hyperlink(url);
                 }
-                ui.weak("From an agent · not Karl's instructions");
+                ui.weak(crate::user::fill(
+                    "From an agent · not {user}'s instructions",
+                ));
             });
             return selected;
         }
@@ -684,7 +686,7 @@ pub fn can_draw(ui: &Ui, c: &str) -> bool {
     })
 }
 
-/// Marker in front of a message Karl spoke (🎙 is not in egui's default fonts; 🎤 is).
+/// Marker in front of a message the user spoke (🎙 is not in egui's default fonts; 🎤 is).
 pub const VOICE_MARKER: &str = "🎤";
 
 /// A voice message's bubble text.

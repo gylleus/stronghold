@@ -79,7 +79,7 @@ pub const GLIDE_S: f64 = 0.8;
 pub enum Pulse {
     /// A broadcast to the coordinators: a golden ring.
     Broadcast,
-    /// Karl asked for a status report: a cyan ring gathering in to the King.
+    /// The user asked for a status report: a cyan ring gathering in to the King.
     StatusReport,
 }
 
@@ -1327,10 +1327,10 @@ fn paint_ground(
     }
     sprites.portal(
         painter,
-        scene.karl_portal(),
+        scene.user_portal(),
         px,
         portal_frame,
-        "Karl",
+        &crate::user::name(),
         FontId::monospace(10.0 + 2.0 * px),
     );
     label(

@@ -1,6 +1,6 @@
 //! The app side of talking to the King: the global hold-to-talk hotkey, sending transcripts
 //! to his chat as voice messages, speaking his replies, the pill and the background overlay,
-//! and the two speech models (downloaded only when Karl clicks, prepared at start once there).
+//! and the two speech models (downloaded only when the user clicks, prepared at start once there).
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -319,7 +319,10 @@ impl StrongholdApp {
         self.talk.talk.stop_speaking();
         self.talk.apply_to_speaker(draft);
         self.talk.testing = true;
-        self.talk.talk.speaker().speak(TEST_SENTENCE);
+        self.talk
+            .talk
+            .speaker()
+            .speak(&crate::user::fill(TEST_SENTENCE));
     }
 
     pub(super) fn download_voice_model(&mut self, model: VoiceModel) {
@@ -369,7 +372,7 @@ impl StrongholdApp {
         log::warn!("talk: {err}");
         if err.is_model_missing() {
             self.talk.notify(Notice::SpeechModelMissing);
-            // The download needs a click: bring the window up if Karl is elsewhere.
+            // The download needs a click: bring the window up if the user is elsewhere.
             if !focused {
                 self.bring_forward_to_king();
             }
@@ -471,8 +474,8 @@ impl StrongholdApp {
             TalkEvent::Sent(text) => {
                 log::info!("talk: sent a voice message ({} chars)", text.len());
                 self.talk.sent_at = Some(Instant::now());
-                self.traffic.push(super::chat::karl_to_king());
-                // His panel shows the conversation when Karl looks; no focus is taken.
+                self.traffic.push(super::chat::user_to_king());
+                // His panel shows the conversation when the user looks; no focus is taken.
                 if self.selected.as_ref() != Some(&crate::model::NodeId::king()) {
                     self.select_king();
                 }

@@ -1,6 +1,6 @@
 //! Manual whip UI: the confirmation popover and the result toast.
 //!
-//! A manual whip is sent at once unless a target waits on Karl's input or it covers
+//! A manual whip is sent at once unless a target waits on the user's input or it covers
 //! [`CONFIRM_AT`](crate::whip::manual::CONFIRM_AT) or more targets; then a small popover lists
 //! the targets (with warnings and skips) and asks first. Results show in a toast and in the
 //! whip log.

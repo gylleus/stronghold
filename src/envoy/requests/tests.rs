@@ -82,7 +82,7 @@ fn limits_duplicates_ownership_and_followups_survive_reload() {
 #[test]
 fn karl_thread_validation_and_failed_save_do_not_charge() {
     for to in ["Karl", " kArL ", "me", "UKARL", "<@UKARL>"] {
-        assert!(refuse_karl(to, "UKARL").unwrap_err().contains("ask_karl"));
+        assert!(refuse_user(to, "UKARL").unwrap_err().contains("ask_user"));
     }
     assert!(Thread::from_link("https://evil.example/archives/C123/p1234567000001").is_err());
     assert_eq!(
@@ -143,15 +143,15 @@ fn thread_followup_and_adoption_are_idempotent() {
 #[test]
 fn karl_aliases_and_labeled_mentions_are_refused() {
     for target in [
-        " Karl   GYLLEUS ",
+        " KARL ",
         " @KaRl ",
         "<@u000karl001|Karl Gylleus>",
         " <@ U000KARL001 | Karl > ",
     ] {
         assert!(
-            refuse_karl(target, "U000KARL001")
+            refuse_user(target, "U000KARL001")
                 .unwrap_err()
-                .contains("ask_karl")
+                .contains("ask_user")
         );
     }
 }

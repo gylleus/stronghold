@@ -16,13 +16,13 @@ screen (markdown is fine there)."
     };
 }
 
-/// Put before a message Karl spoke (not shown in his bubble): the King's reply is read aloud.
+/// Put before a message the user spoke (not shown in their bubble): the King's reply is read aloud.
 pub const VOICE_NOTE: &str = concat!(
-    "[Stronghold] Karl said this by voice (hold-to-talk); this turn is spoken. ",
+    "[Stronghold] {user} said this by voice (hold-to-talk); this turn is spoken. ",
     say_rules!()
 );
 
-/// Put before a typed message while "Speak replies" is on: his reply is read aloud.
+/// Put before a typed message while "Speak replies" is on: the King's reply is read aloud.
 pub const SPEAK_NOTE: &str = concat!(
     "[Stronghold] Speak replies is on; this turn is spoken. ",
     say_rules!()
@@ -31,7 +31,7 @@ pub const SPEAK_NOTE: &str = concat!(
 /// What the speaker needs from the chat, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpeechEvent {
-    /// Karl sent a message; `voice` when he spoke it.
+    /// The user sent a message; `voice` when they spoke it.
     TurnStart { voice: bool },
     /// A delta of the King's reply text (top-level text blocks only; tool calls and
     /// subagents are not spoken).

@@ -455,7 +455,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "notify",
         "tell_king",
         "king_inbox",
-        "ask_karl",
+        "ask_user",
         "finish_session",
         "reach_out",
         "reach_out_status",
@@ -1615,7 +1615,7 @@ fn notify_is_listed_with_when_to_call_it() {
         "Handover",
         "one notification per event",
         "standalone session with no coordinator",
-        "Karl sees it in his inbox when Stronghold starts",
+        "Karl sees it in their inbox when Stronghold starts",
         "quiet mode",
     ] {
         assert!(
@@ -1627,8 +1627,8 @@ fn notify_is_listed_with_when_to_call_it() {
     let instructions = init["result"]["instructions"].as_str().unwrap();
     assert!(instructions.contains("notify {title, message, severity"));
     // The tool and the server instructions give the same rules.
-    assert!(description.contains(notify::RULES));
-    assert!(instructions.contains(notify::RULES));
+    assert!(description.contains(&crate::user::fill(notify::RULES)));
+    assert!(instructions.contains(&crate::user::fill(notify::RULES)));
 }
 
 #[test]
@@ -2092,14 +2092,14 @@ fn spawn_session_offers_allow_suffix_and_passes_it_on() {
 }
 
 // ---------------------------------------------------------------------------
-// ask_karl and finish_session
+// ask_user and finish_session
 
 #[test]
-fn ask_karl_and_finish_session_are_listed_with_when_to_call_them() {
+fn ask_user_and_finish_session_are_listed_with_when_to_call_them() {
     let mut server = McpServer::new(FakeControl::default());
     let r = rpc(&mut server, "tools/list", json!({}));
     let tools = r["result"]["tools"].as_array().unwrap();
-    let ask = tools.iter().find(|t| t["name"] == "ask_karl").unwrap();
+    let ask = tools.iter().find(|t| t["name"] == "ask_user").unwrap();
     assert_eq!(ask["inputSchema"]["required"], json!(["question"]));
     let finish = tools
         .iter()
@@ -2129,12 +2129,15 @@ fn ask_karl_and_finish_session_are_listed_with_when_to_call_them() {
     }
     let init = rpc(&mut server, "initialize", json!({}));
     let instructions = init["result"]["instructions"].as_str().unwrap();
-    assert!(instructions.ends_with(lifecycle::RULES));
-    assert!(lifecycle::RULES.contains("call ask_karl"));
-    assert!(lifecycle::RULES.contains("finish_session only once Karl says you can go"));
-    assert!(lifecycle::RULES.contains("Anything else, or can I close?"));
-    // notify points plain questions at ask_karl.
-    assert!(notify::RULES.contains("ask_karl"));
+    assert!(instructions.ends_with(&crate::user::fill(lifecycle::RULES)));
+    assert!(crate::user::fill(lifecycle::RULES).contains("call ask_user"));
+    assert!(
+        crate::user::fill(lifecycle::RULES)
+            .contains("finish_session only once Karl says you can go")
+    );
+    assert!(crate::user::fill(lifecycle::RULES).contains("Anything else, or can I close?"));
+    // notify points plain questions at ask_user.
+    assert!(crate::user::fill(notify::RULES).contains("ask_user"));
 }
 
 #[test]
@@ -2148,7 +2151,7 @@ fn ask_karl_sends_the_question_with_the_callers_identity() {
     let mut server = agent_server(FakeControl::default().reply("ask", Ok(reply)));
     let r = call(
         &mut server,
-        "ask_karl",
+        "ask_user",
         json!({"question": "Merge now or wait for the migration?", "context": "Migration lands Friday."}),
     );
     assert!(!is_error(&r), "{r}");
@@ -2170,18 +2173,18 @@ fn ask_karl_sends_the_question_with_the_callers_identity() {
 #[test]
 fn ask_karl_refuses_bad_arguments_and_says_when_stronghold_is_down() {
     let mut server = agent_server(FakeControl::default());
-    let r = call(&mut server, "ask_karl", json!({"question": "  "}));
+    let r = call(&mut server, "ask_user", json!({"question": "  "}));
     assert!(is_error(&r));
     let r = call(
         &mut server,
-        "ask_karl",
+        "ask_user",
         json!({"question": "Ok?", "severity": "loud"}),
     );
     assert!(is_error(&r));
     assert!(server.control().calls.is_empty());
 
     let mut down = agent_server(FakeControl::default().reply("ask", Err(CallError::NotRunning)));
-    let r = call(&mut down, "ask_karl", json!({"question": "Ok?"}));
+    let r = call(&mut down, "ask_user", json!({"question": "Ok?"}));
     assert!(is_error(&r));
     assert!(text(&r).contains("Ask in the chat"), "{}", text(&r));
 }
@@ -2255,7 +2258,7 @@ fn finish_session_checks_then_finishes() {
     assert_eq!(calls[1]["pr_url"], "https://github.com/o/r/pull/3");
     assert_eq!(calls[1]["origin"]["terminal_handle"], "term_442fcb9f");
     assert_eq!(calls[1]["forced"], json!([]));
-    assert_eq!(calls[1]["approval"], "karl");
+    assert_eq!(calls[1]["approval"], "user");
 }
 
 #[test]
@@ -2373,7 +2376,7 @@ fn finish_session_without_karls_go_ahead_asks_him_first() {
         t.starts_with("Not finished; your terminal stays open."),
         "{t}"
     );
-    assert!(t.contains("ask Karl first (ask_karl"), "{t}");
+    assert!(t.contains("ask Karl first (ask_user"), "{t}");
     assert!(server.control().calls.is_empty(), "nothing reaches the app");
 }
 
@@ -2558,7 +2561,7 @@ fn ask_karl_tells_envoy_to_keep_taking_batches_and_preserves_unmatched_guidance(
         let mut server = agent_server(FakeControl::default().reply("ask", Ok(reply)));
         let r = call(
             &mut server,
-            "ask_karl",
+            "ask_user",
             json!({"question": "Should tartine go live?"}),
         );
         assert!(!is_error(&r), "{r}");
@@ -2644,4 +2647,24 @@ fn close_passes_caller_identity_to_the_pre_close_animation_hook() {
             other => panic!("unexpected command: {other:?}"),
         }
     }
+}
+
+#[test]
+fn every_reply_names_the_user_instead_of_the_placeholder() {
+    let mut server = McpServer::new(FakeControl::default());
+    for (method, params) in [
+        ("initialize", json!({})),
+        ("tools/list", json!({})),
+        ("prompts/list", json!({})),
+    ] {
+        let r = rpc(&mut server, method, params).to_string();
+        assert!(!r.contains(crate::user::PLACEHOLDER), "{method}: {r}");
+        assert!(r.contains("Karl"), "{method}");
+    }
+    let r = rpc(
+        &mut server,
+        "tools/call",
+        json!({"name": "ask_karl", "arguments": {}}),
+    );
+    assert_eq!(r["result"]["isError"], true, "the old name still answers");
 }

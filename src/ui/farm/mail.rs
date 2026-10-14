@@ -1,4 +1,4 @@
-//! Sealed scrolls carried along the mine's passages. Karl's messages appear in his rune
+//! Sealed scrolls carried along the mine's passages. The user's messages appear in his rune
 //! portal; outside messages reach the priest through the receiver stone's rune conduit.
 //! Knowledge read from or filed in the Ledger travels its chamber's shaft in blue.
 
@@ -20,11 +20,11 @@ const PORTAL_S: f64 = 0.7;
 /// The share of its trip a scroll taken from the Ledger lights the lectern for.
 const LEDGER_FLARE: f32 = 0.2;
 
-/// Whether `flight` leaves from Karl's portal: Karl's own, or the King instructing a dwarf (his
+/// Whether `flight` leaves from the user's portal: the user's own, or the King instructing a dwarf (his
 /// whip's nudges stay with him).
 pub fn from_portal(flight: &Flight) -> bool {
     match &flight.from {
-        Endpoint::Karl => true,
+        Endpoint::User => true,
         Endpoint::Node(id) => *id == NodeId::king() && flight.kind == MessageKind::Instruction,
         Endpoint::Outside | Endpoint::Ledger => false,
     }
@@ -41,7 +41,7 @@ pub fn portal_flare(air: &[InFlight], now_s: f64) -> u8 {
             } else {
                 -1.0
             };
-            let arrival = if f.flight.to == Endpoint::Karl {
+            let arrival = if f.flight.to == Endpoint::User {
                 (elapsed - crate::ui::envelope::TRAVEL_S + PORTAL_S / 2.0) / PORTAL_S
             } else {
                 -1.0
@@ -67,7 +67,7 @@ pub(super) fn locate(scene: &Scene, placed: &[Placed], end: &Endpoint) -> Option
             .zip(placed)
             .find(|(dwarf, _)| &dwarf.id == id)
             .map(|(_, at)| (at.pos, false)),
-        Endpoint::Karl => Some((above_portal(scene), true)),
+        Endpoint::User => Some((above_portal(scene), true)),
         Endpoint::Outside => Some((pos2(scene.entrance_x(), scene.surface_y - 0.5 * a), true)),
         Endpoint::Ledger => super::ledger::lectern(scene).map(|at| (at, false)),
     }
@@ -75,7 +75,7 @@ pub(super) fn locate(scene: &Scene, placed: &[Placed], end: &Endpoint) -> Option
 
 /// Where a scroll clears the arch before joining the surface route.
 fn above_portal(scene: &Scene) -> Pos2 {
-    scene.karl_portal() - vec2(0.0, super::layout::PORTAL_H * scene.px + 0.3 * scene.cell())
+    scene.user_portal() - vec2(0.0, super::layout::PORTAL_H * scene.px + 0.3 * scene.cell())
 }
 
 /// The way from `from` to `to` through the passages; each is a point and whether it is on the
@@ -100,15 +100,15 @@ pub fn path(scene: &Scene, from: (Pos2, bool), to: (Pos2, bool)) -> Vec<Pos2> {
 }
 
 /// Outside mail for the Envoy follows the rune conduit instead of the public entrance. Mail
-/// from Karl's portal emerges from its centre first; mail for Karl disappears into it last.
+/// from the user's portal emerges from its centre first; mail for the user disappears into it last.
 fn flight_path(scene: &Scene, placed: &[Placed], flight: &Flight) -> Option<Vec<Pos2>> {
     let (from, to) = (&flight.from, &flight.to);
     let to_at = locate(scene, placed, to)?;
     if from_portal(flight) {
-        let mut route = vec![scene.karl_portal_focus()];
+        let mut route = vec![scene.user_portal_focus()];
         route.extend(path(scene, (above_portal(scene), true), to_at));
-        if *to == Endpoint::Karl {
-            route.push(scene.karl_portal_focus());
+        if *to == Endpoint::User {
+            route.push(scene.user_portal_focus());
         }
         route.dedup();
         return Some(route);
@@ -138,8 +138,8 @@ fn flight_path(scene: &Scene, placed: &[Placed], flight: &Flight) -> Option<Vec<
         return Some(route);
     }
     let mut route = path(scene, from_at, to_at);
-    if *to == Endpoint::Karl {
-        route.push(scene.karl_portal_focus());
+    if *to == Endpoint::User {
+        route.push(scene.user_portal_focus());
     }
     Some(route)
 }
@@ -341,14 +341,14 @@ mod tests {
             .collect();
         let worker = Endpoint::Node(id("working"));
         let at_worker = scene.dwarf(&id("working")).unwrap().pos;
-        let focus = scene.karl_portal_focus();
+        let focus = scene.user_portal_focus();
         let king = Endpoint::Node(NodeId::king());
         let flight = |from: &Endpoint, to: &Endpoint, kind| Flight {
             from: from.clone(),
             to: to.clone(),
             kind,
         };
-        for from in [&Endpoint::Karl, &king] {
+        for from in [&Endpoint::User, &king] {
             let f = flight(from, &worker, MessageKind::Instruction);
             assert!(from_portal(&f));
             let route = flight_path(&scene, &placed, &f).unwrap();
@@ -361,10 +361,10 @@ mod tests {
         assert!(!from_portal(&nudge));
         assert_ne!(flight_path(&scene, &placed, &nudge).unwrap()[0], focus);
         // Karl's chat message reaches the King; an ask for Karl disappears into the portal.
-        let chat = flight(&Endpoint::Karl, &king, MessageKind::Instruction);
+        let chat = flight(&Endpoint::User, &king, MessageKind::Instruction);
         let to_king = flight_path(&scene, &placed, &chat).unwrap();
         assert_eq!(to_king[0], focus);
-        let ask = flight(&worker, &Endpoint::Karl, MessageKind::Ask);
+        let ask = flight(&worker, &Endpoint::User, MessageKind::Ask);
         assert_eq!(
             flight_path(&scene, &placed, &ask).unwrap().last(),
             Some(&focus)
@@ -376,7 +376,7 @@ mod tests {
         let air = |still| {
             vec![InFlight {
                 flight: Flight {
-                    from: Endpoint::Karl,
+                    from: Endpoint::User,
                     to: Endpoint::Node(id("working")),
                     kind: MessageKind::Instruction,
                 },
@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(portal_flare(&air(true), PORTAL_S / 2.0), 0);
         let mut incoming = air(false);
         incoming[0].flight.from = Endpoint::Node(id("working"));
-        incoming[0].flight.to = Endpoint::Karl;
+        incoming[0].flight.to = Endpoint::User;
         let arrival = crate::ui::envelope::TRAVEL_S;
         assert_eq!(portal_flare(&incoming, PORTAL_S / 2.0), 0);
         assert_eq!(portal_flare(&incoming, arrival), 3);

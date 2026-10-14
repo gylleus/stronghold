@@ -48,7 +48,7 @@ rendered pixel grid, independent of camera zoom. The setting is persisted as `ar
   Vertical legs use `CartYoke` and an overhead chain. `motion::route` connects actual
   shaft centres to the gallery, with sidings through rooms; cargo rides in the tub.
   Arrival removes the cart and restores the worker's state pose. There is no idle ride.
-- `mail.rs` keeps message routes/timing and draws sealed scrolls. Karl's stone rune portal
+- `mail.rs` keeps message routes/timing and draws sealed scrolls. The user's stone rune portal
   replaces the tube: scrolls materialise in its centre and the threshold flares on departure
   or arrival. The open portal has a two-second veil swirl (eight frames at four frames per
   second), with a stronger 0.7-second flare for mail. `world::portal_frame` combines the
@@ -137,7 +137,7 @@ and smooth rendering. The dwarf hold is the only fleet view; dwarves always rend
 as pixels, with size and palette pickers in Settings → Art. The notes below record
 the earlier art experiments.
 
-What Karl asked for:
+What the user asked for:
 - simpler and more unique art;
 - no GPT/cloud generation;
 - animation done in the game rather than baked into frames;
@@ -150,7 +150,7 @@ Built (commit 8f7716c, bead `myr-bov.1`):
 - **`src/ui/dwarf/cutout.rs`, the piece painter.** A piece is a few polygons that move as
   one part. A `Finish` sets how pieces are drawn. **Ink** is the default: a thin dark
   outline, flat fills, no shadow. **Paper** is the first try: a cream border, drop shadows
-  and brass pins. Karl: "how the character is composed and behaves, but it doesn't need to
+  and brass pins. The user: "how the character is composed and behaves, but it doesn't need to
   look like it's made of paper." Ear-clipping triangulation lets concave
   shapes (beards, boots) fill correctly in egui. Smooth outlines come from a few control
   points (Catmull-Rom), placed by an affine transform. Brass split pins mark the joints.
@@ -174,7 +174,7 @@ Built (commit 8f7716c, bead `myr-bov.1`):
 ![The first try, paper finish](tests/paper-dwarf-lab.png)
 ![Wind-up, strike, study](tests/paper-dwarf-poses.png)
 
-**Pixel experiment** (Karl: "make them low res via a pixelization model and color filter"):
+**Pixel experiment** (the user: "make them low res via a pixelization model and color filter"):
 
 - **`src/ui/dwarf/pixel.rs`:** the dwarf's shapes go through epaint's own tessellator, then
   a small CPU rasteriser at the target size: one sample per pixel by default (hard edges),
@@ -203,7 +203,7 @@ Notes: the outline colour has to stay clear of the background. On the dark mine 
 palette's darkest colour can swallow the outline (Oil 6, Fantasy 24). The farm would want a
 lighter backdrop, or an outline colour picked per palette.
 
-**In the app** (Karl: "add this pixel and palette options to the app itself"): a new
+**In the app** (the user: "add this pixel and palette options to the app itself"): a new
 **Settings → Art** section, saved as the `art` key in `settings.json` and applied at once.
 
 - **Dwarf pixels:** Smooth, Farm pixels (one pixel per farm texel, matching the farm's
@@ -227,12 +227,12 @@ shows the demo fleet.
 ![The farm with dwarves](tests/farm-dwarves.png)
 ![Smooth (top) and farm pixels in Endesga 32 (bottom)](tests/farm-dwarves-smooth-vs-pixel.png)
 
-Also fixed after Karl's notes:
+Also fixed after the user's notes:
 - The mining swing is overhead now, with both hands on the handle. It goes up behind the
   head, over the top and down in front; before, it swung underarm.
 - The pickaxe head curves back towards the hands.
 
-**Roles, parts and poses** (Karl: "more roles and more parts … and any other things you can
+**Roles, parts and poses** (the user: "more roles and more parts … and any other things you can
 think of"; the front-facing King and Envoy were dropped as unnecessary complexity). The dwarf
 module is now split into `mod.rs` (look, names, assembly), `pose.rs` and `parts.rs`.
 
@@ -269,7 +269,7 @@ module is now split into `mod.rs` (look, names, assembly), `pose.rs` and `parts.
 
   Lying dwarves put their tool away.
 - **Farm mapping:**
-  - waiting on Karl → Wait;
+  - waiting on the user → Wait;
   - building → Build;
   - working coordinators and the Envoy → Study;
   - done → Carry or Hold (the crumb sprite is dropped for dwarves);
@@ -282,7 +282,7 @@ module is now split into `mod.rs` (look, names, assembly), `pose.rs` and `parts.
 ![The lab crowd: roles and parts](tests/dwarf-roles-crowd.png)
 ![The farm with roles](tests/farm-dwarf-roles.png)
 
-Next, if Karl likes the direction:
+Next, if the user likes the direction:
 - showing each agent's dwarf name somewhere in the app (tooltip or details);
 - a lighter farm backdrop, or a per-palette outline colour, where a palette's darkest
   colour swallows the outline;
@@ -362,7 +362,7 @@ raw material, not finished sprites.
 | `init` a Stronghold art project | Works |
 | `plan` a 16 px sprite with a 2-frame walk | Works, writes the exact prompt per action |
 | `map` + `check` on today's `crown.png` | Works. The original fails the check (5 off-palette colors), the mapped copy passes |
-| `generate --backend reference`, a dwarf miner | Works. SDXL reference in 34 s, then cutout and a fixed-palette export. A first try was refused for disk space (3.9 GiB free, 4 GiB reserve hard-coded); Karl freed space and the rerun passed |
+| `generate --backend reference`, a dwarf miner | Works. SDXL reference in 34 s, then cutout and a fixed-palette export. A first try was refused for disk space (3.9 GiB free, 4 GiB reserve hard-coded); the user freed space and the rerun passed |
 | Same reference exported at 32, 48 and 64 px | Works. 32 px is muddy, 48 px reads as a dwarf, 64 px is clearly better (see below) |
 
 ![SDXL reference for the test dwarf](tests/dwarf-reference.png)
@@ -407,7 +407,7 @@ motion, and it still needed cleanup.
    are applied at runtime) and ask for a flat grey background.
 2. [`tools/imagegen.sh`](tools/imagegen.sh) runs one headless `codex exec` call per image,
    with the identity reference attached (`-i`). It copies the untouched PNG out. About
-   1–2 minutes per image, on Karl's Codex quota.
+   1–2 minutes per image, on the user's Codex quota.
 3. **Reference first:** one still per character
    ([`prompts/miner-ref-v2.txt`](prompts/miner-ref-v2.txt)), then one sheet per action
    from that reference (`miner-mine.txt`, 8 poses; `miner-think.txt`, 6; `king-command.txt`,
@@ -426,7 +426,7 @@ motion, and it still needed cleanup.
 
 ![Miner `mine` (48 px) and King `command` (64 px), drawn by image_gen, area-downscaled, shown 4× and 3×](tests/imagegen-sheets-48-64.png)
 
-Karl's notes on the image_gen rounds:
+The user's notes on the image_gen rounds:
 
 - **Too tall.** The first dwarves were about 4½ heads tall. The proportions line that fixed
   it, now in every prompt: *"a proper fantasy dwarf, NOT a short human: about 2.5–3 heads
@@ -495,8 +495,8 @@ or a pose in it (same places, same state → place rules for every agent).
 | Subagent (trails its parent) | **Apprentice**: a young, short-bearded dwarf carrying a lantern behind their elder |
 | The Envoy (outside world) | **Ravenmaster**, facing the camera: a raven roost on the surface, and a desk underground with a brass **speaking tube** and ear trumpet |
 | Claude / Codex / unknown agent | **Livery colour** of hood and tunic: amber-ochre / slate with teal trim / plain grey |
-| Needs input (waiting on Karl) | Dwarves queue at the **mine entrance** on the mountainside |
-| Karl's messages | Pop out of a brass **message tube** rising from the rock, as sealed scrolls |
+| Needs input (waiting on the user) | Dwarves queue at the **mine entrance** on the mountainside |
+| The user's messages | Pop out of a brass **message tube** rising from the rock, as sealed scrolls |
 | Done / PR ready | Dwarf carries a **gold nugget** to the **treasury**, where each PR is a **treasure heap** |
 | Idle / stalled | Dwarf **dozing** against the rock, sitting on a crate |
 | The whip (nudge a stalled agent) | A **pebble bonks the helmet**: a small stone arcs in, "tink", the dwarf jolts awake |
@@ -618,7 +618,7 @@ Frame counts are targets (6–8 per loop); durations are tuned in code.
    gems, so neighbouring heaps differ.
 9. **`treasure_chest`** (treasury dressing): *Size:* 48×40. *Visual:* an open iron-bound
    oak chest spilling gold.
-10. **`scroll`**: a message in flight, and Karl's messages from the tube. *Size:* 18×12.
+10. **`scroll`**: a message in flight, and the user's messages from the tube. *Size:* 18×12.
     *Visual:* a rolled parchment tied with string and a red wax seal.
 11. **`pebble`**: the whip. *Size:* 9×9, 2 frames. *Visual:* a small grey stone; frame two
     adds a white "tink" spark.
@@ -637,10 +637,10 @@ bottom left, the mark centred.
 
 ### 4d. Set pieces: places in the hold
 
-18. **`mine_entrance`**: the landing, where dwarves wait for Karl. *Size:* about 96×72.
+18. **`mine_entrance`**: the landing, where dwarves wait for the user. *Size:* about 96×72.
     *Visual:* a timber-framed portal cut into the rocky hillside, a lantern on a hook, a
     small wooden sign with crossed pickaxes. Dwarves stand in line beside it.
-19. **`message_tube`**: replaces Karl's green pipe. *Size:* 48×72, built as three parts:
+19. **`message_tube`**: replaces the user's green pipe. *Size:* 48×72, built as three parts:
     a flared brass bell mouth on top, a body segment that tiles vertically (it stretches while
     a message pops out), and a riveted base flange. A blank brass plate on the body holds the
     code-drawn label.
@@ -746,7 +746,7 @@ is drawn at a whole-pixel scale. `src/ui/art.rs` would load PNGs with nearest fi
 
 ### 4i. Side view: getting the dwarves to face sideways
 
-Karl's first note: the test dwarf looks at the camera. SDXL with the pixel-art LoRA leans
+The user's first note: the test dwarf looks at the camera. SDXL with the pixel-art LoRA leans
 heavily towards front and three-quarter views, and "side profile facing right" in Paleccino's
 prompt template isn't enough on its own.
 
@@ -774,7 +774,7 @@ findings above matter only if Paleccino's local reference stage is used.
   repeats the facing.
 - **To make it reliable,** port fitness-rpg's `--guide-image` / `--guide-strength`
   (image-to-image from a side-view silhouette) and `view = "profile"` into Paleccino.
-  That changes Paleccino, not Stronghold, so it's Karl's call. With a guide, every seed comes
+  That changes Paleccino, not Stronghold, so it's the user's call. With a guide, every seed comes
   out in profile, and dwarves of one role share a stance, which helps a big roster look
   consistent.
 
@@ -814,7 +814,7 @@ load time.
 
 ### 4k. Variety: a roster built to grow
 
-Karl wants hundreds of different dwarves eventually. For now: a handful while the look
+The user wants hundreds of different dwarves eventually. For now: a handful while the look
 settles, built so more can be added endlessly.
 
 - **One TOML file per dwarf** under `art/roster/`: role (miner, foreman, apprentice), build,
@@ -836,7 +836,7 @@ settles, built so more can be added endlessly.
 
 ## 5. Decisions
 
-Settled with Karl (2026-10-11/12):
+Settled with the user (2026-10-11/12):
 
 - Theme: dwarves underground, mining for gold and treasure; grim and gritty.
 - 48 px actor cells (the King 64 px).
@@ -853,7 +853,7 @@ Still open:
    ravenmaster.
 2. **The whip.** A pebble bonking the helmet is my suggestion. Alternatives: the foreman
    ringing a hand bell, or a splash from a water bucket.
-3. **Karl's pipe.** A brass message tube is my suggestion. Alternatives: a mine-lift cage
+3. **the user's pipe.** A brass message tube is my suggestion. Alternatives: a mine-lift cage
    that comes down, or a well with a bucket.
 4. **UI illustrations as pixel art** (King avatar, empty states, app icon), or smooth vector?
 5. **Which palettes to bundle** for the first version of the picker (see 4j).

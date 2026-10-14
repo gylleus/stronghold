@@ -1,6 +1,6 @@
 //! The King section: his model and effort (saving restarts his `claude` process on the same
 //! conversation), auto mode, speaking his replies aloud, and the default model and effort of
-//! the dwarves he (or Karl) spawns.
+//! the dwarves he (or the user) spawns.
 
 use eframe::egui;
 

@@ -18,9 +18,9 @@ const INTERRUPTED_NOTE: &str = "[Request interrupted by user]";
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatItem {
     User(String),
-    /// An incoming agent message, never a Karl bubble.
+    /// An incoming agent message, never a the user bubble.
     Inbox(Box<crate::king_inbox::InboxMessage>),
-    /// Karl's message spoken with hold-to-talk (drawn with a 🎤 marker).
+    /// The user's message spoken with hold-to-talk (drawn with a 🎤 marker).
     VoiceUser(String),
     /// Reply text as streamed, `<say>` tags included; the pane shows the say-line apart
     /// (see [`split_say`](super::say::split_say)).
@@ -31,7 +31,7 @@ pub enum ChatItem {
     Tool(ToolCall),
     Permission(PermissionCard),
     Notice(String),
-    /// A note from Stronghold itself (e.g. auto mode changed), not typed by Karl.
+    /// A note from Stronghold itself (e.g. auto mode changed), not typed by the user.
     System(String),
     Error(String),
 }
@@ -150,7 +150,7 @@ impl Transcript {
         self.running = true;
     }
 
-    /// A message Karl spoke (hold-to-talk).
+    /// A message the user spoke (hold-to-talk).
     pub fn push_voice_user(&mut self, text: &str) {
         self.push_local(ChatItem::VoiceUser(text.to_owned()));
         self.running = true;

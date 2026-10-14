@@ -1,7 +1,7 @@
 //! Starting new agent sessions from Stronghold: in an existing worktree, in a new worktree, or as
 //! a worker of an existing run.
 //!
-//! A [`SpawnRequest`] (what Karl or the King asked for, resolved to Orca ids) becomes a
+//! A [`SpawnRequest`] (what the user or the King asked for, resolved to Orca ids) becomes a
 //! [`SpawnPlan`]: the `orca` calls to make, in order ([`Step`]). Building the plan is pure, so
 //! the dialog can show the exact commands before launch; [`exec`] runs them on a background
 //! thread and makes sure the prompt was really submitted ([`verify`]).

@@ -1,9 +1,9 @@
 //! How each Claude session's last turn ended, read from its main transcript: whether the agent
-//! ended it asking a question (and so waits on Karl) and when Karl last prompted it.
+//! ended it asking a question (and so waits on the user) and when the user last prompted it.
 //!
 //! A turn ends with an assistant record whose `stop_reason` is `end_turn`. If its text closes
 //! on a question, the session has an [`OpenQuestion`] until a user record that is not a tool
-//! result arrives (Karl's answer, or anything else that starts a new turn). Sidechain and meta
+//! result arrives (the user's answer, or anything else that starts a new turn). Sidechain and meta
 //! records are skipped. Files are tailed from a remembered offset like [`super::usage`].
 
 use std::collections::{BTreeMap, HashMap, HashSet};

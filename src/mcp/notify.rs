@@ -1,4 +1,4 @@
-//! The `notify` MCP tool: any agent reaches Karl through Stronghold (a pop-up, a sound, his
+//! The `notify` MCP tool: any agent reaches the user through Stronghold (a pop-up, a sound, their
 //! inbox), attributed to the agent's Orca terminal like `mark_pr_ready`.
 
 use std::path::Path;
@@ -20,24 +20,24 @@ use crate::review::mark::Origin;
 macro_rules! rules_text {
     () => {
         "When to call notify (the clan playbook's rules): \
-(1) Blocked on Karl for something he must do: a permission, credential, passkey or 2FA, prod \
+(1) Blocked on {user} for something they must do: a permission, credential, passkey or 2FA, prod \
 approval. Severity warn, or urgent if work is stalled and can't wait; say what you need and \
-what it unblocks. A question you wait on him to answer goes through ask_karl instead. \
-Envoy questions also use ask_karl: they reach Karl's inbox while the Envoy keeps taking batches. \
-(2) Handover, you're done and the next move is Karl's: a PR ready for his review (right after \
-merge_ready and mark_pr_ready; a coordinator after the ready marker), a merge waiting on him, a \
-run or campaign finished. Severity info, with the url and one line on what he needs to do next; \
+what it unblocks. A question you wait on them to answer goes through ask_user instead. \
+Envoy questions also use ask_user: they reach {user}'s inbox while the Envoy keeps taking batches. \
+(2) Handover, you're done and the next move is {user}'s: a PR ready for their review (right after \
+merge_ready and mark_pr_ready; a coordinator after the ready marker), a merge waiting on them, a \
+run or campaign finished. Severity info, with the url and one line on what they need to do next; \
 a status, never a question about merging. Stronghold folds a PR handover into its own \
-\"PR ready for review\" notification, so Karl gets one. When you'd stay for his follow-ups \
-(you usually would), make the handover an ask_karl (info, \"Done: ... Anything else, or can I \
+\"PR ready for review\" notification, so {user} gets one. When you'd stay for their follow-ups \
+(you usually would), make the handover an ask_user (info, \"Done: ... Anything else, or can I \
 close?\") instead, not both. \
 (3) Not for progress or routine status; one notification per event. A terminal waiting at a \
-prompt already shows as needs input and is notified by Stronghold; leaving, once Karl says so, is \
-finish_session, which records and tells Karl itself. \
+prompt already shows as needs input and is notified by Stronghold; leaving, once {user} says so, is \
+finish_session, which records and tells {user} itself. \
 (4) Workers under a coordinator go through it (ask, escalation, merge_ready) and don't call \
-notify, except to summon Karl for a credential step; a standalone session with no coordinator \
-notifies Karl directly. \
-(5) If Stronghold isn't running, notify queues the notification and Karl sees it in his inbox when \
+notify, except to summon {user} for a credential step; a standalone session with no coordinator \
+notifies {user} directly. \
+(5) If Stronghold isn't running, notify queues the notification and {user} sees it in their inbox when \
 Stronghold starts. A handover can wait for that; a blocking ask that can't also gets the osascript \
 summon dialog."
     };
@@ -51,17 +51,16 @@ pub const RULES: &str = rules_text!();
 pub fn definitions() -> Vec<Value> {
     vec![json!({
         "name": "notify",
-        "title": "Notify Karl",
+        "title": "Notify {user}",
         "description": format!(
-            "Sends Karl, the human who runs this clan, a notification through Stronghold (his \
-             clan dashboard): a macOS and/or in-app pop-up with a sound, as his settings say, \
-             kept in his inbox and attributed to your terminal. Clicking it selects your node \
+            "Sends {user}, the human who runs this clan, a notification through Stronghold (their \
+             clan dashboard): a macOS and/or in-app pop-up with a sound, as their settings say, \
+             kept in their inbox and attributed to your terminal. Clicking it selects your node \
              and opens `url`. Works even when Stronghold isn't running: the notification is \
-             queued and reaches his inbox when it starts. {RULES} Urgent gets through Karl's quiet mode. Put what and \
+             queued and reaches their inbox when it starts. {RULES} Urgent gets through {user}'s quiet mode. Put what and \
              which task in the title and the ask in the message. Identical repeats collapse \
              into one; each agent gets at most {AGENT_MAX} per {} minutes.",
-            AGENT_WINDOW_MS / 60_000
-        ),
+            AGENT_WINDOW_MS / 60_000, user = crate::user::name()),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -71,7 +70,7 @@ pub fn definitions() -> Vec<Value> {
                 },
                 "message": {
                     "type": "string",
-                    "description": format!("What you need from Karl or what happened, in a sentence or two (up to {MAX_MESSAGE_CHARS} characters)."),
+                    "description": format!("What you need from {user} or what happened, in a sentence or two (up to {MAX_MESSAGE_CHARS} characters).", user = crate::user::name()),
                 },
                 "severity": {
                     "type": "string",
@@ -80,7 +79,7 @@ pub fn definitions() -> Vec<Value> {
                 },
                 "url": {
                     "type": "string",
-                    "description": "An http(s) link Karl should open: the PR, issue, dashboard or doc.",
+                    "description": "An http(s) link {user} should open: the PR, issue, dashboard or doc.",
                 },
                 "agent": {
                     "type": "string",
@@ -90,7 +89,7 @@ pub fn definitions() -> Vec<Value> {
             "required": ["title"],
         },
         "annotations": {
-            "title": "Notify Karl",
+            "title": "Notify {user}",
             "readOnlyHint": false,
             "destructiveHint": false,
             "idempotentHint": false,
@@ -146,7 +145,7 @@ fn notify(
     let reply = match control.call("notify", notice.to_params()) {
         Ok(reply) => reply,
         Err(CallError::NotRunning) => return queue(pending, &notice),
-        Err(e) => return error(format!("Couldn't notify Karl: {e}")),
+        Err(e) => return error(format!("Couldn't notify {{user}}: {e}")),
     };
     let text = reply_text(&reply);
     let is_error = reply["outcome"] == "rate_limited";
@@ -164,21 +163,23 @@ fn queue(pending: Option<&Path>, notice: &AgentNotice) -> ToolOutput {
     let Some(path) = pending else {
         return error(
             "Stronghold isn't running and there is no data dir to queue the notification in. \
-             Reach Karl another way if it can't wait."
+             Reach {user} another way if it can't wait."
                 .into(),
         );
     };
     if let Err(e) = pending::append(path, notice, now_ms()) {
         return error(format!(
-            "Stronghold isn't running and queuing the notification failed: {e}. Reach Karl \
-             another way if it can't wait."
+            "Stronghold isn't running and queuing the notification failed: {e}. Reach {user} \
+             another way if it can't wait.",
+            user = crate::user::name()
         ));
     }
     ToolOutput {
-        text: "Stronghold isn't running, so the notification is queued; Karl will see it in his \
+        text:
+            "Stronghold isn't running, so the notification is queued; {user} will see it in their \
                inbox when Stronghold starts. If it is a blocking ask that can't wait, also summon \
-               him with the osascript dialog."
-            .into(),
+               them with the osascript dialog."
+                .into(),
         structured: Some(json!({
             "outcome": "queued",
             "severity": notice.severity.name(),
@@ -203,25 +204,31 @@ pub(crate) fn reply_text(reply: &Value) -> String {
             .collect();
             if ways.is_empty() {
                 let why = if reply["quiet"] == true {
-                    "Karl is in quiet mode"
+                    "{user} is in quiet mode"
                 } else {
-                    "it is below the severity Karl has pop-ups and sounds for"
+                    "it is below the severity {user} has pop-ups and sounds for"
                 };
                 format!(
-                    "Recorded in Karl's inbox without a pop-up ({why}). Use urgent only if it \
-                     really can't wait."
+                    "Recorded in {user}'s inbox without a pop-up ({why}). Use urgent only if it \
+                     really can't wait.",
+                    user = crate::user::name()
                 )
             } else {
-                format!("Sent to Karl ({}).", ways.join(", "))
+                format!(
+                    "Sent to {user} ({}).",
+                    ways.join(", "),
+                    user = crate::user::name()
+                )
             }
         }
         Some("collapsed") => format!(
-            "Same as a notification you sent recently: collapsed into it (×{}), so Karl sees \
+            "Same as a notification you sent recently: collapsed into it (×{}), so {user} sees \
              it once. No need to repeat it.",
-            reply["count"].as_u64().unwrap_or(2)
+            reply["count"].as_u64().unwrap_or(2),
+            user = crate::user::name()
         ),
         Some("folded") => "Folded into Stronghold's own \"PR ready for review\" notification for \
-             this PR, so Karl gets one; your title and message replaced its text."
+             this PR, so {user} gets one; your title and message replaced its text."
             .to_owned(),
         Some("rate_limited") => {
             let mins = reply["retry_after_ms"]
@@ -229,8 +236,9 @@ pub(crate) fn reply_text(reply: &Value) -> String {
                 .map_or(1, |ms| (ms + 59_999) / 60_000);
             format!(
                 "Not sent: you already sent {AGENT_MAX} notifications in the last {} minutes. Put \
-                 what you need from Karl into one notification and try again in {mins} min.",
-                AGENT_WINDOW_MS / 60_000
+                 what you need from {user} into one notification and try again in {mins} min.",
+                AGENT_WINDOW_MS / 60_000,
+                user = crate::user::name()
             )
         }
         other => format!("Stronghold answered {}.", other.unwrap_or("?")),

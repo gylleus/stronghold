@@ -89,7 +89,7 @@ pub struct ReviewRow {
     pub review_decision: Option<String>,
     /// Why GitHub could not be read for this PR.
     pub error: Option<String>,
-    /// Reviewed by Karl, then pushed to.
+    /// Reviewed by the user, then pushed to.
     pub updated_since_review: bool,
 }
 

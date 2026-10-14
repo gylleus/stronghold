@@ -1,18 +1,18 @@
-//! Who an inbound message is for: Karl, someone else, or a call for the Envoy's judgement.
+//! Who an inbound message is for: the user, someone else, or a call for the Envoy's judgement.
 //!
 //! A Slack mention is `<@U…>` (or `<@U…|name>`); a bare `@name` notifies nobody but still names
 //! an addressee, which is how coworkers refer to their agents in text. `<!here>`, `<!channel>`
-//! and `<!everyone>` are broadcasts, not addressees. Karl is known by his member id only.
+//! and `<!everyone>` are broadcasts, not addressees. The user is known by their member id only.
 
 use super::channel::{EventKind, InboundEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Addressee {
-    /// A DM to Karl, or a message that mentions his id.
-    Karl,
-    /// Someone else is tagged and Karl is not; not for Karl unless the Envoy has a strong reason.
+    /// A DM to the user, or a message that mentions their id.
+    User,
+    /// Someone else is tagged and the user is not; not for the user unless the Envoy has a strong reason.
     Other,
-    /// Nobody is tagged, or someone else is tagged in a thread Karl's side owns.
+    /// Nobody is tagged, or someone else is tagged in a thread the user's side owns.
     Unclear,
 }
 
@@ -23,12 +23,12 @@ pub struct Verdict {
 }
 
 impl Verdict {
-    /// ` — addressee: Karl (a DM)`, appended to an event line.
+    /// ` — addressee: the user (a DM)`, appended to an event line.
     pub fn annotation(&self) -> String {
         let who = match self.addressee {
-            Addressee::Karl => "Karl",
-            Addressee::Other => "not Karl",
-            Addressee::Unclear => "unclear",
+            Addressee::User => crate::user::name(),
+            Addressee::Other => crate::user::fill("not {user}"),
+            Addressee::Unclear => "unclear".into(),
         };
         format!(" — addressee: {who} ({})", self.why)
     }
@@ -95,72 +95,76 @@ fn is_broadcast(name: &str) -> bool {
     )
 }
 
-/// Whether `text` mentions Karl's member id.
-pub fn mentions_karl(text: &str, karl: &str) -> bool {
-    let karl = format!("<@{}>", karl.to_ascii_uppercase());
-    mentions(text).iter().any(|m| m == &karl)
+/// Whether `text` mentions the user's member id.
+pub fn mentions_user(text: &str, user_id: &str) -> bool {
+    let tag = format!("<@{}>", user_id.to_ascii_uppercase());
+    mentions(text).iter().any(|m| m == &tag)
 }
 
-/// A bare `@karl…` names Karl without notifying him: a hint, never proof.
-fn names_karl(mention: &str) -> bool {
-    mention.starts_with("@karl")
+/// A bare `@name…` names the user without notifying them: a hint, never proof.
+fn names_user(mention: &str) -> bool {
+    let name = crate::user::name().to_lowercase();
+    !name.contains(' ') && mention.to_lowercase().starts_with(&format!("@{name}"))
 }
 
-/// Who `event` is for. `thread` holds the other inbox events in its thread (Karl's own posts
-/// never reach the inbox, so a thread he started is known only when its root mentioned him).
-/// `karls_thread` says the app knows Karl's side owns the thread: a dwarf's `reach_out` thread,
+/// Who `event` is for. `thread` holds the other inbox events in its thread (the user's own posts
+/// never reach the inbox, so a thread they started is known only when its root mentioned them).
+/// `users_thread` says the app knows the user's side owns the thread: a dwarf's `reach_out` thread,
 /// a watched thread, or one the Envoy replied in.
 pub fn classify(
     event: &InboundEvent,
     thread: &[&InboundEvent],
-    karl: &str,
-    karls_thread: bool,
+    user_id: &str,
+    users_thread: bool,
 ) -> Verdict {
     if event.kind == EventKind::Dm {
         return Verdict {
-            addressee: Addressee::Karl,
+            addressee: Addressee::User,
             why: "a DM".into(),
         };
     }
-    if mentions_karl(&event.text, karl) {
+    if mentions_user(&event.text, user_id) {
         return Verdict {
-            addressee: Addressee::Karl,
-            why: "mentions Karl".into(),
+            addressee: Addressee::User,
+            why: crate::user::fill("mentions {user}"),
         };
     }
-    let (named_karl, others): (Vec<String>, Vec<String>) = mentions(&event.text)
+    let (named_user, others): (Vec<String>, Vec<String>) = mentions(&event.text)
         .into_iter()
-        .partition(|m| names_karl(m));
+        .partition(|m| names_user(m));
     if others.is_empty() {
         return Verdict {
             addressee: Addressee::Unclear,
-            why: if named_karl.is_empty() {
+            why: if named_user.is_empty() {
                 "no mention".into()
             } else {
-                "a bare @karl, not a real mention".into()
+                format!(
+                    "a bare @{}, not a real mention",
+                    crate::user::name().to_lowercase()
+                )
             },
         };
     }
     let tags = format!("tags {}", list(&others));
-    if !named_karl.is_empty() {
+    if !named_user.is_empty() {
         return Verdict {
             addressee: Addressee::Unclear,
-            why: format!("{tags} and a bare @karl"),
+            why: format!("{tags} and a bare @{}", crate::user::name().to_lowercase()),
         };
     }
-    let in_karls_thread = karls_thread
+    let in_users_thread = users_thread
         || thread
             .iter()
-            .any(|e| e.kind == EventKind::Dm || mentions_karl(&e.text, karl));
-    if in_karls_thread {
+            .any(|e| e.kind == EventKind::Dm || mentions_user(&e.text, user_id));
+    if in_users_thread {
         Verdict {
             addressee: Addressee::Unclear,
-            why: format!("{tags} in Karl's thread"),
+            why: format!("{tags} in {user}'s thread", user = crate::user::name()),
         }
     } else {
         Verdict {
             addressee: Addressee::Other,
-            why: format!("{tags}, not Karl"),
+            why: format!("{tags}, not {user}", user = crate::user::name()),
         }
     }
 }
@@ -217,8 +221,8 @@ mod tests {
                 "<!subteam^S123>",
             ]
         );
-        assert!(mentions_karl("ping <@u000karl001|karl>", KARL));
-        assert!(!mentions_karl("ping @karl", KARL));
+        assert!(mentions_user("ping <@u000karl001|karl>", KARL));
+        assert!(!mentions_user("ping @karl", KARL));
     }
 
     #[test]
@@ -238,19 +242,19 @@ mod tests {
     #[test]
     fn karl_tagged_is_for_karl() {
         let v = judge("<@U000KARL001> is api#694 ready?");
-        assert_eq!(v.addressee, Addressee::Karl);
+        assert_eq!(v.addressee, Addressee::User);
         assert_eq!(v.annotation(), " — addressee: Karl (mentions Karl)");
         let v = classify(&event(EventKind::Dm, None, "hey"), &[], KARL, false);
-        assert_eq!(v.addressee, Addressee::Karl);
+        assert_eq!(v.addressee, Addressee::User);
         assert_eq!(v.why, "a DM");
     }
 
     #[test]
     fn both_tagged_is_for_karl() {
         let v = judge("<@U000COWORK1> <@U000KARL001> can you two sync on the wheat preload?");
-        assert_eq!(v.addressee, Addressee::Karl);
+        assert_eq!(v.addressee, Addressee::User);
         let v = judge("@search-agent cc <@u000karl001>");
-        assert_eq!(v.addressee, Addressee::Karl);
+        assert_eq!(v.addressee, Addressee::User);
     }
 
     #[test]

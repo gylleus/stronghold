@@ -10,7 +10,7 @@
 //! every run it covers.
 //!
 //! The message type is `status` (informational, no reply expected). Text is prefixed with
-//! `King: ` per `docs/heartbeat-convention.md`: broadcasts are Karl speaking through the King.
+//! `King: ` per `docs/heartbeat-convention.md`: broadcasts are the user speaking through the King.
 
 use std::collections::{BTreeSet, HashMap};
 use std::thread;

@@ -1835,7 +1835,7 @@ fn portal_stone_threshold_meets_the_surface_in_every_outline() {
     use super::world::{Prop, render};
     use crate::ui::dwarf::cutout::Outline;
     let scene = scene(&snapshot());
-    let foot = scene.karl_portal();
+    let foot = scene.user_portal();
     for outline in Outline::ALL {
         let image = render(Prop::Portal, Prop::Portal.size(), 0, outline);
         let bottom = (0..image.size[1])
