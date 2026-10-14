@@ -1,4 +1,4 @@
-//! Minecart journeys through chamber sidings, shaft hoists and the gallery.
+//! Walking journeys along horizontal galleries and their shared ladders.
 
 use super::layout::{Scene, Spot};
 use eframe::egui::{Pos2, Rect, Vec2, pos2};
@@ -8,69 +8,44 @@ pub const SPEED: f32 = 240.0;
 pub const MIN_WALK_S: f64 = 0.5;
 pub const MAX_WALK_S: f64 = 2.5;
 
-/// A cart uses the actual shaft mouths instead of cutting vertically through solid rock.
-/// Chamber legs stay inside the room; shaft legs are carried by a hoist.
+/// Walk along work rows and use the shared ladder to change depth. Resolve access from
+/// the current position too: a state change can interrupt a climb or a gallery crossing.
 pub fn route(from: Pos2, to: Pos2, from_spot: &Spot, to_spot: &Spot, scene: &Scene) -> Vec<Pos2> {
-    if from_spot.area() == to_spot.area() {
-        return vec![from, pos2(to.x, from.y), to];
+    let underground = |p: Pos2| p.y > scene.gallery.bottom();
+    let ladder_x = scene.work_ladder().center().x;
+    if underground(from) && underground(to) {
+        let mut path = if (from.y - to.y).abs() < f32::EPSILON {
+            vec![from, to]
+        } else {
+            vec![from, pos2(ladder_x, from.y), pos2(ladder_x, to.y), to]
+        };
+        path.dedup();
+        return path;
     }
-    fn access(at: Pos2, spot: &Spot, scene: &Scene) -> Vec<Pos2> {
+    if from_spot.area() == to_spot.area() && from.y == to.y {
+        return vec![from, to];
+    }
+    let access = |at: Pos2, spot: &Spot| {
         let gy = scene.gallery.center().y;
-        if scene.gallery.contains(at) {
-            return vec![at, pos2(at.x, gy)];
-        }
-        // A second state change can interrupt a journey in its shaft.
-        if let Some(t) = scene
-            .tunnels
-            .iter()
-            .find(|t| t.shaft.contains(at) && !t.chamber.contains(at))
-        {
-            return vec![
-                at,
-                pos2(t.shaft.center().x, at.y),
-                pos2(t.shaft.center().x, gy),
-            ];
-        }
-        let x = match spot {
-            Spot::Landing(_) => scene.entrance_x(),
-            Spot::King => scene.throne_hall.center().x,
-            Spot::Storage(_) => scene.storage.center().x,
-            Spot::Comms => scene.comms.map_or(at.x, |r| r.shaft.center().x),
-            Spot::Mouth(key, _) | Spot::Chamber(key, _) => {
-                if let Some(t) = scene.tunnels.iter().find(|t| &t.key == key) {
-                    return vec![
-                        at,
-                        pos2(t.shaft.center().x, at.y),
-                        pos2(t.shaft.center().x, gy),
-                    ];
-                }
-                at.x
+        let x = if underground(at) {
+            ladder_x
+        } else if scene.gallery.contains(at) {
+            at.x
+        } else {
+            match spot {
+                Spot::Landing(_) => scene.entrance_x(),
+                Spot::King => scene.throne_hall.center().x,
+                Spot::Storage(_) => scene.storage.center().x,
+                Spot::Comms => scene.comms.map_or(at.x, |r| r.shaft.center().x),
+                Spot::Mouth(..) | Spot::Chamber(..) | Spot::Trail(..) => at.x,
             }
-            Spot::Trail(..) => at.x,
         };
         vec![at, pos2(x, at.y), pos2(x, gy)]
-    }
-    let mut path = access(from, from_spot, scene);
-    let arrival = access(to, to_spot, scene);
-    path.extend(arrival.into_iter().rev());
+    };
+    let mut path = access(from, from_spot);
+    path.extend(access(to, to_spot).into_iter().rev());
     path.dedup();
     path
-}
-
-/// The overhead anchor for a cart hoist, in the shaft or room it currently occupies.
-pub fn hoist_ceiling(scene: &Scene, at: Pos2) -> f32 {
-    if let Some(t) = scene.tunnels.iter().find(|t| t.chamber.contains(at)) {
-        return t.chamber.top() + 2.0 * scene.px;
-    }
-    if let Some(t) = scene.tunnels.iter().find(|t| t.shaft.contains(at)) {
-        return t.shaft.top();
-    }
-    for r in [scene.throne_hall, scene.storage] {
-        if r.contains(at) {
-            return r.top();
-        }
-    }
-    scene.surface_y
 }
 
 pub fn path_length(path: &[Pos2]) -> f32 {

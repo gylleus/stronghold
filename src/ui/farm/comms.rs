@@ -42,7 +42,7 @@ pub fn paint(
     let Some(mut room) = scene.comms else { return };
     let px = room.px;
     sprites.passage(painter, room.shaft, scene.px);
-    sprites.shoring(painter, room.shaft, scene.px);
+    sprites.ladder(painter, room.shaft, scene.px);
     sprites.masonry(painter, room.chamber);
     let offset = vec2(receipt.offset, 0.0);
     room.chamber = room.chamber.translate(offset);

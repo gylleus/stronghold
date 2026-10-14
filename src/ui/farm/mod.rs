@@ -244,11 +244,10 @@ pub struct FarmView {
     dwarf_art: DwarfArt,
 }
 
-/// A room's chamber, shaft and label relative to the farm's rect (see [`motion::to_unit`]).
+/// A room's chamber and label relative to the farm's rect (see [`motion::to_unit`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct RoomShape {
     chamber: Rect,
-    shaft: Rect,
     label_top: Pos2,
 }
 
@@ -259,7 +258,6 @@ impl RoomShape {
         };
         Self {
             chamber: unit(tunnel.chamber),
-            shaft: unit(tunnel.shaft),
             label_top: motion::to_unit(tunnel.label_top, rect),
         }
     }
@@ -269,12 +267,11 @@ impl RoomShape {
             |a: Rect, b: Rect| Rect::from_min_max(a.min.lerp(b.min, t), a.max.lerp(b.max, t));
         Self {
             chamber: rect(self.chamber, to.chamber),
-            shaft: rect(self.shaft, to.shaft),
             label_top: self.label_top.lerp(to.label_top, t),
         }
     }
 
-    fn screen(self, rect: Rect) -> (Rect, Rect, Pos2) {
+    fn screen(self, rect: Rect) -> (Rect, Pos2) {
         let screen = |r: Rect| {
             Rect::from_min_max(
                 motion::from_unit(r.min, rect),
@@ -283,7 +280,6 @@ impl RoomShape {
         };
         (
             screen(self.chamber),
-            screen(self.shaft),
             motion::from_unit(self.label_top, rect),
         )
     }
@@ -977,14 +973,14 @@ impl FarmView {
                 self.room_glides.remove(&tunnel.key);
                 continue;
             }
-            let (chamber, shaft, label_top) = glide.at(target, now_s).screen(rect);
-            let shift = chamber.right_bottom() - tunnel.chamber.right_bottom();
+            let (chamber, label_top) = glide.at(target, now_s).screen(rect);
+            let shift = chamber.right_top() - tunnel.chamber.right_top();
             for bed in &mut scene.beds {
                 if tunnel.chamber.contains(bed.rect.center()) {
                     bed.rect = bed.rect.translate(shift);
                 }
             }
-            (tunnel.chamber, tunnel.shaft, tunnel.label_top) = (chamber, shaft, label_top);
+            (tunnel.chamber, tunnel.label_top) = (chamber, label_top);
         }
         self.room_glides.retain(|key, _| shapes.contains_key(key));
         self.room_shapes = shapes;
@@ -1216,12 +1212,15 @@ fn paint_ground(
         up(scene.storage.center().x, scene.storage.bottom() - px),
     ] {
         sprites.passage(painter, shaft, px);
-        sprites.shoring(painter, shaft, px);
+        sprites.ladder(painter, shaft, px);
     }
-    for tunnel in &scene.tunnels {
-        sprites.passage(painter, tunnel.shaft, px);
-        sprites.shoring(painter, tunnel.shaft, px);
+    let ladder = scene.work_ladder();
+    sprites.passage(painter, ladder, px);
+    for gallery in scene.work_galleries() {
+        sprites.passage(painter, gallery, px);
+        sprites.gallery(painter, gallery, px);
     }
+    sprites.ladder(painter, ladder, px);
     sprites.passage(painter, scene.gallery, px);
     sprites.gallery(painter, scene.gallery, px);
     sprites.standing(
@@ -1249,20 +1248,6 @@ fn paint_ground(
     sprites.throne_hall(painter, scene.throne_hall, px);
     sprites.masonry(painter, scene.storage);
     for tunnel in &scene.tunnels {
-        let seed = dwarf::seed_of(&tunnel.label) as u8;
-        sprites.cave(painter, tunnel.chamber, seed);
-        let mut rows = Vec::new();
-        for dwarf in &scene.dwarves {
-            if matches!(&dwarf.spot, Spot::Chamber(key,_) if key == &tunnel.key) {
-                let y = dwarf.pos.y + dwarf.size / 2.0;
-                if !rows.iter().any(|row: &f32| (row - y).abs() < px) {
-                    rows.push(y);
-                }
-            }
-        }
-        for y in rows {
-            sprites.siding(painter, tunnel.chamber, y, px);
-        }
         if tunnel.key != TunnelKey::RestingArea {
             let prop = world::Prop::ToolRack;
             let size = prop.size().map(|n| n as f32 * px * 0.85);
@@ -1285,44 +1270,35 @@ fn paint_ground(
         sprites.bed(painter, bed.rect, px);
     }
 
-    // Each tunnel's name and progress under the gallery, above its shaft.
+    // A single header line leaves the status bubbles clear of the name and task count.
     let font = FontId::monospace(9.0 + 2.0 * px);
     for tunnel in &scene.tunnels {
         let top = tunnel.label_top;
         let width = tunnel.chamber.width() + 0.4 * a;
+        let title = match tunnel.tasks {
+            Some((done, total)) => format!("{done}/{total} · {}", tunnel.label),
+            None => tunnel.label.clone(),
+        };
         let text = label(
             painter,
             top,
             Align2::CENTER_TOP,
-            &tunnel.label,
+            &title,
             font.clone(),
             width,
             px,
             palette,
         );
-        // The run's task progress: a bar filling as tasks complete, and the count.
-        if let (Some(progress), Some((done, total))) = (tunnel.progress, tunnel.tasks) {
-            let count = format!("{done}/{total} tasks done");
-            let small = FontId::monospace(8.0 + 1.5 * px);
+        if let Some(progress) = tunnel.progress {
             let bar_w = width.min(text.width().max(3.0 * a));
             let bar = Rect::from_center_size(
-                egui::pos2(top.x, text.bottom() + 4.0 * px),
+                egui::pos2(top.x, text.bottom() + 2.0 * px),
                 vec2(bar_w, 2.0 * px),
             );
             painter.rect_filled(bar.expand(px), 0.0, palette.label_shadow);
             painter.rect_filled(bar, 0.0, world::WOOD_DARK);
             let filled = Rect::from_min_size(bar.min, vec2(bar.width() * progress, bar.height()));
             painter.rect_filled(filled, 0.0, world::GOLD);
-            label(
-                painter,
-                egui::pos2(top.x, bar.bottom() + 2.0 * px),
-                Align2::CENTER_TOP,
-                &count,
-                small,
-                width,
-                px,
-                palette,
-            );
         }
     }
     sprites.portal(
@@ -1444,21 +1420,6 @@ fn paint_dwarves(
             cell = cell.translate(vec2(0.0, -layout::SLEEPER_LIFT * tpx));
         }
         let carrying = dwarf.pose == Pose::Carry;
-        let riding = walking
-            && !matches!(
-                dwarf.kind,
-                crate::model::NodeKind::King | crate::model::NodeKind::Envoy
-            );
-        let hoisted = riding && at.heading.is_some_and(|h| h.y.abs() > h.x.abs());
-        if hoisted {
-            sprites.cart_hoist(
-                painter,
-                cell,
-                motion::hoist_ceiling(scene, at.pos),
-                tpx,
-                dwarf.alpha,
-            );
-        }
         // Messages reaching the Envoy: he casts, his crystal lighting the room.
         let casting =
             dwarf.kind == crate::model::NodeKind::Envoy && effects.envoy_receipt.casting();
@@ -1490,6 +1451,8 @@ fn paint_dwarves(
             look: dwarf_look(dwarf),
             action: if casting {
                 Action::Cast
+            } else if walking && at.heading.is_some_and(|h| h.y.abs() > h.x.abs()) {
+                Action::Climb
             } else {
                 dwarf_action(dwarf, walking, carrying, effects.king_busy)
             },
@@ -1513,15 +1476,7 @@ fn paint_dwarves(
             }
             continue;
         }
-        let rider_cell = if riding {
-            cell.translate(vec2(0.0, -3.0 * tpx))
-        } else {
-            cell
-        };
-        figures.body(painter, &figure, rider_cell, px, now_s);
-        if riding {
-            sprites.cart(painter, cell, tpx, carrying, hoisted, now_s, dwarf.alpha);
-        }
+        figures.body(painter, &figure, cell, px, now_s);
         if let Some(bed) = bed {
             sprites.blanket(painter, bed.rect, cell, tpx, dwarf.alpha);
         }
@@ -1622,7 +1577,8 @@ fn dwarf_action(dwarf: &layout::Dwarf, walking: bool, carrying: bool, king_busy:
         };
     }
     match dwarf.pose {
-        _ if walking => Action::Ride,
+        _ if walking && carrying => Action::Carry,
+        _ if walking => Action::Walk,
         _ if carrying => Action::Hold,
         _ if dwarf.state == NodeState::Stalled => Action::Wait,
         Pose::Dig => Action::Mine,

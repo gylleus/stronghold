@@ -20,7 +20,7 @@ use eframe::egui::Vec2;
 use serde::{Deserialize, Serialize};
 
 use super::layout::{
-    CELL, Crowd, SHAFT_GAP, SLOT, TunnelKey, band, chamber_per_row, pack, rows_height,
+    CELL, Crowd, LADDER_GAP, SLOT, TunnelKey, band, chamber_per_row, pack, rows_height,
 };
 
 /// Dwarf slots a room is dug for beyond its dwarves, when the view has the room.
@@ -36,7 +36,7 @@ const PX_STEP: f32 = 0.5;
 /// Most levels of rooms stacked under the gallery.
 const MAX_LEVELS: usize = 3;
 /// Height over each level of rooms for their labels and progress bars, in cells.
-pub const LABEL_GAP: f32 = 1.6;
+pub const LABEL_GAP: f32 = 1.3;
 
 /// One room in the grid.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -125,7 +125,6 @@ pub struct Ground {
     /// Left edge of each column, from the view's left.
     lefts: Vec<f32>,
     widths: Vec<f32>,
-    depths: Vec<usize>,
     /// Height of each level's band under the gallery.
     pub band_h: f32,
     /// From the view's top to the top of the first level's band.
@@ -137,10 +136,12 @@ impl Ground {
         let a = CELL * grid.px;
         let below_top = band(size, a, crowd).gallery_top(a) + (1.2 + LABEL_GAP) * a;
         let band_h = band_height(size.y, below_top, a, grid.levels);
-        let lefts = grid
-            .widths
+        let available = (size.x - LADDER_GAP * a).max(a);
+        let total = grid.widths.iter().sum::<f32>().max(1.0);
+        let widths: Vec<f32> = grid.widths.iter().map(|w| w * available / total).collect();
+        let lefts = widths
             .iter()
-            .scan(0.0, |x, w| {
+            .scan(LADDER_GAP * a, |x, w| {
                 let left = *x;
                 *x += w;
                 Some(left)
@@ -151,47 +152,24 @@ impl Ground {
             px: grid.px,
             levels: grid.levels,
             lefts,
-            widths: grid.widths.clone(),
-            depths: grid.depths.clone(),
+            widths,
             band_h,
             below_top,
         }
     }
 
-    /// Shafts to deeper rooms passing on the right of the room at `(level, col)`.
-    fn gaps(&self, level: usize, col: usize) -> usize {
-        self.depths
-            .get(col)
-            .map_or(0, |d| d.saturating_sub(level + 1))
-    }
-
-    /// Left edge of the chambers in column `col`, from the view's left.
+    /// Left edge of a room column, clear of the shared ladder.
     pub fn chamber_left(&self, col: usize) -> f32 {
         self.lefts.get(col).copied().unwrap_or_default() + 0.3 * self.a
     }
 
-    /// Width of the chamber at `(level, col)`: its column less a margin and room on its right
-    /// for the shafts down to the chambers under it.
-    pub fn chamber_w(&self, level: usize, col: usize) -> f32 {
+    pub fn chamber_w(&self, _level: usize, col: usize) -> f32 {
         let width = self.widths.get(col).copied().unwrap_or_default();
-        let gaps = self.gaps(level, col) as f32 * SHAFT_GAP * self.a;
-        (width - 0.6 * self.a - gaps).max(SLOT * self.a)
-    }
-
-    /// Where the shaft down to the chamber at `(level, col)` runs, from the view's left: an
-    /// upper chamber's middle, else beside the chambers over it.
-    pub fn shaft_x(&self, level: usize, col: usize) -> f32 {
-        let left = self.chamber_left(col);
-        let width = self.chamber_w(level, col);
-        if level == 0 {
-            left + width / 2.0
-        } else {
-            left + width - SHAFT_GAP * self.a / 2.0
-        }
+        (width - 0.6 * self.a).max(SLOT * self.a)
     }
 
     pub fn per_row(&self, level: usize, col: usize) -> usize {
-        chamber_per_row(self.chamber_w(level, col), self.a)
+        chamber_per_row(self.chamber_w(level, col) - self.a, self.a)
     }
 
     /// The most rows a level's band has the height for.
@@ -232,7 +210,7 @@ fn target_rows(footprints: &[usize], per_row: usize, max_rows: usize) -> usize {
 
 /// Width of a chamber holding `per_row` dwarves side by side.
 fn chamber_width(per_row: usize, a: f32) -> f32 {
-    ((per_row - 1) as f32 * SLOT + 2.0).max(SLOT) * a
+    ((per_row - 1) as f32 * SLOT + 3.0).max(SLOT) * a
 }
 
 /// The grid fitted to `size` at `px` for `rooms` (each room's footprints), if every room
@@ -262,18 +240,17 @@ fn fit(
         let depths: Vec<usize> = (0..cols).map(|c| (n - c * levels).min(levels)).collect();
         let mut widths = vec![0.0f32; cols];
         for (i, footprints) in rooms.iter().enumerate() {
-            let (level, col) = (i % levels, i / levels);
+            let col = i / levels;
             let slots = (footprints.iter().sum::<usize>() + spare).max(1);
             let per_row = (1..=slots).find(|&p| {
                 let rows = rows_for(footprints, spare, p);
                 rows <= max_rows && (!packed || rows <= p + 1)
             })?;
-            let gaps = depths[col] - level - 1;
-            let width = chamber_width(per_row, a) + 0.6 * a + gaps as f32 * SHAFT_GAP * a;
+            let width = chamber_width(per_row, a) + 0.6 * a;
             widths[col] = widths[col].max(width);
         }
         let total: f32 = widths.iter().sum();
-        (total <= size.x).then(|| Grid {
+        (total <= size.x - LADDER_GAP * a).then(|| Grid {
             px,
             levels,
             widths: widths.iter().map(|w| w * size.x / total).collect(),
@@ -391,8 +368,7 @@ impl RoomPlan {
         }
         let crowd = self.crowd(demand.envoy);
         let footprints: Vec<&[usize]> = keys.iter().map(|(_, f, _)| *f).collect();
-        // The biggest scale with a spare slot at least, chambers packed side by side if it
-        // costs no scale, a second spare slot if that costs nothing either.
+        // Keep spare capacity so another dwarf can join without moving the rooms.
         let tries = |spares: &'static [usize]| {
             scales().flat_map(move |px| {
                 [true, false]

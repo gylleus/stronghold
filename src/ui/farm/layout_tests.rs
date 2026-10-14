@@ -251,10 +251,9 @@ fn dwarves_go_where_their_state_says() {
     assert_eq!(coord.tag, None, "its tunnel's label names it");
     assert_eq!(dwarf(&scene, "working").tag.as_deref(), Some("working"));
     assert!(
-        (coord.pos.x - tunnel.shaft.center().x).abs() < 1.0,
-        "at the mouth"
+        tunnel.chamber.contains(coord.pos),
+        "inside the gallery mouth"
     );
-    assert!(coord.pos.y < tunnel.chamber.top(), "above the chamber");
 
     for name in ["working", "idle", "stalled", "done", "failed"] {
         let a = dwarf(&scene, name);
@@ -378,7 +377,7 @@ fn one_tunnel_per_run_then_per_repo() {
         scene.tunnels[0].tasks, None,
         "no task counts, no progress bar"
     );
-    let xs: Vec<f32> = scene.tunnels.iter().map(|t| t.shaft.center().x).collect();
+    let xs: Vec<f32> = scene.tunnels.iter().map(|t| t.chamber.center().x).collect();
     assert!(xs.windows(2).all(|w| w[0] < w[1]), "left to right: {xs:?}");
 }
 
@@ -481,7 +480,7 @@ fn a_finished_run_without_workers_has_no_tunnel() {
 }
 
 #[test]
-fn tunnels_deepen_with_progress() {
+fn task_progress_keeps_galleries_on_their_level() {
     let mut s = ClanSnapshot::default();
     s.runs = vec![run("early", 0, 4), run("late", 4, 4)];
     s.nodes.push(node(
@@ -511,7 +510,7 @@ fn tunnels_deepen_with_progress() {
     assert_eq!(late.progress, Some(1.0));
     assert_eq!(early.tasks, Some((0, 4)));
     assert_eq!(late.tasks, Some((4, 4)));
-    assert!(late.chamber.top() > early.chamber.top() + 50.0);
+    assert_eq!(late.chamber.top(), early.chamber.top());
     assert!(late.chamber.bottom() <= rect.bottom());
 }
 
@@ -661,7 +660,7 @@ fn assert_fits_with_pr(s: &ClanSnapshot, pr: &[&str]) -> Scene {
 }
 
 #[test]
-fn cart_routes_use_the_chamber_shaft_and_entrance() {
+fn walking_routes_use_the_shared_ladder_and_entrance() {
     let scene = scene(&snapshot());
     let worker = dwarf(&scene, "working");
     let t = &scene.tunnels[tunnel_of(&scene, "working")];
@@ -672,18 +671,21 @@ fn cart_routes_use_the_chamber_shaft_and_entrance() {
     let path = route(worker.pos, to, &worker.spot, &Spot::Landing(0), &scene);
     assert_eq!(along(&path, 0.0).0, worker.pos);
     assert_eq!(along(&path, 1.0).0, to);
-    assert!(path.contains(&pos2(t.shaft.center().x, scene.gallery.center().y)));
+    assert!(path.contains(&pos2(
+        scene.work_ladder().center().x,
+        scene.gallery.center().y
+    )));
     assert!(path.contains(&pos2(scene.entrance_x(), scene.gallery.center().y)));
     for leg in path.windows(2) {
         assert!(
             leg[0].x == leg[1].x || leg[0].y == leg[1].y,
-            "axis-aligned rails and hoists"
+            "axis-aligned galleries and ladders"
         );
         let mid = leg[0].lerp(leg[1], 0.5);
         if mid.y > scene.gallery.bottom() && mid.y < t.chamber.top() {
             assert!(
-                t.shaft.contains(mid),
-                "cart must stay in the excavated shaft"
+                scene.work_ladder().contains(mid),
+                "vertical travel stays on the shared ladder"
             );
         }
     }
@@ -692,23 +694,30 @@ fn cart_routes_use_the_chamber_shaft_and_entrance() {
 }
 
 #[test]
-fn dwarves_ride_only_during_travel_and_arrive_in_their_work_pose() {
+fn dwarves_walk_and_climb_then_arrive_in_their_work_pose() {
     use crate::ui::dwarf::{Action, pose};
     let scene = scene(&snapshot());
     let worker = dwarf(&scene, "working");
     assert_eq!(
         super::dwarf_action(worker, true, false, false),
-        Action::Ride
+        Action::Walk
     );
-    assert_eq!(super::dwarf_action(worker, true, true, false), Action::Ride);
+    assert_eq!(
+        super::dwarf_action(worker, true, true, false),
+        Action::Carry
+    );
     assert_eq!(
         super::dwarf_action(worker, false, false, false),
         Action::Mine
     );
-    let seated = pose(Action::Ride, 0.4);
-    assert!(seated.stowed);
-    assert_eq!(seated.stride, 0.0, "feet stay inside the cart");
-    assert!(!seated.nugget, "cargo goes in the cart");
+    let climbing = pose(Action::Climb, 0.4);
+    assert!(climbing.stowed);
+    assert_ne!(climbing.stride, 0.0, "feet climb the rungs");
+    assert!(
+        climbing.arm < -1.0 && climbing.back_arm < -1.0,
+        "hands reach up"
+    );
+    assert!(!climbing.nugget);
 }
 
 #[test]
@@ -736,7 +745,10 @@ fn a_state_change_walks_the_dwarf_over() {
         placed[i]
     };
     let first = at(&mut farm, 10.0);
-    assert_eq!(first.pos, start, "sets off from where it was");
+    assert!(
+        first.pos.distance(start) < 0.001,
+        "sets off from where it was"
+    );
     assert!(first.heading.is_some());
     let mid = at(&mut farm, 10.4);
     assert!(mid.pos != start && mid.pos != target, "on its way");
@@ -1043,7 +1055,7 @@ fn dragging_a_box_selects_the_dwarves_in_it() {
     let (hits, additive) = boxed.expect("the box was released");
     assert!(!additive);
     let hits: BTreeSet<NodeId> = hits.into_iter().collect();
-    let expected: BTreeSet<NodeId> = ["working", "idle", "stalled", "done", "failed"]
+    let expected: BTreeSet<NodeId> = ["working", "idle", "stalled", "done", "failed", "r1-coord"]
         .iter()
         .map(|n| id(n))
         .collect();
@@ -1483,7 +1495,7 @@ fn only_the_resting_area_has_beds() {
 }
 
 /// Many runs in a tall view stack their chambers two to a column, which draws the dwarves
-/// bigger than one long row of narrow columns, and no shaft cuts through another chamber.
+/// bigger than one long row of narrow columns, with the shared ladder clear of every room.
 #[test]
 fn many_tunnels_stack_chambers_to_draw_dwarves_bigger() {
     let mut s = ClanSnapshot::default();
@@ -1530,8 +1542,8 @@ fn many_tunnels_stack_chambers_to_draw_dwarves_bigger() {
                 "chambers {i} and {j} overlap"
             );
             assert!(
-                !t.shaft.intersects(u.chamber),
-                "shaft {i} crosses chamber {j}"
+                !scene.work_ladder().intersects(u.chamber),
+                "shared ladder crosses chamber {j}"
             );
         }
     }
@@ -1617,7 +1629,7 @@ fn comms_room_fits_beside_entrance_at_small_and_large_clans() {
             assert!(!room.chamber.intersects(entrance));
             for tunnel in &scene.tunnels {
                 assert!(!room.chamber.intersects(tunnel.chamber));
-                assert!(!room.chamber.intersects(tunnel.shaft));
+                assert!(!room.chamber.intersects(scene.work_ladder()));
             }
             assert!(room.shaft.intersects(scene.gallery));
             assert!(room.shaft.intersects(room.chamber));
@@ -1744,8 +1756,8 @@ pub(super) fn typical_clan(n: usize) -> ClanSnapshot {
     s
 }
 
-/// Share of the ground under the gallery that rooms use: each chamber with the margin
-/// around it, from its label down.
+/// Share of the occupied work levels used by rooms and their labels. Unexcavated rock
+/// below the last gallery is no longer counted as tunnel depth.
 pub(super) fn fill(scene: &Scene) -> f32 {
     let a = scene.cell();
     let rooms: f32 = scene
@@ -1753,7 +1765,12 @@ pub(super) fn fill(scene: &Scene) -> f32 {
         .iter()
         .map(|t| (t.chamber.width() + 0.6 * a) * (t.chamber.bottom() - t.label_top.y))
         .sum();
-    rooms / (scene.rect.width() * (scene.rect.bottom() - scene.gallery.bottom()))
+    let bottom = scene
+        .tunnels
+        .iter()
+        .map(|t| t.chamber.bottom())
+        .fold(scene.gallery.bottom(), f32::max);
+    rooms / (scene.rect.width() * (bottom - scene.gallery.bottom()))
 }
 
 /// Share of the rect's height the farm reaches down to.
@@ -1796,7 +1813,10 @@ fn the_farm_fills_the_view() {
             (least..=0.95).contains(&fill),
             "{n} dwarves in {size:?}: fill {fill}"
         );
-        assert!(reach(&scene) > 0.85, "{n} dwarves in {size:?} reach down");
+        assert!(
+            reach(&scene) <= 1.0,
+            "{n} dwarves in {size:?} fit vertically"
+        );
         assert!(
             scene.cell() >= cell,
             "{n} dwarves in {size:?}: {}",
@@ -1950,4 +1970,111 @@ fn king_close_holds_target_in_view_and_bonks_once_instead_of_falling() {
     frame(&mut farm, &snapshot, 0.90);
     assert!(!farm.throws.contains(&id("loose")));
     assert!(farm.falls.is_empty());
+}
+
+/// Every work row is horizontal, supported by rock, and connected by the same ladder.
+/// Exercise wide and narrow panes with several runs, attendants and subagents.
+#[test]
+fn work_galleries_and_routes_share_one_ladder_at_every_crowd_size() {
+    for (size, n) in [
+        (vec2(1280.0, 800.0), 30),
+        (vec2(900.0, 650.0), 30),
+        (vec2(800.0, 1400.0), 60),
+    ] {
+        let mut s = typical_clan(n);
+        let run = s.runs[0].id.clone();
+        for i in 0..6 {
+            s.nodes.push(node(
+                &format!("attendant-{i}"),
+                NodeKind::Attendant,
+                Some(&run),
+                NodeState::Working,
+            ));
+        }
+        for i in 0..3 {
+            let name = format!("apprentice-{i}");
+            s.nodes
+                .push(node(&name, NodeKind::Subagent, None, NodeState::Working));
+            s.edges.push(Edge {
+                from: id("attendant-0"),
+                to: id(&name),
+                kind: EdgeKind::Subagent,
+            });
+        }
+        let input = FarmInput {
+            snapshot: &s,
+            hidden: &BTreeSet::new(),
+            pr_ready: &HashSet::new(),
+            building: &HashSet::new(),
+            now_ms: 0,
+        };
+        let scene = layout(&input, Rect::from_min_size(Pos2::new(23.0, 47.0), size));
+        let ladder = scene.work_ladder();
+        let galleries = scene.work_galleries();
+        assert!(scene.rect.contains_rect(ladder));
+        for row in &galleries {
+            assert!(scene.rect.contains_rect(*row), "{row:?}");
+            assert!(row.width() > row.height() * 3.0, "long horizontal gallery");
+            assert!(
+                row.intersects(ladder),
+                "every level reaches the shared ladder"
+            );
+        }
+        for (i, row) in galleries.iter().enumerate() {
+            for other in &galleries[i + 1..] {
+                assert!(!row.intersects(*other), "rock separates work floors");
+            }
+        }
+        let workers: Vec<_> = scene
+            .dwarves
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d.spot,
+                    Spot::Chamber(..) | Spot::Mouth(..) | Spot::Trail(..)
+                )
+            })
+            .collect();
+        for (i, dwarf) in workers.iter().enumerate() {
+            let floor = galleries
+                .iter()
+                .find(|g| g.contains(dwarf.pos))
+                .expect("dwarf in a gallery");
+            assert!(
+                (dwarf.pos.y + dwarf.size / 2.0 - floor.bottom()).abs() < 0.01,
+                "feet on the floor"
+            );
+            for other in &workers[i + 1..] {
+                let bodies = Rect::from_center_size(dwarf.pos, Vec2::splat(dwarf.size))
+                    .intersect(Rect::from_center_size(other.pos, Vec2::splat(other.size)));
+                assert!(
+                    bodies.width() < 0.01 || bodies.height() < 0.01,
+                    "{} overlaps {}",
+                    dwarf.id,
+                    other.id
+                );
+                let path = route(dwarf.pos, other.pos, &dwarf.spot, &other.spot, &scene);
+                for leg in path.windows(2) {
+                    if leg[0].y != leg[1].y {
+                        assert_eq!(leg[0].x, ladder.center().x);
+                        assert_eq!(leg[1].x, ladder.center().x);
+                    }
+                    for step in 0..=8 {
+                        let at = leg[0].lerp(leg[1], step as f32 / 8.0);
+                        assert!(
+                            ladder.contains(at) || galleries.iter().any(|g| g.contains(at)),
+                            "journey leaves excavated ground: {at:?}"
+                        );
+                    }
+                }
+            }
+        }
+        // A second state change halfway up the ladder keeps the new route on its rungs.
+        let at = ladder.center();
+        let target = workers[0];
+        let interrupted = route(at, target.pos, &target.spot, &target.spot, &scene);
+        assert_eq!(interrupted[0], at);
+        assert_eq!(interrupted[1].x, ladder.center().x);
+        assert_eq!(*interrupted.last().unwrap(), target.pos);
+    }
 }
