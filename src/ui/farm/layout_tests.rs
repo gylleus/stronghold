@@ -128,6 +128,45 @@ fn king_has_a_regular_body_and_stands_on_the_throne_hall_floor() {
 }
 
 #[test]
+fn finished_dwarves_only_visit_the_treasury_for_review_work() {
+    for kind in [NodeKind::Worker, NodeKind::Coordinator, NodeKind::Terminal] {
+        for state in [NodeState::Done, NodeState::Idle] {
+            for pr in [false, true] {
+                let mut s = ClanSnapshot::default();
+                s.runs = vec![run("r1", 0, 0)];
+                let run = (kind != NodeKind::Terminal).then_some("r1");
+                let mut n = node("finished", kind, run, state);
+                n.terminal_handle = Some("open-terminal".into());
+                s.nodes.push(n);
+                let scene = scene_with(&s, &BTreeSet::new(), if pr { &["finished"] } else { &[] });
+                let dwarf = dwarf(&scene, "finished");
+                if pr && kind != NodeKind::Worker {
+                    assert!(matches!(dwarf.spot, Spot::Storage(_)));
+                    assert_eq!(dwarf.pose, Pose::Carry);
+                    assert_eq!(dwarf.mark, Some(Mark::PrReady));
+                    assert_eq!(scene.pr_ready, 1);
+                } else {
+                    let key = if kind == NodeKind::Terminal {
+                        TunnelKey::Repo("repo-finished".into())
+                    } else {
+                        TunnelKey::Run("r1".into())
+                    };
+                    let expected = if kind == NodeKind::Coordinator {
+                        Spot::Mouth(key, 0)
+                    } else {
+                        Spot::Chamber(key, 0)
+                    };
+                    assert_eq!(dwarf.spot, expected, "{kind:?} {state:?} pr={pr}");
+                    assert_eq!(dwarf.pose, Pose::Sleep);
+                    assert_eq!(dwarf.mark, Some(Mark::Sleep));
+                    assert_eq!(scene.pr_ready, 0);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn state_picks_the_place() {
     use Home::*;
     use NodeState::*;
@@ -145,17 +184,18 @@ fn state_picks_the_place() {
         };
         for pr in [false, true] {
             assert_eq!(home(kind, NeedsInput, pr), Landing, "{kind:?}");
-            assert_eq!(home(kind, Done, pr), Storage, "{kind:?}");
+            let resting = if pr && kind != NodeKind::Worker {
+                Storage
+            } else {
+                post
+            };
+            for state in [Done, Idle] {
+                assert_eq!(home(kind, state, pr), resting, "{kind:?} {state:?}");
+            }
             for state in [Working, Stalled, Failed] {
                 assert_eq!(home(kind, state, pr), post, "{kind:?} {state:?}");
             }
         }
-        assert_eq!(home(kind, Idle, false), post, "{kind:?}");
-        assert_eq!(
-            home(kind, Idle, true),
-            Storage,
-            "idle with a PR waits in storage"
-        );
     }
     for state in [Working, Idle, NeedsInput, Stalled, Done, Failed] {
         assert_eq!(home(NodeKind::King, state, false), King);
@@ -177,7 +217,7 @@ fn state_picks_pose_and_mark() {
     assert_eq!(worker(Idle), Pose::Sleep);
     assert_eq!(worker(Stalled), Pose::Sleep);
     assert_eq!(worker(NeedsInput), Pose::Wait);
-    assert_eq!(worker(Done), Pose::Carry);
+    assert_eq!(worker(Done), Pose::Sleep);
     assert_eq!(worker(Failed), Pose::Failed);
     let coord = pose(NodeKind::Coordinator, Working, Home::Mouth);
     assert_eq!(coord, Pose::Stand, "coordinators stand at the mouth");
@@ -189,7 +229,7 @@ fn state_picks_pose_and_mark() {
     );
     assert_eq!(mark(NeedsInput, false), Some(Mark::Alert));
     assert_eq!(mark(Failed, false), Some(Mark::Failed));
-    assert_eq!(mark(Done, false), None);
+    assert_eq!(mark(Done, false), Some(Mark::Sleep));
     assert_eq!(mark(Done, true), Some(Mark::PrReady));
     assert_eq!(mark(Idle, true), Some(Mark::PrReady));
     assert_eq!(mark(Working, false), None);
@@ -215,7 +255,7 @@ fn dwarves_go_where_their_state_says() {
         "inside the gallery mouth"
     );
 
-    for name in ["working", "idle", "stalled", "failed"] {
+    for name in ["working", "idle", "stalled", "done", "failed"] {
         let a = dwarf(&scene, name);
         assert!(matches!(a.spot, Spot::Chamber(..)), "{name}");
         assert_eq!(tunnel_of(&scene, name), t, "{name}");
@@ -237,9 +277,8 @@ fn dwarves_go_where_their_state_says() {
     assert!(scene.landing.contains(waiting.pos));
 
     let done = dwarf(&scene, "done");
-    assert_eq!(done.spot, Spot::Storage(0));
-    assert!(scene.storage.contains(done.pos));
-    assert_eq!(done.pose, Pose::Carry);
+    assert_eq!(done.pose, Pose::Sleep);
+    assert_eq!(done.mark, Some(Mark::Sleep));
 }
 
 #[test]
@@ -282,7 +321,13 @@ fn everyone_waiting_on_karl_shares_the_landing() {
 
 #[test]
 fn pr_ready_dwarves_mark_and_pile_in_storage() {
-    let scene = scene_with(&snapshot(), &BTreeSet::new(), &["done", "idle"]);
+    let mut s = snapshot();
+    for n in &mut s.nodes {
+        if matches!(n.id.as_str(), "done" | "idle") {
+            n.kind = NodeKind::Terminal;
+        }
+    }
+    let scene = scene_with(&s, &BTreeSet::new(), &["done", "idle"]);
     assert_eq!(dwarf(&scene, "done").mark, Some(Mark::PrReady));
     let idle = dwarf(&scene, "idle");
     assert_eq!(
@@ -563,12 +608,14 @@ fn crowds_on_the_landing_and_in_storage_fit() {
         ));
         s.nodes.push(node(
             &format!("done{i}"),
-            NodeKind::Worker,
+            NodeKind::Terminal,
             Some("r"),
             NodeState::Done,
         ));
     }
-    let scene = assert_fits(&s);
+    let pr: Vec<String> = (0..14).map(|i| format!("done{i}")).collect();
+    let pr: Vec<&str> = pr.iter().map(String::as_str).collect();
+    let scene = assert_fits_with_pr(&s, &pr);
     for a in &scene.dwarves {
         let area = if a.state == NodeState::Done {
             scene.storage
@@ -587,7 +634,11 @@ fn crowds_on_the_landing_and_in_storage_fit() {
 
 /// Lays `s` out and checks every dwarf is drawn inside the view and none sit on each other.
 fn assert_fits(s: &ClanSnapshot) -> Scene {
-    let scene = scene(s);
+    assert_fits_with_pr(s, &[])
+}
+
+fn assert_fits_with_pr(s: &ClanSnapshot, pr: &[&str]) -> Scene {
+    let scene = scene_with(s, &BTreeSet::new(), pr);
     assert_eq!(scene.dwarves.len(), s.nodes.len());
     for a in &scene.dwarves {
         let cell = Rect::from_center_size(a.pos, Vec2::splat(a.size));
@@ -1004,7 +1055,7 @@ fn dragging_a_box_selects_the_dwarves_in_it() {
     let (hits, additive) = boxed.expect("the box was released");
     assert!(!additive);
     let hits: BTreeSet<NodeId> = hits.into_iter().collect();
-    let expected: BTreeSet<NodeId> = ["working", "idle", "stalled", "failed", "r1-coord"]
+    let expected: BTreeSet<NodeId> = ["working", "idle", "stalled", "done", "failed", "r1-coord"]
         .iter()
         .map(|n| id(n))
         .collect();
@@ -1739,7 +1790,8 @@ fn the_farm_fills_the_view() {
     // (view, dwarves, smallest dwarf cell in points, least fill)
     let cases = [
         (vec2(1280.0, 800.0), 5, 56.0, 0.75),
-        (vec2(1280.0, 800.0), 15, 48.0, 0.75),
+        // Finished workers now occupy chamber slots alongside the other miners.
+        (vec2(1280.0, 800.0), 15, 40.0, 0.75),
         (vec2(1280.0, 800.0), 30, 40.0, 0.75),
         (vec2(900.0, 650.0), 5, 48.0, 0.75),
         (vec2(900.0, 650.0), 15, 32.0, 0.75),

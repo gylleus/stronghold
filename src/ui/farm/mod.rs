@@ -1428,8 +1428,7 @@ fn paint_dwarves(
         if bed.is_some() {
             cell = cell.translate(vec2(0.0, -layout::SLEEPER_LIFT * tpx));
         }
-        let carrying =
-            dwarf.pose == Pose::Carry || (walking && dwarf.state == crate::model::NodeState::Done);
+        let carrying = dwarf.pose == Pose::Carry;
         // Messages reaching the Envoy: he casts, his crystal lighting the room.
         let casting =
             dwarf.kind == crate::model::NodeKind::Envoy && effects.envoy_receipt.casting();
