@@ -434,20 +434,26 @@ impl eframe::App for Demo {
         ui.ctx().request_repaint_after(Duration::from_millis(30));
         let image = ui.ctx().input(|i| {
             i.raw.events.iter().find_map(|e| match e {
-                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                egui::Event::Screenshot {
+                    image, user_data, ..
+                } if user_data
+                    .data
+                    .as_ref()
+                    .and_then(|data| data.downcast_ref::<u8>())
+                    == Some(&self.stage) =>
+                {
+                    Some(image.clone())
+                }
                 _ => None,
             })
         });
-        let shoot = |ctx: &egui::Context| {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()))
-        };
+        let captured = image.is_some();
         match self.stage {
             0 if self.started.elapsed() >= Duration::from_secs(1)
                 && (self.hammer.is_none()
                     || (0.78..0.84)
                         .contains(&((ui.input(|i| i.time) / 1.2).rem_euclid(1.0) as f32))) =>
             {
-                shoot(ui.ctx());
                 self.stage = 1;
             }
             1 => {
@@ -463,7 +469,6 @@ impl eframe::App for Demo {
                 }
             }
             2 if self.flipped_at.elapsed() >= Duration::from_millis(180) => {
-                shoot(ui.ctx());
                 self.stage = 3;
             }
             3 => {
@@ -473,7 +478,6 @@ impl eframe::App for Demo {
                 }
             }
             4 if self.flipped_at.elapsed() >= Duration::from_millis(700) => {
-                shoot(ui.ctx());
                 self.stage = 5;
             }
             5 => {
@@ -483,7 +487,6 @@ impl eframe::App for Demo {
                 }
             }
             6 if self.flipped_at.elapsed() >= Duration::from_millis(1500) => {
-                shoot(ui.ctx());
                 self.stage = 7;
             }
             7 => {
@@ -496,6 +499,13 @@ impl eframe::App for Demo {
                 }
             }
             _ => {}
+        }
+        // Keep requesting until the renderer replies; stage tags discard late captures.
+        if self.stage % 2 == 1 && !captured {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(
+                    self.stage,
+                )));
         }
     }
 }
