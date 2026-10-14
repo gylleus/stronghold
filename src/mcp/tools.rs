@@ -403,7 +403,7 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "focus_agent",
             "Focus an agent",
-            "Selects the agent and zooms the hold's camera onto it. Pass \
+            "Selects the agent and pans the hold's camera to it, keeping the current zoom. Pass \
              id \"king\" for the King.",
             object(
                 json!({

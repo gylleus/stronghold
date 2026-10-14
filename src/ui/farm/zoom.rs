@@ -67,14 +67,19 @@ impl Camera {
         self.clamp();
     }
 
-    /// Fits a figure or room into the viewport, within the farm's zoom limits.
+    /// Centers on a farm point at the current zoom, staying inside the farm.
+    pub fn pan_to(&mut self, rect: Rect, point: Pos2) {
+        self.center = (point - rect.min) / rect.size();
+        self.clamp();
+    }
+
+    /// Fits a room into the viewport, within the farm's zoom limits.
     pub fn focus(&mut self, rect: Rect, bounds: Rect) {
         let size = bounds.size() * 1.25;
         self.zoom = (rect.width() / size.x)
             .min(rect.height() / size.y)
             .clamp(MIN_ZOOM, MAX_ZOOM);
-        self.center = (bounds.center() - rect.min) / rect.size();
-        self.clamp();
+        self.pan_to(rect, bounds.center());
     }
 
     /// Keeps the view inside the farm.
