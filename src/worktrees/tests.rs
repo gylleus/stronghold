@@ -1248,9 +1248,9 @@ fn git_registered_worktrees_join_the_census_and_are_never_orphans() {
     fs::create_dir(direct.join("subfolder")).unwrap();
     fs::create_dir_all(root.join("repo/stray")).unwrap();
     let listed = vec![worktree("r::wt", wt.to_str().unwrap())];
-    let all = all_worktrees(&listed, std::slice::from_ref(&r)).unwrap();
-    assert_eq!(all.len(), 4);
-    assert_eq!(all.iter().filter(|w| w.is_main_worktree).count(), 1);
+    let all = all_worktrees(&listed, std::slice::from_ref(&r), Some(&root)).unwrap();
+    assert_eq!(all.len(), 3);
+    assert_eq!(all.iter().filter(|w| w.is_main_worktree).count(), 0);
     assert_eq!(
         all.iter()
             .filter(|w| w.path == wt.to_str().unwrap())
@@ -1382,4 +1382,57 @@ fn unlisted_worktree_matches_retained_dispatch_by_path() {
     }))
     .unwrap();
     assert_eq!(dispatches_in(&w, &[worker]), vec!["live"]);
+}
+
+#[test]
+fn unlisted_census_is_scoped_to_workspaces_but_listed_paths_are_preserved() {
+    let (tmp, repo, wt) = repo_with_feature();
+    let r = Repo {
+        id: "r".into(),
+        path: repo.to_str().unwrap().into(),
+        ..Repo::default()
+    };
+    let root = tmp.path().join("workspaces");
+    let nested = root.join("repo/nested");
+    let direct = root.join("root-level");
+    let sibling = tmp.path().join("workspaces-other/unlisted");
+    fs::create_dir_all(nested.parent().unwrap()).unwrap();
+    fs::create_dir_all(sibling.parent().unwrap()).unwrap();
+    for (branch, path) in [
+        ("nested", &nested),
+        ("direct", &direct),
+        ("outside", &sibling),
+    ] {
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                branch,
+                path.to_str().unwrap(),
+            ],
+        );
+    }
+    let repos = std::slice::from_ref(&r);
+    let all = all_worktrees(&[], repos, Some(&root)).unwrap();
+    assert_eq!(all.len(), 2);
+    assert!(
+        all.iter()
+            .all(|w| canonical_path(Path::new(&w.path)).starts_with(canonical_path(&root)))
+    );
+    assert!(all.iter().any(|w| w.branch_name() == Some("direct")));
+    assert!(all.iter().any(|w| w.branch_name() == Some("nested")));
+    let listed = vec![worktree("r::listed", wt.to_str().unwrap())];
+    let all = all_worktrees(&listed, repos, Some(&root)).unwrap();
+    assert_eq!(all.len(), 3);
+    assert!(
+        all.iter()
+            .any(|w| w.id == "r::listed" && w.path == wt.to_str().unwrap())
+    );
+    assert!(orphan_dirs(&root, &all).is_empty());
+    let without_root = all_worktrees(&listed, repos, None).unwrap();
+    assert_eq!(without_root.len(), 1);
+    assert_eq!(without_root[0].id, "r::listed");
 }

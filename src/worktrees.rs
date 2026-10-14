@@ -201,10 +201,15 @@ fn registered_worktrees(repo: &Repo) -> Result<Vec<Worktree>, String> {
     Ok(worktrees)
 }
 
-/// Preserve Orca's metadata and add every git registration absent from its list. Failure to
-/// enumerate a git repo aborts the census rather than silently dropping unknown worktrees.
-fn all_worktrees(listed: &[Worktree], repos: &[Repo]) -> Result<Vec<Worktree>, String> {
+/// Preserve Orca's listed worktrees anywhere, adding unlisted git registrations only below
+/// the workspaces root. Failure to enumerate a git repo aborts the census.
+fn all_worktrees(
+    listed: &[Worktree],
+    repos: &[Repo],
+    root: Option<&Path>,
+) -> Result<Vec<Worktree>, String> {
     let mut all = listed.to_vec();
+    let root = root.map(canonical_path);
     for repo in repos.iter().filter(|r| r.kind.as_deref() != Some("folder")) {
         for w in registered_worktrees(repo)? {
             let path = canonical_path(Path::new(&w.path));
@@ -215,7 +220,10 @@ fn all_worktrees(listed: &[Worktree], repos: &[Repo]) -> Result<Vec<Worktree>, S
                 existing.branch = w.branch;
                 existing.is_main_worktree |= w.is_main_worktree;
                 existing.is_pinned |= w.is_pinned;
-            } else {
+            } else if root
+                .as_ref()
+                .is_some_and(|root| path != *root && path.starts_with(root))
+            {
                 all.push(w);
             }
         }
@@ -1584,7 +1592,7 @@ pub fn evaluate(
         return Err("Orca's worktree list was truncated".into());
     }
     let repos = client.repo_list().map_err(|e| format!("repo list: {e}"))?;
-    let worktrees = all_worktrees(&list.worktrees, &repos)?;
+    let worktrees = all_worktrees(&list.worktrees, &repos, workspaces_root().as_deref())?;
     let mut ctx = Context::fetch(client, now_ms)?;
     let linked: Vec<&Worktree> = worktrees.iter().filter(|w| !w.is_main_worktree).collect();
     let repo_ids: HashSet<&str> = linked.iter().filter_map(|w| w.repo()).collect();
@@ -1779,7 +1787,7 @@ fn recheck(
         return Err("Orca's worktree list was truncated".into());
     }
     let repos = client.repo_list().map_err(|e| format!("repo list: {e}"))?;
-    let worktrees = all_worktrees(&list.worktrees, &repos)?;
+    let worktrees = all_worktrees(&list.worktrees, &repos, workspaces_root().as_deref())?;
     let w = worktrees
         .into_iter()
         .find(|w| w.id == entry.id && w.path == entry.path)
