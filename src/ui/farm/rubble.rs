@@ -286,6 +286,7 @@ pub struct RubbleView {
     pinned: Option<String>,
     /// Reduce motion: no shiver, debris or hammer swing.
     still: bool,
+    worker: super::hammer::Demolisher,
 }
 
 impl RubbleView {
@@ -339,12 +340,24 @@ impl RubbleView {
         {
             self.pinned = None;
         }
+        let target = self
+            .hammer
+            .as_ref()
+            .and_then(|job| job.current.as_deref())
+            .and_then(|id| rubble.heap(id))
+            .map(|heap| super::hammer::Target {
+                id: heap.site.id.clone(),
+                impact: heap.impact(),
+                ground: heap.foot.y,
+                px: scene.px,
+            });
+        self.worker.update(target, now_s, still, away);
         rubble
     }
 
     /// Whether anything moves: a heap scatters or the hammer swings.
     pub fn animating(&self) -> bool {
-        !self.cleared.is_empty() || self.hammer.is_some()
+        !self.cleared.is_empty() || (!self.still && self.worker.frame.is_some())
     }
 
     #[cfg(test)]
@@ -369,28 +382,23 @@ impl RubbleView {
         now_s: f64,
     ) {
         let still = self.still;
-        let cutting = self.hammer.as_ref().and_then(|s| s.current.as_deref());
+        let striking = self.worker.frame.as_ref().filter(|_| !still);
+        let cutting = striking.map(|f| f.target.id.as_str());
         for heap in &rubble.heaps {
             let alpha = if heap.back {
                 f32::from(BACK_TINT) / 255.0
             } else {
                 1.0
             };
-            let phase = super::hammer::phase(now_s, still);
-            let shiver = if cutting == Some(heap.site.id.as_str())
-                && !still
-                && (0.68..0.83).contains(&phase)
-            {
-                ((phase - 0.68) * 110.0).sin() * scene.px
+            let shiver = if cutting == Some(heap.site.id.as_str()) {
+                striking
+                    .and_then(|f| f.phase)
+                    .map_or(Vec2::ZERO, impact_shake)
+                    * scene.px
             } else {
-                0.0
+                Vec2::ZERO
             };
-            sprites.prop(
-                painter,
-                heap.prop(),
-                heap.rect().translate(vec2(shiver, 0.0)),
-                alpha,
-            );
+            sprites.prop(painter, heap.prop(), heap.rect().translate(shiver), alpha);
         }
         for f in &self.cleared {
             paint_cleared(painter, f, now_s);
@@ -410,7 +418,7 @@ impl RubbleView {
         rubble: &Rubble,
         hovered: Option<&str>,
         palette: Palette,
-        now_s: f64,
+        _now_s: f64,
     ) {
         let still = self.still;
         for heap in &rubble.heaps {
@@ -428,25 +436,30 @@ impl RubbleView {
                 );
             }
         }
-        if let Some(job) = &self.hammer {
-            let at = job
-                .current
-                .as_deref()
-                .and_then(|id| rubble.heap(id))
-                .map(|t| (t.impact(), t.k))
-                .or_else(|| {
-                    rubble
-                        .sign
-                        .map(|s| (s - vec2(0.0, 3.0 * scene.px), scene.px))
-                })
-                .unwrap_or_else(|| {
-                    let (_, end) = strip(scene);
-                    (
-                        pos2(end - 8.0 * scene.cell(), scene.surface_y - 3.0 * scene.px),
-                        scene.px,
-                    )
-                });
-            paint_hammer(painter, sprites, scene, at, job, now_s, still);
+        if let Some(frame) = &self.worker.frame {
+            super::hammer::paint(painter, frame, |rect, turn, alpha| {
+                sprites.prop_turned(painter, Prop::CleanupHammer, rect, turn, alpha);
+            });
+            if !still && let Some(phase) = frame.phase {
+                let k = rubble
+                    .heap(&frame.target.id)
+                    .map_or(scene.px, |heap| heap.k);
+                for particle in impact_particles(phase, hash(&frame.target.id)) {
+                    paint_particle(painter, frame.target.impact, k, particle, 1.0);
+                }
+            }
+            if let Some(job) = &self.hammer {
+                super::label(
+                    painter,
+                    frame.foot - vec2(0.0, 46.0 * scene.px),
+                    Align2::CENTER_BOTTOM,
+                    &format!("Clearing worktrees {}/{}", job.done, job.total),
+                    FontId::proportional((5.5 * scene.px).clamp(11.0, 14.0)),
+                    12.0 * scene.cell(),
+                    scene.px,
+                    palette,
+                );
+            }
         }
     }
 
@@ -503,36 +516,13 @@ fn paint_sign(painter: &egui::Painter, scene: &Scene, foot: Pos2, more: usize, p
     );
 }
 
-/// A generated sledgehammer swings into the heap; chips appear only on impact.
-fn paint_hammer(
-    painter: &egui::Painter,
-    sprites: &Sprites,
-    scene: &Scene,
-    (cut, k): (Pos2, f32),
-    job: &CleanupJob,
-    now_s: f64,
-    still: bool,
-) {
-    let phase = super::hammer::phase(now_s, still);
-    let scale = scene.px * 0.9;
-    let (rect, turn) = super::hammer::placement(cut, scale, phase);
-    sprites.prop_turned(painter, Prop::CleanupHammer, rect, turn, 1.0);
-    if !still {
-        let seed = job.current.as_deref().map_or(0, hash);
-        for particle in impact_particles(phase, seed) {
-            paint_particle(painter, cut, k, particle, 1.0);
-        }
-    }
-    super::label(
-        painter,
-        cut - vec2(0.0, 26.0 * scene.px),
-        Align2::CENTER_BOTTOM,
-        &format!("Clearing worktrees {}/{}", job.done, job.total),
-        FontId::proportional((5.5 * scene.px).clamp(11.0, 14.0)),
-        12.0 * scene.cell(),
-        scene.px,
-        Palette::DAY,
-    );
+/// Local kick at contact, rapidly damping to rest; no camera or neighbouring heap motion.
+pub(super) fn impact_shake(phase: f32) -> Vec2 {
+    let Some(life) = super::hammer::impact_life(phase) else {
+        return Vec2::ZERO;
+    };
+    let decay = (1.0 - life).powi(3);
+    vec2(2.8 * (life * 25.0).cos(), -1.2 * (life * 19.0).cos()) * decay
 }
 
 /// Samples are in heap texels. No particle pool, RNG or frame-by-frame integration.
@@ -561,16 +551,19 @@ fn variation(seed: u32, i: usize) -> f32 {
 
 /// One bounded burst per stroke, starting exactly when the hammer contacts the heap.
 pub(super) fn impact_particles(phase: f32, seed: u32) -> impl Iterator<Item = Particle> {
-    let life = (phase - 0.68) / 0.32;
-    (0..28).filter_map(move |i| {
+    debris(super::hammer::impact_life(phase).unwrap_or(-1.0), seed)
+}
+
+fn debris(life: f32, seed: u32) -> impl Iterator<Item = Particle> {
+    (0..12).filter_map(move |i| {
         if !(0.0..1.0).contains(&life) {
             return None;
         }
         let r = variation(seed, i);
         let side = if i % 2 == 0 { -1.0 } else { 1.0 };
-        let kind = if i < 8 {
+        let kind = if i < 3 {
             ParticleKind::Dust
-        } else if i < 22 {
+        } else if i < 10 {
             ParticleKind::Chip
         } else {
             ParticleKind::Spark
@@ -614,7 +607,7 @@ pub(super) fn break_particles(age: f64, seed: u32) -> impl Iterator<Item = Parti
         })
     });
     // Dust and smaller splinters dissipate before the large pieces finish their flight.
-    let debris = impact_particles(0.68 + (age / 0.65) as f32 * 0.32, seed);
+    let debris = debris((age / 0.65) as f32, seed);
     chunks.chain(debris)
 }
 

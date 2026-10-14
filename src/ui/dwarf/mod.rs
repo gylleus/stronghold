@@ -13,7 +13,7 @@ mod pose;
 
 use cutout::{Finish, Xf};
 use eframe::egui::{Align2, Color32, FontId, Painter, Pos2, Shape, pos2, vec2};
-pub use pose::{Action, Eyes, Pose, pose};
+pub use pose::{Action, Eyes, Pose, demolition, pose};
 
 /// Who a dwarf is in the hold; sets his kit and the parts he's likely to have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -529,7 +529,9 @@ pub fn draw(
 
     let mut out = Vec::new();
     let o = &mut out;
-    cutout::draw(o, &parts::back_arm(look), back_arm, finish);
+    if !pose.two_handed {
+        cutout::draw(o, &parts::back_arm(look), back_arm, finish);
+    }
     cutout::draw(
         o,
         &parts::boot(-6.0 - pose.stride, look, true),
@@ -567,6 +569,35 @@ pub fn draw(
         question: (pose.question > 0.0)
             .then(|| (head.apply(pos2(8.0, -108.0)), 22.0 * k * pose.question)),
     }
+}
+
+/// Attach a separate prop to the front fist, and draw both arms over its handle.
+/// The prop's origin is the fist; negative Y points toward its head.
+pub fn held_prop(foot: Pos2, height: f32, look: &Look, pose: &Pose) -> (Xf, Vec<Shape>) {
+    let k = height * look.role.scale() / 100.0;
+    let body = Xf::translate(foot.to_vec2() - vec2(0.0, pose.hop * k))
+        .then(Xf::scale(k, k))
+        .then(Xf::rotate_about(pos2(0.0, -45.0), pose.roll))
+        .then(Xf::rotate(pose.lean))
+        .then(Xf::scale(1.0 - pose.stretch * 0.6, 1.0 + pose.stretch));
+    let arm = Xf::rotate_about(SHOULDER, -pose.arm);
+    let grip = arm
+        .then(Xf::translate(vec2(SHOULDER.x, -25.5)))
+        .then(Xf::rotate(std::f32::consts::PI - pose.grip));
+    let mut hands = Vec::new();
+    cutout::draw(
+        &mut hands,
+        &parts::support_arm(look, grip.apply(pos2(0.0, -10.0))),
+        body,
+        &Finish::INK,
+    );
+    cutout::draw(
+        &mut hands,
+        &parts::arm(look, pose),
+        body.then(arm),
+        &Finish::INK,
+    );
+    (body.then(grip), hands)
 }
 
 /// Little four-pointed sparks flying off the tool tip `s` seconds after a strike.
