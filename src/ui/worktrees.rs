@@ -1,6 +1,6 @@
 //! Orca worktrees in the top bar: how many there are and how much disk they take, and the
-//! cleanup side panel (evaluate → plan → confirm → clean up). While it runs, a hammer breaks the
-//! removed worktrees' heaps in the farm ([`crate::ui::farm::rubble`]), or runs along
+//! cleanup side panel (evaluate → plan → confirm → clean up). While it runs, a dwarf with a sledge breaks the
+//! removed worktrees' heaps in the farm ([`crate::ui::farm::rubble`]), or works at
 //! the bottom of the window in the other views.
 //!
 //! The count comes from the poller's `worktree list` for free; disk usage is measured off the
@@ -27,8 +27,6 @@ use crate::worktrees::{self, Census, Outcome, Plan, Removal, SweepMarker, format
 pub const SIZE_SCAN_EVERY_MS: i64 = 30 * 60 * 1000;
 /// How often the sweep marker is checked, for a cleanup the King started.
 const MARKER_CHECK_EVERY_MS: i64 = 1_000;
-/// Seconds for the hammer to cross the window once.
-const CROSS_SECONDS: f64 = 7.0;
 /// Points per texel of the hammer along the window's bottom (the farm sizes its own).
 const FLOOR_TEXEL: f32 = 3.0;
 
@@ -87,6 +85,7 @@ pub struct WorktreePanel {
     reduced_motion: Arc<AtomicBool>,
     /// The hammer's pixel art, for the menu and the floor.
     hammer: egui::TextureHandle,
+    demolisher: hammer::Demolisher,
 }
 
 impl WorktreePanel {
@@ -112,6 +111,7 @@ impl WorktreePanel {
             external: None,
             next_marker_check_ms: 0,
             reduced_motion,
+            demolisher: hammer::Demolisher::default(),
             hammer: ctx.load_texture(
                 "worktrees/hammer",
                 hammer::render([26, 40], Outline::Fine),
@@ -536,55 +536,53 @@ impl WorktreePanel {
         self.cleanup_job().map(|job| (job.done, job.total))
     }
 
-    /// The hammer running along the bottom of the window while worktrees are removed, when
+    /// The demolition dwarf at the bottom of the window while worktrees are removed, when
     /// the farm (where it breaks their heaps) is not on screen.
-    pub fn hammer(&self, ctx: &egui::Context) {
-        let Some((done, total)) = self.progress() else {
-            return;
-        };
+    pub fn hammer(&mut self, ctx: &egui::Context) {
+        let progress = self.progress();
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
             egui::Id::new("worktree_hammer"),
         ));
         let screen = ctx.content_rect();
-        let floor = screen.bottom() - 8.0;
-        let label = format!("Clearing worktrees {done}/{total}");
-        let text_color = ctx.global_style().visuals.weak_text_color();
         let t = ctx.input(|i| i.time);
         let reduced = self.reduced_motion();
-        let phase = (t / CROSS_SECONDS).rem_euclid(2.0);
-        let u = if phase < 1.0 { phase } else { 2.0 - phase };
-        let eased = 0.5 - 0.5 * (u * std::f64::consts::PI).cos();
-        let x = if reduced {
-            screen.right() - 170.0
-        } else {
-            screen.left() + 80.0 + (screen.width() - 280.0).max(1.0) * eased as f32
+        let target = progress.map(|_| hammer::Target {
+            id: "floor".into(),
+            impact: pos2(screen.right() - 100.0, screen.bottom() - 28.0),
+            ground: screen.bottom() - 8.0,
+            px: FLOOR_TEXEL * 0.6,
+        });
+        self.demolisher.update(target, t, reduced, false);
+        let Some(frame) = &self.demolisher.frame else {
+            return;
         };
-        let impact = pos2(x, floor - 24.0);
-        let phase = hammer::phase(t, reduced);
-        let (rect, (angle, pivot)) = hammer::placement(impact, FLOOR_TEXEL * 0.6, phase);
-        if !reduced && phase >= 0.68 {
-            draw_chips(&painter, impact, (phase - 0.68) / 0.32);
+        hammer::paint(&painter, frame, |rect, (angle, pivot), alpha| {
+            let mut mesh = egui::Mesh::with_texture(self.hammer.id());
+            mesh.add_rect_with_uv(
+                rect,
+                egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE.gamma_multiply(alpha),
+            );
+            mesh.rotate(egui::emath::Rot2::from_angle(angle), pivot);
+            painter.add(mesh);
+        });
+        if !reduced && let Some(life) = frame.phase.and_then(hammer::impact_life) {
+            draw_chips(&painter, frame.target.impact, life);
         }
-        let mut mesh = egui::Mesh::with_texture(self.hammer.id());
-        mesh.add_rect_with_uv(
-            rect,
-            egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-            Color32::WHITE,
-        );
-        mesh.rotate(egui::emath::Rot2::from_angle(angle), pivot);
-        painter.add(mesh);
-        painter.text(
-            impact - vec2(0.0, 75.0),
-            egui::Align2::CENTER_BOTTOM,
-            label,
-            egui::FontId::proportional(12.0),
-            text_color,
-        );
+        if let Some((done, total)) = progress {
+            painter.text(
+                frame.foot - vec2(0.0, frame.height + 8.0),
+                egui::Align2::CENTER_BOTTOM,
+                format!("Clearing worktrees {done}/{total}"),
+                egui::FontId::proportional(12.0),
+                ctx.global_style().visuals.weak_text_color(),
+            );
+        }
         ctx.request_repaint_after(std::time::Duration::from_millis(if reduced {
             500
         } else {
-            33
+            16
         }));
     }
 }

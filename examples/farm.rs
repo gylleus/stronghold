@@ -17,7 +17,7 @@
 //! bursts). With `--shot`, it saves a
 //! screenshot once settled and another while a worker walks, a new one emerges, a broadcast
 //! ripples and messages fly (`-walk`), plus rubble burst (`-break`) and cleared
-//! (`-cleared`) frames, then exits. With `--hammer`, the first shot waits for impact.
+//! (`-cleared`) frames, then exits. With `--hammer`, the first shot shows the demolition dwarf.
 //! K closes a synthetic dwarf with the King's tool throw; `--king-throw --shot out.png`
 //! captures its flight and impact.
 //! `--pixels farm|HEIGHT` and `--palette NAME` select dwarf rendering.
@@ -478,11 +478,7 @@ impl eframe::App for Demo {
         });
         let captured = image.is_some();
         match self.stage {
-            0 if self.started.elapsed() >= Duration::from_secs(1)
-                && (self.hammer.is_none()
-                    || (0.78..0.84)
-                        .contains(&((ui.input(|i| i.time) / 1.2).rem_euclid(1.0) as f32))) =>
-            {
+            0 if self.started.elapsed() >= Duration::from_millis(1200) => {
                 self.stage = 1;
             }
             1 => {

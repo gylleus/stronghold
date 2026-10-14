@@ -103,6 +103,8 @@ pub struct Pose {
     pub nugget: bool,
     /// His tool put away (lying down).
     pub stowed: bool,
+    /// Both hands grip a separately drawn prop; omit the free back arm.
+    pub two_handed: bool,
     /// Seconds since the tool last struck, for sparks.
     pub since_strike: Option<f32>,
     /// A "?" over the head, 0..1 grown.
@@ -304,6 +306,34 @@ pub fn pose(action: Action, t: f64) -> Pose {
     }
 }
 
+/// A demolition stroke: quick lift, accelerating blow, a firm contact hold, then recovery.
+/// `contact_arm` aims the sledge at the top of the particular heap.
+pub fn demolition(phase: f32, contact_arm: f32) -> Pose {
+    let raised = 3.5;
+    let arm = if phase < 0.32 {
+        lerp(2.1, raised, ease_out(phase / 0.32))
+    } else if phase < 0.44 {
+        lerp(raised, contact_arm, ease_in((phase - 0.32) / 0.12))
+    } else if phase < 0.56 {
+        contact_arm
+    } else {
+        lerp(contact_arm, 2.1, ease_in_out((phase - 0.56) / 0.44))
+    };
+    Pose {
+        arm,
+        back_arm: arm,
+        head: if (0.44..0.56).contains(&phase) {
+            0.12
+        } else {
+            -0.04
+        },
+        brows: -1.0,
+        stowed: true,
+        two_handed: true,
+        ..Pose::default()
+    }
+}
+
 fn lerp(a: f32, b: f32, k: f32) -> f32 {
     a + (b - a) * k
 }
@@ -369,6 +399,17 @@ mod tests {
                 .count();
             assert_eq!(strikes, 1, "{action:?}");
         }
+    }
+
+    #[test]
+    fn demolition_holds_contact_then_recovers_without_a_jump() {
+        let contact = 1.5;
+        assert_eq!(demolition(0.32, contact).arm, 3.5);
+        for phase in [0.44, 0.48, 0.55, 0.56] {
+            assert!((demolition(phase, contact).arm - contact).abs() < 0.001);
+        }
+        assert!((demolition(0.99999, contact).arm - demolition(0.0, contact).arm).abs() < 0.001);
+        assert!(demolition(0.43, contact).arm > contact);
     }
 
     #[test]
