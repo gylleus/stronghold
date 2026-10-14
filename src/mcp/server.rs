@@ -55,8 +55,8 @@ only shows the plan unless dry_run=false is passed. spawn_session \
 starts a new session (existing worktree, new worktree, or a run's worker) with a prompt.
 
 This server also serves the clan playbook, the standing rules the clan runs by, read from disk \
-(no app needed): the prompts coordinator, attendant, worker and envoy (slash commands such as \
-/mcp__stronghold__coordinator) load a role's rules; get_playbook and list_playbook fetch a role, a \
+(no app needed): the prompts coordinator, attendant, worker, envoy and lorekeeper (slash commands \
+such as /mcp__stronghold__coordinator) load a role's rules; get_playbook and list_playbook fetch a role, a \
 file or one section; resources stronghold://playbook/<file> hold each file. attendant_brief \
 {run_id} and kickoff {task_id} (also prompts attendant-brief and kickoff) return those templates \
 pre-filled from live clan data. Every answer starts with the playbook version (git commit, dirty \
