@@ -81,6 +81,7 @@ impl MyrstackApp {
         self.panes.set_conversation(self.has_conversation());
         self.panes.sync_notifications();
         self.notifications_strip(ui);
+        self.worktrees.show(ui);
         if let Some(pane) = self.bring_forward.take() {
             self.panes.activate(pane);
         }

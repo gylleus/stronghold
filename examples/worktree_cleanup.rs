@@ -1,8 +1,8 @@
-//! The worktree cleanup window on a synthetic plan, with the hammer running along the bottom
+//! The worktree cleanup side panel on a synthetic plan, with the hammer running along the bottom
 //! (driven by a sweep marker in a temporary data dir, as when the King runs `clean_worktrees`).
 //! `cargo run --example farm -- --hammer` shows it breaking heaps in the farm.
 //!
-//! `cargo run --example worktree_cleanup [--shot out.png] [--light]`: with `--shot`, saves a
+//! `cargo run --example worktree_cleanup -- [--shot out.png] [--light] [--small]`: with `--shot`, saves a
 //! screenshot after a moment and exits.
 
 use std::time::{Duration, Instant};
@@ -124,6 +124,7 @@ struct Demo {
     shot: Option<String>,
     since: Instant,
     shooting: bool,
+    clicks: usize,
     /// Holds the sweep marker.
     _data: tempfile::TempDir,
 }
@@ -131,11 +132,18 @@ struct Demo {
 impl eframe::App for Demo {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.panel.tick(None, now_ms());
+        egui::Panel::top("top_bar").show(ui, |ui| {
+            self.panel.top_bar(ui, &[]);
+        });
+        self.panel.show(ui);
         egui::CentralPanel::default().show(ui, |ui| {
             ui.heading("Farm goes here");
+            if ui.button("Keep working").clicked() {
+                self.clicks += 1;
+            }
+            ui.label(format!("Workspace clicks: {}", self.clicks));
         });
-        self.panel.tick(None, now_ms());
-        self.panel.window(&ctx);
         self.panel.hammer(&ctx);
         let Some(path) = &self.shot else { return };
         if !self.shooting && self.since.elapsed() > Duration::from_millis(2500) {
@@ -171,6 +179,11 @@ fn main() -> eframe::Result {
         .position(|a| a == "--shot")
         .and_then(|i| args.get(i + 1).cloned());
     let light = args.iter().any(|a| a == "--light");
+    let window = if args.iter().any(|a| a == "--small") {
+        [640.0, 400.0]
+    } else {
+        WINDOW
+    };
     let data = tempfile::tempdir().expect("temp dir");
     // SAFETY: set before any thread starts.
     unsafe { std::env::set_var("MYRSTACK_DATA_DIR", data.path()) };
@@ -190,14 +203,16 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "worktree cleanup",
         eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size(WINDOW),
+            viewport: egui::ViewportBuilder::default().with_inner_size(window),
             ..Default::default()
         },
         Box::new(move |cc| {
             myrstack::ui::theme::install(&cc.egui_ctx);
-            if light {
-                cc.egui_ctx.set_theme(egui::Theme::Light);
-            }
+            cc.egui_ctx.set_theme(if light {
+                egui::Theme::Light
+            } else {
+                egui::Theme::Dark
+            });
             let mut panel = WorktreePanel::new(&cc.egui_ctx);
             panel.show_plan(plan());
             Ok(Box::new(Demo {
@@ -205,6 +220,7 @@ fn main() -> eframe::Result {
                 shot,
                 since: Instant::now(),
                 shooting: false,
+                clicks: 0,
                 _data: data,
             }))
         }),
