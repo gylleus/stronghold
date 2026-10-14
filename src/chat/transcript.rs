@@ -18,9 +18,9 @@ const INTERRUPTED_NOTE: &str = "[Request interrupted by user]";
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatItem {
     User(String),
-    /// Incoming ant data, never a Karl bubble.
-    Ant(Box<crate::queen_inbox::AntMessage>),
-    /// Karl's message spoken with hold-to-talk (drawn with a 🎤 marker).
+    /// An incoming agent message, never a the user bubble.
+    Inbox(Box<crate::king_inbox::InboxMessage>),
+    /// The user's message spoken with hold-to-talk (drawn with a 🎤 marker).
     VoiceUser(String),
     /// Reply text as streamed, `<say>` tags included; the pane shows the say-line apart
     /// (see [`split_say`](super::say::split_say)).
@@ -31,7 +31,7 @@ pub enum ChatItem {
     Tool(ToolCall),
     Permission(PermissionCard),
     Notice(String),
-    /// A note from Stronghold itself (e.g. auto mode changed), not typed by Karl.
+    /// A note from Stronghold itself (e.g. auto mode changed), not typed by the user.
     System(String),
     Error(String),
 }
@@ -133,15 +133,15 @@ impl Transcript {
         self.set_timestamps(start, Some(timestamp));
     }
 
-    pub fn push_ant(&mut self, message: &crate::queen_inbox::AntMessage) {
-        if let Some(ChatItem::Ant(existing)) = self
+    pub fn push_inbox(&mut self, message: &crate::king_inbox::InboxMessage) {
+        if let Some(ChatItem::Inbox(existing)) = self
             .items
             .iter_mut()
-            .find(|item| matches!(item, ChatItem::Ant(m) if m.id == message.id))
+            .find(|item| matches!(item, ChatItem::Inbox(m) if m.id == message.id))
         {
             **existing = message.clone();
         } else {
-            self.push_local(ChatItem::Ant(Box::new(message.clone())));
+            self.push_local(ChatItem::Inbox(Box::new(message.clone())));
         }
     }
 
@@ -150,7 +150,7 @@ impl Transcript {
         self.running = true;
     }
 
-    /// A message Karl spoke (hold-to-talk).
+    /// A message the user spoke (hold-to-talk).
     pub fn push_voice_user(&mut self, text: &str) {
         self.push_local(ChatItem::VoiceUser(text.to_owned()));
         self.running = true;

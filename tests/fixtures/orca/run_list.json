@@ -5,7 +5,7 @@
     "runs": [
       {
         "id": "run_7c25cdcf46e0",
-        "objective": "commerce-platform wave 2026-09-23: HACK-76 generated looks (culori palettes, Google Fonts catalogue, fonts from R2) and the tracks that follow; opus workers implement, coordinator gates, Karl merges",
+        "objective": "storefront wave 2026-09-23: HACK-76 generated looks (culori palettes, Google Fonts catalogue, fonts from R2) and the tracks that follow; opus workers implement, coordinator gates, Karl merges",
         "home_database": "this_database",
         "coordinator_handle": "term_df9f48c9-c8e8-4ceb-afca-932028245fb1",
         "coordinator_pane_key": "2e4e577a-208f-495e-b79c-2a5505c63a50:77bd6bcf-3100-4734-af40-1c8609f6c217",
@@ -16,7 +16,7 @@
       },
       {
         "id": "run_1ae630816d30",
-        "objective": "VROOM-1521: shopify_plan_update carries change_type, previous plan/ARR, products and session quota",
+        "objective": "ACME-1521: shopify_plan_update carries change_type, previous plan/ARR, products and session quota",
         "home_database": "this_database",
         "coordinator_handle": "term_33b68740-e5da-4ff4-89e8-12f6cf9158b4",
         "coordinator_pane_key": "8a3a1889-323a-42ac-8f91-7a285c2b509e:9a717b9c-ed57-404d-be47-cba9adbb4ff7",
@@ -27,7 +27,7 @@
       },
       {
         "id": "run_d01f9ddeba0b",
-        "objective": "VROOM-1520: shopify_plan_update announces the real catalogue plan, not Custom",
+        "objective": "ACME-1520: shopify_plan_update announces the real catalogue plan, not Custom",
         "home_database": "this_database",
         "coordinator_handle": "term_3f56f9dd-c1da-40a2-9b19-376b0b20aeb6",
         "coordinator_pane_key": "c83aa883-92b4-4443-b873-149f274a6fbf:cca5d58e-b119-4edd-a79b-4fba9e7cebe6",

@@ -2,13 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// #agent-comms, where coworkers' agents talk to Karl's.
-pub const AGENT_COMMS: &str = "C0BHZLG3X63";
-/// Karl's Slack member id; mentions of it are pings to Karl.
-pub const KARL_USER_ID: &str = "U0AMMLGSFL0";
-/// Owner of the repos Slack names as `repo#N`.
-pub const GITHUB_OWNER: &str = "depict-org";
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EnvoySettings {
@@ -17,12 +10,17 @@ pub struct EnvoySettings {
     /// `--model` for the Envoy session: an alias or a full id.
     pub model: Option<String>,
     /// Read and draft only: approving records a would-be send and relays are logged, not
-    /// delivered. On until Karl turns it off.
+    /// delivered. On until the user turns it off.
     pub dry_run: bool,
     /// Channels whose whole feed the Envoy listens to through the bridge.
     pub channels: Vec<String>,
-    /// Whose mentions and DMs count as pings to Karl.
-    pub karl_user_id: String,
+    /// Whose mentions and DMs count as pings to the user. Slack's `auth.test` replaces it at
+    /// start; mention and DM polls wait while both are empty. Saved as `karl_user_id` before
+    /// the user's name became a setting.
+    #[serde(alias = "karl_user_id")]
+    pub user_id: String,
+    /// GitHub owner of the repos Slack names as `repo#N`; empty turns PR lookups off.
+    pub github_owner: String,
     /// How often mentions and DMs are polled with Slack search (the bridge can't see them).
     #[serde(deserialize_with = "poll_secs")]
     pub poll_secs: u64,
@@ -99,8 +97,9 @@ impl Default for EnvoySettings {
             agent: "claude".into(),
             model: Some("sonnet".into()),
             dry_run: true,
-            channels: vec![AGENT_COMMS.into()],
-            karl_user_id: KARL_USER_ID.into(),
+            channels: Vec::new(),
+            user_id: String::new(),
+            github_owner: String::new(),
             poll_secs: 120,
             policies: Vec::new(),
             fresh_after_secs: 300,
@@ -115,11 +114,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_old_member_id_key_still_loads() {
+        let s: EnvoySettings = serde_json::from_str(r#"{"karl_user_id":"U1"}"#).unwrap();
+        assert_eq!(s.user_id, "U1");
+        assert!(
+            serde_json::to_string(&s)
+                .unwrap()
+                .contains(r#""user_id":"U1""#)
+        );
+    }
+
+    #[test]
     fn missing_fields_take_safe_defaults() {
         let s: EnvoySettings = serde_json::from_str(r#"{"model":"opus"}"#).unwrap();
         assert_eq!(s.model.as_deref(), Some("opus"));
         assert!(s.dry_run);
-        assert_eq!(s.channels, vec![AGENT_COMMS.to_string()]);
+        assert!(s.channels.is_empty());
+        assert!(s.user_id.is_empty());
+        assert!(s.github_owner.is_empty());
         assert_eq!(s.fresh_after_secs, 300);
         assert_eq!(s.reset_after_events, 40);
         assert_eq!(s.reset_after_tokens, 80_000);

@@ -74,7 +74,7 @@ fn resolves_every_way_an_agent_is_named() {
         resolve(&s, "stronghold-whip"),
         Some(Endpoint::Node(NodeId::king()))
     );
-    assert_eq!(resolve(&s, "Karl"), Some(Endpoint::Karl));
+    assert_eq!(resolve(&s, "Karl"), Some(Endpoint::User));
     assert_eq!(resolve(&s, "slack"), Some(Endpoint::Outside));
     assert_eq!(resolve(&s, "term_gone"), None);
     assert_eq!(resolve(&s, "run:r9"), None);

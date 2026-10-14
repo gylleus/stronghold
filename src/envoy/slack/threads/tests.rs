@@ -176,12 +176,12 @@ fn installation_catches_fast_reply_even_after_channel_cursor_and_display_evictio
 fn routing_verifies_dm_recipient_and_refuses_karl() {
     let dir = tempfile::tempdir().unwrap();
     let mut channel = channel(dir.path());
-    channel.settings.karl_user_id = "UKARL".into();
+    channel.settings.user_id = "UKARL".into();
     assert!(
         channel
             .resolve_destination("D123")
             .unwrap_err()
-            .contains("ask_karl")
+            .contains("ask_user")
     );
     assert_eq!(
         channel.resolve_destination("C123").unwrap().conversation,

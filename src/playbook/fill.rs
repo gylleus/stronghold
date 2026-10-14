@@ -546,7 +546,7 @@ pub fn kickoff(
             Some((r, from)) => value(r.clone(), from),
             None => Resolution::Missing,
         },
-        "VROOM-###" => match &ticket {
+        "TICKET-###" => match &ticket {
             Some((t, from)) => value(t.clone(), from),
             None => Resolution::Missing,
         },
@@ -661,23 +661,18 @@ fn waited_types(template: &str) -> Option<String> {
     Some(types.split(',').collect::<Vec<_>>().join(", "))
 }
 
-/// A ticket key such as `VROOM-1521`: `VROOM-` first, else any `ABC-123`.
+/// The first ticket key such as `ABC-123` in `text`.
 pub fn ticket_id(text: &str) -> Option<String> {
-    let keys: Vec<String> = text
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
-        .filter_map(|word| {
-            let (prefix, number) = word.split_once('-')?;
-            let ok = prefix.len() >= 2
-                && prefix.chars().all(|c| c.is_ascii_uppercase())
-                && !number.is_empty()
-                && number.chars().all(|c| c.is_ascii_digit());
-            ok.then(|| word.to_owned())
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        .find(|word| {
+            word.split_once('-').is_some_and(|(prefix, number)| {
+                prefix.len() >= 2
+                    && prefix.chars().all(|c| c.is_ascii_uppercase())
+                    && !number.is_empty()
+                    && number.chars().all(|c| c.is_ascii_digit())
+            })
         })
-        .collect();
-    keys.iter()
-        .find(|k| k.starts_with("VROOM-"))
-        .or(keys.first())
-        .cloned()
+        .map(str::to_owned)
 }
 
 /// `2026-09-25 14:03 UTC`.
@@ -729,15 +724,15 @@ pub(crate) mod tests {
         let facts: ClanFacts = serde_json::from_value(json!({
             "polled_at_ms": NOW,
             "terminals": [
-                {"handle": COORD, "worktreePath": "/u/orca/workspaces/depict/coord",
+                {"handle": COORD, "worktreePath": "/u/orca/workspaces/shop/coord",
                  "branch": "refs/heads/main", "agentIdentity": "claude", "tabId": "tab1", "leafId": "l1"},
-                {"handle": W1, "worktreePath": "/u/orca/workspaces/depict/track-a",
+                {"handle": W1, "worktreePath": "/u/orca/workspaces/shop/track-a",
                  "branch": "refs/heads/karl/track-a", "agentIdentity": "claude"},
-                {"handle": W2, "worktreePath": "/u/orca/workspaces/depict/track-c",
+                {"handle": W2, "worktreePath": "/u/orca/workspaces/shop/track-c",
                  "agentIdentity": "codex"},
             ],
             "runs": [
-                {"id": RUN, "objective": "VROOM-1521 wave: ship \"plan\" updates",
+                {"id": RUN, "objective": "ACME-1521 wave: ship \"plan\" updates",
                  "coordinator_handle": "term_gone", "created_at": "2026-09-23T08:37:04Z"},
                 {"id": "run_2", "objective": "other", "coordinator_handle": COORD},
             ],
@@ -748,7 +743,7 @@ pub(crate) mod tests {
                  "agentTerminalHandle": W2},
             ],
             "tasks": {RUN: [
-                {"id": "t_a", "run_id": RUN, "task_title": "VROOM-1522 track A",
+                {"id": "t_a", "run_id": RUN, "task_title": "ACME-1522 track A",
                  "spec": "Own the A path.\nNot B.", "status": "dispatched", "deps": "[]",
                  "dispatch_id": "d1", "created_by_terminal_handle": COORD,
                  "created_at": "2026-09-23T09:00:00Z"},
@@ -819,7 +814,7 @@ pub(crate) mod tests {
                 "track",
                 "repo",
                 "repoId",
-                "VROOM-###",
+                "TICKET-###",
                 "one-line title",
                 "track-number",
                 "standard | gated",
@@ -877,10 +872,10 @@ pub(crate) mod tests {
         let t = template(ATTENDANT_BRIEF);
         let f = attendant_brief(&t, &data, RUN, None, context()).unwrap();
         let body = &f.result.text;
-        assert!(body.starts_with("# Attendant brief — VROOM-1521 wave (fill every <…>"));
+        assert!(body.starts_with("# Attendant brief — ACME-1521 wave (fill every <…>"));
         assert!(body.contains(&format!("- Coordinator terminal: `{COORD}`")));
         assert!(body.contains("`<coordinator scratchpad path: FILL IN>` — `SCRATCH` below."));
-        assert!(body.contains("--objective \"VROOM-1521 wave: ship \\\"plan\\\" updates\" --json"));
+        assert!(body.contains("--objective \"ACME-1521 wave: ship \\\"plan\\\" updates\" --json"));
         assert!(body.contains("`RUN_ID=run_1`"));
         assert!(body.contains("\"<type> from <track>: <subject> — msg <id>\""));
         assert_eq!(f.result.missing, ["coordinator scratchpad path"]);
@@ -906,7 +901,7 @@ pub(crate) mod tests {
         assert!(
             header.contains("Run: run_1, created 2026-09-23 08:37 UTC · 3 tasks · 2 dispatches")
         );
-        assert!(header.contains("- d1 · worker term_w1 · task t_a \"VROOM-1522 track A\" · ready"));
+        assert!(header.contains("- d1 · worker term_w1 · task t_a \"ACME-1522 track A\" · ready"));
         assert!(header.contains("Finished dispatches: 1 (succeeded 1)"));
         assert!(
             lines.contains(&"Bus event types on this run so far: heartbeat ×2, worker_done ×1"),
@@ -986,9 +981,9 @@ pub(crate) mod tests {
         let t = template(KICKOFF);
         let f = kickoff(&t, &data, "t_a", context()).unwrap();
         let body = &f.result.text;
-        assert!(body.starts_with("# KICKOFF — VROOM-1522 track A\n"));
-        assert!(body.contains("- **Repo:** depict (`orca repo list` → `id:<repoId: FILL IN>`)"));
-        assert!(body.contains("- **Ticket:** VROOM-1522 — VROOM-1522 track A"));
+        assert!(body.starts_with("# KICKOFF — ACME-1522 track A\n"));
+        assert!(body.contains("- **Repo:** shop (`orca repo list` → `id:<repoId: FILL IN>`)"));
+        assert!(body.contains("- **Ticket:** ACME-1522 — ACME-1522 track A"));
         assert!(body.contains("<track-number: FILL IN>00–<track-number: FILL IN>99"));
         assert!(body.contains("## Scope\n\nOwn the A path.\nNot B.\n"));
         assert!(body.contains("- Blocked by: none\n"));
@@ -998,25 +993,25 @@ pub(crate) mod tests {
         assert!(body.contains("**Open decisions:** <none: FILL IN>"));
         assert!(f.result.missing.contains(&"fact".to_owned()));
         let header = f.header();
-        assert!(header.contains("Task: t_a \"VROOM-1522 track A\" · dispatched · run run_1"));
+        assert!(header.contains("Task: t_a \"ACME-1522 track A\" · dispatched · run run_1"));
         assert!(header.contains(
-            "Dispatch: d1 · worker term_w1 · worktree /u/orca/workspaces/depict/track-a · \
+            "Dispatch: d1 · worker term_w1 · worktree /u/orca/workspaces/shop/track-a · \
              branch karl/track-a"
         ));
-        assert!(header.contains("- <repo> = depict (the worker's worktree)"));
+        assert!(header.contains("- <repo> = shop (the worker's worktree)"));
 
         let f = kickoff(&t, &data, "t_b", context()).unwrap();
         assert!(
             f.result
                 .text
-                .contains("- Blocked by: t_a \"VROOM-1522 track A\" (dispatched)")
+                .contains("- Blocked by: t_a \"ACME-1522 track A\" (dispatched)")
         );
         assert!(f.result.text.contains("- Blocks: none"));
-        assert!(f.result.text.contains("<VROOM-###: FILL IN>"));
+        assert!(f.result.text.contains("<TICKET-###: FILL IN>"));
         assert!(f.header().contains("Dispatch: not dispatched yet"));
         assert!(
             f.header()
-                .contains("- <repo> = depict (the coordinator's worktree)")
+                .contains("- <repo> = shop (the coordinator's worktree)")
         );
         assert!(
             f.result.text.contains("<What this track owns"),
@@ -1042,10 +1037,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn ticket_ids_prefer_vroom() {
+    fn ticket_ids_take_the_first_key() {
         assert_eq!(
-            ticket_id("HACK-7 then VROOM-12: x").as_deref(),
-            Some("VROOM-12")
+            ticket_id("HACK-7 then ACME-12: x").as_deref(),
+            Some("HACK-7")
         );
         assert_eq!(ticket_id("(HACK-76) looks").as_deref(), Some("HACK-76"));
         assert_eq!(ticket_id("hack-77-admin-speed A-1 X-y"), None);

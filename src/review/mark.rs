@@ -23,7 +23,7 @@ pub const MAX_PENDING_BYTES: u64 = 256 * 1024;
 /// Longest title and summary kept.
 pub const MAX_TEXT_CHARS: usize = 500;
 
-pub const WORKER_READY_ERROR: &str = "Dispatched workers cannot mark PRs ready for Karl. Send \
+pub const WORKER_READY_ERROR: &str = "Dispatched workers cannot mark PRs ready for review. Send \
     merge_ready to your coordinator instead; the coordinator must verify the gate and call \
     mark_pr_ready.";
 
@@ -341,7 +341,7 @@ mod tests {
 
     fn mark(n: u64, at_ms: i64) -> ReadyMark {
         ReadyMark::new(
-            &format!("https://github.com/depict-org/realtime/pull/{n}"),
+            &format!("https://github.com/acme/api/pull/{n}"),
             Some("recs: gate legacy config retirement"),
             None,
             Origin {

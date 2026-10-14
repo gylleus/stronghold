@@ -10,19 +10,19 @@ macro_rules! say_rules {
 at most 25 words, plain everyday words a non-engineer would use, the answer first, small \
 rounded numbers. No ids, hashes, branch or file names and no jargon (dispatch, run id, handle, \
 coordinator handle, PR number): say \"the search go-live PR\" or \"a pull request in \
-depict\", and name agents by their short human name or repo. Don't list; offer the details \
+the shop repo\", and name agents by their short human name or repo. Don't list; offer the details \
 instead (\"Want the list?\"). After the </say> line, write the normal detailed answer for the \
 screen (markdown is fine there)."
     };
 }
 
-/// Put before a message Karl spoke (not shown in his bubble): the King's reply is read aloud.
+/// Put before a message the user spoke (not shown in their bubble): the King's reply is read aloud.
 pub const VOICE_NOTE: &str = concat!(
-    "[Stronghold] Karl said this by voice (hold-to-talk); this turn is spoken. ",
+    "[Stronghold] {user} said this by voice (hold-to-talk); this turn is spoken. ",
     say_rules!()
 );
 
-/// Put before a typed message while "Speak replies" is on: his reply is read aloud.
+/// Put before a typed message while "Speak replies" is on: the King's reply is read aloud.
 pub const SPEAK_NOTE: &str = concat!(
     "[Stronghold] Speak replies is on; this turn is spoken. ",
     say_rules!()
@@ -31,7 +31,7 @@ pub const SPEAK_NOTE: &str = concat!(
 /// What the speaker needs from the chat, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpeechEvent {
-    /// Karl sent a message; `voice` when he spoke it.
+    /// The user sent a message; `voice` when they spoke it.
     TurnStart { voice: bool },
     /// A delta of the King's reply text (top-level text blocks only; tool calls and
     /// subagents are not spoken).

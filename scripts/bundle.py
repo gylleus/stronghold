@@ -22,7 +22,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-BUNDLE_ID = "ai.depict.stronghold"
+BUNDLE_ID = "com.gylleus.stronghold"
 APP_NAME = "Stronghold"
 EXECUTABLE = "stronghold"
 ICON = "Stronghold.icns"

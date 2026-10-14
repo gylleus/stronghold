@@ -47,8 +47,9 @@ macro_rules! screen {
     };
 }
 
-const WT_ID: &str = "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/orca/workspaces/commerce-platform/hack-77-admin-speed";
-const WT_PATH: &str = "/Users/gylleus/orca/workspaces/commerce-platform/hack-77-admin-speed";
+const WT_ID: &str =
+    "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/k/orca/workspaces/storefront/hack-77-admin-speed";
+const WT_PATH: &str = "/Users/k/orca/workspaces/storefront/hack-77-admin-speed";
 const REPO_ID: &str = "f2c8fcb1-8fa7-4763-8986-a597cba57cdd";
 const PROMPT: &str = "Fix the flaky checkout test in packages/platform: it times out on CI about \
                       one run in five. Find the cause, fix it, and add a regression test.";
@@ -565,7 +566,7 @@ fn repo_and_worktree_lists_parse() {
     let c = catalog();
     assert_eq!(c.repos.len(), 3);
     let cp = c.repos.iter().find(|r| r.id == REPO_ID).unwrap();
-    assert_eq!(cp.name(), "commerce-platform");
+    assert_eq!(cp.name(), "storefront");
     assert_eq!(cp.worktree_base_ref.as_deref(), Some("origin/main"));
     assert_eq!(cp.selector(), format!("id:{REPO_ID}"));
     let wt = c.worktree(WT_ID).unwrap();
@@ -1077,7 +1078,7 @@ fn new_worktree_run_records_the_worktree_and_allows_direnv() {
     let ctx = &outcome.context;
     assert_eq!(
         ctx.worktree_path.as_deref(),
-        Some("/Users/gylleus/orca/workspaces/commerce-platform/spawn-test")
+        Some("/Users/k/orca/workspaces/storefront/spawn-test")
     );
     assert_eq!(
         ctx.handle.as_deref(),
@@ -1085,7 +1086,7 @@ fn new_worktree_run_records_the_worktree_and_allows_direnv() {
     );
     assert_eq!(
         fake.direnv_calls,
-        vec!["/Users/gylleus/orca/workspaces/commerce-platform/spawn-test"]
+        vec!["/Users/k/orca/workspaces/storefront/spawn-test"]
     );
     assert!(outcome.verified && fake.sent.is_empty());
 }
@@ -1116,7 +1117,7 @@ fn worker_run_creates_task_starts_worker_and_checks_the_preamble() {
     assert_eq!(ctx.dispatch_id.as_deref(), Some("dispatch_0a1b2c3d4e5f"));
     assert_eq!(
         ctx.worktree_path.as_deref(),
-        Some("/Users/gylleus/orca/workspaces/commerce-platform/flaky-checkout")
+        Some("/Users/k/orca/workspaces/storefront/flaky-checkout")
     );
     assert_eq!(
         outcome.node_id(),
@@ -1311,7 +1312,7 @@ fn api_jobs_resolve_against_orca_lists_then_run() {
     let job = Job::Args {
         args: SpawnArgs {
             mode: ModeName::Worktree,
-            worktree: Some("commerce-platform/hack-77-admin-speed".into()),
+            worktree: Some("storefront/hack-77-admin-speed".into()),
             prompt: PROMPT.into(),
             ..SpawnArgs::default()
         },
@@ -1354,18 +1355,18 @@ fn catalog_groups_and_finds_by_every_name() {
     let c = catalog();
     let groups = c.groups();
     let names: Vec<&str> = groups.iter().map(|g| g.repo.name()).collect();
-    assert_eq!(names, ["commerce-platform", "depict", "fitness-rpg"]);
-    let cp = &groups[0];
+    assert_eq!(names, ["fitness-rpg", "shop", "storefront"]);
+    let cp = &groups[2];
     assert!(cp.worktrees[0].is_main_worktree, "main checkout first");
     assert_eq!(cp.worktrees.len(), 2);
 
     // The sidebar names repos after paths.
-    assert_eq!(c.repo_for_sidebar("commerce-platform").unwrap().id, REPO_ID);
-    assert_eq!(c.repo_for_sidebar("depict").unwrap().name(), "depict");
+    assert_eq!(c.repo_for_sidebar("storefront").unwrap().id, REPO_ID);
+    assert_eq!(c.repo_for_sidebar("shop").unwrap().name(), "shop");
     assert!(c.repo_for_sidebar("nope").is_none());
     assert_eq!(c.find_repo(&format!("id:{REPO_ID}")).unwrap().id, REPO_ID);
     assert_eq!(
-        c.find_repo("/Users/gylleus/repo/hackathon/commerce-platform/")
+        c.find_repo("/Users/k/repo/hackathon/storefront/")
             .unwrap()
             .id,
         REPO_ID
@@ -1379,8 +1380,8 @@ fn catalog_groups_and_finds_by_every_name() {
     assert_eq!(c.find_worktree(WT_PATH).unwrap().id, WT_ID);
     assert_eq!(c.find_worktree("hack-77-admin-speed").unwrap().id, WT_ID);
     assert_eq!(
-        c.find_worktree("commerce-platform/main").unwrap().path,
-        "/Users/gylleus/repo/hackathon/commerce-platform"
+        c.find_worktree("storefront/main").unwrap().path,
+        "/Users/k/repo/hackathon/storefront"
     );
     let err = c.find_worktree("main").unwrap_err();
     assert!(err.contains("names 3 worktrees"), "{err}");
@@ -1394,7 +1395,7 @@ fn api_args_parse_and_resolve_per_mode() {
     let parse = |v: Value| SpawnArgs::parse(&v);
 
     let a = parse(
-        json!({"mode": "new_worktree", "repo": "commerce-platform", "name": "x",
+        json!({"mode": "new_worktree", "repo": "storefront", "name": "x",
                          "prompt": "go", "agent": "Codex", "model": "o3"}),
     )
     .unwrap();
@@ -1465,14 +1466,14 @@ fn control_spawn_method_parses_into_a_command() {
     use crate::control::commands::{ControlCommand, SPAWN_REPLY_TIMEOUT};
     let parsed = ControlCommand::parse(
         "spawn",
-        &json!({"mode": "worktree", "worktree": "depict/main", "prompt": "hi"}),
+        &json!({"mode": "worktree", "worktree": "shop/main", "prompt": "hi"}),
     )
     .unwrap()
     .unwrap();
     let ControlCommand::Spawn(args) = &parsed else {
         panic!("{parsed:?}")
     };
-    assert_eq!(args.worktree.as_deref(), Some("depict/main"));
+    assert_eq!(args.worktree.as_deref(), Some("shop/main"));
     assert_eq!(parsed.reply_timeout(), SPAWN_REPLY_TIMEOUT);
     assert!(
         crate::control::server::ACTION_METHODS.contains(&"spawn"),
@@ -1546,7 +1547,8 @@ fn a_spawn_selects_its_node_only_with_focus_new() {
 // ---------------------------------------------------------------------------
 // Taken names, startup shells
 
-const NEW_WT_ID: &str = "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/orca/workspaces/commerce-platform/spawn-test";
+const NEW_WT_ID: &str =
+    "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/k/orca/workspaces/storefront/spawn-test";
 const NEW_AGENT: &str = "term_7d1e4c2a-9b3f-4e8d-a6c5-0f1e2d3c4b5a";
 
 fn working_agent() -> LiveAgent {
@@ -1589,7 +1591,7 @@ fn taken_name_job(allow_suffix: bool) -> Job {
     Job::Args {
         args: SpawnArgs {
             mode: ModeName::NewWorktree,
-            repo: Some("commerce-platform".into()),
+            repo: Some("storefront".into()),
             name: Some("hack-77-admin-speed".into()),
             prompt: PROMPT.into(),
             allow_suffix,
@@ -1623,14 +1625,14 @@ fn api_spawn_into_a_taken_name_fails_before_creating_anything() {
     // A worker's new worktree is checked too; a branch alone is enough.
     let mut fake = Fake {
         catalog: catalog(),
-        branches: vec!["gylleus/flaky-checkout".into()],
+        branches: vec!["karl/flaky-checkout".into()],
         ..Fake::default()
     };
     let job = Job::Args {
         args: SpawnArgs {
             mode: ModeName::Worker,
             run_id: Some("run_7c25cdcf46e0".into()),
-            repo: Some("commerce-platform".into()),
+            repo: Some("storefront".into()),
             name: Some("flaky-checkout".into()),
             prompt: PROMPT.into(),
             ..SpawnArgs::default()
@@ -1642,7 +1644,7 @@ fn api_spawn_into_a_taken_name_fails_before_creating_anything() {
     let mut events = Vec::new();
     run_job(2, job, &mut fake, &mut |e| events.push(e));
     assert!(
-        matches!(&events[..], [SpawnEvent::Done { result: Err(f), .. }] if f.message.contains("branch gylleus/flaky-checkout")),
+        matches!(&events[..], [SpawnEvent::Done { result: Err(f), .. }] if f.message.contains("branch karl/flaky-checkout")),
         "{events:?}"
     );
 

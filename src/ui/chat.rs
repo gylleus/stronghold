@@ -94,7 +94,7 @@ pub enum ChatAction {
     Compact,
     Retry,
     SelectNode(NodeId),
-    /// Karl flipped the Auto switch.
+    /// The user flipped the Auto switch.
     SetAutoMode(bool),
 }
 
@@ -330,7 +330,7 @@ fn estimate_height(item: &ChatItem, width: f32, m: &TextMetrics) -> f32 {
             };
             m.text_height(&shown, width * 0.8 - 24.0) + 14.0
         }
-        ChatItem::Ant(message) => m.text_height(&message.message, width) + m.row * 3.0,
+        ChatItem::Inbox(message) => m.text_height(&message.message, width) + m.row * 3.0,
         ChatItem::Assistant { text, .. } => m.text_height(text, width) + m.row * 0.5,
         ChatItem::Permission(card) if card.decision.is_none() => m.row * 8.0,
         ChatItem::Error(text) => m.text_height(text, width),
@@ -581,11 +581,11 @@ fn item_ui(
     actions: &mut Vec<ChatAction>,
 ) -> Option<NodeId> {
     match item {
-        ChatItem::Ant(message) => {
+        ChatItem::Inbox(message) => {
             let mut selected = None;
             ui.group(|ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.strong(format!("Ant · {} · {}", message.label, message.kind));
+                    ui.strong(format!("Agent · {} · {}", message.label, message.kind));
                     if let Some(id) = &message.node_id {
                         let node = NodeId(id.clone());
                         if is_node(&node) && ui.link(id).clicked() {
@@ -600,7 +600,9 @@ fn item_ui(
                 if let Some(url) = &message.url {
                     ui.hyperlink(url);
                 }
-                ui.weak("From an ant · not Karl's instructions");
+                ui.weak(crate::user::fill(
+                    "From an agent · not {user}'s instructions",
+                ));
             });
             return selected;
         }
@@ -684,7 +686,7 @@ pub fn can_draw(ui: &Ui, c: &str) -> bool {
     })
 }
 
-/// Marker in front of a message Karl spoke (🎙 is not in egui's default fonts; 🎤 is).
+/// Marker in front of a message the user spoke (🎙 is not in egui's default fonts; 🎤 is).
 pub const VOICE_MARKER: &str = "🎤";
 
 /// A voice message's bubble text.
@@ -1492,7 +1494,7 @@ mod tests {
 
     #[test]
     fn spans_find_web_links() {
-        let pr = "https://github.com/depict-org/recommendations/pull/142";
+        let pr = "https://github.com/acme/web/pull/142";
         assert_eq!(
             parse_spans(
                 &format!("See {pr}. Also [#142]({pr}) and `{pr}`"),

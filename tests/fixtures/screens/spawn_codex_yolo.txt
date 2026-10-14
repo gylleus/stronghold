@@ -1,6 +1,6 @@
 
   >_ OpenAI Codex (v0.160.0)
-     ~/orca/workspaces/myrstack/codex-never-ask
+     ~/orca/workspaces/stronghold/codex-never-ask
   permissions: YOLO mode
   Anything interesting on the docket?
 
@@ -11,5 +11,5 @@
 
 › Ask Codex to do anything
 
-  GPT-6-Astra high · ~/orca/workspaces/myrstack/codex-never-ask
+  GPT-6-Astra high · ~/orca/workspaces/stronghold/codex-never-ask
   ← for agents · ? for shortcuts                                         ⚠ 5 warnings · f2 to view

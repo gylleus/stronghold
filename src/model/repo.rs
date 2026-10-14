@@ -12,7 +12,7 @@ pub const NO_REPO: &str = "(no repo)";
 /// The repo of a worktree path: the component after `workspaces/` in Orca paths
 /// (`…/orca/workspaces/<repo>/<worktree>`), the parent directory without its `-worktrees`
 /// suffix for sibling worktrees (`…/<repo>-worktrees/<name>`), else the directory's own name
-/// (a repo root such as `…/hackathon/commerce-platform`).
+/// (a repo root such as `…/repo/shop`).
 pub fn repo_of(path: &str) -> Option<String> {
     let path = Path::new(path.trim_end_matches('/'));
     let components: Vec<&str> = path.iter().filter_map(|c| c.to_str()).collect();
@@ -130,14 +130,11 @@ mod tests {
             ("/Users/x/orca/workspaces/shop/feat-pay/", Some("shop")),
             ("/Users/x/orca/workspaces/shop", Some("shop")),
             (
-                "/Users/gylleus/orca/workspaces/commerce-platform/hack-77-admin-speed",
-                Some("commerce-platform"),
+                "/Users/k/orca/workspaces/storefront/hack-77-admin-speed",
+                Some("storefront"),
             ),
-            (
-                "/Users/gylleus/repo/hackathon/commerce-platform",
-                Some("commerce-platform"),
-            ),
-            ("/Users/gylleus/repo/depict/realtime", Some("realtime")),
+            ("/Users/k/repo/hackathon/storefront", Some("storefront")),
+            ("/Users/k/repo/shop/api", Some("api")),
             ("/Users/x/code/saker/stronghold", Some("stronghold")),
             (
                 "/Users/x/repo/stronghold-worktrees/myr-k7y.6",

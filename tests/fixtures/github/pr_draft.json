@@ -9,7 +9,7 @@
       "body": "<!-- linear-linkback --> (trimmed)",
       "createdAt": "2026-09-28T12:24:08Z",
       "id": "IC_kwDOKwOQwM8AAAABXd2OZg",
-      "url": "https://github.com/depict-org/depict/pull/8118#issuecomment-5869768294"
+      "url": "https://github.com/acme/shop/pull/8118#issuecomment-5869768294"
     },
     {
       "author": {
@@ -19,7 +19,7 @@
       "body": "<!-- ankra-ai:section:review -->\n\n## Ankra AI review\n\n**Verdict: comments.**\n\n(review text trimmed for the fixture)\n\n_Reviewed commit da939d40e863. This review is read-only and advisory._",
       "createdAt": "2026-09-28T12:26:18Z",
       "id": "IC_kwDOKwOQwM8AAAABXd4J4g",
-      "url": "https://github.com/depict-org/depict/pull/8118#issuecomment-5869799906"
+      "url": "https://github.com/acme/shop/pull/8118#issuecomment-5869799906"
     },
     {
       "author": {
@@ -29,7 +29,7 @@
       "body": "## Deploying before-after-4 with &nbsp;<a href=\"https://pages.dev\"><img alt=\"Clo (trimmed)",
       "createdAt": "2026-09-28T12:28:57Z",
       "id": "IC_kwDOKwOQwM8AAAABXd6ftg",
-      "url": "https://github.com/depict-org/depict/pull/8118#issuecomment-5869838262"
+      "url": "https://github.com/acme/shop/pull/8118#issuecomment-5869838262"
     },
     {
       "author": {
@@ -39,7 +39,7 @@
       "body": "<!-- portal-app-next-preview --> (trimmed)",
       "createdAt": "2026-09-28T12:32:45Z",
       "id": "IC_kwDOKwOQwM8AAAABXd95dA",
-      "url": "https://github.com/depict-org/depict/pull/8118#issuecomment-5869894004"
+      "url": "https://github.com/acme/shop/pull/8118#issuecomment-5869894004"
     }
   ],
   "headRefOid": "da939d40e8638a3ae4b2066a0ff2116c18504060",
@@ -56,7 +56,7 @@
       "name": "battery",
       "startedAt": "2026-09-28T12:34:55Z",
       "status": "COMPLETED",
-      "workflowName": "Foundation eval gate (label-triggered)"
+      "workflowName": "Catalog eval gate (label-triggered)"
     },
     {
       "__typename": "CheckRun",
@@ -92,7 +92,7 @@
       "name": "typecheck",
       "startedAt": "2026-09-28T12:34:51Z",
       "status": "COMPLETED",
-      "workflowName": "Depict-search typecheck"
+      "workflowName": "Search typecheck"
     },
     {
       "__typename": "CheckRun",
@@ -209,6 +209,6 @@
       "state": "SUCCESS"
     }
   ],
-  "title": "VROOM-1496: Hydrate live storefront recommendations with Shopify sections",
-  "url": "https://github.com/depict-org/depict/pull/8118"
+  "title": "ACME-1496: Hydrate live storefront recommendations with Shopify sections",
+  "url": "https://github.com/acme/shop/pull/8118"
 }

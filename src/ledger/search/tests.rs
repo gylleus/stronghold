@@ -5,7 +5,7 @@ use std::io::Cursor;
 fn requests_use_meaning_for_questions_and_text_for_ids() {
     for (query, expected) in [
         ("Where does the clan keep memories?", "vector"),
-        ("VROOM-1299", "text"),
+        ("ACME-1299", "text"),
         ("myr-bas", "text"),
         ("basic-memory setup", "vector"),
         ("basic-memory", "vector"),
@@ -18,7 +18,7 @@ fn requests_use_meaning_for_questions_and_text_for_ids() {
         assert_eq!(request["params"]["arguments"]["output_format"], "json");
         assert_eq!(request["params"]["arguments"]["project"], "ledger");
     }
-    assert_eq!(Mode::Meaning.search_type("VROOM-1299"), "vector");
+    assert_eq!(Mode::Meaning.search_type("ACME-1299"), "vector");
     assert_eq!(Mode::Text.search_type("any question"), "text");
 }
 
@@ -117,18 +117,18 @@ fn fallback_searches_literal_terms_and_reads_real_filenames_without_writing() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     std::fs::create_dir(root.join("repo")).unwrap();
-    let content = "---\ntitle: A different title\ntype: decision\n---\n\n# Notes\nFixed VROOM-1299 with café [literal].\n";
+    let content = "---\ntitle: A different title\ntype: decision\n---\n\n# Notes\nFixed ACME-1299 with café [literal].\n";
     let file = root.join("repo/actual.md");
     std::fs::write(&file, content).unwrap();
     std::fs::write(root.join("other.md"), "Unrelated text").unwrap();
-    std::fs::write(root.join(".hidden.md"), "VROOM-1299").unwrap();
-    std::fs::write(root.join("ignored.txt"), "VROOM-1299").unwrap();
+    std::fs::write(root.join(".hidden.md"), "ACME-1299").unwrap();
+    std::fs::write(root.join("ignored.txt"), "ACME-1299").unwrap();
     let before = std::fs::metadata(&file).unwrap().modified().unwrap();
-    let hits = fallback(root, "vroom-1299 CAFÉ").unwrap();
+    let hits = fallback(root, "acme-1299 CAFÉ").unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].entry.title, "A different title");
     assert_eq!(hits[0].entry.kind.as_deref(), Some("decision"));
-    assert!(hits[0].snippet.contains("VROOM-1299"));
+    assert!(hits[0].snippet.contains("ACME-1299"));
     assert!(!hits[0].snippet.contains("title:"));
     assert!(read(root, &hits[0].entry).unwrap().starts_with("# Notes"));
     assert_eq!(fallback(root, "different repo").unwrap().len(), 1);

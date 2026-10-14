@@ -345,11 +345,11 @@ impl StrongholdApp {
                     crate::notify::Severity::Info => MessageKind::Status,
                     _ => MessageKind::Ask,
                 };
-                self.traffic_to_karl(&notice.origin, notice.agent.as_deref(), kind);
+                self.traffic_to_user(&notice.origin, notice.agent.as_deref(), kind);
                 self.control_notify(notice)
             }
             ControlCommand::Ask(ask) => {
-                self.traffic_to_karl(&ask.origin, None, MessageKind::Ask);
+                self.traffic_to_user(&ask.origin, None, MessageKind::Ask);
                 self.control_ask(ask)
             }
             ControlCommand::AgentMessage(message) => {

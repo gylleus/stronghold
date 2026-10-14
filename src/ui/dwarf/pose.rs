@@ -8,7 +8,7 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 pub enum Action {
     /// Standing still (idle, done).
     Still,
-    /// Waiting on Karl: leaning on his tool, glaring up. Holds still.
+    /// Waiting on the user: leaning on its tool, glaring up. Holds still.
     Wait,
     /// Working something out: head tilting, scratching under the hat, a "?" popping.
     Study,

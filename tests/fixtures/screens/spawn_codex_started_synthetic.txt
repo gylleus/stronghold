@@ -13,4 +13,4 @@
 
 › Ask Codex to do anything
 
-  gpt-6-astra high · ~/orca/workspaces/depict/spawn-old
+  gpt-6-astra high · ~/orca/workspaces/shop/spawn-old

@@ -23,7 +23,7 @@ pub struct RuleContext<'a> {
     pub threshold_ms: i64,
     /// A Run with no activity for longer than this is abandoned; see [`is_abandoned`].
     pub abandon_after_ms: i64,
-    /// Terminal handles currently waiting on Karl (NeedsInput). They are never flagged.
+    /// Terminal handles currently waiting on the user (NeedsInput). They are never flagged.
     pub needs_input: &'a BTreeSet<String>,
 }
 

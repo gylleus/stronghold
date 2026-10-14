@@ -1,10 +1,10 @@
-//! Karl's review surface; draft actions are returned to the app for persistence and delivery.
+//! The user's review surface; draft actions are returned to the app for persistence and delivery.
 
 use std::collections::{BTreeSet, HashMap};
 
 use eframe::egui::{self, PointerButton, Ui};
 
-use crate::envoy::drafts::{ATTRIBUTION, Draft, DraftKind, DraftStatus};
+use crate::envoy::drafts::{Draft, DraftKind, DraftStatus, attribution};
 use crate::envoy::inbox::Inbox;
 
 pub const DRY_RUN_BANNER: &str = "Dry run: approving records the message, nothing is posted";
@@ -379,11 +379,11 @@ impl DraftsPanel {
         } else {
             edit(ui, text)
         };
-        if draft.kind != DraftKind::TaskProposal && !text.trim_end().ends_with(ATTRIBUTION) {
+        if draft.kind != DraftKind::TaskProposal && !text.trim_end().ends_with(&attribution()) {
             ui.label(if draft.automatic {
-                crate::envoy::drafts::AUTO_ATTRIBUTION
+                crate::envoy::drafts::auto_attribution()
             } else {
-                ATTRIBUTION
+                attribution()
             });
         }
         if draft.kind == DraftKind::TaskProposal {

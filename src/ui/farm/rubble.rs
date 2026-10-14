@@ -37,7 +37,7 @@ const BACK_TINT: u8 = 165;
 /// What is in a worktree, as its heap shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Health {
-    /// An agent works in it, or waits on Karl.
+    /// An agent works in it, or waits on the user.
     Active,
     /// Its agents are idle, done, failed or parked.
     Resting,

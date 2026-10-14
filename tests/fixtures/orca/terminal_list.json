@@ -5,29 +5,29 @@
     "terminals": [
       {
         "handle": "term_08fe0725-96a1-4355-a4fd-6c8a07aa6c72",
-        "ptyId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/gylleus/orca/workspaces/depict/tinybird-replay-sessions@@c2143292",
+        "ptyId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/k/orca/workspaces/shop/tinybird-replay-sessions@@c2143292",
         "incarnationId": "52ffec31-4c94-458b-8ea5-336b394ed6a8",
         "orphaned": false,
-        "worktreeId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/gylleus/orca/workspaces/depict/tinybird-replay-sessions",
-        "worktreePath": "/Users/gylleus/orca/workspaces/depict/tinybird-replay-sessions",
-        "branch": "refs/heads/gylleus/tinybird-replay-sessions",
+        "worktreeId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/k/orca/workspaces/shop/tinybird-replay-sessions",
+        "worktreePath": "/Users/k/orca/workspaces/shop/tinybird-replay-sessions",
+        "branch": "refs/heads/karl/tinybird-replay-sessions",
         "tabId": "38735325-f8b8-4be0-a967-2aed62c4abda",
         "leafId": "65257f46-4a80-49f4-a376-c12ee314ea0c",
         "title": "..play-sessions",
         "connected": true,
         "writable": true,
         "lastOutputAt": 1789598758208,
-        "preview": "workspaces/depict/tinybird-replay-sessions  gylleus/tinybird-replay-sessions ✔                                          ",
+        "preview": "workspaces/shop/tinybird-replay-sessions  karl/tinybird-replay-sessions ✔                                          ",
         "executionHostId": "local"
       },
       {
         "handle": "term_70c8df0b-cf78-4b43-a6f8-aefab63bca21",
-        "ptyId": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/orca/workspaces/commerce-platform/hack-77-core-in-template@@4388bef9",
+        "ptyId": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/k/orca/workspaces/storefront/hack-77-core-in-template@@4388bef9",
         "incarnationId": "95e33c5f-3d47-4012-8020-5662e76bdbc9",
         "orphaned": false,
-        "worktreeId": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/orca/workspaces/commerce-platform/hack-77-core-in-template",
-        "worktreePath": "/Users/gylleus/orca/workspaces/commerce-platform/hack-77-core-in-template",
-        "branch": "refs/heads/gylleus/hack-77-service-shops",
+        "worktreeId": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/k/orca/workspaces/storefront/hack-77-core-in-template",
+        "worktreePath": "/Users/k/orca/workspaces/storefront/hack-77-core-in-template",
+        "branch": "refs/heads/karl/hack-77-service-shops",
         "tabId": "36bf36e4-6c38-4775-850a-55a8798b0ca9",
         "leafId": "7fdd2658-8920-48f7-9744-e6f1b037c14e",
         "title": "✳ Hack 77 core in template",
@@ -40,12 +40,12 @@
       },
       {
         "handle": "term_1744da75-821f-46fe-912d-e252e0bbf3fb",
-        "ptyId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/gylleus/orca/workspaces/depict/tinybird-replay-sessions@@3e25adcf",
+        "ptyId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/k/orca/workspaces/shop/tinybird-replay-sessions@@3e25adcf",
         "incarnationId": "602d85b4-742d-4e25-b285-d2d9d19fcb69",
         "orphaned": false,
-        "worktreeId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/gylleus/orca/workspaces/depict/tinybird-replay-sessions",
-        "worktreePath": "/Users/gylleus/orca/workspaces/depict/tinybird-replay-sessions",
-        "branch": "refs/heads/gylleus/tinybird-replay-sessions",
+        "worktreeId": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/k/orca/workspaces/shop/tinybird-replay-sessions",
+        "worktreePath": "/Users/k/orca/workspaces/shop/tinybird-replay-sessions",
+        "branch": "refs/heads/karl/tinybird-replay-sessions",
         "tabId": "39104421-86e6-44e9-b0f7-cf18985c1bd1",
         "leafId": "180fd694-956b-44fa-902d-5c16b7408e0e",
         "title": "tinybird-replay-sessions",
@@ -64,8 +64,8 @@
       "omittedHostIds": []
     },
     "topologyRevisions": {
-      "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/gylleus/orca/workspaces/depict/tinybird-replay-sessions": 231,
-      "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/orca/workspaces/commerce-platform/hack-77-core-in-template": 129
+      "82b955aa-5767-4b8c-8b59-2bfaf1425c9f::/Users/k/orca/workspaces/shop/tinybird-replay-sessions": 231,
+      "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/k/orca/workspaces/storefront/hack-77-core-in-template": 129
     },
     "totalCount": 3,
     "truncated": false

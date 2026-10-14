@@ -179,7 +179,7 @@ impl LedgerPane {
             }
         });
         if self.mode == Mode::Auto {
-            ui.weak("Meaning for questions · text for IDs such as VROOM-1299 or myr-bas");
+            ui.weak("Meaning for questions · text for IDs such as ABC-123 or myr-bas");
         }
         if submit || (self.query.trim().is_empty() && self.shelf.as_ref() != Some(shelf)) {
             self.run_search(shelf);

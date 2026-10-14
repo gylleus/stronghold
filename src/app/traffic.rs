@@ -16,14 +16,14 @@ const SPAWN_WAIT_S: f64 = 20.0;
 const CALL_WAIT_S: f64 = 3.0;
 
 impl StrongholdApp {
-    /// An agent reaching Karl: from the caller at `origin`, else from the node `about`.
-    pub(super) fn traffic_to_karl(&self, origin: &Origin, about: Option<&str>, kind: MessageKind) {
+    /// An agent reaching the user: from the caller at `origin`, else from the node `about`.
+    pub(super) fn traffic_to_user(&self, origin: &Origin, about: Option<&str>, kind: MessageKind) {
         let from = self
             .caller(origin)
             .map(|n| n.id.0.clone())
             .or_else(|| about.map(str::to_owned));
         if let Some(from) = from {
-            self.traffic.push(AgentMessage::new(from, "karl", kind));
+            self.traffic.push(AgentMessage::new(from, "user", kind));
         }
     }
 
@@ -60,7 +60,7 @@ impl StrongholdApp {
 
 impl StrongholdApp {
     /// Pops the agents whose state change just settled in both views, with a soft sound for
-    /// the done and the waiting when Karl turned it on.
+    /// the done and the waiting when the user turned it on.
     pub(super) fn poll_state_pops(&mut self, ctx: &egui::Context) {
         let Some(snapshot) = &self.snapshot else {
             return;

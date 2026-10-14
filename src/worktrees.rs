@@ -14,7 +14,7 @@
 //! already in its tree (a squash merge), HEAD inside a merged PR's head, or the PR merged or
 //! closed with every commit on a remote. Untracked agent notes (`*.md`) and logs (`*.log`)
 //! don't keep a worktree: notes and untracked `.orca/` / `.local/` scratch (up to 50 MB)
-//! are saved under `~/Documents/agents/notes/` and logs deleted before removal. Unpushed,
+//! are saved under `notes/` in the agents dir and logs deleted before removal. Unpushed,
 //! unmerged idle work is archived locally first; other git-work keep reasons can be explicitly
 //! archived. Activity and protection guards always apply. [`archive`] owns recovery artifacts.
 
@@ -398,7 +398,7 @@ pub struct GitFacts {
     /// Untracked logs (`*.log`), relative paths: deleted before removal.
     pub logs: Vec<String>,
     /// Other untracked files, grouped by their top-level folder (`demo-check/`) or file, with
-    /// their size: they keep the worktree until Karl decides.
+    /// their size: they keep the worktree until the user decides.
     pub untracked: Vec<(String, u64)>,
     /// A base branch HEAD is an ancestor of, e.g. `main` or `origin/main`.
     pub merged_into: Option<String>,
@@ -424,7 +424,7 @@ pub struct GitFacts {
 pub struct Facts {
     pub is_main: bool,
     pub pinned: bool,
-    /// An agent Karl parked ([`crate::park`]) lives in it.
+    /// An agent the user parked ([`crate::park`]) lives in it.
     pub parked: bool,
     pub exists: bool,
     /// Milliseconds since Orca created it, when known.
@@ -2098,10 +2098,10 @@ pub fn execute_archives(
     Ok(done)
 }
 
-/// `~/Documents/agents/notes`, where a removed worktree's notes are saved.
+/// `notes` in the [agents dir](crate::paths::agents_dir), where a removed worktree's notes
+/// are saved.
 pub fn notes_root() -> Option<PathBuf> {
-    directories::BaseDirs::new()
-        .map(|b| b.home_dir().join("Documents").join("agents").join("notes"))
+    crate::paths::agents_dir().map(|d| d.join("notes"))
 }
 
 /// Copies each note from `dir` to the same relative path under `dest`, checks every copy, and

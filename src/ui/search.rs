@@ -995,7 +995,7 @@ mod tests {
         w.task_id = Some("task-7".into());
         w.branch = Some("feat/stripe".into());
         w.terminal_handle = Some("term_abc".into());
-        w.worktree_path = Some("/Users/x/repo/hackathon/commerce-platform".into());
+        w.worktree_path = Some("/Users/x/repo/hackathon/storefront".into());
         snapshot.nodes = vec![w];
 
         let mut data = ClanData::default();
@@ -1014,8 +1014,8 @@ mod tests {
         assert_eq!(e.field(Field::TaskTitle), Some("Wire up payment intents"));
         assert_eq!(e.field(Field::TaskId), Some("task-7"));
         assert_eq!(e.field(Field::Handle), Some("term_abc"));
-        assert_eq!(e.field(Field::Repo), Some("commerce-platform"));
-        let hits = rank(&entries, "commerce", 5);
+        assert_eq!(e.field(Field::Repo), Some("storefront"));
+        let hits = rank(&entries, "storefront", 5);
         assert_eq!(hits[0].field, Field::Repo);
 
         for query in [
@@ -1121,7 +1121,7 @@ mod tests {
         w.run_id = Some("run-9f".into());
         w.task_id = Some("task-7".into());
         w.terminal_handle = Some("term_ABC".into());
-        w.worktree_path = Some("/x/commerce-platform".into());
+        w.worktree_path = Some("/x/storefront".into());
         let mut snapshot = ClanSnapshot::default();
         snapshot.nodes = vec![w, node("term:other", NodeKind::Terminal, "worker 3")];
         let entries = search_entries(&snapshot, None);
@@ -1131,7 +1131,7 @@ mod tests {
             ("RUN-9F", Field::RunId),
             ("task-7", Field::TaskId),
             ("term_abc", Field::Handle),
-            ("commerce", Field::Repo),
+            ("storefront", Field::Repo),
             ("d-42", Field::NodeId),
         ] {
             let hits = rank(&entries, query, 5);

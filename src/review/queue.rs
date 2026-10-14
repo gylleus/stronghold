@@ -1,8 +1,8 @@
 //! The review queue: PRs agents marked ready, keyed by PR URL, with their latest GitHub status
-//! and what Karl did with them. Pure state; the app feeds it marks and statuses, and saves it
+//! and what the user did with them. Pure state; the app feeds it marks and statuses, and saves it
 //! to `<data dir>/review-queue.json`.
 //!
-//! An entry is shown until Karl dismisses it or marks it reviewed (a later mark shows it
+//! An entry is shown until the user dismisses it or marks it reviewed (a later mark shows it
 //! again, and so does a new push after "reviewed"), or until GitHub says it merged or closed
 //! and [`GONE_GRACE_MS`] passed. Drafts are never shown. Legacy bus marks and marks with
 //! dispatched worker identities are ignored, including when loading a saved queue.
@@ -28,7 +28,7 @@ pub const RESOLVED_TTL_MS: i64 = 14 * 24 * 3_600_000;
 /// Most entries kept; the oldest marks go first.
 pub const MAX_ENTRIES: usize = 200;
 
-/// What Karl did with an entry.
+/// What the user did with an entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Resolution {
@@ -114,7 +114,7 @@ impl Entry {
             .unwrap_or_default()
     }
 
-    /// Karl dismissed or reviewed it after its newest mark, and no push followed the review.
+    /// The user dismissed or reviewed it after its newest mark, and no push followed the review.
     pub fn is_resolved(&self) -> bool {
         match &self.resolution {
             None => false,
@@ -441,7 +441,7 @@ mod tests {
     use super::*;
     use crate::review::github::{Ci, Marker, MarkerKind};
 
-    const URL: &str = "https://github.com/depict-org/realtime/pull/255";
+    const URL: &str = "https://github.com/acme/api/pull/255";
 
     fn mark(source: MarkSource, at_ms: i64) -> ReadyMark {
         ReadyMark::new(

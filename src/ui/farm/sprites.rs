@@ -3,7 +3,7 @@
 //! Granite, worked stone and alpine turf are procedural `ColorImage`s. All art is drawn
 //! in code except `assets/art/tools/cleanup_hammer.png`, reduced by `hammer::render`.
 //! Palette mapping covers textures and the final scene's shapes.
-//! Art settings choose the ink width for shared cutouts, including Karl's rune portal.
+//! Art settings choose the ink width for shared cutouts, including the user's rune portal.
 
 use super::art::ArtSettings;
 use super::layout::{MATTRESS_TOP, Mark, PORTAL_H, PORTAL_W};

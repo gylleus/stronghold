@@ -246,7 +246,7 @@ fn gateway_mcp_to_event_route_approval_fast_reply_and_safe_terminal_delivery() {
         sent.lock().unwrap()[0].text,
         format!(
             "Request from dwarf:\n\n{ask}\n\n{}",
-            crate::envoy::drafts::ATTRIBUTION
+            crate::envoy::drafts::attribution()
         )
     );
     let delivery = core.requests()[0].deliveries[0].id.clone();
@@ -348,7 +348,7 @@ fn auto_veto_cancel_dry_run_and_restart_keep_manual_drafts_manual() {
             assert!(
                 sends[0]
                     .text
-                    .ends_with(crate::envoy::drafts::AUTO_ATTRIBUTION)
+                    .ends_with(&crate::envoy::drafts::auto_attribution())
             );
         }
         let id = submit(&mut core, "cancel ask");

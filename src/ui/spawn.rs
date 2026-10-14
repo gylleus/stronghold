@@ -392,7 +392,7 @@ impl SpawnDialog {
         }
     }
 
-    /// Draws the dialog; returns the plan to launch when Karl pressed Launch (or ⌘↩).
+    /// Draws the dialog; returns the plan to launch when the user pressed Launch (or ⌘↩).
     pub fn show(
         &mut self,
         ctx: &egui::Context,
@@ -832,7 +832,7 @@ mod tests {
     use crate::spawn::exec::SpawnOutcome;
     use crate::spawn::{SpawnContext, Step};
 
-    const WT_ID: &str = "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/orca/workspaces/commerce-platform/hack-77-admin-speed";
+    const WT_ID: &str = "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/k/orca/workspaces/storefront/hack-77-admin-speed";
     const REPO_ID: &str = "f2c8fcb1-8fa7-4763-8986-a597cba57cdd";
 
     fn catalog() -> Catalog {
@@ -861,7 +861,7 @@ mod tests {
                 node: "term:term_w".into(),
                 state: "working".into(),
                 worktree_path: Some(
-                    "/Users/gylleus/orca/workspaces/commerce-platform/hack-77-admin-speed".into(),
+                    "/Users/k/orca/workspaces/storefront/hack-77-admin-speed".into(),
                 ),
             }],
         }
@@ -971,14 +971,12 @@ mod tests {
     #[test]
     fn opening_from_a_sidebar_repo_picks_it_and_its_main_worktree() {
         let mut dialog = SpawnDialog::default();
-        dialog.open(Some("commerce-platform"));
+        dialog.open(Some("storefront"));
         dialog.set_catalog(catalog());
         assert_eq!(dialog.form.repo_id.as_deref(), Some(REPO_ID));
         assert_eq!(
             dialog.form.worktree_id.as_deref(),
-            Some(
-                "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/repo/hackathon/commerce-platform"
-            )
+            Some("f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/k/repo/hackathon/storefront")
         );
         assert!(dialog.open);
     }

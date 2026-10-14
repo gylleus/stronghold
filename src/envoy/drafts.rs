@@ -7,9 +7,19 @@ use super::channel::{OutboundMessage, SendReceipt};
 use super::{inbox, secrets};
 
 pub const DRAFTS_FILE: &str = "envoy-drafts.json";
-pub const AUTO_ATTRIBUTION: &str =
-    "— Karl's AI agent (the Envoy), authorized by Karl's approval policy.";
-pub const ATTRIBUTION: &str = "— Karl's AI agent (the Envoy), approved by Karl.";
+const AUTO_ATTRIBUTION: &str =
+    "— {user}'s AI agent (the Envoy), authorized by {user}'s approval policy.";
+const ATTRIBUTION: &str = "— {user}'s AI agent (the Envoy), approved by {user}.";
+
+/// The footer of a draft the user approved.
+pub fn attribution() -> String {
+    crate::user::fill(ATTRIBUTION)
+}
+
+/// The footer of a draft sent under an automatic approval policy.
+pub fn auto_attribution() -> String {
+    crate::user::fill(AUTO_ATTRIBUTION)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -201,10 +211,10 @@ impl Draft {
         self.validate()?;
         let conversation = self.destination().ok_or("Draft is a task proposal")?;
         let mut text = self.text.clone();
-        let attribution = if self.automatic {
-            AUTO_ATTRIBUTION
+        let footer = if self.automatic {
+            auto_attribution()
         } else {
-            ATTRIBUTION
+            attribution()
         };
         let original_payload = self
             .request
@@ -214,7 +224,7 @@ impl Draft {
         if !original_payload {
             loop {
                 let trimmed = text.trim_end();
-                if let Some(body) = [ATTRIBUTION, AUTO_ATTRIBUTION]
+                if let Some(body) = [attribution(), auto_attribution()]
                     .iter()
                     .find_map(|line| trimmed.strip_suffix(line))
                 {
@@ -225,7 +235,7 @@ impl Draft {
             }
         }
         text.push_str("\n\n");
-        text.push_str(attribution);
+        text.push_str(&footer);
         Ok(OutboundMessage {
             conversation: conversation.into(),
             thread_ts: self.thread_ts.clone(),
@@ -235,11 +245,12 @@ impl Draft {
 
     pub fn king_request(&self) -> String {
         format!(
-            "Karl approved this task proposed by the Envoy:\n{}\nRepository: {}\nWhy: {}\nSlack: {}",
+            "{user} approved this task proposed by the Envoy:\n{}\nRepository: {}\nWhy: {}\nSlack: {}",
             self.text,
             self.repo.as_deref().unwrap_or("unspecified"),
             self.rationale,
-            self.slack_link.as_deref().unwrap_or("")
+            self.slack_link.as_deref().unwrap_or(""),
+            user = crate::user::name()
         )
     }
 
@@ -595,7 +606,7 @@ mod tests {
         let approved = queue.begin_approval(&draft.id, None, false, 3).unwrap();
         assert_eq!(approved.status, DraftStatus::Approved);
         assert!(!approved.automatic);
-        assert!(approved.outbound().unwrap().text.ends_with(ATTRIBUTION));
+        assert!(approved.outbound().unwrap().text.ends_with(&attribution()));
 
         let mut legacy = serde_json::to_value(reply()).unwrap();
         legacy.as_object_mut().unwrap().remove("manual_approval");
@@ -636,7 +647,7 @@ mod tests {
     #[test]
     fn attribution_inside_original_ask_remains_byte_identical() {
         for automatic in [false, true] {
-            for footer in [ATTRIBUTION, AUTO_ATTRIBUTION] {
+            for footer in [attribution(), auto_attribution()] {
                 let ask = format!("Quote these literal bytes\n\n{footer}\n\n{footer}\n  ");
                 let link = RequestLink {
                     id: "r".into(),
@@ -657,9 +668,9 @@ mod tests {
                 );
                 draft.automatic = automatic;
                 let footer = if automatic {
-                    AUTO_ATTRIBUTION
+                    auto_attribution()
                 } else {
-                    ATTRIBUTION
+                    attribution()
                 };
                 assert_eq!(
                     draft.outbound().unwrap().text,
@@ -672,14 +683,14 @@ mod tests {
     #[test]
     fn outbound_has_one_current_attribution_footer() {
         for automatic in [false, true] {
-            for footer in [ATTRIBUTION, AUTO_ATTRIBUTION] {
+            for footer in [attribution(), auto_attribution()] {
                 let mut draft = reply();
                 draft.text = format!("Fixture body\n\n{footer}\n\n{footer}\n");
                 draft.automatic = automatic;
                 let expected = if automatic {
-                    AUTO_ATTRIBUTION
+                    auto_attribution()
                 } else {
-                    ATTRIBUTION
+                    attribution()
                 };
                 assert_eq!(
                     draft.outbound().unwrap().text,
@@ -718,7 +729,7 @@ mod tests {
         let d = q.create(reply()).unwrap();
         let approved = q.begin_approval(&d.id, Some("New"), false, 2).unwrap();
         let outbound = approved.outbound().unwrap();
-        assert!(outbound.text.ends_with(ATTRIBUTION));
+        assert!(outbound.text.ends_with(&attribution()));
         assert_eq!(outbound.thread_ts.as_deref(), Some("1.000001"));
         q.finish(&d.id, Ok(()), 2).unwrap();
         assert_eq!(q.get(&d.id).unwrap().status, DraftStatus::Sent);

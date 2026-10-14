@@ -106,7 +106,7 @@ first poll, with `ready: false`.
       "by_kind":{"coordinator":7,"terminal":24,"worker":85},
       "by_state":{"done":47,"failed":35,"idle":33,"working":1},
       "needs_input":["term:term_…"],"stalled":[],
-      "runs":[{"id":"run_7c25cdcf46e0","objective":"commerce-platform wave …","repo":"hackathon",
+      "runs":[{"id":"run_7c25cdcf46e0","objective":"storefront wave …","repo":"storefront",
                "coordinator":"term:term_df9f…","coordinator_state":"idle",
                "tasks":{"total":58,"pending":0,"ready":1,"dispatched":1,"completed":50,
                         "failed":6,"blocked":0,"other":0},
@@ -143,7 +143,7 @@ Lists agents. Every param is an optional filter, and filters combine with AND:
 | `kind` | string or list | node kind |
 | `run` | string | run id |
 | `repo` | string | repo name (as in the sidebar) |
-| `needs_input` | bool | waiting on Karl |
+| `needs_input` | bool | waiting on the user |
 | `live` | bool | terminal is in `terminal list` |
 | `text` | string | substring of the label, branch or run objective (case-insensitive) |
 
@@ -151,9 +151,9 @@ Lists agents. Every param is an optional filter, and filters combine with AND:
 {"v":1,"method":"agents","params":{"kind":"coordinator","live":true}}
 → {"ok":true,"result":{"count":7,"agents":[{
     "id":"term:term_2574…","kind":"coordinator","label":"AI agent playbook","state":"idle",
-    "live":true,"run_id":"run_36e69d11f0b2","run_objective":"recs-core composition: …",
-    "task_id":null,"agent":"claude","branch":"main","worktree":"/Users/…/realtime",
-    "repo":"depict","terminal_handle":"term_2574…","parent":null,
+    "live":true,"run_id":"run_36e69d11f0b2","run_objective":"pricing engine: …",
+    "task_id":null,"agent":"claude","branch":"main","worktree":"/Users/…/api",
+    "repo":"api","terminal_handle":"term_2574…","parent":null,
     "last_output_ms":1790343526107,"idle_secs":948,
     "needs_input":null,"stalled":false,"escalated":false,
     "tokens":{"total":1072927489,"input":217861,"output":2304590,
@@ -161,7 +161,7 @@ Lists agents. Every param is an optional filter, and filters combine with AND:
     "released":false,"worker_state":null,"dispatch_status":null,"preview":"…"}]}}
 ```
 
-`needs_input` is set while the agent waits on Karl, for example
+`needs_input` is set while the agent waits on the user, for example
 `{"kind":"choice","options":["1. Yes","2. No"]}`. The possible kinds are `permission`,
 `choice`, `confirm`, `freeform_question`, and `unknown` (only the preview hinted at a prompt).
 `idle_secs` is computed when the response is built. `parent` is a worker's coordinator, or a
@@ -261,7 +261,7 @@ the unread count and the newest unread ones under `notifications`.
 {"v":1,"method":"alerts"}
 → {"ok":true,"result":{"alerts":[{"id":7,"at_ms":…,"severity":"warn","source":"agent",
    "title":"Blocked: need prod DB access","message":"…","url":"https://…",
-   "agent":"realtime-255","node":"term:term_…","count":1,"read":false}]}}
+   "agent":"api-255","node":"term:term_…","count":1,"read":false}]}}
 ```
 
 ### `clan_data`
@@ -273,7 +273,7 @@ templates (`stronghold playbook attendant-brief`, MCP `attendant_brief`/`kickoff
 
 ### `review_queue`
 
-The PRs waiting for Karl's review, newest mark first (see [Review queue](#review-queue)).
+The PRs waiting for the user's review, newest mark first (see [Review queue](#review-queue)).
 Each entry has the PR (`url`, `repo` as `owner/repo`, `number`, `title`), the agent that
 marked it (`agent: {id, label, live}` when its terminal is a node, else `agent_handle`), the
 mark (`source`: `tool` \| `cli` \| `bus`, `summary`, `marked_ms`) and GitHub's state as last
@@ -286,8 +286,8 @@ read: `state` (`open` \| `draft` \| `merged` \| `closed`, `null` before the firs
 ```json
 {"v":1,"method":"review_queue"}
 → {"ok":true,"result":{"count":1,"github":{"available":true,"error":null},"entries":[
-    {"url":"https://github.com/depict-org/realtime/pull/255","repo":"depict-org/realtime",
-     "number":255,"title":"recs: gate legacy config retirement","summary":null,
+    {"url":"https://github.com/acme/api/pull/255","repo":"acme/api",
+     "number":255,"title":"api: gate legacy config retirement","summary":null,
      "agent":{"id":"term:term_…","label":"…","live":true},"agent_handle":null,
      "source":"cli","marked_ms":…,"state":"open","ci":{"state":"passing","total":9},
      "head_sha":"92b1c94…","ankra_verdict":"comments","ankra_on_head":false,
@@ -440,7 +440,7 @@ it with `dry_run: true` first and show the plan's warnings.
 → {"ok":true,"result":{"dry_run":true,"plan":{
     "targets":[{"id":"term:term_2574…","label":"AI agent playbook","kind":"coordinator"}],
     "steps":[{"command":"orca terminal close --terminal=term_2574…","label":"Close terminal AI agent playbook"}],
-    "warnings":["run recs-core composition: … loses its coordinator; its workers keep running (6 open tasks)"],
+    "warnings":["run pricing engine: … loses its coordinator; its workers keep running (6 open tasks)"],
     "refused":null,"can_run":true}}}
 ```
 
@@ -497,7 +497,7 @@ Threshold and cooldown do not apply, and the nudges are **sent live even when th
 whip is in dry-run** (an explicit request). They are logged with `manual: true` and recorded
 by the whip, so their echo is not taken for progress and a stalled target climbs the
 escalation ladder (and starts a new cooldown). The King, subagents, released workers and
-dead terminals are skipped with a reason. An agent waiting on Karl's input is nudged, with a
+dead terminals are skipped with a reason. An agent waiting on the user's input is nudged, with a
 `warning`. The API does not ask for confirmation; the app's "Whip" button does for
 NeedsInput targets and for 5 or more targets.
 
@@ -552,7 +552,7 @@ nothing goes to GitHub or the bus.
    "agent":{"id":"term:term_…","label":"…","live":true},"origin":{…},"count":3}}
 ```
 
-`outcome` is `new`, `updated` (a newer mark of a known PR; it shows again if Karl had
+`outcome` is `new`, `updated` (a newer mark of a known PR; it shows again if the user had
 dismissed it) or `unchanged`.
 
 ### `review_dismiss`, `review_done`
@@ -564,7 +564,7 @@ is not in the queue.
 ### `notify`
 
 `{"title", "message"?, "severity"?: "info"|"warn"|"urgent", "url"?: http(s), "agent"?,
-"origin"?: {"terminal_handle", "pane_key", "tab_id"}}`. An agent's notification to Karl (the
+"origin"?: {"terminal_handle", "pane_key", "tab_id"}}`. An agent's notification to the user (the
 `notify` MCP tool sends it with the caller's Orca identity). It goes through the app's
 dispatcher like every notification; see [Notifications](#notifications).
 
@@ -575,10 +575,10 @@ dispatcher like every notification; see [Notifications](#notifications).
    "delivery":{"native":true,"in_app":true,"sound":true}}}
 ```
 
-`outcome` is `delivered` (possibly silently: below Karl's thresholds or quiet mode, see
+`outcome` is `delivered` (possibly silently: below the user's thresholds or quiet mode, see
 `delivery` and `quiet`), `collapsed` (identical to one the agent sent in the last 30 min;
 `count` says how many), `folded` (a handover about a PR that Stronghold announced as ready for
-review in the last 10 min: its text replaces that entry's, so Karl gets one notification; a
+review in the last 10 min: its text replaces that entry's, so the user gets one notification; a
 review announcement after an agent's handover about the same PR is dropped likewise), or
 `rate_limited` (at most 5 per agent per 10 min;
 `retry_after_ms`). An `agent` that matches no node is reported as `unknown_agent` and the
@@ -588,23 +588,23 @@ notification is filed under the caller's terminal.
 
 `{"question", "context"?, "severity"?: "info"|"warn"|"urgent" (default warn), "url"?: http(s),
 "origin"?}`. An
-agent's question to Karl (the `ask_karl` MCP tool). Notifies him like `notify` and marks the
-caller's terminal waiting (needs input) until he answers. The reply is `notify`'s plus
+agent's question to the user (the `ask_user` MCP tool). Notifies them like `notify` and marks the
+caller's terminal waiting (needs input) until they answer. The reply is `notify`'s plus
 `"waiting": true|false` (false when the origin matches no terminal).
 
 ### `finish`
 
-`{"summary", "approval": "karl"|"trivial", "outcome"?: "done"|"handed_over"|"abandoned",
+`{"summary", "approval": "user"|"trivial", "outcome"?: "done"|"handed_over"|"abandoned",
 "pr_url"?, "force"?, "forced"?: […], "dry_run"?, "origin"?}` (`approval` is optional only on a
 `dry_run`). An agent ending its own session (the `finish_session` MCP tool).
 With `dry_run` it returns the caller's node (`agent`: id, label, kind, worktree, branch) with
 `refused` (a worker) and `problems` (open tasks, PRs in the review queue). Otherwise a refusal,
 or problems without `force`, fail with `refused`; past them the app records the outcome
-(`finished`, with `forced` = the caller's problems plus the app's), notifies Karl and closes
+(`finished`, with `forced` = the caller's problems plus the app's), notifies the user and closes
 the terminal after `closing_in_ms` with the `plan` returned.
 
 ```json
-{"v":1,"method":"finish","params":{"summary":"Merged into main","approval":"karl","origin":{"terminal_handle":"term_…"}}}
+{"v":1,"method":"finish","params":{"summary":"Merged into main","approval":"user","origin":{"terminal_handle":"term_…"}}}
 → {"ok":true,"result":{"dry_run":false,"agent":{"id":"term:term_…",…},"finished":{…},
    "closing_in_ms":2000,"plan":{…},"notification":"delivered"}}
 ```
@@ -614,10 +614,10 @@ the terminal after `closing_in_ms` with the `plan` returned.
 `{"from", "to", "kind"?}`. Draws a message between agents, which happened elsewhere, as an
 envelope flying from `from` to `to` in the hold; nothing is sent. Each end
 is a node id, a terminal handle, `run:<id>` (its coordinator), `dispatch:<id>`, `king`,
-`envoy` (the live Envoy session), `karl` or `slack` (the outside world: the landing mound
+`envoy` (the live Envoy session), `user` or `slack` (the outside world: the landing mound
 in the hold). `kind` picks the look: `instruction`, `message` (default), `ask` (or `question`,
 `escalation`), `merge_ready`, `relay` (or `slack`, `envoy`), `nudge` or `status`. Unknown ends
-are ignored. Bus messages, `send`, `notify`, `ask`, whip nudges and Karl's typing are drawn
+are ignored. Bus messages, `send`, `notify`, `ask`, whip nudges and the user's typing are drawn
 already; this is for traffic the app can't see, such as the Envoy's relays.
 
 ```json

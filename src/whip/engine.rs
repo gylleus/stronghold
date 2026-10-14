@@ -293,7 +293,7 @@ impl WhipEngine {
         }
     }
 
-    /// Sends a manual nudge now through `executor` (never dry-run: Karl asked for it) and logs
+    /// Sends a manual nudge now through `executor` (never dry-run: the user asked for it) and logs
     /// it marked manual. A sent nudge is recorded like one of the engine's own: its echo is not
     /// taken for progress, and each stalled target it covers climbs the escalation ladder and
     /// starts a new cooldown.

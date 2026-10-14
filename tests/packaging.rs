@@ -44,7 +44,7 @@ fn info_plist_lints_and_has_the_app_keys() {
 
     assert_eq!(
         plist_value(&plist, "CFBundleIdentifier"),
-        "ai.depict.stronghold"
+        "com.gylleus.stronghold"
     );
     assert_eq!(plist_value(&plist, "CFBundleName"), "Stronghold");
     assert_eq!(plist_value(&plist, "CFBundleDisplayName"), "Stronghold");

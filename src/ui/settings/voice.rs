@@ -11,7 +11,7 @@ use crate::voice::settings::{TALK_HOTKEYS, VoiceSettings, hotkey_label};
 use crate::voice::tts::Voice;
 
 /// Said by the "Test voice" button.
-pub const TEST_SENTENCE: &str = "Hi Karl. This is how I will sound when I answer you.";
+pub const TEST_SENTENCE: &str = "Hi {user}. This is how I will sound when I answer you.";
 
 /// A speech model's state, for the Models rows.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -113,7 +113,10 @@ pub fn voice_section(
     let installed = matches!(status.voice_model, ModelStatus::Installed(_));
     if ui
         .add_enabled(installed, egui::Button::new("▶ Test voice"))
-        .on_hover_text(format!("Says \"{TEST_SENTENCE}\" with the settings above"))
+        .on_hover_text(format!(
+            "Says \"{}\" with the settings above",
+            crate::user::fill(TEST_SENTENCE)
+        ))
         .on_disabled_hover_text("Download the King's voice first")
         .clicked()
     {

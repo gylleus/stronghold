@@ -9,7 +9,7 @@
       "body": "<!-- ankra-ai:section:review -->\n\n## Ankra AI review\n\n**Verdict: looks good.**\n\n(review text trimmed for the fixture)\n\n_Reviewed commit 50e7dbc14b57. This review is read-only and advisory._",
       "createdAt": "2026-09-28T13:11:15Z",
       "id": "IC_kwDOKwOQwM8AAAABXela4g",
-      "url": "https://github.com/depict-org/depict/pull/8124#issuecomment-5870541538"
+      "url": "https://github.com/acme/shop/pull/8124#issuecomment-5870541538"
     }
   ],
   "headRefOid": "50e7dbc14b57afb25df977b6f830dd10a667d2d8",
@@ -107,6 +107,6 @@
       "state": "SUCCESS"
     }
   ],
-  "title": "VROOM-TBD: search go-live writes schema-bearing liquid before dependent JSON",
-  "url": "https://github.com/depict-org/depict/pull/8124"
+  "title": "ACME-TBD: search go-live writes schema-bearing liquid before dependent JSON",
+  "url": "https://github.com/acme/shop/pull/8124"
 }

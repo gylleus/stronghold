@@ -178,7 +178,7 @@ pub fn definitions() -> Vec<Value> {
             "clan_status",
             "Clan status",
             "The King's view of the whole clan: its state, agent counts, every run with its \
-             objective, coordinator and task counts, who needs Karl's input, stalled or \
+             objective, coordinator and task counts, who needs {user}'s input, stalled or \
              escalated agents, the whip and the plan quotas. Start here.",
             object(json!({}), &[]),
             READ,
@@ -194,7 +194,7 @@ pub fn definitions() -> Vec<Value> {
                     "kind": one_or_many(&KINDS, "Only these kinds."),
                     "run": { "type": "string", "description": "Run id (run_…)." },
                     "repo": { "type": "string", "description": "Repo name." },
-                    "needs_input": { "type": "boolean", "description": "Waiting on Karl (or not)." },
+                    "needs_input": { "type": "boolean", "description": "Waiting on {user} (or not)." },
                     "live": { "type": "boolean", "description": "Terminal still open (or not)." },
                     "parked": { "type": "boolean", "description": "Parked in the resting area (or not)." },
                     "text": { "type": "string", "description": "Case-insensitive substring of the label, branch or run objective." },
@@ -222,7 +222,7 @@ pub fn definitions() -> Vec<Value> {
             "Send text to an agent",
             "Types text into an agent's terminal and, unless submit is false, presses Enter. \
              Needs a live terminal (not a subagent). A parked agent is woken first (back in \
-             the live clan). This is real input to a running agent: confirm with Karl first \
+             the live clan). This is real input to a running agent: confirm with {user} first \
              (the King in auto mode needn't).",
             object(
                 json!({
@@ -253,7 +253,7 @@ pub fn definitions() -> Vec<Value> {
             "Close agent sessions",
             "Kills agents' sessions: an active dispatch is stopped, then the terminal is closed. \
              dry_run defaults to TRUE, which only returns the plan and its warnings. To really \
-             close, show Karl the plan and call again with dry_run=false. Subagents and the \
+             close, show {user} the plan and call again with dry_run=false. Subagents and the \
              King cannot be closed. Parked agents are closed only when named here, with a \
              warning in the plan.",
             object(
@@ -269,14 +269,14 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "park_agents",
             "Park or wake agents",
-            "Parks agents in the resting area: a dwarf that finished but that Karl wants to \
+            "Parks agents in the resting area: a dwarf that finished but that {user} wants to \
              keep for later. A parked agent leaves the live clan (its own room in the hold, \
              out of clan state, stalled and needs-input counts), the whip \
              never nudges it, and no cleanup closes it or removes its worktree unless named \
              explicitly; its terminal, session and worktree stay, so it can continue later. \
              wake=true brings agents back; send_to_agent also wakes a parked agent. Parking \
              survives restarts. Only agents with a live terminal can be parked (not the King \
-             or subagents). Park or wake when Karl asks.",
+             or subagents). Park or wake when {user} asks.",
             object(
                 json!({
                     "ids": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Agent ids (or terminal handles or labels)." },
@@ -289,7 +289,7 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "broadcast_to_coordinators",
             "Broadcast to coordinators",
-            "Sends a King-prefixed Orca bus message (agents treat it as Karl's instruction) to the live coordinators of the given \
+            "Sends a King-prefixed Orca bus message (agents treat it as {user}'s instruction) to the live coordinators of the given \
              runs, or of all runs with all=true. Give exactly one of runs or all.",
             object(
                 json!({
@@ -336,7 +336,7 @@ pub fn definitions() -> Vec<Value> {
              when it stalls (a worker about its task on the bus, a coordinator about its run, a \
              loose terminal typed into), live even when the automatic whip is in dry-run and \
              ignoring threshold and cooldown. The King, subagents, released workers and dead \
-             terminals are skipped with a reason; agents waiting on Karl's input are nudged with \
+             terminals are skipped with a reason; agents waiting on {user}'s input are nudged with \
              a warning (a nudge won't answer their prompt). With stalled=true, runs an \
              immediate whip pass instead, under the normal rules (threshold, cooldown, \
              dry-run). Give exactly one of ids or stalled.",
@@ -361,9 +361,9 @@ pub fn definitions() -> Vec<Value> {
              repo and name); \"worker\" adds a task to run_id (as its coordinator) and starts a \
              worker on it (give exactly one of: repo + name for a new worktree, worktree, or \
              terminal to reuse an agent already running there); the prompt is the task spec. \
-             Use it when Karl asks for a new session, and as a coordinator to start each \
+             Use it when {user} asks for a new session, and as a coordinator to start each \
              worker of its own run (worker mode; the playbook's default way to start one). \
-             Returns the new terminal and node id; the dashboard leaves Karl's selection \
+             Returns the new terminal and node id; the dashboard leaves {user}'s selection \
              alone (it selects the new node only with \"Focus new dwarves\" on in Settings; use \
              focus_agent to show it). A new worktree whose name or branch already \
              exists is refused with the existing worktree and its live agents (send_to_agent \
@@ -376,7 +376,7 @@ pub fn definitions() -> Vec<Value> {
              agents in that worktree go by it) or, for a worker, its task's display name. To \
              rename an agent later, run `orca worktree set --worktree path:<path> \
              --display-name <name>`. A Claude dwarf started without a model gets the Dwarves \
-             default model and effort from Stronghold's Settings (King section), which Karl \
+             default model and effort from Stronghold's Settings (King section), which {user} \
              uses to move the whole clan to one model; the result names the model used. An \
              explicit model wins; Codex dwarves keep Codex's default.",
             object(
@@ -443,7 +443,7 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "alerts",
             "Alerts",
-            "Karl's notification inbox, newest first: what agents sent him with notify and what \
+            "{user}'s notification inbox, newest first: what agents sent them with notify and what \
              Stronghold raised itself (needs input, stalls, PRs ready), with severity, agent, \
              link, read state and how many repeats were collapsed.",
             object(
@@ -705,12 +705,13 @@ fn clan_text(s: &Status, fallback: bool, now: i64) -> String {
     if !fallback {
         let auto = s.status.get("king_auto").and_then(Value::as_bool) == Some(true);
         out.push(format!(
-            "King auto mode: {} (Karl sets it in the chat header)",
+            "King auto mode: {} ({user} sets it in the chat header)",
             if auto {
-                "on — the King's actions run without Karl's confirmation"
+                "on — the King's actions run without {user}'s confirmation"
             } else {
-                "off — destructive actions ask Karl"
-            }
+                "off — destructive actions ask {user}"
+            },
+            user = crate::user::name()
         ));
     }
     if !fallback && let Some(n) = s.status.get("notifications") {
@@ -726,7 +727,7 @@ fn clan_text(s: &Status, fallback: bool, now: i64) -> String {
     out.join("\n")
 }
 
-/// Karl's unread notifications, newest first, from `status`'s `notifications`.
+/// The user's unread notifications, newest first, from `status`'s `notifications`.
 fn notifications_text(n: &Value, now: i64) -> Vec<String> {
     let unread = n["unread"].as_u64().unwrap_or(0);
     if unread == 0 {
@@ -1217,7 +1218,7 @@ fn close_text(result: &Value, dry_run: bool) -> String {
             out.push("This plan cannot run.".into());
         } else {
             out.push(
-                "To really close, confirm with Karl (the King in auto mode needn't), then call \
+                "To really close, confirm with {user} (the King in auto mode needn't), then call \
                  close_agents again with dry_run=false."
                     .into(),
             );

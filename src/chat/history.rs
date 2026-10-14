@@ -28,8 +28,8 @@ pub enum HistoryRecord {
     },
     /// A prompt: typed by the user or sent by another agent.
     Prompt(String),
-    Ant(Box<crate::queen_inbox::AntMessage>),
-    /// A prompt Karl spoke to the King.
+    Inbox(Box<crate::king_inbox::InboxMessage>),
+    /// A prompt the user spoke to the King.
     VoicePrompt(String),
     /// An assistant message or tool results, as the CLI streams them.
     Message(Incoming),
@@ -160,8 +160,8 @@ fn prompt_record(text: &str) -> Option<HistoryRecord> {
     if text.is_empty() {
         return None;
     }
-    if let Some(message) = crate::queen_inbox::AntMessage::from_prompt(text) {
-        return Some(HistoryRecord::Ant(Box::new(message)));
+    if let Some(message) = crate::king_inbox::InboxMessage::from_prompt(text) {
+        return Some(HistoryRecord::Inbox(Box::new(message)));
     }
     Some(if voice {
         HistoryRecord::VoicePrompt(text.to_owned())
@@ -182,7 +182,7 @@ fn strip_notes(mut text: &str) -> (bool, &str) {
             (auto_mode::NOTE_ON, false),
             (auto_mode::NOTE_OFF, false),
         ] {
-            if let Some(rest) = text.strip_prefix(note) {
+            if let Some(rest) = text.strip_prefix(crate::user::fill(note).as_str()) {
                 voice |= spoken;
                 text = rest.trim_start();
             }
@@ -255,7 +255,7 @@ impl Transcript {
         }
         match record {
             HistoryRecord::Timed { .. } => unreachable!(),
-            HistoryRecord::Ant(message) => self.push_ant(message),
+            HistoryRecord::Inbox(message) => self.push_inbox(message),
             HistoryRecord::Prompt(text) => self.items.push(super::ChatItem::User(text.clone())),
             HistoryRecord::VoicePrompt(text) => {
                 self.items.push(super::ChatItem::VoiceUser(text.clone()));
@@ -561,8 +561,8 @@ mod tests {
     fn notes_to_the_king_are_taken_off() {
         let voiced = format!(
             "{}\n\n{}\n\nHow many agents?",
-            voice::VOICE_NOTE,
-            auto_mode::NOTE_ON
+            crate::user::fill(voice::VOICE_NOTE),
+            auto_mode::note(true)
         );
         let spoken = format!("{}\n\nStatus?", voice::SPEAK_NOTE);
         let t = transcript_of(&jsonl(&[prompt(&voiced), prompt(&spoken)]));

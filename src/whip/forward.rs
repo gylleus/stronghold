@@ -8,11 +8,11 @@
 //! only because it revoked the dispatch after misreporting its start
 //! ([`ClanData::is_misreported_launch_report`]) is forwarded as the worker's report. It types only into a live Claude session
 //! ([`claude_session_live`]): a coordinator that exited leaves a shell, where the line would run
-//! as a command. If the coordinator stays unreachable, Karl gets one notification per Run.
+//! as a command. If the coordinator stays unreachable, the user gets one notification per Run.
 //!
 //! At-least-once: an event counts as forwarded only once its line was typed (see
 //! [`Forwarder::record`]). A failed send keeps it pending and retries with a backoff
-//! ([`retry_delay_ms`]); after [`ALERT_AFTER_FAILURES`] failures in a row Karl gets one
+//! ([`retry_delay_ms`]); after [`ALERT_AFTER_FAILURES`] failures in a row the user gets one
 //! notification per Run. Forwarding is live even when the whip is in dry run: it only delivers
 //! facts. The forwarded set survives restarts ([`load_forwarded`] / [`save_forwarded`],
 //! `forwarded.json` next to `settings.json`), so events that arrived while Stronghold was down are
@@ -39,12 +39,12 @@ pub const MAX_EVENT_AGE_MS: i64 = 6 * 60 * 60_000;
 /// Without a saved forwarded set, events younger than this are still forwarded on the first
 /// tick (they may have arrived while Stronghold was restarting); older ones count as handled.
 pub const STARTUP_REPLAY_MS: i64 = 10 * 60_000;
-/// How long a Run's events may wait for an unreachable coordinator before Karl is told.
+/// How long a Run's events may wait for an unreachable coordinator before the user is told.
 pub const UNREACHABLE_GRACE_MS: i64 = 5 * 60_000;
 /// Longest wait between two attempts to forward a Run's events after failed sends; also how
 /// long a handed-out forward may go without an outcome before it is retried.
 pub const RETRY_MAX_MS: i64 = 10 * 60_000;
-/// Failed sends in a row for a Run before Karl is told.
+/// Failed sends in a row for a Run before the user is told.
 pub const ALERT_AFTER_FAILURES: u32 = 3;
 /// File holding the forwarded set, next to `settings.json`.
 pub const FORWARDED_FILE: &str = "forwarded.json";
@@ -105,7 +105,7 @@ pub struct Forwarder {
     failures: BTreeMap<String, Failures>,
     /// Runs with events waiting on an unreachable coordinator, since when.
     waiting: BTreeMap<String, i64>,
-    /// Runs Karl has been told about; cleared once the coordinator is reachable again.
+    /// Runs the user has been told about; cleared once the coordinator is reachable again.
     alerted: BTreeSet<String>,
     /// `sent` changed since the last [`Forwarder::take_changed`].
     changed: bool,

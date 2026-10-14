@@ -344,7 +344,7 @@ fn notify_check(p: &NotifyProbe) -> Check {
 
 fn bridge_check(p: &BridgeProbe, now_ms: i64) -> Check {
     const NAME: &str = "Slack reply bridge";
-    const FIX: &str = "Re-run ~/repo/saker/slack-reply-bridge/install.sh (logs in \
+    const FIX: &str = "Re-run the slack-reply-bridge's install.sh (logs in \
                        ~/Library/Logs/slack-reply-bridge/)";
     match p {
         BridgeProbe::NotConfigured => {

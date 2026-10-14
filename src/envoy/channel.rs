@@ -11,7 +11,7 @@ pub enum EventKind {
     Dm,
     AgentComms,
     ThreadReply,
-    /// A message newly pinned in a conversation Karl can see.
+    /// A message newly pinned in a conversation the user can see.
     Pin,
 }
 

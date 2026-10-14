@@ -10,7 +10,7 @@
 //! - A press stops him speaking (and silences the rest of that reply) and starts recording.
 //!   A press that only interrupted him and heard nothing sends nothing and says nothing.
 //! - A transcript is sent as soon as the chat can take it. If he is mid-turn, that turn is
-//!   interrupted first: Karl talking over the King is a new request, like in a conversation, and a
+//!   interrupted first: the user talking over the King is a new request, like in a conversation, and a
 //!   turn waiting on a permission card would otherwise never end. If the chat does not
 //!   become ready within [`SEND_TIMEOUT`], the text comes back as [`TalkEvent::NotSent`].
 //! - Replies to voice messages are always spoken; other replies only with "Speak replies".
@@ -123,7 +123,7 @@ struct ReplySpeech {
     speak: bool,
     /// The turn started with a voice message.
     voice: bool,
-    /// Karl stopped the King: the rest of this reply stays silent.
+    /// The user stopped the King: the rest of this reply stays silent.
     muted: bool,
     /// The turn is still running.
     running: bool,

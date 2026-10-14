@@ -1,8 +1,8 @@
 # Playbook proposal: heartbeat convention
 
-These are proposed insertions to Karl's clan docs so that agents follow
+These are proposed insertions to the user's clan docs so that agents follow
 [`heartbeat-convention.md`](heartbeat-convention.md). Nothing here has been
-applied. Karl approves and applies them.
+applied. The user approves and applies them.
 
 - **`_AGENT_PROTOCOL.md`**: 1 block (insert A).
 - **`AGENT-FLEET-PLAYBOOK.md`**: 4 blocks (inserts B–E).
@@ -79,7 +79,7 @@ Insert after the step 4 paragraph, before `5. **PR gates.**`:
   within 15 min: dispatch the follow-up, or `task-update` the dependent task to
   `blocked`/`failed` with a reason. Also start or block every `ready` unassigned task.
   (Never `task-update --status completed` after a valid `worker_done`; Orca already did.)
-  Holding on purpose, for Karl or a merge window, is fine, but say so once to the Run:
+  Holding on purpose, for the user or a merge window, is fine, but say so once to the Run:
   `orca orchestration send --run <id> --type status --subject "holding: <reason>" --json`.
   Otherwise Stronghold nudges you. A `Stronghold:` nudge gets one of those two answers, and
   nothing more.
@@ -100,6 +100,6 @@ Insert after the step 4 paragraph, before `5. **PR gates.**`:
 - **`ATTENDANT-BRIEF-TEMPLATE.md` "Silence is an event too" (20 min).**
   Leave it as is. The attendant never nudges, so it doesn't collide with
   Stronghold. It keeps working when Stronghold isn't running. Once Stronghold is
-  live, Karl may want to drop it to save tokens.
+  live, the user may want to drop it to save tokens.
 - **`KICKOFF-TEMPLATE.md`.** It already points at `_AGENT_PROTOCOL.md`, so
   insert A reaches every worker.

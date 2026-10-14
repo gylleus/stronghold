@@ -3,11 +3,11 @@
 //!
 //! The MCP server checks the agent's git worktree ([`git_problems`]); the app checks the clan
 //! ([`clan_problems`]: workers belong to their coordinator, a coordinator's open tasks, a PR
-//! still in Karl's review queue). Past the
+//! still in the user's review queue). Past the
 //! guards the app records a [`FinishedSession`] in `<data dir>/finished.jsonl`, closes the
 //! terminal with the same plan as `close_agents`, and shows the node as done while it fades
 //! out. The worktree and branch are kept: removing them is the coordinator's post-merge cleanup
-//! or Karl's call, never the leaving agent's.
+//! or the user's call, never the leaving agent's.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -30,8 +30,8 @@ const MAX_LOG_BYTES: u64 = 512 * 1024;
 /// How long after the reply the terminal is closed, so the agent receives it.
 pub const CLOSE_DELAY_MS: i64 = 2_000;
 /// Why a finish without `approval` is refused.
-pub const APPROVAL_MISSING: &str = "\"approval\" is missing: ask Karl first (ask_karl: \
-     done, anything else or can I close?) and stay; pass approval \"karl\" once he says you \
+pub const APPROVAL_MISSING: &str = "\"approval\" is missing: ask {user} first (ask_user: \
+     done, anything else or can I close?) and stay; pass approval \"user\" once they say you \
      can go, or \"trivial\" only for a tiny one-shot task with nothing to follow up";
 /// Longest summary kept.
 pub const MAX_SUMMARY_CHARS: usize = 300;
@@ -45,10 +45,10 @@ pub enum FinishOutcome {
     /// The work landed (merged, or nothing to merge) and nothing is left.
     #[default]
     Done,
-    /// The work is with someone else now (a PR Karl or another agent takes over, a merge
+    /// The work is with someone else now (a PR the user or another agent takes over, a merge
     /// handled elsewhere) and this terminal isn't needed for it.
     HandedOver,
-    /// Karl called the work off.
+    /// The user called the work off.
     Abandoned,
 }
 
@@ -80,23 +80,25 @@ impl FinishOutcome {
     }
 }
 
-/// Why the agent may leave: Karl said so, or the task was a one-shot with nothing to follow
-/// up. Karl usually has follow-ups, so an agent that thinks it's done asks him first
-/// (`ask_karl`) and stays.
+/// Why the agent may leave: the user said so, or the task was a one-shot with nothing to follow
+/// up. The user usually has follow-ups, so an agent that thinks it's done asks them first
+/// (`ask_user`) and stays.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Approval {
-    /// Karl told the agent it can go.
+    /// The user told the agent it can go.
     #[default]
-    Karl,
-    /// A tiny one-shot task (a lookup, a one-line fix) with nothing Karl could follow up on.
+    #[serde(alias = "karl")]
+    User,
+    /// A tiny one-shot task (a lookup, a one-line fix) with nothing the user could follow up on.
     Trivial,
 }
 
 impl Approval {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "karl" => Some(Self::Karl),
+            // `karl` is the name from before the user's name became a setting.
+            "user" | "karl" => Some(Self::User),
             "trivial" => Some(Self::Trivial),
             _ => None,
         }
@@ -104,7 +106,7 @@ impl Approval {
 
     pub fn name(self) -> &'static str {
         match self {
-            Self::Karl => "karl",
+            Self::User => "user",
             Self::Trivial => "trivial",
         }
     }
@@ -246,9 +248,13 @@ impl FinishRequest {
         };
         let approval = match p.str("approval")?.map(str::trim).filter(|a| !a.is_empty()) {
             None if dry_run => None,
-            None => return Err(ControlError::invalid_params(APPROVAL_MISSING)),
+            None => {
+                return Err(ControlError::invalid_params(crate::user::fill(
+                    APPROVAL_MISSING,
+                )));
+            }
             Some(a) => Some(Approval::parse(a).ok_or_else(|| {
-                ControlError::invalid_params(format!("unknown approval {a:?}; use karl or trivial"))
+                ControlError::invalid_params(format!("unknown approval {a:?}; use user or trivial"))
             })?),
         };
         Ok(Self {
@@ -279,7 +285,7 @@ pub fn origin_of(params: &Value) -> Result<Origin, ControlError> {
 }
 
 /// What the clan says about `node` leaving: a refusal no `force` overrides, and problems
-/// that `force` does. `open_prs` are the node's PRs still in Karl's review queue.
+/// that `force` does. `open_prs` are the node's PRs still in the user's review queue.
 pub fn clan_problems(
     node: &Node,
     snapshot: &ClanSnapshot,
@@ -298,8 +304,9 @@ pub fn clan_problems(
         )),
         NodeKind::Worker => Some(format!(
             "you're a worker in run {}: after worker_done your terminal is your coordinator's \
-             to reuse or release (or Karl's to close), so end your turn and idle",
+             to reuse or release (or {user}'s to close), so end your turn and idle",
             node.run_id.as_deref().unwrap_or("?"),
+            user = crate::user::name()
         )),
         _ => None,
     };
@@ -322,8 +329,9 @@ pub fn clan_problems(
     }
     for url in open_prs {
         problems.push(format!(
-            "{url} is waiting for Karl's review: stay so you can address his comments; finish \
-             once it's merged, or when Karl says your terminal isn't needed"
+            "{url} is waiting for {user}'s review: stay so you can address their comments; finish \
+             once it's merged, or when {user} says your terminal isn't needed",
+            user = crate::user::name()
         ));
     }
     (refusal, problems)

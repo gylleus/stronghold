@@ -17,9 +17,9 @@ impl SlackSender for Fake {
     }
 }
 impl SlackIo for Fake {
-    fn pr_head(&mut self, repo: &str, number: u64) -> Result<Option<String>, String> {
+    fn pr_head(&mut self, _: &str, repo: &str, number: u64) -> Result<Option<String>, String> {
         self.methods.push(format!("pr_head {repo}#{number}"));
-        Ok((number != 404).then(|| format!("gylleus/{repo}-{number}")))
+        Ok((number != 404).then(|| format!("karl/{repo}-{number}")))
     }
     fn api(&mut self, method: &str, params: &[(&str, String)]) -> Result<Value, String> {
         self.methods.push(method.into());
@@ -49,6 +49,8 @@ fn channel(dir: &Path) -> SlackChannel<Fake> {
         dir.into(),
         EnvoySettings {
             channels: vec!["C123".into()],
+            user_id: "U0KARL0001".into(),
+            github_owner: "acme-org".into(),
             ..EnvoySettings::default()
         },
     )
@@ -326,7 +328,7 @@ fn search_and_history_bound_catchup_and_report_skipped_older_messages() {
     );
     assert_eq!(c.io.methods.len(), 5);
     assert_eq!(
-        c.inbox.poll_watermarks[&format!("mention:{}", c.settings.karl_user_id)],
+        c.inbox.poll_watermarks[&format!("mention:{}", c.settings.user_id)],
         NOW
     );
     c.io.methods.clear();
@@ -455,11 +457,11 @@ fn pr_refs_resolve_to_head_branches_once() {
     )
     .unwrap()
     .remove(0);
-    e.text = "realtime#694 and realtime#404, also #12 and VROOM-1".into();
+    e.text = "api#694 and api#404, also #12 and ACME-1".into();
     c.resolve_prs(std::slice::from_ref(&e));
-    assert_eq!(c.inbox.pr_heads["realtime#694"], "gylleus/realtime-694");
+    assert_eq!(c.inbox.pr_heads["api#694"], "karl/api-694");
     assert_eq!(
-        c.inbox.pr_heads["realtime#404"], "",
+        c.inbox.pr_heads["api#404"], "",
         "a missing PR is cached too"
     );
     assert_eq!(
@@ -475,30 +477,30 @@ fn pr_refs_resolve_to_head_branches_once() {
 fn karls_id_is_resolved_from_auth_test() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = channel(dir.path());
-    assert_eq!(c.settings.karl_user_id, "U0AMMLGSFL0");
+    assert_eq!(c.settings.user_id, "U0KARL0001");
     c.io.replies
-        .push_back(json!({"ok":true,"user":"karl126","user_id":"u0ammlgsfl0","team":"Depict"}));
-    assert_eq!(c.resolve_karl().unwrap().as_deref(), Some("U0AMMLGSFL0"));
+        .push_back(json!({"ok":true,"user":"karl","user_id":"u0karl0002","team":"Acme"}));
+    assert_eq!(c.resolve_user_id().unwrap().as_deref(), Some("U0KARL0002"));
     c.io.replies
-        .push_back(json!({"ok":true,"user":"karl126","user_id":"W0NEWID","team":"Depict"}));
-    assert_eq!(c.resolve_karl().unwrap().as_deref(), Some("W0NEWID"));
+        .push_back(json!({"ok":true,"user":"karl","user_id":"W0NEWID","team":"Acme"}));
+    assert_eq!(c.resolve_user_id().unwrap().as_deref(), Some("W0NEWID"));
     assert_eq!(
-        c.settings.karl_user_id, "W0NEWID",
+        c.settings.user_id, "W0NEWID",
         "the resolved id replaces the configured one"
     );
-    c.io.replies.push_back(json!({"ok":true,"team":"Depict"}));
+    c.io.replies.push_back(json!({"ok":true,"team":"Acme"}));
     assert_eq!(
-        c.resolve_karl().unwrap(),
+        c.resolve_user_id().unwrap(),
         None,
         "no id: the configured one stands"
     );
-    assert_eq!(c.settings.karl_user_id, "W0NEWID");
+    assert_eq!(c.settings.user_id, "W0NEWID");
     c.io.replies
-        .push_back(json!({"ok":true,"user_id":"C0BHZLG3X63"}));
+        .push_back(json!({"ok":true,"user_id":"C000AGENT01"}));
     assert!(
-        c.resolve_karl().is_err(),
+        c.resolve_user_id().is_err(),
         "a conversation id is not a member id"
     );
-    assert_eq!(c.settings.karl_user_id, "W0NEWID");
+    assert_eq!(c.settings.user_id, "W0NEWID");
     assert_eq!(c.io.methods.iter().filter(|m| *m == "auth.test").count(), 4);
 }

@@ -1,4 +1,4 @@
-//! A notification an agent sends Karl: the `notify` MCP tool's arguments plus the caller's
+//! A notification an agent sends the user: the `notify` MCP tool's arguments plus the caller's
 //! Orca identity, carried to the app as the control API's `notify` params.
 
 use serde_json::{Value, json};
@@ -22,7 +22,7 @@ pub struct AgentNotice {
     pub title: String,
     pub message: String,
     pub severity: Severity,
-    /// An http(s) link Karl can open from the notification.
+    /// An http(s) link the user can open from the notification.
     pub url: Option<String>,
     /// The node it is about (node id, terminal handle or label), when not the caller's own.
     pub agent: Option<String>,

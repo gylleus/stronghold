@@ -8,10 +8,10 @@
 //! an async runtime would add weight without buying anything. Tools and setup: `docs/mcp.md`.
 
 pub mod backend;
+pub mod king_inbox;
 pub mod lifecycle;
 pub mod notify;
 pub mod playbook;
-pub mod queen;
 pub mod review;
 pub mod server;
 #[cfg(test)]

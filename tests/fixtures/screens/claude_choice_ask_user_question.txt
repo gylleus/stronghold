@@ -1,18 +1,18 @@
-⏺ Monitor(waiting for coordinator's unsubmitted draft to clear before forwarding VROOM-1516 question)
+⏺ Monitor(waiting for coordinator's unsubmitted draft to clear before forwarding ACME-1516 question)
   ⎿  Monitor started · task bath22f5u · timeout 1800s
   ⎿  Allowed by auto mode classifier
-⏺ Standing by for that notification. The VROOM-1516 question (msg_e90b7cd65970) stays held, unacknowledged, so it isn't lost — it'll forward the moment the coordinator's input line is clear.
+⏺ Standing by for that notification. The ACME-1516 question (msg_e90b7cd65970) stays held, unacknowledged, so it isn't lost — it'll forward the moment the coordinator's input line is clear.
 ✻ Churned for 37s · done 3:49 PM
-⏺ Monitor event: "waiting for coordinator's unsubmitted draft to clear before forwarding VROOM-1516 question"
-⏺ The draft has now sat unchanged for 35+ minutes across two watch windows — I won't force it. I've fully captured the VROOM-1516 question content already, so I can safely acknowledge this batch (nothing is lost) and keep retrying delivery opportunistically on each future
+⏺ Monitor event: "waiting for coordinator's unsubmitted draft to clear before forwarding ACME-1516 question"
+⏺ The draft has now sat unchanged for 35+ minutes across two watch windows — I won't force it. I've fully captured the ACME-1516 question content already, so I can safely acknowledge this batch (nothing is lost) and keep retrying delivery opportunistically on each future
   liveness check, without blocking the bus loop on this one stuck terminal.
   Ran 1 shell command
-⏺ The VROOM-1516 worker is now explicitly blocked waiting on my held forward, and two more real events landed (a new VROOM-1515 scope question, plus merge_ready + worker_done for PR #76). Rechecking the coordinator's draft state before flushing all pending forwards.
+⏺ The ACME-1516 worker is now explicitly blocked waiting on my held forward, and two more real events landed (a new ACME-1515 scope question, plus merge_ready + worker_done for PR #76). Rechecking the coordinator's draft state before flushing all pending forwards.
   Ran 1 shell command
 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ☐ Stuck draft
 │ The coordinator terminal (term_86f60793) has had an unsubmitted draft — "yes delete weekly reports and classic home too" — sitting in its input line for 40+ minutes, unchanged. Per the fleet playbook I won't press Enter on someone else's unsubmitted text or type over it.
-│ Meanwhile a real backlog has built up undelivered: the VROOM-1516 worker is now blocked waiting on my forward of its question, a new VROOM-1515 scope question arrived, and VROOM-1515's PR #76 reported merge_ready. How should I proceed?
+│ Meanwhile a real backlog has built up undelivered: the ACME-1516 worker is now blocked waiting on my forward of its question, a new ACME-1515 scope question arrived, and ACME-1515's PR #76 reported merge_ready. How should I proceed?
 ❯ 1. Submit that draft, then forward mine
      You confirm that text is real and ready. I'll press Enter on it as-is (submitting it verbatim), then send my forwards after.
   2. Discard it, forward mine only

@@ -153,13 +153,13 @@ mod tests {
     fn thread_notes_outrank_conversation_notes_and_roots_find_their_own_thread() {
         let mut notes = ThreadNotes::default();
         notes
-            .set("D1", None, "Daniel: wants the rollout date", 1)
+            .set("D1", None, "Sam: wants the rollout date", 1)
             .unwrap();
         notes
             .set(
                 "C1",
                 Some("10.000001"),
-                "  Asked for\nrealtime#694 review;\twaiting on Albin ",
+                "  Asked for\napi#694 review;\twaiting on Alex ",
                 2,
             )
             .unwrap();
@@ -168,7 +168,7 @@ mod tests {
                 .for_event(&event("C1", "10.000001", None))
                 .unwrap()
                 .text,
-            "Asked for realtime#694 review; waiting on Albin",
+            "Asked for api#694 review; waiting on Alex",
             "a root message finds its thread's note, flattened to one line"
         );
         assert_eq!(
@@ -176,7 +176,7 @@ mod tests {
                 .for_event(&event("C1", "11.000001", Some("10.000001")))
                 .unwrap()
                 .text,
-            "Asked for realtime#694 review; waiting on Albin"
+            "Asked for api#694 review; waiting on Alex"
         );
         assert!(notes.for_event(&event("C1", "12.000001", None)).is_none());
         assert_eq!(
@@ -184,7 +184,7 @@ mod tests {
                 .for_event(&event("D1", "13.000001", Some("12.000001")))
                 .unwrap()
                 .text,
-            "Daniel: wants the rollout date",
+            "Sam: wants the rollout date",
             "a thread without its own note falls back to the conversation note"
         );
         assert_eq!(notes.set("C1", Some("10.000001"), "  ", 3).unwrap(), None);

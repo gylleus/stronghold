@@ -1,6 +1,6 @@
 codex '--dangerously-bypass-approvals-and-sandbox'
-direnv: error /Users/gylleus/orca/workspaces/recommendations/recs-eval-harness/.envrc is blocked. Run `direnv allow` to approve its content
-workspaces/recommendations/recs-eval-harness                                                                                                                                                                                                                                                                                                                                                                                      1h0m
+direnv: error /Users/k/orca/workspaces/web/recs-eval-harness/.envrc is blocked. Run `direnv allow` to approve its content
+workspaces/web/recs-eval-harness                                                                                                                                                                                                                                                                                                                                                                                      1h0m
 ▶ codex '--dangerously-bypass-approvals-and-sandbox'
 ╭─────────────────────────────────────────────────╮
 │ ✨ Update available! 0.153.4 -> 0.154.0         │
@@ -13,7 +13,7 @@ workspaces/recommendations/recs-eval-harness                                    
 │ >_ OpenAI Codex (v0.153.4)                              │
 │                                                         │
 │ model:       gpt-6-astra high   /model to change        │
-│ directory:   ~/orca/…/recommendations/recs-eval-harness │
+│ directory:   ~/orca/…/web/recs-eval-harness │
 │ permissions: YOLO mode                                  │
 ╰─────────────────────────────────────────────────────────╯
   Tip: Try the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true
@@ -22,4 +22,4 @@ workspaces/recommendations/recs-eval-harness                                    
 ⚠ The cloudflare-observability MCP server requires OAuth reauthentication. Run `codex mcp login cloudflare-observability`.
 ⚠ MCP startup incomplete (failed: cloudflare-observability)
 › Ask Codex to do anything
-  gpt-6-astra high · ~/orca/workspaces/recommendations/recs-eval-harness
+  gpt-6-astra high · ~/orca/workspaces/web/recs-eval-harness

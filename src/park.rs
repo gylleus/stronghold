@@ -1,4 +1,4 @@
-//! Parking agents: Karl shelves a dwarf that finished its task but that he wants to keep for
+//! Parking agents: the user shelves a dwarf that finished its task but that they want to keep for
 //! later. A parked agent sleeps in the resting area, out of the live clan: the whip leaves it
 //! alone, it counts in no stalled or needs-input total, and no cleanup closes its terminal or
 //! removes its worktree unless it is named explicitly. Its terminal, session and worktree stay
@@ -7,7 +7,7 @@
 //! Parking is an overlay on a node, like the release fade ([`crate::model::Node::released_at_ms`])
 //! and finished sessions ([`crate::finish`]), but the opposite of both: those mean the terminal
 //! is gone or going, parking keeps it. Its state stays what Orca reports; parking only says
-//! Karl doesn't want it in the live view.
+//! The user doesn't want it in the live view.
 //!
 //! The parked set lives in `<data dir>/parked.json`, keyed by node id (`term:<handle>`: only a
 //! live terminal can be parked), so it survives restarts and the MCP process (worktree

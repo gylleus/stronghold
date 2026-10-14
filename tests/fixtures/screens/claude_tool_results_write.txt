@@ -1,23 +1,23 @@
-⏺ The small dumps are complete while the 38 GB trinity-db dump continues in the background. In the meantime, I'll pull the Typesense API key from the k8s secret directly into the stack's env file without printing it, and write the compose file. · summary
+⏺ The small dumps are complete while the 38 GB appdb dump continues in the background. In the meantime, I'll pull the Typesense API key from the k8s secret directly into the stack's env file without printing it, and write the compose file. · summary
   Ran 2 shell commands
-⏺ Write(~/depict-local-stack/docker-compose.yml)
-  ⎿  Wrote 41 lines to ../../../depict-local-stack/docker-compose.yml
-       1 # Karl's local depict stack: replaces the retired OrbStack k8s environment
-       2 # (CNPG trinity-db-cluster + depict-typesense-sts). Postgres keeps port 9950 so
-       3 # every existing consumer (trinity-dbhub MCP, wrangler localConnectionString
+⏺ Write(~/local-stack/docker-compose.yml)
+  ⎿  Wrote 41 lines to ../../../local-stack/docker-compose.yml
+       1 # Karl's local shop stack: replaces the retired OrbStack k8s environment
+       2 # (CNPG appdb-cluster + search-sts). Postgres keeps port 9950 so
+       3 # every existing consumer (appdb-mcp MCP, wrangler localConnectionString
        4 # defaults, worker overrides) works unchanged. Typesense moves to 9952 — the
-       5 # old cluster.local URL died with k8s; 8108 is taken by recs-bench.
+       5 # old cluster.local URL died with k8s; 8108 is taken by bench.
        6 #
        7 # Restore after first `docker compose up -d postgres`:
        8 #   for f in globals.sql; do docker compose exec -T postgres psql -U postgres < dumps/$f; done
-       9 #   for db in trinity-db foundation-local trinity-db-test; do
+       9 #   for db in appdb catalog-local appdb-test; do
       10 #     docker compose exec -T postgres createdb -U postgres "$db" 2>/dev/null;
      … +31 lines
   ⎿  Allowed by auto mode classifier
   Searched for 1 pattern
 ⏺ The worker is holding cleanly. Updating it on the environment migration, and pre-writing the collection export script so the k8s window is as short as possible:
-⏺ Write(~/orca/workspaces/recommendations/serving-field/ANSWER-5.md)
-  ⎿  Wrote 18 lines to ../../../orca/workspaces/recommendations/serving-field/ANSWER-5.md
+⏺ Write(~/orca/workspaces/web/serving-field/ANSWER-5.md)
+  ⎿  Wrote 18 lines to ../../../orca/workspaces/web/serving-field/ANSWER-5.md
        1 # ANSWER-5 — environment migration in progress; keep holding (coordinator, 2026-09-28)
        2
        3 Change of plan on Karl's instruction: the OrbStack k8s environment is being RETIRED (memory
@@ -25,43 +25,43 @@
        5
        6 What changes for you when the migration lands (ANSWER-6 will say GO):
        7 1. Postgres: NOTHING changes — new docker postgres publishes the same localhost:9950 with
-       8    the same databases (trinity-db, foundation-local) restored from dumps taken today. Your
-       9    authorized FOUNDATION_HYPERDRIVE override stays exactly as is.
+       8    the same databases (appdb, catalog-local) restored from dumps taken today. Your
+       9    authorized DB_URL override stays exactly as is.
       10 2. Typesense: the cluster.local URL dies. New endpoint `http://localhost:9952`, SAME API
      … +8 lines
   ⎿  Allowed by auto mode classifier
-⏺ Write(~/depict-local-stack/export-devstore-collection.sh)
-  ⎿  Wrote 17 lines to ../../../depict-local-stack/export-devstore-collection.sh
+⏺ Write(~/local-stack/export-devstore-collection.sh)
+  ⎿  Wrote 17 lines to ../../../local-stack/export-devstore-collection.sh
        1 #!/bin/bash
-       2 # Export the dev store's foundation collection (schema + documents) from the
+       2 # Export the dev store's catalog collection (schema + documents) from the
        3 # k8s Typesense while it is briefly scaled up, into ./typesense-seed/.
-       4 # Run from ~/depict-local-stack once depict-typesense-sts is 1/1.
+       4 # Run from ~/local-stack once search-sts is 1/1.
        5 set -euo pipefail
        6 cd "$(dirname "$0")"
        7 source .env
-       8 SRC="http://192.168.194.213:8108"
-       9 COLL="foundation_ingestion_shopify-95139528988_en__main"
+       8 SRC="http://10.0.0.12:8108"
+       9 COLL="catalog_devstore_en__main"
       10 mkdir -p typesense-seed
      … +7 lines
   ⎿  Allowed by auto mode classifier
   Ran 1 shell command
 ⏺ Migration is staged. State of play and your two actions, in order:
-  Already done (me): globals + foundation-local + trinity-db-test dumped; the 38 GB trinity-db dump is running in the background. Compose file ready at ~/depict-local-stack/docker-compose.yml — postgres:17 keeps 9950 (so the MCP, wrangler defaults, and the worker's override all survive unchanged), typesense:30.1 goes to 9952 (8108 is taken by your recs-bench container). The k8s Typesense admin key was extracted into the stack's .env unseen, so
+  Already done (me): globals + catalog-local + appdb-test dumped; the 38 GB appdb dump is running in the background. Compose file ready at ~/local-stack/docker-compose.yml — postgres:17 keeps 9950 (so the MCP, wrangler defaults, and the worker's override all survive unchanged), typesense:30.1 goes to 9952 (8108 is taken by your bench container). The k8s Typesense admin key was extracted into the stack's .env unseen, so
   nothing key-related changes for consumers. serving-field is holding and briefed.
   Your action 1 — brief Typesense window (any time now; k8s must still be alive for it):
-  ! kubectl --context orbstack scale sts depict-typesense-sts -n depict --replicas=1
-  Once its pod is up I run ~/depict-local-stack/export-devstore-collection.sh — exports the dev-store collection (schema + docs, API-based, no raft surgery) plus an inventory of every other collection so you can decide later what else is worth re-seeding. The rest of that 3×40 Gi PVC data is 52 days stale; my default is to let it die.
-  Your action 2 — the nuke (only after I confirm both the trinity dump AND the export are done): OrbStack → Settings → Kubernetes → turn off. That kills what's actually eating your RAM — Prometheus stack, ArgoCD (crash-looping for 407 restarts), both operators, metrics-server. One flag before you flip it: ankra-agent runs in that cluster (healthy, restarted 5 h ago) plus an ankra-autoscaler-provider. If that agent is a connected runner Ankra's
+  ! kubectl --context orbstack scale sts search-sts -n shop --replicas=1
+  Once its pod is up I run ~/local-stack/export-devstore-collection.sh — exports the dev-store collection (schema + docs, API-based, no raft surgery) plus an inventory of every other collection so you can decide later what else is worth re-seeding. The rest of that 3×40 Gi PVC data is 52 days stale; my default is to let it die.
+  Your action 2 — the nuke (only after I confirm both the appdb dump AND the export are done): OrbStack → Settings → Kubernetes → turn off. That kills what's actually eating your RAM — Prometheus stack, ArgoCD (crash-looping for 407 restarts), both operators, metrics-server. One flag before you flip it: ankra-agent runs in that cluster (healthy, restarted 5 h ago) plus an ankra-autoscaler-provider. If that agent is a connected runner Ankra's
   platform depends on, its reviews may degrade — you know what it's for better than I do; PR reviews themselves fire on GitHub regardless.
   After the nuke (me): docker compose up, restore the three databases, import the dev-store collection, flip the worker's Typesense URL, GO for the verification run, and update the memory files that describe the old k8s setup.
 ✻ Brewed for 7m 14s · done 2:26 PM · 1 shell still running
-❯ Why do  we need to action one? Why can't we just run the ingestion again? The local foundation ingestion.
-⏺ Fair challenge — if local foundation ingestion can rebuild the collection from the restored DB, the export step (and the k8s scale-up) is pointless. Let me check the recipe and whether the local trinity-db actually holds the dev store's foundation source data:
+❯ Why do  we need to action one? Why can't we just run the ingestion again? The local catalog ingestion.
+⏺ Fair challenge — if local catalog ingestion can rebuild the collection from the restored DB, the export step (and the k8s scale-up) is pointless. Let me check the recipe and whether the local appdb actually holds the dev store's catalog source data:
   Recalled 1 memory
-⏺ That memory only covers gpt_search ingestion from the live Shopify shop, not the old Typesense data—so I still need to identify which component generates the foundation_ingestion_* collections and what running it locally requires. · summary
+⏺ That memory only covers search ingestion from the live Shopify shop, not the old Typesense data—so I still need to identify which component generates the catalog_* collections and what running it locally requires. · summary
   Searched for 1 pattern, ran 1 shell command
-⏺ Confirmed action 1 isn't needed since foundation-ingestion has a full local rebuild path (S2 transform + S3 Typesense seeding, with a fallback script for missing raw rows), and a fresh rebuild beats the 52-day-stale export. Now I'll verify whether the local trinity-db already has the dev store's raw foundation rows so the rebuild can stay fully local. · summary
-⏺ Calling trinity-dbhub…
+⏺ Confirmed action 1 isn't needed since catalog-ingest has a full local rebuild path (S2 transform + S3 Typesense seeding, with a fallback script for missing raw rows), and a fresh rebuild beats the 52-day-stale export. Now I'll verify whether the local appdb already has the dev store's raw catalog rows so the rebuild can stay fully local. · summary
+⏺ Calling appdb-mcp…
 ✢ Proofing… (1m 15s · ↓ 3.5k tokens · thinking with xhigh effort)
                                                                                                                                                                                                                                                                                                                                                                                                                      ✘ Auto-update failed · Run claude doctor
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 //! The review queue's MCP tools: `mark_pr_ready` for agents that finished a PR, and
-//! `review_queue` for Karl (through the King) to see what is waiting.
+//! `review_queue` for the user (through the King) to see what is waiting.
 
 use std::path::PathBuf;
 
@@ -26,7 +26,7 @@ pub struct ReviewEnv {
     /// Where `notify` queues notifications while the app isn't running; `None` refuses to
     /// queue.
     pub notify_pending: Option<PathBuf>,
-    pub queen_inbox: Option<PathBuf>,
+    pub king_inbox: Option<PathBuf>,
 }
 
 impl ReviewEnv {
@@ -37,7 +37,7 @@ impl ReviewEnv {
             pending: mark::default_pending_path(),
             queue_file: (!cfg!(test)).then(ReviewQueue::default_path),
             notify_pending: crate::notify::pending::default_path(),
-            queen_inbox: crate::queen_inbox::default_path(),
+            king_inbox: crate::king_inbox::default_path(),
         }
     }
 }
@@ -48,8 +48,8 @@ pub fn definitions() -> Vec<Value> {
         json!({
             "name": "mark_pr_ready",
             "title": "Mark PR ready for review",
-            "description": "Tells Stronghold (Karl's clan dashboard) that a pull request is ready \
-                for Karl's review, so it shows in his review queue attributed to your terminal. \
+            "description": "Tells Stronghold ({user}'s clan dashboard) that a pull request is ready \
+                for {user}'s review, so it shows in their review queue attributed to your terminal. \
                 Only coordinators after verifying the gate, or standalone agents, may call it. \
                 Dispatched workers must send merge_ready to their coordinator instead. It only \
                 records locally: nothing is posted to GitHub or sent to other agents. Works even when Stronghold isn't running (it shows on start).",
@@ -73,7 +73,7 @@ pub fn definitions() -> Vec<Value> {
         json!({
             "name": "review_queue",
             "title": "Review queue",
-            "description": "PRs agents marked ready for Karl's review that he hasn't reviewed \
+            "description": "PRs agents marked ready for {user}'s review that they haven't reviewed \
                 yet, newest first: repo, number, title, the agent that marked it (with its node \
                 id), CI, the Ankra verdict (stale when it reviewed an older commit than the \
                 head), the ready marker, and age. Merged or closed PRs drop off.",
@@ -256,7 +256,7 @@ fn entry_line(entry: &Value, now: i64) -> String {
         parts.push(format!("review: {}", d.to_lowercase().replace('_', " ")));
     }
     if r.updated_since_review {
-        parts.push("pushed to since Karl's review".into());
+        parts.push("pushed to since {user}'s review".into());
     }
     parts.push(format!(
         "marked {} ago",
@@ -320,7 +320,7 @@ mod tests {
     use crate::review::view::{AgentRef, ReviewRow};
     use crate::review::{ReviewCommand, ReviewQueue};
 
-    const URL: &str = "https://github.com/depict-org/realtime/pull/255";
+    const URL: &str = "https://github.com/acme/api/pull/255";
 
     /// Records every call; `running: false` answers like an app that isn't running.
     struct Fake {
@@ -364,7 +364,7 @@ mod tests {
             pending: Some(dir.join(mark::PENDING_FILE)),
             queue_file: Some(dir.join(crate::review::queue::QUEUE_FILE)),
             notify_pending: None,
-            queen_inbox: None,
+            king_inbox: None,
         }
     }
 
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn mark_pr_ready_sends_the_callers_orca_identity() {
         let dir = tempfile::tempdir().unwrap();
-        let reply = json!({"url": URL, "outcome": "new", "count": 1, "agent": {"id": "term:term_442fcb9f", "label": "realtime-255"}});
+        let reply = json!({"url": URL, "outcome": "new", "count": 1, "agent": {"id": "term:term_442fcb9f", "label": "api-255"}});
         let mut server =
             McpServer::new(Fake::new(true, reply)).with_review_env(agent_env(dir.path()));
         let r = call_tool(
@@ -431,8 +431,8 @@ mod tests {
         assert_eq!(r["isError"], false, "{}", text(&r));
         assert_eq!(
             text(&r),
-            "Marked depict-org/realtime#255 ready for review from term_442fcb9f, shown under \
-             realtime-255. Stronghold's review queue now lists 1 PR."
+            "Marked acme/api#255 ready for review from term_442fcb9f, shown under \
+             api-255. Stronghold's review queue now lists 1 PR."
         );
         let (method, params) = &server.control().calls[0];
         assert_eq!(method, "pr_ready");
@@ -504,13 +504,13 @@ mod tests {
     fn row(ci: Ci, ankra_on_head: Option<bool>) -> ReviewRow {
         ReviewRow {
             url: URL.into(),
-            repo: "depict-org/realtime".into(),
+            repo: "acme/api".into(),
             number: 255,
             title: "recs: gate legacy config retirement".into(),
             summary: Some("PR #255 green".into()),
             agent: Some(AgentRef {
                 id: crate::model::NodeId::terminal("term_a"),
-                label: "realtime-255".into(),
+                label: "api-255".into(),
                 live: true,
             }),
             agent_handle: None,
@@ -539,7 +539,7 @@ mod tests {
         let r = call_tool(&mut server, "review_queue", json!({}));
         assert_eq!(server.control().calls[0].0, "review_queue");
         let t = text(&r);
-        assert!(t.starts_with("Ready for review (1):\n- depict-org/realtime#255 recs: gate legacy config retirement — realtime-255 `term:term_a` · CI green (9 checks) · Ankra: comments (stale, not on head) · ✅ ready marker (stale) · review: review required · marked 2h"), "{t}");
+        assert!(t.starts_with("Ready for review (1):\n- acme/api#255 recs: gate legacy config retirement — api-255 `term:term_a` · CI green (9 checks) · Ankra: comments (stale, not on head) · ✅ ready marker (stale) · review: review required · marked 2h"), "{t}");
         assert!(t.contains(&format!("\n  {URL}")), "{t}");
         assert!(
             t.ends_with("GitHub status unavailable: gh auth login"),

@@ -121,6 +121,8 @@ pub struct SettingsPane {
     voice_draft: VoiceSettings,
     notify_draft: NotifySettings,
     envoy_draft: envoy::EnvoyDraft,
+    /// The General section's name field.
+    user_draft: String,
     /// "Whip all stalled now" was clicked; see [`SettingsPane::take_whip_stalled`].
     whip_stalled: bool,
 }
@@ -147,6 +149,7 @@ impl SettingsPane {
             voice_draft: applied.voice.clone(),
             notify_draft: applied.notifications.clone(),
             envoy_draft: envoy::EnvoyDraft::new(&applied.envoy),
+            user_draft: applied.user.name.clone().unwrap_or_default(),
             applied,
             path,
             message,
@@ -323,6 +326,7 @@ impl SettingsPane {
                 }
             }
             Section::General => {
+                self.user_name_ui(ui);
                 let focus_new = self.applied.spawn.focus_new;
                 if let Some(on) = general::section(ui, cx.general, self.path.as_deref(), focus_new)
                 {
@@ -410,6 +414,37 @@ impl SettingsPane {
         self.commit(next);
         self.voice_draft.speak_replies = on;
         self.applied.voice.clone()
+    }
+
+    /// The name agents and the King call the user, with its Save and Revert.
+    fn user_name_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Your name");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.user_draft)
+                    .hint_text(crate::user::name())
+                    .desired_width(160.0),
+            )
+            .on_hover_text(
+                "What the King, the Envoy, the playbook and agents call you. Empty: the first \
+                 word of your macOS account's full name. Sessions already running keep the \
+                 name they started with.",
+            );
+        });
+        let saved = self.applied.user.name.clone().unwrap_or_default();
+        let (save, revert) = save_row(ui, self, self.user_draft.trim() != saved, "Save name");
+        if save {
+            let mut next = self.applied.clone();
+            let name = self.user_draft.trim();
+            next.user.name = (!name.is_empty()).then(|| name.to_owned());
+            self.commit(next);
+            self.user_draft = self.applied.user.name.clone().unwrap_or_default();
+            crate::user::set(&self.applied.user);
+        }
+        if revert {
+            self.user_draft = saved;
+        }
+        ui.separator();
     }
 
     /// Saves "Focus new dwarves when they're spawned" at once.

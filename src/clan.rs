@@ -351,9 +351,9 @@ mod names_tests {
     #[test]
     fn chosen_names_skip_orca_defaults() {
         let names = chosen_worktree_names(&[
-            worktree("/w/shop/fix-cart", "gylleus/fix-cart", "fix-cart", false),
-            worktree("/w/shop/retry/", "gylleus/retry", "Checkout retries", false),
-            worktree("/w/shop/x", "gylleus/x-branch", "gylleus/x-branch", false),
+            worktree("/w/shop/fix-cart", "karl/fix-cart", "fix-cart", false),
+            worktree("/w/shop/retry/", "karl/retry", "Checkout retries", false),
+            worktree("/w/shop/x", "karl/x-branch", "karl/x-branch", false),
             worktree("/r/shop", "main", "old-branch-name", true),
             worktree("/w/shop/blank", "b", "  ", false),
         ]);

@@ -82,7 +82,7 @@ pub enum ControlCommand {
     /// Inbox, drafting and relay requests, restricted to the persisted Envoy terminal.
     Envoy(crate::envoy::control::EnvoyCommand),
     /// Type `text` into the agent's terminal, then Enter when `enter`. `from` is the sender's
-    /// terminal handle (`from`, or the caller's `origin`), `None` for the King or Karl.
+    /// terminal handle (`from`, or the caller's `origin`), `None` for the King or the user.
     Send {
         agent: String,
         text: String,
@@ -142,9 +142,9 @@ pub enum ControlCommand {
     Review(crate::review::ReviewCommand),
     /// Start a new agent session (existing worktree, new worktree, or a run's worker).
     Spawn(crate::spawn::SpawnArgs),
-    /// A notification from an agent to Karl, through the app's dispatcher.
+    /// A notification from an agent to the user, through the app's dispatcher.
     Notify(crate::notify::agent::AgentNotice),
-    /// An agent's question to Karl (`ask_karl`): notifies him; all but Envoy show waiting.
+    /// An agent's question to the user (`ask_user`): notifies them; all but Envoy show waiting.
     Ask(crate::ask::AskRequest),
     /// An agent ending its own session (`finish_session`), or with `dry_run` checking whether
     /// it may.

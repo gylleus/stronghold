@@ -3,13 +3,13 @@
   "ok": true,
   "result": {
     "worktree": {
-      "id": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/gylleus/orca/workspaces/commerce-platform/spawn-test",
+      "id": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd::/Users/k/orca/workspaces/storefront/spawn-test",
       "instanceId": "0b6d3a52-6c35-4d2e-8f3a-1f0e0d9c8b7a",
       "repoId": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd",
       "hostId": "local",
-      "path": "/Users/gylleus/orca/workspaces/commerce-platform/spawn-test",
+      "path": "/Users/k/orca/workspaces/storefront/spawn-test",
       "head": "ad0703b3b51ca4b827969bae3f7390e6bb5666f3",
-      "branch": "refs/heads/gylleus/spawn-test",
+      "branch": "refs/heads/karl/spawn-test",
       "isBare": false,
       "isMainWorktree": false,
       "displayName": "spawn-test",
@@ -21,9 +21,9 @@
       "lineage": null,
       "workspaceLineage": null,
       "git": {
-        "path": "/Users/gylleus/orca/workspaces/commerce-platform/spawn-test",
+        "path": "/Users/k/orca/workspaces/storefront/spawn-test",
         "head": "ad0703b3b51ca4b827969bae3f7390e6bb5666f3",
-        "branch": "refs/heads/gylleus/spawn-test",
+        "branch": "refs/heads/karl/spawn-test",
         "isBare": false,
         "isMainWorktree": false
       }

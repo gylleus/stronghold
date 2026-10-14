@@ -1,4 +1,4 @@
-//! Stronghold: a live farm view of the Orca agent clan.
+//! Stronghold: the Orca agent clan as dwarves in a live hold.
 
 // Stub modules are filled in by later milestones.
 #![allow(dead_code)]
@@ -18,6 +18,7 @@ pub mod envoy;
 pub mod finish;
 pub mod health;
 pub mod hotkey;
+pub mod king_inbox;
 pub mod ledger;
 pub mod legacy;
 pub mod logfile;
@@ -26,16 +27,17 @@ pub mod model;
 pub mod notify;
 pub mod orca;
 pub mod park;
+pub mod paths;
 pub mod persist;
 pub mod playbook;
 pub mod poller;
-pub mod queen_inbox;
 pub mod quota;
 pub mod review;
 pub mod spawn;
 pub mod stale;
 pub mod traffic;
 pub mod ui;
+pub mod user;
 pub mod voice;
 pub mod whip;
 pub mod worktrees;

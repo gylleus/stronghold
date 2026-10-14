@@ -178,7 +178,7 @@ impl<I: SlackIo> SlackChannel<I> {
                 if e.ts != thread.ts {
                     e.thread_ts = Some(thread.ts.clone());
                     if e.permalink.is_none()
-                        && e.user != self.settings.karl_user_id
+                        && e.user != self.settings.user_id
                         && !state.seen.contains(&e.id())
                     {
                         let link = self.io.api(
@@ -359,7 +359,7 @@ impl<I: SlackIo> SlackChannel<I> {
         &mut self,
         conversation: &str,
     ) -> Result<ResolvedDestination, String> {
-        super::super::requests::refuse_karl(conversation, &self.settings.karl_user_id)?;
+        super::super::requests::refuse_user(conversation, &self.settings.user_id)?;
         validate_conversation(conversation)?;
         let mut person = false;
         if conversation.starts_with('D') {
@@ -369,7 +369,7 @@ impl<I: SlackIo> SlackChannel<I> {
             let user = value["channel"]["user"]
                 .as_str()
                 .ok_or("DM recipient could not be verified")?;
-            super::super::requests::refuse_karl(user, &self.settings.karl_user_id)?;
+            super::super::requests::refuse_user(user, &self.settings.user_id)?;
             let info = self.io.api("users.info", &[("user", user.into())])?;
             person = info["user"]["is_bot"] == false
                 && info["user"]["is_app_user"] != true
