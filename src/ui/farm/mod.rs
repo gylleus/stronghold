@@ -1554,12 +1554,15 @@ fn dwarf_look(dwarf: &layout::Dwarf) -> Look {
         NodeKind::Coordinator | NodeKind::Attendant => Role::Foreman,
         NodeKind::Subagent => Role::Apprentice,
         NodeKind::Envoy => Role::RunePriest,
+        NodeKind::Lorekeeper => Role::Librarian,
         NodeKind::Worker | NodeKind::Terminal => Role::Miner,
     };
     let mut look = Look::for_role(role, dwarf::seed_of(dwarf.id.as_str()));
     let coat = Coat::new(dwarf.agent.as_ref());
     art::dress(&mut look, coat);
-    if dwarf.state == crate::model::NodeState::Stalled && role != Role::RunePriest {
+    if dwarf.state == crate::model::NodeState::Stalled
+        && !matches!(role, Role::RunePriest | Role::Librarian)
+    {
         look.hat = dwarf::Hat::Helmet;
     }
     look
@@ -1581,6 +1584,7 @@ fn dwarf_action(dwarf: &layout::Dwarf, walking: bool, carrying: bool, king_busy:
         _ if walking => Action::Walk,
         _ if carrying => Action::Hold,
         _ if dwarf.state == NodeState::Stalled => Action::Wait,
+        Pose::Stand if dwarf.kind == crate::model::NodeKind::Lorekeeper => Action::Read,
         Pose::Dig => Action::Mine,
         Pose::Build => Action::Build,
         Pose::Wait => Action::Wait,
@@ -1609,6 +1613,7 @@ fn paint_falls(
                 Role::Foreman
             }
             crate::model::NodeKind::Envoy => Role::RunePriest,
+            crate::model::NodeKind::Lorekeeper => Role::Librarian,
             _ => Role::Miner,
         };
         let mut dwarf = Look::for_role(role, fall.body.seed);

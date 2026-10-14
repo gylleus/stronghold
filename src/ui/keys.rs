@@ -314,8 +314,12 @@ pub fn nav_groups(snapshot: &ClanSnapshot, hidden: &BTreeSet<NodeId>) -> Vec<Nav
         .nodes
         .iter()
         .filter(|n| n.kind != NodeKind::Subagent);
-    let (loose, others): (Vec<_>, Vec<_>) =
-        others.partition(|n| matches!(n.kind, NodeKind::Terminal | NodeKind::Envoy));
+    let (loose, others): (Vec<_>, Vec<_>) = others.partition(|n| {
+        matches!(
+            n.kind,
+            NodeKind::Terminal | NodeKind::Envoy | NodeKind::Lorekeeper
+        )
+    });
     for node in others.into_iter().chain(loose) {
         visit(&node.id, &mut rest);
     }

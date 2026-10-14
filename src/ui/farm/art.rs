@@ -53,8 +53,11 @@ impl Pixels {
 }
 
 /// Guild cloth, painted helmets and a shaped crest keep agent identity visible at farm
-/// size. Failed dwarves retain their guild; the red failure bubble shows their state.
+/// size. The librarian keeps its ink robes; failed dwarves retain their guild.
 pub fn dress(look: &mut Look, coat: Coat) {
+    if look.role == dwarf::Role::Librarian {
+        return;
+    }
     look.crest = match coat {
         Coat::Plain => dwarf::Crest::None,
         Coat::Claude => dwarf::Crest::Sun,

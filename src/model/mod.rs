@@ -85,6 +85,8 @@ pub enum NodeKind {
     Terminal,
     /// The persistent listener session, identified by terminal handle.
     Envoy,
+    /// The short-lived Ledger maintenance session, identified by terminal handle.
+    Lorekeeper,
     /// A Claude subagent under a terminal (M3).
     Subagent,
     /// The clan's hub, linked to every coordinator and loose terminal; broadcasts start here.
@@ -393,7 +395,10 @@ impl ClanSnapshot {
                 !n.is_parked()
                     && (matches!(
                         n.kind,
-                        NodeKind::Coordinator | NodeKind::Terminal | NodeKind::Envoy
+                        NodeKind::Coordinator
+                            | NodeKind::Terminal
+                            | NodeKind::Envoy
+                            | NodeKind::Lorekeeper
                     ) || self.coordinator_gone(n))
             })
             .map(|n| Edge {
@@ -453,6 +458,23 @@ impl ClanSnapshot {
             {
                 node.kind = NodeKind::Envoy;
                 node.label = format!("Envoy · {}", status.health().label());
+            }
+        }
+        self.add_king();
+    }
+
+    /// Identity follows the handle even when the agent rewrites its terminal title.
+    pub fn mark_lorekeeper(&mut self, handle: Option<&str>) {
+        let Some(handle) = handle else {
+            return;
+        };
+        for node in &mut self.nodes {
+            if node.live
+                && node.kind != NodeKind::Subagent
+                && node.terminal_handle.as_deref() == Some(handle)
+            {
+                node.kind = NodeKind::Lorekeeper;
+                node.label = "Lorekeeper".into();
             }
         }
         self.add_king();

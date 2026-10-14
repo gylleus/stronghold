@@ -152,13 +152,14 @@ const STATES: [&str; 6] = [
     "done",
     "failed",
 ];
-const KINDS: [&str; 6] = [
+const KINDS: [&str; 7] = [
     "coordinator",
     "attendant",
     "worker",
     "terminal",
     "subagent",
     "envoy",
+    "lorekeeper",
 ];
 
 fn one_or_many(values: &[&str], description: &str) -> Value {

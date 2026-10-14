@@ -12,6 +12,8 @@ pub enum Action {
     Wait,
     /// Working something out: head tilting, scratching under the hat, a "?" popping.
     Study,
+    /// Reading a book held at chest height.
+    Read,
     /// Hands raised over a scrying basin; only active work pulses the runes.
     Scry,
     /// Staff thrust up in his fist, the other arm flung back, the crystal blazing and runes
@@ -37,10 +39,11 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 14] = [
+    pub const ALL: [Action; 15] = [
         Action::Still,
         Action::Wait,
         Action::Study,
+        Action::Read,
         Action::Scry,
         Action::Cast,
         Action::Mine,
@@ -139,6 +142,12 @@ pub fn pose(action: Action, t: f64) -> Pose {
     };
     match action {
         Action::Still => rest,
+        Action::Read => Pose {
+            arm: 1.2,
+            grip: -1.2,
+            head: 0.16,
+            ..rest
+        },
         Action::Wait => Pose {
             // Both fists on the tool, its head on the floor in front; chin up, glaring.
             arm: 0.6,

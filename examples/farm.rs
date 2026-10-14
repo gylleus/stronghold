@@ -8,6 +8,7 @@
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
 //! terminals in the resting area; `--dwarves N` keeps only the first N agents.
 //! `--workspace-counts 1,3,9` previews uneven workspace groups; `--size 600x800` resizes the view.
+//! `--lorekeeper` adds the librarian reading in a terminal chamber.
 //! `--taskmasters` shows coordinators in every state, plus a parked coordinator and attendant.
 //! The surface carries a heap per worktree: the
 //! agents' own and a few with nobody in them, or `--heaps N` of them; `--hammer` runs the worktree
@@ -126,6 +127,17 @@ fn main() -> eframe::Result {
             } else {
                 clan()
             };
+            if args.iter().any(|a| a == "--lorekeeper") {
+                let mut librarian = node(
+                    "Lorekeeper",
+                    NodeKind::Lorekeeper,
+                    None,
+                    NodeState::Working,
+                    "stronghold",
+                );
+                librarian.agent = Some(AgentIdentity::Claude);
+                snapshot.nodes.push(librarian);
+            }
             if args.iter().any(|a| a == "--taskmasters") {
                 taskmasters(&mut snapshot);
             }
@@ -641,7 +653,10 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState, repo: &
 fn keep_dwarves(s: &mut ClanSnapshot, n: usize) {
     let mut kept = 0;
     s.nodes.retain(|node| {
-        if matches!(node.kind, NodeKind::King | NodeKind::Envoy) {
+        if matches!(
+            node.kind,
+            NodeKind::King | NodeKind::Envoy | NodeKind::Lorekeeper
+        ) {
             return true;
         }
         kept += 1;

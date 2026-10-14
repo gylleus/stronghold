@@ -14,6 +14,7 @@ use super::{
 };
 
 const HAIRS_FUR: Color32 = Color32::from_rgb(0xd2, 0xca, 0xb6);
+const PARCHMENT: Color32 = Color32::from_rgb(0xd8, 0xc8, 0x9e);
 const BRASS: Color32 = Color32::from_rgb(0xc8, 0x96, 0x3c);
 const FLAME: Color32 = Color32::from_rgb(0xff, 0xb0, 0x30);
 const FLAME_CORE: Color32 = Color32::from_rgb(0xff, 0xf0, 0xb0);
@@ -123,6 +124,11 @@ pub(super) fn body(look: &Look) -> Piece {
                 capsule(pos2(10.0, -33.0), pos2(16.0, -8.0), 1.8),
                 tint(look.tunic, 0.2),
             );
+            if look.role == Role::Librarian {
+                p.paint(rect(-12.0, -45.0, -6.0, -16.0), PARCHMENT);
+                p.paint(capsule(pos2(-18.0, -8.0), pos2(19.0, -8.0), 1.2), PARCHMENT);
+                return p;
+            }
             p.paint(capsule(pos2(-18.0, -8.0), pos2(19.0, -8.0), 1.2), BRASS);
             for x in [-13.0, -2.0, 9.0] {
                 rune(&mut p, pos2(x, -16.0), BRASS);
@@ -422,7 +428,7 @@ pub(super) fn tool_tip(tool: Tool) -> Pos2 {
         Tool::Shovel => 4.0,
         Tool::Lantern => -4.0,
         Tool::Staff => -10.0,
-        Tool::None => -25.5,
+        Tool::Book | Tool::None => -25.5,
     };
     pos2(SHOULDER.x, y)
 }
@@ -503,6 +509,25 @@ pub(super) fn tool(p: &mut Piece, tool: Tool, small: bool) {
                 rune(p, pos2(x - 1.0, y), BRASS);
             }
             crystal(p, pos2(x, -85.0), 0.0);
+        }
+        Tool::Book => {
+            let y = hand.y;
+            p.cut(rect(x - 5.0, y - 20.0, x + 25.0, y + 1.0), LEATHER);
+            p.paint(rect(x - 3.0, y - 18.0, x + 23.0, y - 1.0), PARCHMENT);
+            p.paint(
+                rect(x + 9.0, y - 18.0, x + 11.0, y - 1.0),
+                shade(PARCHMENT, 0.4),
+            );
+            for line in [-14.0, -9.0, -4.0] {
+                p.paint(
+                    rect(x - 1.0, y + line, x + 6.0, y + line + 1.0),
+                    shade(PARCHMENT, 0.45),
+                );
+                p.paint(
+                    rect(x + 14.0, y + line, x + 21.0, y + line + 1.0),
+                    shade(PARCHMENT, 0.45),
+                );
+            }
         }
         Tool::None => {}
     }
@@ -653,6 +678,14 @@ pub(super) fn head(look: &Look, pose: &Pose) -> Piece {
         }
     }
     nose(&mut p, look);
+    if look.role == Role::Librarian {
+        p.paint(capsule(pos2(-3.0, -70.0), pos2(11.0, -70.0), 1.0), BRASS);
+        p.cut(ellipse(pos2(15.0, -70.0), 5.0, 4.6, 16), BRASS);
+        p.paint(ellipse(pos2(15.0, -70.0), 3.5, 3.2, 12), tint(skin, 0.3));
+        if pose.eyes == Eyes::Open {
+            p.paint(ellipse(pos2(15.5, -69.5), 1.2, 1.8, 8), INK);
+        }
+    }
     if look.extras.pipe {
         let pipe = shade(WOOD, 0.35);
         p.cut(capsule(pos2(22.0, -54.0), pos2(31.0, -51.5), 1.1), pipe);
