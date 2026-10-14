@@ -1582,7 +1582,7 @@ fn agent_origin() -> crate::review::mark::Origin {
     crate::review::mark::Origin {
         terminal_handle: Some("term_442fcb9f".into()),
         pane_key: Some("16b3a609:e499ad8b".into()),
-        tab_id: None,
+        ..crate::review::mark::Origin::default()
     }
 }
 

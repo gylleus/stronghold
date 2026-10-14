@@ -72,9 +72,11 @@ orca orchestration send --type worker_done --subject "<short status>" \
 - Use `--outcome failed` when it failed. Never encode failure only in prose.
 - Gates green and standing by for merge → `--type merge_ready` with the PR URL in the body.
   That is a report to the coordinator, not a verdict. **Never mark the PR ready yourself** —
-  not as a comment, and not by editing the description. The coordinator rewrites the
-  description and sets the marker, and only after independently verifying the gate; yours
-  would be the same claim without the second pair of eyes. Your job is to write the initial
+  not with `mark_pr_ready` or `stronghold pr-ready`, not as a comment, and not by editing the
+  description. `merge_ready` does not add the PR to Karl's review queue. The coordinator
+  rewrites the description, sets the marker and calls `mark_pr_ready` after independently
+  verifying the gate; yours would be the same claim without the second pair of eyes.
+  Your job is to write the initial
   description and keep it honest as the PR changes under review — if the design moved, say so
   there rather than leaving an opening argument the coordinator has to reconstruct. Open it
   with a `## Why` section — the goal, then each design decision with what forced it — before
