@@ -181,17 +181,17 @@ fn list(mentions: &[String]) -> String {
 mod tests {
     use super::*;
 
-    const KARL: &str = "U0AMMLGSFL0";
-    const DANIEL: &str = "U0177NR3GG4";
+    const KARL: &str = "U000KARL001";
+    const COWORKER: &str = "U000COWORK1";
 
     fn event(kind: EventKind, thread: Option<&str>, text: &str) -> InboundEvent {
         InboundEvent {
             channel_kind: "slack".into(),
-            conversation: "C0BHZLG3X63".into(),
+            conversation: "C000AGENT01".into(),
             ts: "1791300000.000002".into(),
             thread_ts: thread.map(str::to_owned),
             user: "UBOT".into(),
-            user_name: "daniels-agent".into(),
+            user_name: "sams-agent".into(),
             text: text.into(),
             kind,
             permalink: None,
@@ -204,40 +204,40 @@ mod tests {
 
     #[test]
     fn mentions_are_ids_groups_and_bare_names_without_broadcasts() {
-        let text = "<@U0177NR3GG4|Daniel> and <@u0ammlgsfl0>: @depict-search-agent, @Albin. \
-                    <!here> <!channel> @channel <!subteam^S123|@eng> mail karl@depict.ai \
-                    <@U0177NR3GG4> again";
+        let text = "<@U000COWORK1|Sam> and <@u000karl001>: @search-bot, @Alex. \
+                    <!here> <!channel> @channel <!subteam^S123|@eng> mail karl@example.com \
+                    <@U000COWORK1> again";
         assert_eq!(
             mentions(text),
             vec![
-                "<@U0177NR3GG4>",
-                "<@U0AMMLGSFL0>",
-                "@depict-search-agent",
-                "@albin",
+                "<@U000COWORK1>",
+                "<@U000KARL001>",
+                "@search-bot",
+                "@alex",
                 "<!subteam^S123>",
             ]
         );
-        assert!(mentions_karl("ping <@u0ammlgsfl0|karl>", KARL));
+        assert!(mentions_karl("ping <@u000karl001|karl>", KARL));
         assert!(!mentions_karl("ping @karl", KARL));
     }
 
     #[test]
     fn someone_else_tagged_is_not_for_karl() {
-        let v = judge("<@U0177NR3GG4> can your search agent reindex wheat?");
+        let v = judge("<@U000COWORK1> can your search agent reindex wheat?");
         assert_eq!(v.addressee, Addressee::Other);
-        assert_eq!(v.why, "tags <@U0177NR3GG4>, not Karl");
-        let v = judge("@depict-search-agent please rerun the eval");
+        assert_eq!(v.why, "tags <@U000COWORK1>, not Karl");
+        let v = judge("@search-bot please rerun the eval");
         assert_eq!(v.addressee, Addressee::Other);
-        assert_eq!(v.why, "tags @depict-search-agent, not Karl");
+        assert_eq!(v.why, "tags @search-bot, not Karl");
         assert_eq!(
             v.annotation(),
-            " — addressee: not Karl (tags @depict-search-agent, not Karl)"
+            " — addressee: not Karl (tags @search-bot, not Karl)"
         );
     }
 
     #[test]
     fn karl_tagged_is_for_karl() {
-        let v = judge("<@U0AMMLGSFL0> is realtime#694 ready?");
+        let v = judge("<@U000KARL001> is api#694 ready?");
         assert_eq!(v.addressee, Addressee::Karl);
         assert_eq!(v.annotation(), " — addressee: Karl (mentions Karl)");
         let v = classify(&event(EventKind::Dm, None, "hey"), &[], KARL, false);
@@ -247,23 +247,23 @@ mod tests {
 
     #[test]
     fn both_tagged_is_for_karl() {
-        let v = judge("<@U0177NR3GG4> <@U0AMMLGSFL0> can you two sync on the wheat preload?");
+        let v = judge("<@U000COWORK1> <@U000KARL001> can you two sync on the wheat preload?");
         assert_eq!(v.addressee, Addressee::Karl);
-        let v = judge("@search-agent cc <@u0ammlgsfl0>");
+        let v = judge("@search-agent cc <@u000karl001>");
         assert_eq!(v.addressee, Addressee::Karl);
     }
 
     #[test]
     fn reply_in_karls_thread_tagging_another_agent_is_judged_by_context() {
-        let text = format!("<@{DANIEL}> your agent should take this one");
+        let text = format!("<@{COWORKER}> your agent should take this one");
         let reply = event(EventKind::ThreadReply, Some("1791300000.000001"), &text);
         let app_knows = classify(&reply, &[], KARL, true);
         assert_eq!(app_knows.addressee, Addressee::Unclear);
-        assert_eq!(app_knows.why, "tags <@U0177NR3GG4> in Karl's thread");
+        assert_eq!(app_knows.why, "tags <@U000COWORK1> in Karl's thread");
         let root = event(
             EventKind::Mention,
             None,
-            "<@U0AMMLGSFL0> who owns the wheat preload?",
+            "<@U000KARL001> who owns the wheat preload?",
         );
         let inbox_knows = classify(&reply, &[&root], KARL, false);
         assert_eq!(inbox_knows.addressee, Addressee::Unclear);
@@ -290,9 +290,9 @@ mod tests {
         let v = judge("@karl is this yours?");
         assert_eq!(v.addressee, Addressee::Unclear);
         assert_eq!(v.why, "a bare @karl, not a real mention");
-        let v = judge("<@U0177NR3GG4> and @Karl please look");
+        let v = judge("<@U000COWORK1> and @Karl please look");
         assert_eq!(v.addressee, Addressee::Unclear);
-        assert_eq!(v.why, "tags <@U0177NR3GG4> and a bare @karl");
+        assert_eq!(v.why, "tags <@U000COWORK1> and a bare @karl");
     }
 
     #[test]

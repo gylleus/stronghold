@@ -73,6 +73,7 @@ Every tool returns a compact, chat-ready text block. Most also return `structure
 | `king_inbox` | `limit` (default 20, max 100) | – (reads the durable inbox) | read-only |
 | `ask_karl` | `question`, `context`, `severity` (`info` \| `warn` \| `urgent`), `url` | `ask` | not destructive |
 | `finish_session` | `summary`, `approval` (`karl` \| `trivial`), `outcome` (`done` \| `handed_over` \| `abandoned`), `pr_url`, `force` | `finish` (a `dry_run` check, then the real one) | destructive |
+| `spawn_session` | `mode` (`worktree` \| `new_worktree` \| `worker`), `prompt`, plus `worktree`, `repo` + `name`, `base_branch`, `run_id`, `terminal`, `title`, `label`, `agent`, `model`, `effort`, `allow_suffix` | `spawn` | destructive |
 | `clean_worktrees` | `dry_run` (**default true**), `ids` (needed with `dry_run: false`) | – (runs `orca`, `git`, `gh` itself) | destructive |
 
 `mark_pr_ready` is for clan agents: the server is registered at user scope, so every Claude
@@ -328,8 +329,8 @@ Stalled: none
 Runs (8):
 | Run | Objective | Coordinator | Tasks | Workers | Active | Flags |
 |---|---|---|---|---|---|---|
-| run_36e69d11f0b2 | recs-core composition: step rotation (depict-804)… | AI agent playbook (working) | 0/9 done, 1 dispatched, 5 ready, 3 failed | 19 (1 working, 1 idle) | just now |  |
-| run_7c25cdcf46e0 | commerce-platform wave 2026-09-23: HACK-76 genera… | cp-wave-0923-ATTENDANT brief (idle) | 50/58 done, 1 dispatched, 1 ready, 6 failed | 46 (1 working, 1 idle) | 23s ago |  |
+| run_36e69d11f0b2 | pricing engine: step rotation (shop-804)… | AI agent playbook (working) | 0/9 done, 1 dispatched, 5 ready, 3 failed | 19 (1 working, 1 idle) | just now |  |
+| run_7c25cdcf46e0 | storefront wave 2026-09-23: HACK-76 genera… | cp-wave-0923-ATTENDANT brief (idle) | 50/58 done, 1 dispatched, 1 ready, 6 failed | 46 (1 working, 1 idle) | 23s ago |  |
 …
 Whip: on, dry-run · 0 stall findings · 0 escalated · last tick 10s ago
 Quotas: Claude 5h 25% (resets in 41m), wk 13% (resets in 6d 2h) · Codex wk 0% (resets in 6d 4h)
@@ -337,11 +338,11 @@ Quotas: Claude 5h 25% (resets in 41m), wk 13% (resets in 6d 2h) · Codex wk 0% (
 → close_agents {"ids":["term:term_2bf8…"]}
 DRY RUN: nothing was closed. This is the plan:
 Targets (1):
-- ..pict/realtime `term:term_2bf8…` (coordinator)
+- ..acme/api `term:term_2bf8…` (coordinator)
 Steps:
 - `orca terminal close --terminal=term_2bf8…`
 Warnings:
-- run depict-xyx: … loses its coordinator; its workers keep running (0 open tasks)
+- run shop-xyx: … loses its coordinator; its workers keep running (0 open tasks)
 To really close, confirm with Karl (the King in auto mode needn't), then call
 close_agents again with dry_run=false.
 ```

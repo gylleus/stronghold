@@ -641,19 +641,19 @@ fn each_tool_maps_to_its_control_request() {
         ),
         (
             "spawn_session",
-            json!({"mode": "worktree", "worktree": "depict/main", "prompt": " Fix it ", "bogus": 1}),
+            json!({"mode": "worktree", "worktree": "shop/main", "prompt": " Fix it ", "bogus": 1}),
             vec![(
                 "spawn",
-                json!({"mode": "worktree", "worktree": "depict/main", "prompt": "Fix it", "agent": "claude"}),
+                json!({"mode": "worktree", "worktree": "shop/main", "prompt": "Fix it", "agent": "claude"}),
             )],
         ),
         (
             "spawn_session",
-            json!({"mode": "worker", "run_id": "run_1", "repo": "depict", "name": "w1",
+            json!({"mode": "worker", "run_id": "run_1", "repo": "shop", "name": "w1",
                    "prompt": "spec", "agent": "codex", "model": "gpt-6-astra"}),
             vec![(
                 "spawn",
-                json!({"mode": "worker", "run_id": "run_1", "repo": "depict", "name": "w1",
+                json!({"mode": "worker", "run_id": "run_1", "repo": "shop", "name": "w1",
                        "prompt": "spec", "agent": "codex", "model": "gpt-6-astra"}),
             )],
         ),
@@ -1523,7 +1523,7 @@ fn spawn_session_reports_the_new_session() {
     let r = call(
         &mut server,
         "spawn_session",
-        json!({"mode": "new_worktree", "repo": "depict", "name": "x", "prompt": "go"}),
+        json!({"mode": "new_worktree", "repo": "shop", "name": "x", "prompt": "go"}),
     );
     assert!(!is_error(&r), "{}", text(&r));
     let t = text(&r);
@@ -1546,7 +1546,7 @@ fn spawn_session_reports_the_new_session() {
     let r = call(
         &mut server,
         "spawn_session",
-        json!({"mode": "new_worktree", "repo": "depict", "name": "x", "prompt": "go",
+        json!({"mode": "new_worktree", "repo": "shop", "name": "x", "prompt": "go",
                "effort": "max"}),
     );
     assert!(text(&r).contains("Model: the CLI default"), "{}", text(&r));
@@ -1557,7 +1557,7 @@ fn spawn_session_reports_the_new_session() {
     let r = call(
         &mut server,
         "spawn_session",
-        json!({"mode": "new_worktree", "repo": "depict", "name": "x", "prompt": "go",
+        json!({"mode": "new_worktree", "repo": "shop", "name": "x", "prompt": "go",
                "agent": "codex"}),
     );
     assert!(!text(&r).contains("Model:"), "{}", text(&r));
@@ -1635,7 +1635,7 @@ fn notify_is_listed_with_when_to_call_it() {
 fn notify_sends_the_notice_with_the_callers_identity() {
     let reply = json!({
         "outcome": "delivered", "id": 4, "severity": "warn", "quiet": false,
-        "agent": {"id": "term:term_442fcb9f", "label": "realtime-255"},
+        "agent": {"id": "term:term_442fcb9f", "label": "api-255"},
         "delivery": {"native": true, "in_app": true, "sound": true},
     });
     let mut server = agent_server(FakeControl::default().reply("notify", Ok(reply)));
@@ -1652,7 +1652,7 @@ fn notify_sends_the_notice_with_the_callers_identity() {
     assert!(!is_error(&r), "{}", text(&r));
     assert_eq!(
         text(&r),
-        "Sent to Karl (macOS pop-up, Stronghold pop-up, sound). Shown under realtime-255 \
+        "Sent to Karl (macOS pop-up, Stronghold pop-up, sound). Shown under api-255 \
          (`term:term_442fcb9f`)."
     );
     assert_eq!(
@@ -1882,7 +1882,7 @@ fn alert(id: u64, read: bool) -> view::AlertView {
         title: format!("Blocked {id}"),
         message: "needs prod access".into(),
         url: Some("https://github.com/o/r/issues/1".into()),
-        agent: Some("realtime-255".into()),
+        agent: Some("api-255".into()),
         node: Some("term:term_442fcb9f".into()),
         count: 2,
         read,
@@ -1905,7 +1905,7 @@ fn alerts_lists_the_inbox_with_read_state() {
     assert!(line.starts_with("- [unread] warn · "), "{line}");
     assert!(
         line.ends_with(
-            "realtime-255: Blocked 2 ×2 `term:term_442fcb9f` — needs prod access \
+            "api-255: Blocked 2 ×2 `term:term_442fcb9f` — needs prod access \
              <https://github.com/o/r/issues/1>"
         ),
         "{line}"
@@ -2141,7 +2141,7 @@ fn ask_karl_and_finish_session_are_listed_with_when_to_call_them() {
 fn ask_karl_sends_the_question_with_the_callers_identity() {
     let reply = json!({
         "outcome": "delivered", "id": 9, "severity": "warn", "quiet": false,
-        "agent": {"id": "term:term_442fcb9f", "label": "realtime-255"},
+        "agent": {"id": "term:term_442fcb9f", "label": "api-255"},
         "delivery": {"native": true, "in_app": true, "sound": false},
         "waiting": true,
     });
@@ -2218,8 +2218,8 @@ fn finish_check(worktree: &std::path::Path, problems: Value) -> Value {
     json!({
         "dry_run": true,
         "agent": {
-            "id": "term:term_442fcb9f", "label": "realtime-255", "kind": "terminal",
-            "worktree": worktree, "branch": "gylleus/realtime-255",
+            "id": "term:term_442fcb9f", "label": "api-255", "kind": "terminal",
+            "worktree": worktree, "branch": "karl/api-255",
         },
         "refused": null,
         "problems": problems,
@@ -2246,7 +2246,7 @@ fn finish_session_checks_then_finishes() {
         "{t}"
     );
     assert!(t.contains("closes this terminal in about 2 s"), "{t}");
-    assert!(t.contains("branch gylleus/realtime-255 are kept"), "{t}");
+    assert!(t.contains("branch karl/api-255 are kept"), "{t}");
     let calls = &server.control().calls;
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[0]["dry_run"], true);

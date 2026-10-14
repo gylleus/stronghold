@@ -45,7 +45,7 @@ mod tests {
     #[test]
     fn methods_parse_into_commands() {
         let params = json!({
-            "url": "https://github.com/depict-org/realtime/pull/255",
+            "url": "https://github.com/acme/api/pull/255",
             "title": "gate",
             "via": "cli",
             "origin": {"terminal_handle": "term_a", "pane_key": "t:l"},

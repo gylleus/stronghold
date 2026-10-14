@@ -163,7 +163,7 @@ impl crate::envoy::slack::SlackIo for FakeSlack {
         if method == "auth.test"
             && let Some(id) = self.karl_id
         {
-            return Ok(json!({"ok":true,"user":"karl126","user_id":id,"team":"Depict"}));
+            return Ok(json!({"ok":true,"user":"karl","user_id":id,"team":"Acme"}));
         }
         Ok(json!({"ok":true,"messages":{"matches":[],"paging":{"pages":1}}}))
     }
@@ -682,7 +682,7 @@ fn batches_name_candidate_dwarves_and_fold_the_backlog() {
     let mut old = receipt_event("1791200000.000001");
     old.text = "yesterday".into();
     let mut root = receipt_event("1791299900.000001");
-    root.text = "Plan for realtime#694".into();
+    root.text = "Plan for api#694".into();
     let mut reply = receipt_event("1791299950.000001");
     reply.thread_ts = Some(root.ts.clone());
     reply.text = "yes, push the merge commit yourself".into();
@@ -697,7 +697,7 @@ fn batches_name_candidate_dwarves_and_fold_the_backlog() {
     let dwarves = [Dwarf {
         id: "term:term_dwarf".into(),
         label: "Recs rollout".into(),
-        prs: vec!["realtime#694".into()],
+        prs: vec!["api#694".into()],
         ..Dwarf::default()
     }];
     let (action, batch) = core.next_forward(now, &dwarves).expect("batch");
@@ -713,10 +713,10 @@ fn batches_name_candidate_dwarves_and_fold_the_backlog() {
         .collect();
     assert_eq!(lines.len(), 4);
     assert!(lines[0].starts_with("Envoy backlog: 1 event(s) older than 30 min"));
-    assert!(lines[1].ends_with("dwarves: Recs rollout (term:term_dwarf, realtime#694)"));
+    assert!(lines[1].ends_with("dwarves: Recs rollout (term:term_dwarf, api#694)"));
     assert!(
         lines[2].contains("push the merge commit")
-            && lines[2].ends_with("dwarves: Recs rollout (term:term_dwarf, realtime#694)"),
+            && lines[2].ends_with("dwarves: Recs rollout (term:term_dwarf, api#694)"),
         "a reply inherits its thread's refs: {}",
         lines[2]
     );
@@ -1206,7 +1206,7 @@ fn thread_notes_are_written_by_tool_and_typed_with_every_event_in_the_thread() {
     let mut core = AppEnvoy::load(dir.path().into());
     core.handle = Some("term_envoy".into());
     let mut root = receipt_event("10.000001");
-    root.text = "Can Karl's agent review realtime#694?".into();
+    root.text = "Can Karl's agent review api#694?".into();
     let mut reply = receipt_event("11.000001");
     reply.thread_ts = Some(root.ts.clone());
     reply.text = "ping".into();
@@ -1222,17 +1222,17 @@ fn thread_notes_are_written_by_tool_and_typed_with_every_event_in_the_thread() {
     assert!(
         core.request(&envoy_command(
             "envoy_note",
-            json!({"conversation":"C123","thread_ts":"10.000001","text":"Avery asked for a realtime#694 review;\npromised an answer today; waiting on the Recs dwarf"})
+            json!({"conversation":"C123","thread_ts":"10.000001","text":"Avery asked for a api#694 review;\npromised an answer today; waiting on the Recs dwarf"})
         ))
         .is_ok()
     );
     let stored = core
         .request(&envoy_command(
             "envoy_note",
-            json!({"conversation":"D1","text":"Daniel: wants the rollout date"}),
+            json!({"conversation":"D1","text":"Sam: wants the rollout date"}),
         ))
         .unwrap();
-    assert_eq!(stored["note"]["text"], "Daniel: wants the rollout date");
+    assert_eq!(stored["note"]["text"], "Sam: wants the rollout date");
     assert_eq!(stored["notes"], 2);
     for args in [
         json!({"conversation":"nope","text":"x"}),
@@ -1245,7 +1245,7 @@ fn thread_notes_are_written_by_tool_and_typed_with_every_event_in_the_thread() {
     let (action, _) = core.next_forward(20_000, &[]).unwrap();
     let lines: Vec<String> = typed(&action).split(" | ").map(str::to_owned).collect();
     assert_eq!(lines.len(), 4);
-    let note = "— note: Avery asked for a realtime#694 review; promised an answer today; waiting on the Recs dwarf";
+    let note = "— note: Avery asked for a api#694 review; promised an answer today; waiting on the Recs dwarf";
     assert!(lines[0].ends_with(note), "root: {}", lines[0]);
     assert!(lines[1].ends_with(note), "reply: {}", lines[1]);
     assert!(
@@ -1254,7 +1254,7 @@ fn thread_notes_are_written_by_tool_and_typed_with_every_event_in_the_thread() {
         lines[2]
     );
     assert!(
-        lines[3].ends_with("— note: Daniel: wants the rollout date"),
+        lines[3].ends_with("— note: Sam: wants the rollout date"),
         "conversation note: {}",
         lines[3]
     );
@@ -1471,15 +1471,15 @@ fn batches_say_who_each_event_is_for() {
     let mut envoy_root = receipt_event("1791299850.000001");
     envoy_root.text = "Anyone know the recs rollout status?".into();
     let mut tagged_other = receipt_event("1791299900.000001");
-    tagged_other.text = "<@U0177NR3GG4> can your search agent reindex wheat?".into();
+    tagged_other.text = "<@U000COWORK1> can your search agent reindex wheat?".into();
     let mut tagged_karl = receipt_event("1791299910.000001");
-    tagged_karl.text = format!("<@{karl}> is realtime#694 ready?");
+    tagged_karl.text = format!("<@{karl}> is api#694 ready?");
     let mut in_dwarf_thread = receipt_event("1791299920.000001");
     in_dwarf_thread.thread_ts = Some(dwarf_root.ts.clone());
-    in_dwarf_thread.text = "<@U0177NR3GG4> your agent should answer this".into();
+    in_dwarf_thread.text = "<@U000COWORK1> your agent should answer this".into();
     let mut in_envoy_thread = receipt_event("1791299930.000001");
     in_envoy_thread.thread_ts = Some(envoy_root.ts.clone());
-    in_envoy_thread.text = "@depict-search-agent take it from here".into();
+    in_envoy_thread.text = "@search-bot take it from here".into();
     let mut chatter = receipt_event("1791299960.000001");
     chatter.text = "lunch?".into();
     let mut inbox = Inbox::default();
@@ -1523,7 +1523,7 @@ fn batches_say_who_each_event_is_for() {
     let lines: Vec<&str> = text.split(" | ").collect();
     assert_eq!(lines.len(), 5, "{text}");
     assert!(
-        lines[0].contains("— addressee: not Karl (tags <@U0177NR3GG4>, not Karl) — no dwarf match"),
+        lines[0].contains("— addressee: not Karl (tags <@U000COWORK1>, not Karl) — no dwarf match"),
         "{}",
         lines[0]
     );
@@ -1534,13 +1534,13 @@ fn batches_say_who_each_event_is_for() {
     );
     assert!(
         lines[2].contains(
-            "— addressee: unclear (tags <@U0177NR3GG4> in Karl's thread) — dwarves: Recs rollout (term:term_dwarf, its thread)"
+            "— addressee: unclear (tags <@U000COWORK1> in Karl's thread) — dwarves: Recs rollout (term:term_dwarf, its thread)"
         ),
         "{}",
         lines[2]
     );
     assert!(
-        lines[3].contains("— addressee: unclear (tags @depict-search-agent in Karl's thread) —"),
+        lines[3].contains("— addressee: unclear (tags @search-bot in Karl's thread) —"),
         "a thread the Envoy replied in is Karl's: {}",
         lines[3]
     );

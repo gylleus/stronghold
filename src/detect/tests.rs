@@ -269,7 +269,7 @@ fn preview_detection() {
     let prompts = [
         (
             "about switching models.   Press enter to confirm or esc to go back   \
-             › Ask Codex to do anything   gpt-5.6-luna medium · ~/orca/workspaces/depict/x",
+             › Ask Codex to do anything   gpt-5.6-luna medium · ~/orca/workspaces/shop/x",
             PromptKind::Confirm,
         ),
         (
@@ -326,7 +326,7 @@ mod claude_session_live {
 
     #[test]
     fn shells_and_other_agents_are_not() {
-        let shell = "⏺ old transcript line\n~/orca/workspaces/x  gylleus/redis-writes ✔        9m";
+        let shell = "⏺ old transcript line\n~/orca/workspaces/x  karl/redis-writes ✔        9m";
         for (agent, preview) in [
             (Some(AgentIdentity::Claude), shell),
             (
@@ -357,7 +357,7 @@ mod claude_session_live {
             assert!(claude_session_live(&titled(title, warning)));
             assert!(!claude_session_live(&titled(title, "⏺ hi\n~/repo %")));
         }
-        for title in ["..launch-health", "gylleus@mac: ~/repo", ""] {
+        for title in ["..launch-health", "k@mac: ~/repo", ""] {
             assert!(!claude_session_live(&titled(
                 title,
                 &format!("{warning}\n❯")

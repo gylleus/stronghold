@@ -106,7 +106,7 @@ first poll, with `ready: false`.
       "by_kind":{"coordinator":7,"terminal":24,"worker":85},
       "by_state":{"done":47,"failed":35,"idle":33,"working":1},
       "needs_input":["term:term_…"],"stalled":[],
-      "runs":[{"id":"run_7c25cdcf46e0","objective":"commerce-platform wave …","repo":"hackathon",
+      "runs":[{"id":"run_7c25cdcf46e0","objective":"storefront wave …","repo":"storefront",
                "coordinator":"term:term_df9f…","coordinator_state":"idle",
                "tasks":{"total":58,"pending":0,"ready":1,"dispatched":1,"completed":50,
                         "failed":6,"blocked":0,"other":0},
@@ -151,9 +151,9 @@ Lists agents. Every param is an optional filter, and filters combine with AND:
 {"v":1,"method":"agents","params":{"kind":"coordinator","live":true}}
 → {"ok":true,"result":{"count":7,"agents":[{
     "id":"term:term_2574…","kind":"coordinator","label":"AI agent playbook","state":"idle",
-    "live":true,"run_id":"run_36e69d11f0b2","run_objective":"recs-core composition: …",
-    "task_id":null,"agent":"claude","branch":"main","worktree":"/Users/…/realtime",
-    "repo":"depict","terminal_handle":"term_2574…","parent":null,
+    "live":true,"run_id":"run_36e69d11f0b2","run_objective":"pricing engine: …",
+    "task_id":null,"agent":"claude","branch":"main","worktree":"/Users/…/api",
+    "repo":"api","terminal_handle":"term_2574…","parent":null,
     "last_output_ms":1790343526107,"idle_secs":948,
     "needs_input":null,"stalled":false,"escalated":false,
     "tokens":{"total":1072927489,"input":217861,"output":2304590,
@@ -261,7 +261,7 @@ the unread count and the newest unread ones under `notifications`.
 {"v":1,"method":"alerts"}
 → {"ok":true,"result":{"alerts":[{"id":7,"at_ms":…,"severity":"warn","source":"agent",
    "title":"Blocked: need prod DB access","message":"…","url":"https://…",
-   "agent":"realtime-255","node":"term:term_…","count":1,"read":false}]}}
+   "agent":"api-255","node":"term:term_…","count":1,"read":false}]}}
 ```
 
 ### `clan_data`
@@ -286,8 +286,8 @@ read: `state` (`open` \| `draft` \| `merged` \| `closed`, `null` before the firs
 ```json
 {"v":1,"method":"review_queue"}
 → {"ok":true,"result":{"count":1,"github":{"available":true,"error":null},"entries":[
-    {"url":"https://github.com/depict-org/realtime/pull/255","repo":"depict-org/realtime",
-     "number":255,"title":"recs: gate legacy config retirement","summary":null,
+    {"url":"https://github.com/acme/api/pull/255","repo":"acme/api",
+     "number":255,"title":"api: gate legacy config retirement","summary":null,
      "agent":{"id":"term:term_…","label":"…","live":true},"agent_handle":null,
      "source":"cli","marked_ms":…,"state":"open","ci":{"state":"passing","total":9},
      "head_sha":"92b1c94…","ankra_verdict":"comments","ankra_on_head":false,
@@ -440,7 +440,7 @@ it with `dry_run: true` first and show the plan's warnings.
 → {"ok":true,"result":{"dry_run":true,"plan":{
     "targets":[{"id":"term:term_2574…","label":"AI agent playbook","kind":"coordinator"}],
     "steps":[{"command":"orca terminal close --terminal=term_2574…","label":"Close terminal AI agent playbook"}],
-    "warnings":["run recs-core composition: … loses its coordinator; its workers keep running (6 open tasks)"],
+    "warnings":["run pricing engine: … loses its coordinator; its workers keep running (6 open tasks)"],
     "refused":null,"can_run":true}}}
 ```
 

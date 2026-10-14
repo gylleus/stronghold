@@ -875,9 +875,9 @@ mod tests {
     #[test]
     fn branch_name_strips_refs_heads() {
         let t = Terminal {
-            branch: Some("refs/heads/gylleus/x".into()),
+            branch: Some("refs/heads/karl/x".into()),
             ..Default::default()
         };
-        assert_eq!(t.branch_name(), Some("gylleus/x"));
+        assert_eq!(t.branch_name(), Some("karl/x"));
     }
 }

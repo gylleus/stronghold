@@ -34,7 +34,7 @@ impl PrRef {
         )
     }
 
-    /// `realtime#255`.
+    /// `api#255`.
     pub fn short(&self) -> String {
         format!("{}#{}", self.repo, self.number)
     }
@@ -122,24 +122,21 @@ mod tests {
 
     #[test]
     fn parses_urls_in_their_usual_forms() {
-        let want = pr("depict-org", "realtime", 255);
+        let want = pr("acme", "api", 255);
         for url in [
-            "https://github.com/depict-org/realtime/pull/255",
-            "http://github.com/depict-org/realtime/pull/255",
-            "github.com/depict-org/realtime/pull/255",
-            "https://www.github.com/depict-org/realtime/pull/255/files",
-            "https://github.com/depict-org/realtime/pull/255#issuecomment-1",
-            "https://github.com/depict-org/realtime/pull/255?x=1",
-            "  https://github.com/depict-org/realtime/pull/255\n",
+            "https://github.com/acme/api/pull/255",
+            "http://github.com/acme/api/pull/255",
+            "github.com/acme/api/pull/255",
+            "https://www.github.com/acme/api/pull/255/files",
+            "https://github.com/acme/api/pull/255#issuecomment-1",
+            "https://github.com/acme/api/pull/255?x=1",
+            "  https://github.com/acme/api/pull/255\n",
         ] {
             assert_eq!(PrRef::parse(url), Some(want.clone()), "{url}");
         }
-        assert_eq!(
-            want.url(),
-            "https://github.com/depict-org/realtime/pull/255"
-        );
-        assert_eq!(want.short(), "realtime#255");
-        assert_eq!(want.to_string(), "depict-org/realtime#255");
+        assert_eq!(want.url(), "https://github.com/acme/api/pull/255");
+        assert_eq!(want.short(), "api#255");
+        assert_eq!(want.to_string(), "acme/api#255");
         assert_eq!(
             PrRef::parse("https://github.com/o/foundation-ingestion.v2/pull/1"),
             Some(pr("o", "foundation-ingestion.v2", 1))
@@ -150,13 +147,13 @@ mod tests {
     fn rejects_non_pr_urls() {
         for url in [
             "",
-            "https://github.com/depict-org/realtime",
-            "https://github.com/depict-org/realtime/issues/255",
-            "https://github.com/depict-org/realtime/pull/",
-            "https://github.com/depict-org/realtime/pull/0",
-            "https://github.com/depict-org/realtime/pull/12abc",
-            "https://gitlab.com/depict-org/realtime/pull/255",
-            "https://github.com//realtime/pull/255",
+            "https://github.com/acme/api",
+            "https://github.com/acme/api/issues/255",
+            "https://github.com/acme/api/pull/",
+            "https://github.com/acme/api/pull/0",
+            "https://github.com/acme/api/pull/12abc",
+            "https://gitlab.com/acme/api/pull/255",
+            "https://github.com//api/pull/255",
             "#255",
         ] {
             assert_eq!(PrRef::parse(url), None, "{url}");
@@ -165,17 +162,14 @@ mod tests {
 
     #[test]
     fn finds_every_pr_in_text_once() {
-        let text = "https://github.com/depict-org/commerce-platform/pull/249 at 72c51c3e: green. \
-                    Stacked on (https://github.com/depict-org/commerce-platform/pull/248), see \
-                    github.com/depict-org/commerce-platform/pull/249 again; not \
-                    https://github.com/depict-org/commerce-platform/issues/3 or \
+        let text = "https://github.com/acme/storefront/pull/249 at 72c51c3e: green. \
+                    Stacked on (https://github.com/acme/storefront/pull/248), see \
+                    github.com/acme/storefront/pull/249 again; not \
+                    https://github.com/acme/storefront/issues/3 or \
                     notgithub.com/a/b/pull/1.";
         assert_eq!(
             find_prs(text),
-            [
-                pr("depict-org", "commerce-platform", 249),
-                pr("depict-org", "commerce-platform", 248)
-            ]
+            [pr("acme", "storefront", 249), pr("acme", "storefront", 248)]
         );
         assert!(find_prs("PR #230 rebased, green").is_empty());
         assert_eq!(

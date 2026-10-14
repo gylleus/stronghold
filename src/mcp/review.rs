@@ -320,7 +320,7 @@ mod tests {
     use crate::review::view::{AgentRef, ReviewRow};
     use crate::review::{ReviewCommand, ReviewQueue};
 
-    const URL: &str = "https://github.com/depict-org/realtime/pull/255";
+    const URL: &str = "https://github.com/acme/api/pull/255";
 
     /// Records every call; `running: false` answers like an app that isn't running.
     struct Fake {
@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn mark_pr_ready_sends_the_callers_orca_identity() {
         let dir = tempfile::tempdir().unwrap();
-        let reply = json!({"url": URL, "outcome": "new", "count": 1, "agent": {"id": "term:term_442fcb9f", "label": "realtime-255"}});
+        let reply = json!({"url": URL, "outcome": "new", "count": 1, "agent": {"id": "term:term_442fcb9f", "label": "api-255"}});
         let mut server =
             McpServer::new(Fake::new(true, reply)).with_review_env(agent_env(dir.path()));
         let r = call_tool(
@@ -413,8 +413,8 @@ mod tests {
         assert_eq!(r["isError"], false, "{}", text(&r));
         assert_eq!(
             text(&r),
-            "Marked depict-org/realtime#255 ready for review from term_442fcb9f, shown under \
-             realtime-255. Stronghold's review queue now lists 1 PR."
+            "Marked acme/api#255 ready for review from term_442fcb9f, shown under \
+             api-255. Stronghold's review queue now lists 1 PR."
         );
         let (method, params) = &server.control().calls[0];
         assert_eq!(method, "pr_ready");
@@ -486,13 +486,13 @@ mod tests {
     fn row(ci: Ci, ankra_on_head: Option<bool>) -> ReviewRow {
         ReviewRow {
             url: URL.into(),
-            repo: "depict-org/realtime".into(),
+            repo: "acme/api".into(),
             number: 255,
             title: "recs: gate legacy config retirement".into(),
             summary: Some("PR #255 green".into()),
             agent: Some(AgentRef {
                 id: crate::model::NodeId::terminal("term_a"),
-                label: "realtime-255".into(),
+                label: "api-255".into(),
                 live: true,
             }),
             agent_handle: None,
@@ -521,7 +521,7 @@ mod tests {
         let r = call_tool(&mut server, "review_queue", json!({}));
         assert_eq!(server.control().calls[0].0, "review_queue");
         let t = text(&r);
-        assert!(t.starts_with("Ready for review (1):\n- depict-org/realtime#255 recs: gate legacy config retirement — realtime-255 `term:term_a` · CI green (9 checks) · Ankra: comments (stale, not on head) · ✅ ready marker (stale) · review: review required · marked 2h"), "{t}");
+        assert!(t.starts_with("Ready for review (1):\n- acme/api#255 recs: gate legacy config retirement — api-255 `term:term_a` · CI green (9 checks) · Ankra: comments (stale, not on head) · ✅ ready marker (stale) · review: review required · marked 2h"), "{t}");
         assert!(t.contains(&format!("\n  {URL}")), "{t}");
         assert!(
             t.ends_with("GitHub status unavailable: gh auth login"),

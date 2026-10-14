@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn normal_prose_and_slack_ids_are_not_secrets() {
         for value in [
-            "Ask U0AMMLGSFL0 in C0BHZLG3X63",
+            "Ask U000KARL001 in C000AGENT01",
             "The api_key needs rotating.",
             "Please reset your password.",
             "The project is ready for review.",

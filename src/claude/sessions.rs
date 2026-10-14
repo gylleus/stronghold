@@ -399,17 +399,17 @@ mod tests {
     fn encodes_real_project_dirs() {
         let cases = [
             (
-                "/Users/gylleus/orca/workspaces/commerce-platform/hack-77-core-in-template",
-                "-Users-gylleus-orca-workspaces-commerce-platform-hack-77-core-in-template",
+                "/Users/k/orca/workspaces/storefront/hack-77-core-in-template",
+                "-Users-k-orca-workspaces-storefront-hack-77-core-in-template",
             ),
-            ("/private/tmp/themes/toteme", "-private-tmp-themes-toteme"),
+            ("/private/tmp/themes/sample", "-private-tmp-themes-sample"),
             (
-                "/Users/gylleus/repo/depict/recommendations/.claude/worktrees/vroom-299-pins",
-                "-Users-gylleus-repo-depict-recommendations--claude-worktrees-vroom-299-pins",
+                "/Users/k/repo/shop/web/.claude/worktrees/acme-299-pins",
+                "-Users-k-repo-shop-web--claude-worktrees-acme-299-pins",
             ),
             (
-                "/Users/gylleus/repo/saker/stronghold-worktrees/myr-8hj.1",
-                "-Users-gylleus-repo-saker-stronghold-worktrees-myr-8hj-1",
+                "/Users/k/repo/saker/stronghold-worktrees/myr-8hj.1",
+                "-Users-k-repo-saker-stronghold-worktrees-myr-8hj-1",
             ),
             ("/a/b_c d@e", "-a-b-c-d-e"),
             // One dash per UTF-16 unit: `å` is one unit, the emoji is two.

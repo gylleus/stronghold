@@ -9,7 +9,7 @@
       "body": "<!-- linear-linkback --> (trimmed)",
       "createdAt": "2026-09-28T11:50:53Z",
       "id": "IC_kwDOSJihI88AAAABXdXgeA",
-      "url": "https://github.com/depict-org/recommendations/pull/130#issuecomment-5869265016"
+      "url": "https://github.com/acme/web/pull/130#issuecomment-5869265016"
     },
     {
       "author": {
@@ -19,7 +19,7 @@
       "body": "<!-- ankra-ai:section:review -->\n\n## Ankra AI review\n\n**Verdict: comments.**\n\n(review text trimmed for the fixture)\n\n_Reviewed commit d15af08348b1. This review is read-only and advisory._",
       "createdAt": "2026-09-28T11:51:18Z",
       "id": "IC_kwDOSJihI88AAAABXdX2aQ",
-      "url": "https://github.com/depict-org/recommendations/pull/130#issuecomment-5869270633"
+      "url": "https://github.com/acme/web/pull/130#issuecomment-5869270633"
     }
   ],
   "headRefOid": "d15af08348b18238b4a025512ee5d62b93758d4b",
@@ -33,7 +33,7 @@
       "__typename": "CheckRun",
       "completedAt": "2026-09-28T11:51:54Z",
       "conclusion": "SUCCESS",
-      "name": "lint + typecheck + unit tests (recommendations)",
+      "name": "lint + typecheck + unit tests (web)",
       "startedAt": "2026-09-28T11:50:49Z",
       "status": "COMPLETED",
       "workflowName": "CI"
@@ -78,7 +78,7 @@
       "__typename": "CheckRun",
       "completedAt": "2026-09-28T11:52:45Z",
       "conclusion": "SKIPPED",
-      "name": "deploy foundation worker",
+      "name": "deploy catalog worker",
       "startedAt": "2026-09-28T11:52:45Z",
       "status": "COMPLETED",
       "workflowName": "CI"
@@ -93,6 +93,6 @@
       "workflowName": ""
     }
   ],
-  "title": "VROOM-1503: Publish surface serving mode to Shopify",
-  "url": "https://github.com/depict-org/recommendations/pull/130"
+  "title": "ACME-1503: Publish surface serving mode to Shopify",
+  "url": "https://github.com/acme/web/pull/130"
 }

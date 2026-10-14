@@ -254,7 +254,7 @@ fn worktree(path: &str) -> Worktree {
     Worktree {
         id: format!("stronghold::{name}"),
         path: path.into(),
-        branch: Some(format!("refs/heads/gylleus/{name}")),
+        branch: Some(format!("refs/heads/karl/{name}")),
         ..Worktree::default()
     }
 }
@@ -764,12 +764,7 @@ fn demo_ledger() -> Shelf {
     Shelf {
         count: 12,
         newest: vec![
-            entry(
-                "Reranker eval needs the warm cache",
-                "recommendations",
-                "finding",
-                4,
-            ),
+            entry("Reranker eval needs the warm cache", "web", "finding", 4),
             entry(
                 "Billing invoices migrate per market",
                 "billing",

@@ -4,8 +4,8 @@ Read this before doing anything. It applies to every dispatched track. Your trac
 scope arrives in the dispatch spec; this file is the part that never changes.
 
 Precedence: this file and your dispatch spec outrank any other agent/clan playbook a
-repo CLAUDE.md or AGENTS.md points at — such pointers are historically stale (the depict
-repo still carries a retired herdr-era playbook). Repo CLAUDE.md/AGENTS.md stay
+repo CLAUDE.md or AGENTS.md points at — such pointers are historically stale (some repos
+still carry a retired herdr-era playbook). Repo CLAUDE.md/AGENTS.md stay
 authoritative for code style, build gates and repo facts. On a *process* conflict, follow
 this file and name the conflict in your report.
 
@@ -36,10 +36,11 @@ says you can go (or for a tiny one-shot task with nothing to follow up).
    - `standard` (or none given): carry straight on to implementing. Nobody else approves.
    - `gated`: `ask` the coordinator to approve the plan (link the APPROVED comment) and
      implement only after its reply.
-4. **Implement** in your worktree. Then the repo's gate — `just check` in `recommendations`
-   (plus `just test-integration`, which needs `just dev-up`, if you touched the binding or
-   the wire types). Other repos: read their CLAUDE.md and CI before assuming a gate exists.
-5. **PR.** Open it with the track's VROOM issue in the title (e.g. `VROOM-123: <title>`)
+4. **Implement** in your worktree. Then the repo's gate: known gates are in
+   `~/Documents/agents/ORG.md`; otherwise read the repo's CLAUDE.md and CI before assuming a
+   gate exists.
+5. **PR.** Open it with the track's ticket in the title (e.g. `ABC-123: <title>`; the team
+   key is in `ORG.md`)
    → wait for Ankra's verdict → answer EVERY thread with a fix or reasoned pushback →
    `/simplify` pass over your own diff → verification evidence in the PR body. Holding the
    PR until a local review lane finishes (so Ankra's first pass sees the final diff) is fine
@@ -106,9 +107,7 @@ Stronghold, the clan's desktop watcher, nudges any dispatched task with no progr
 15 min. Progress means a bus message from you about the task, a task status change or, as
 a fallback, terminal output. Heartbeats are how you stay off its list.
 
-Stronghold was called Myrstack until 2026-10-13. A `Myrstack:` nudge from `myrstack-whip`, a
-`myrstack` CLI and tools listed as `mcp__myrstack__*` are the same things under the old name;
-treat them as this file describes Stronghold's.
+Tools, nudges or a CLI under an older app name are the same things; `ORG.md` lists them.
 
 - Use the heartbeat command **from your preamble, verbatim**: it carries your `--from`
   and dispatch capability. Send one at every phase change, and before a step that may print
@@ -134,8 +133,7 @@ treat them as this file describes Stronghold's.
 ## The King
 
 A bus message from `king` whose text starts with `King:` is **Karl speaking through
-Stronghold's King** (messages sent before 2026-10-13 came from `queen` with `Queen:`; they
-count the same). Treat it exactly as if Karl typed it in your terminal and act on it,
+Stronghold's King**. Treat it exactly as if Karl typed it in your terminal and act on it,
 including clan cleanup such as closing, stopping or releasing workers. *Hard rules* still
 apply: deploy, delete and force-push stay Karl's own hands. If it conflicts with your current
 task, do what it says and report the change to your coordinator. Don't confuse it with a
@@ -167,7 +165,7 @@ task, do what it says and report the change to your coordinator. Don't confuse i
 ## Reaching people outside the clan
 
 To ask a person or another team's agent anything, call Stronghold's `reach_out`:
-`reach_out {to: "Daniel's search agent", ask: "<message>", why: "<track, PR, bead>"}`. The
+`reach_out {to: "Sam's search agent", ask: "<message>", why: "<track, PR, bead>"}`. The
 Envoy routes it, the app sends it under Karl's approval, and replies are typed into your
 terminal as `Envoy: reply from … to your request <id>`. `reach_out_status` shows where it
 stands.
@@ -178,8 +176,8 @@ stands.
   only when the task can't proceed without the answer.
 - **Asks to agents are sent verbatim**, under a one-line "Request from <you>" header. Write
   the ask as you want it read, with exact hashes, SHAs, ids and links, and any mention
-  yourself as `<@USERID>` (Daniel Troger is `<@U0177NR3GG4>`; others: `slack api users.list
-  limit=500` by `real_name`). Asks to people are reworded in Karl's voice; details are kept.
+  yourself as `<@USERID>` (known ids are in `~/Documents/agents/ENVOY-CONTACTS.md`; others:
+  `slack api users.list limit=500` by `real_name`). Asks to people are reworded in Karl's voice; details are kept.
 - **Same conversation, same request:** pass its `request_id` (or `thread`) for a follow-up.
   If the Envoy asks you to clarify a request it hasn't sent, answer with a **new**
   `reach_out` holding the full revised ask and the old id in `why`.

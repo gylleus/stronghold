@@ -344,11 +344,11 @@ mod tests {
     fn snapshot() -> ClanSnapshot {
         let data = ClanData {
             terminals: vec![
-                terminal("c1", "/u/orca/workspaces/depict/a"),
+                terminal("c1", "/u/orca/workspaces/shop/a"),
                 terminal("c2", "/u/repo/saker/stronghold-worktrees/b"),
-                terminal("w1", "/u/orca/workspaces/depict/a"),
-                terminal("w3", "/u/repo/depict/realtime"),
-                terminal("w4", "/u/repo/depict/realtime"),
+                terminal("w1", "/u/orca/workspaces/shop/a"),
+                terminal("w3", "/u/repo/shop/api"),
+                terminal("w4", "/u/repo/shop/api"),
             ],
             runs: vec![
                 run("r1", "c1"),
@@ -469,17 +469,14 @@ mod tests {
     #[test]
     fn repo_names() {
         assert_eq!(
-            repo_name("/u/orca/workspaces/depict/a").as_deref(),
-            Some("depict")
+            repo_name("/u/orca/workspaces/shop/a").as_deref(),
+            Some("shop")
         );
         assert_eq!(
             repo_name("/u/repo/saker/stronghold-worktrees/b").as_deref(),
             Some("stronghold")
         );
-        assert_eq!(
-            repo_name("/u/repo/depict/realtime/").as_deref(),
-            Some("realtime")
-        );
+        assert_eq!(repo_name("/u/repo/shop/api/").as_deref(), Some("api"));
         assert_eq!(repo_name("/"), None);
     }
 
@@ -488,9 +485,9 @@ mod tests {
         let choices = run_choices(&snapshot());
         let ids: Vec<_> = choices.iter().map(|c| c.run_id.as_str()).collect();
         assert_eq!(ids, ["r1", "r2", "r3", "r4"]);
-        assert_eq!(choices[0].repo.as_deref(), Some("depict"));
+        assert_eq!(choices[0].repo.as_deref(), Some("shop"));
         assert!(choices[0].coordinator_state.is_some());
-        assert_eq!(choices[2].repo.as_deref(), Some("realtime"));
+        assert_eq!(choices[2].repo.as_deref(), Some("api"));
         assert_eq!(choices[2].coordinator_state, None);
     }
 

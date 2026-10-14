@@ -28,10 +28,10 @@
   │ from pathlib import Path
   │ import subprocess
   │ … +3 lines
-  └ ✓ Updated issue: depict-zlv — tinybird: expose per-device view-then-purchase sessions for offline recs evaluation
-    Warning: auto-export skipped: /Users/gylleus/repo/depict/beads/.beads/issues.jsonl contains 379 JSONL-only issue record(s) absent from the local Dolt store (depict-02x,
-    depict-0d9, depict-0d9.1, depict-0e3, depict-134s, ...); refusing to overwrite. Run `bd init --from-jsonl` to import the JSONL file, or move it aside and retry.
-• Ran orca worktree set --worktree active --workspace-status in-progress --comment "revised plan on depict-zlv: recommend existing dumps; mapping export prerequisite; awaiting
+  └ ✓ Updated issue: shop-zlv — tinybird: expose per-device view-then-purchase sessions for offline recs evaluation
+    Warning: auto-export skipped: /Users/k/repo/shop/beads/.beads/issues.jsonl contains 379 JSONL-only issue record(s) absent from the local Dolt store (shop-02x,
+    shop-0d9, shop-0d9.1, shop-0e3, shop-134s, ...); refusing to overwrite. Run `bd init --from-jsonl` to import the JSONL file, or move it aside and retry.
+• Ran orca worktree set --worktree active --workspace-status in-progress --comment "revised plan on shop-zlv: recommend existing dumps; mapping export prerequisite; awaiting
   │ approval" --json
   └ {
       "id": "ef2feb86-60e9-4fa2-b148-6d52fb57321d",
@@ -42,8 +42,8 @@
   └ (no output)
 ⚠ Heads up, you have less than 10% of your weekly limit left. Run /status for a breakdown.
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-• Revised plan posted on depict-zlv: recommend existing dumps, with mapping-export access explicitly unresolved. Full plan (/tmp/tinybird-replay-sessions/plan-v2.md).
+• Revised plan posted on shop-zlv: recommend existing dumps, with mapping-export access explicitly unresolved. Full plan (/tmp/tinybird-replay-sessions/plan-v2.md).
   Worktree clean; no implementation. Idling until APPROVED —.
 ─ Worked for 3m 26s ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 › Ask Codex to do anything
-  gpt-5.6-luna medium · ~/orca/workspaces/depict/tinybird-replay-sessions
+  gpt-5.6-luna medium · ~/orca/workspaces/shop/tinybird-replay-sessions

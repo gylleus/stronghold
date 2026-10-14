@@ -213,12 +213,7 @@ fn view_summarizes_the_clan() {
         run.coordinator.as_deref(),
         Some(&*format!("term:{COORDINATOR}"))
     );
-    assert!(
-        run.objective
-            .as_deref()
-            .unwrap()
-            .starts_with("commerce-platform")
-    );
+    assert!(run.objective.as_deref().unwrap().starts_with("storefront"));
 
     let codex = view.find_agent(CODEX).unwrap();
     assert_eq!(codex.state, "needs_input");

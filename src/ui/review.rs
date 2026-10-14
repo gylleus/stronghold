@@ -348,8 +348,8 @@ mod tests {
 
     fn row() -> ReviewRow {
         ReviewRow {
-            url: "https://github.com/depict-org/realtime/pull/255".into(),
-            repo: "depict-org/realtime".into(),
+            url: "https://github.com/acme/api/pull/255".into(),
+            repo: "acme/api".into(),
             number: 255,
             title: "recs: gate legacy config retirement".into(),
             summary: Some("green, threads closed".into()),
@@ -392,7 +392,7 @@ mod tests {
         let first = row();
         let mut second = row();
         second.number = 256;
-        second.url = "https://github.com/depict-org/realtime/pull/256".into();
+        second.url = "https://github.com/acme/api/pull/256".into();
         second.ci = Some(Ci::Pending {
             pending: 1,
             total: 9,
@@ -420,7 +420,7 @@ mod tests {
             });
             output.textures_delta.clear();
             assert_eq!(
-                crate::ui::test_util::text_center(&output, "realtime#255 ✓").is_some(),
+                crate::ui::test_util::text_center(&output, "api#255 ✓").is_some(),
                 expected
             );
         }
@@ -454,7 +454,7 @@ mod tests {
             output.textures_delta.clear();
             output
         };
-        for label in ["+2 PRs", "realtime#256 ✓"] {
+        for label in ["+2 PRs", "api#256 ✓"] {
             let output = frame(vec![]);
             let at = crate::ui::test_util::text_center(&output, label).expect(label);
             frame(vec![Event::PointerMoved(at)]);

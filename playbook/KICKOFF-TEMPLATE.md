@@ -5,7 +5,7 @@ drop it in the worktree as `KICKOFF.md` and point the spec at it.
 
 ---
 
-**Read `/Users/gylleus/Documents/agents/_AGENT_PROTOCOL.md` first.** It is the shared clan
+**Read `~/Documents/agents/_AGENT_PROTOCOL.md` first.** It is the shared clan
 protocol: lifecycle, reporting, hard rules, complexity and measurement discipline. Everything
 below is only what is specific to this track.
 
@@ -13,7 +13,7 @@ below is only what is specific to this track.
 
 - **Name:** <track>
 - **Repo:** <repo> (`orca repo list` → `id:<repoId>`)
-- **Ticket:** <VROOM-###> — <one-line title>
+- **Ticket:** <TICKET-###> — <one-line title>
 - **Port range:** <track-number>00–<track-number>99
 - **Risk:** <standard | gated>. `gated` (auth/security, write paths, live merchant data, or
   Karl flagged it) means the coordinator approves the plan before you implement; `standard`

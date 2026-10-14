@@ -448,7 +448,7 @@ mod tests {
     use super::*;
     use crate::review::github::{Ci, Marker};
 
-    const URL: &str = "https://github.com/depict-org/realtime/pull/255";
+    const URL: &str = "https://github.com/acme/api/pull/255";
 
     fn mark(source: MarkSource, at_ms: i64) -> ReadyMark {
         ReadyMark::new(
@@ -553,7 +553,7 @@ mod tests {
 
     #[test]
     fn bus_hand_off_without_a_ready_marker_on_head_stays_out() {
-        // A worker's merge_ready while the coordinator's marker says not ready (realtime#649).
+        // A worker's merge_ready while the coordinator's marker says not ready (api#649).
         let mut q = ReviewQueue::default();
         q.add(&bus(10));
         let not_ready = with_marker(PrState::Open, "bbbbbbb222", MarkerKind::NotReady, "aaaaaaa");

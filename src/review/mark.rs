@@ -322,7 +322,7 @@ mod tests {
 
     fn mark(n: u64, at_ms: i64) -> ReadyMark {
         ReadyMark::new(
-            &format!("https://github.com/depict-org/realtime/pull/{n}"),
+            &format!("https://github.com/acme/api/pull/{n}"),
             Some("recs: gate legacy config retirement"),
             None,
             Origin {

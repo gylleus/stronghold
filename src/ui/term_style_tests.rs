@@ -157,7 +157,7 @@ fn claude_diff_lines() {
     // Write results list the file with line numbers.
     let s = style(screen!("claude_tool_results_write.txt"), AgentKind::Claude);
     assert_eq!(
-        kind_of(&s, "1 # Karl's local depict stack"),
+        kind_of(&s, "1 # Karl's local shop stack"),
         LineKind::DiffContext
     );
 }
@@ -215,7 +215,7 @@ fn wrapped_prose_is_joined() {
         para.text()
     );
     // List items keep their marker as the hanging prefix and join their continuation.
-    let item = find(&s, "VROOM-1496 (High)");
+    let item = find(&s, "ACME-1496 (High)");
     assert_eq!(item.prefix_text(), "  - ");
     assert!(item.text().contains("rewritten or closed."));
     // Short lines are never joined.
@@ -223,10 +223,7 @@ fn wrapped_prose_is_joined() {
         find(&s, "Projects (the containers)").body_text(),
         "Projects (the containers)"
     );
-    assert_eq!(
-        kind_of(&s, "│ Make Recommendations & Search testable"),
-        LineKind::Table
-    );
+    assert_eq!(kind_of(&s, "│ Make checkout testable"), LineKind::Table);
     let table = find(&s, "┌───");
     assert!(!table.kind.wraps());
     assert_eq!(span_style(table, "┌"), Style::Faint);

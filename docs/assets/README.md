@@ -2,8 +2,7 @@
 
 Status: **the dwarf mine uses code-drawn cutouts, plus one generated hammer sprite
 (2026-10-13).** Characters, props and scenery share the hard pixel renderer, palette and
-outline settings. There is no alternate ant-farm art path. The earlier experiments below
-are history.
+outline settings. The earlier experiments below are history.
 
 ## Dwarven world art: the mountain mine
 
@@ -133,8 +132,8 @@ cargo run --release --example farm -- --heaps 80 --shot /tmp/farm-rubble-crowd.p
 
 ## 0. Current direction: code-drawn paper-cutout dwarves
 
-**2026-10-12 cleanup:** Removed the graph and table views, ant sprites, paper finish
-and smooth rendering. The dwarf farm is the only fleet view; dwarves always render
+**2026-10-12 cleanup:** Removed the graph and table views, the old sprites, paper finish
+and smooth rendering. The dwarf hold is the only fleet view; dwarves always render
 as pixels, with size and palette pickers in Settings → Art. The notes below record
 the earlier art experiments.
 
@@ -207,22 +206,19 @@ lighter backdrop, or an outline colour picked per palette.
 **In the app** (Karl: "add this pixel and palette options to the app itself"): a new
 **Settings → Art** section, saved as the `art` key in `settings.json` and applied at once.
 
-- **"Dwarves instead of ants in the ant farm"** (off by default, so the farm is unchanged
-  until it's switched on).
 - **Dwarf pixels:** Smooth, Farm pixels (one pixel per farm texel, matching the farm's
   art), or 16, 24, 32, 48 or 64 px tall.
 - **Palette:** own colours, or any of the 16 bundled palettes. A palette also works on
   smooth dwarves: their flat shapes are recoloured directly.
 
-How the farm maps onto dwarves (`src/ui/farm/art.rs`):
-- The Queen is the King: crown, white braids, red robe, ruby scepter. While her chat turn
+How the hold maps agents onto dwarves (`src/ui/farm/art.rs`):
+- The King is the hub: crown, white braids, red robe, ruby scepter. While his chat turn
   runs he studies.
 - Each agent gets a dwarf picked by its id. The tunic is its livery: Claude amber, Codex
   slate, failed red, unknown agents their own colour.
 - Walking walks; digging and building mine; sleeping and failed dwarves lie on their backs;
   dwarves leaving the fleet tumble head down.
-- Bubbles, carried items, name tags, dirt, beams and mail are unchanged. The ant-only
-  overlays (crown item, headphones, builder's hat) are skipped for dwarves.
+- Bubbles, carried items, name tags, dirt, beams and mail are drawn over the dwarves.
 
 Pixel dwarves re-render at 12 frames per second and cache one texture per agent.
 `cargo run --release --example farm -- --dwarves [--pixels farm|HEIGHT] [--palette NAME]`
@@ -248,7 +244,7 @@ module is now split into `mod.rs` (look, names, assembly), `pose.rs` and `parts.
     a little lantern;
   - **Ravenmaster** for the Envoy: dark feathered hood, a raven on his shoulder, a brass
     ear trumpet;
-  - **King** for the Queen.
+  - **King** for the clan hub.
 
   `Look::for_role(role, seed)`: faces and colours vary freely, and the role sets the kit.
 - **Parts:**
@@ -364,7 +360,7 @@ raw material, not finished sprites.
 | --- | --- |
 | `paleccino doctor` | Runtime installed, MPS available, all wan5b models present (25 GiB already cached), nothing missing |
 | `init` a Stronghold art project | Works |
-| `plan` a 16 px ant with a 2-frame walk | Works, writes the exact prompt per action |
+| `plan` a 16 px sprite with a 2-frame walk | Works, writes the exact prompt per action |
 | `map` + `check` on today's `crown.png` | Works. The original fails the check (5 off-palette colors), the mapped copy passes |
 | `generate --backend reference`, a dwarf miner | Works. SDXL reference in 34 s, then cutout and a fixed-palette export. A first try was refused for disk space (3.9 GiB free, 4 GiB reserve hard-coded); Karl freed space and the rerun passed |
 | Same reference exported at 32, 48 and 64 px | Works. 32 px is muddy, 48 px reads as a dwarf, 64 px is clearly better (see below) |
@@ -470,8 +466,8 @@ Karl's notes on the image_gen rounds:
   and run Paleccino from its own checkout with `--project art/sprites.toml`. Commit only the
   definitions, palette, chosen exports and provenance. Nothing needs copying, and Stronghold's
   Rust build gains no Python dependency. A `just art …` recipe can wrap the call.
-- **Pixel art only.** Paleccino exports fixed-palette pixel PNGs. That suits the ant farm
-  directly. The UI illustrations (Queen avatar, ant cell, anthill) are smooth SVGs today.
+- **Pixel art only.** Paleccino exports fixed-palette pixel PNGs. That suits the hold
+  directly. The UI illustrations (hub avatar, cells, app icon) are smooth SVGs today.
   Replacing them makes those pixel art too, loaded as PNGs with nearest filtering instead of
   rasterized SVG (a small change in `src/ui/art.rs`). Whether the UI should go pixel is part
   of the theme decision.
@@ -479,39 +475,38 @@ Karl's notes on the image_gen rounds:
   are too small for generated art; the test above puts the floor at 48 px. The farm's layout is
   in farm texels (`px` per texel), so bigger sprites mean adjusting its scale constants and
   the sizes of the drawn props.
-- **Short loops.** Wan makes 33-frame videos. Stronghold's ants use 2-frame walks. Use
+- **Short loops.** Wan makes 33-frame videos. Stronghold's walks use 2 frames. Use
   `frame_stride`/`--frames`, or the authored-sheet path, for short loops. Recoloring by coat
-  (Claude/Codex/plain) keeps working if the exported ant uses a small, known set of palette
+  (Claude/Codex/plain) keeps working if the exported sprite uses a small, known set of palette
   colors.
 - **Phosphor icons stay.** They are functional glyphs at text size, not sprites.
 
 ## 3. The dwarf hold: the fleet as a mine
 
-The ant farm becomes a cutaway of a dwarven mine under a mountainside. Each fleet concept
-gets a dwarf counterpart. The farm's layout and behaviour stay as they are (same places,
-same state → place rules); only what is drawn changes.
+The hold is a cutaway of a dwarven mine under a mountainside. Each fleet concept has a place
+or a pose in it (same places, same state → place rules for every agent).
 
-| Fleet concept | Ant farm today | Dwarf hold |
-| --- | --- | --- |
-| The Queen (the fleet hub) | Crowned ant in the Queen's chamber | **The King under the Mountain**, a grumpy taskmaster overlord in the **throne hall**, facing the camera |
-| Coordinator / attendant | Ant at a tunnel's mouth | **Foreman** with a lantern and a scroll of plans, at the **shaft head** |
-| Worker / terminal | Ant digging in the chamber | **Miner** with a pickaxe at the **ore face** at the end of the shaft |
-| Worker editing or building | Hard hat and hammer overlay | Miner **hammering timber supports** with a mallet, sparks flying |
-| Subagent (trails its parent) | Small faded ant | **Apprentice**: a young, short-bearded dwarf carrying a lantern behind their elder |
-| The Envoy (outside world) | Dish on the surface, listening post with headphones | **Ravenmaster**, facing the camera: a raven roost on the surface, and a desk underground with a brass **speaking tube** and ear trumpet |
-| Claude / Codex / unknown agent | Amber / slate-teal / grey ant coat | **Livery colour** of hood and tunic: amber-ochre / slate with teal trim / plain grey |
-| Needs input (waiting on Karl) | Ants queue at the landing on the surface | Dwarves queue at the **mine entrance** on the mountainside |
-| Karl's messages | Pop out of a green warp pipe | Pop out of a brass **message tube** rising from the rock, as sealed scrolls |
-| Done / PR ready | Ant carries a crumb to the storage pile | Dwarf carries a **gold nugget** to the **treasury**, where each PR is a **treasure heap** |
-| Idle / stalled | Ant asleep, "Zz" | Dwarf **dozing** against the rock, sitting on a crate |
-| The whip (nudge a stalled agent) | A lash pokes the ant | A **pebble bonks the helmet**: a small stone arcs in, "tink", the dwarf jolts awake |
-| Failed | Red ant, belly up | Dwarf **knocked flat** on their back, helmet off, red livery, cross bubble |
-| Leaving the fleet | Ant flips and falls | The knocked-flat dwarf falls and fades (same motion) |
-| Parked (resting area) | Ants in wooden beds | Dwarves in **bunks** with straw mattresses, wool blankets and nightcaps |
-| Messages between agents | Envelopes in flight | **Sealed scrolls** in flight |
-| Tool calls | Beams through the soil | **Glowing rune lines** through the rock |
-| Gallery and tunnels | Dug passages in soil | A **haulage way** with mine-cart rails, shafts shored with **timber**, lit by **wall torches** |
-| Surface | Meadow: trees, flowers, mushrooms | **Mountainside**: pines, boulders, heather, alpine flowers, distant peaks |
+| Fleet concept | Dwarf hold |
+| --- | --- |
+| The King (the clan hub) | **The King under the Mountain**, a grumpy taskmaster overlord in the **throne hall**, facing the camera |
+| Coordinator / attendant | **Foreman** with a lantern and a scroll of plans, at the **shaft head** |
+| Worker / terminal | **Miner** with a pickaxe at the **ore face** at the end of the shaft |
+| Worker editing or building | Miner **hammering timber supports** with a mallet, sparks flying |
+| Subagent (trails its parent) | **Apprentice**: a young, short-bearded dwarf carrying a lantern behind their elder |
+| The Envoy (outside world) | **Ravenmaster**, facing the camera: a raven roost on the surface, and a desk underground with a brass **speaking tube** and ear trumpet |
+| Claude / Codex / unknown agent | **Livery colour** of hood and tunic: amber-ochre / slate with teal trim / plain grey |
+| Needs input (waiting on Karl) | Dwarves queue at the **mine entrance** on the mountainside |
+| Karl's messages | Pop out of a brass **message tube** rising from the rock, as sealed scrolls |
+| Done / PR ready | Dwarf carries a **gold nugget** to the **treasury**, where each PR is a **treasure heap** |
+| Idle / stalled | Dwarf **dozing** against the rock, sitting on a crate |
+| The whip (nudge a stalled agent) | A **pebble bonks the helmet**: a small stone arcs in, "tink", the dwarf jolts awake |
+| Failed | Dwarf **knocked flat** on their back, helmet off, red livery, cross bubble |
+| Leaving the fleet | The knocked-flat dwarf falls and fades (same motion) |
+| Parked (resting area) | Dwarves in **bunks** with straw mattresses, wool blankets and nightcaps |
+| Messages between agents | **Sealed scrolls** in flight |
+| Tool calls | **Glowing rune lines** through the rock |
+| Gallery and tunnels | A **haulage way** with mine-cart rails, shafts shored with **timber**, lit by **wall torches** |
+| Surface | **Mountainside**: pines, boulders, heather, alpine flowers, distant peaks |
 
 ## 4. Resources needed
 
@@ -539,15 +534,15 @@ Shared art direction for every generated asset:
   applies a swappable palette at runtime (see 4j).
 - **Format:** transparent PNG frames and atlases from Paleccino, unless noted.
 
-**Scale.** One farm texel today becomes 3 texels, so a 16 px ant cell becomes a **48×48**
+**Scale.** One texel today becomes 3 texels, so a 16 px cell becomes a **48×48**
 actor cell, and every prop and tile below is sized at that density. Sizes are given in final
 pixels.
 
 **Livery recoloring.** Every dwarf's hood and tunic are generated in one **key colour** that
 nothing else on a dwarf uses (a saturated green). At load the app swaps that hue for the
 agent's livery (Claude amber, Codex slate with teal, plain grey, failed red) and keeps each
-pixel's lightness, so the shading survives. One sprite then serves every agent. The ants do
-something similar today with an exact six-colour ramp, but exact ramps don't survive
+pixel's lightness, so the shading survives. One sprite then serves every agent. The old sprites
+used an exact six-colour ramp, but exact ramps don't survive
 unpaletted originals; a hue key does. This has not been tested yet: it's the first thing
 to try with the key-colour miner.
 
@@ -591,7 +586,7 @@ Frame counts are targets (6–8 per loop); durations are tuned in code.
    young cartoon dwarf with a stubbly beard, an oversized helmet over his eyes and a small
    lantern; livery as their elder. *Animations:* `walk` 8 (scurrying); `work` 6 (holds
    the lantern up for the elder, peering); `still`.
-4. **`king`**: the Queen node. *Size:* 64×64. **Faces the camera.** *Visual:* a squat,
+4. **`king`**: the hub node. *Size:* 64×64. **Faces the camera.** *Visual:* a squat,
    greedy, grumpy cartoon dwarf king grown obscenely rich: enormous scowling head, a giant
    crooked nose, a scarred squinting eye, furious brows, a beard braided with fat gold rings,
    an oversized askew spiked gold crown crammed with rubies, black plate with gold trim, a
@@ -600,9 +595,9 @@ Frame counts are targets (6–8 per loop); durations are tuned in code.
    sprite, so the separate crown item is no longer needed on him.
    *Animations:*
    - `still`: glaring, scepter planted.
-   - `work` 6, while the Queen is busy on a chat turn: counts gold coins and bites one
+   - `work` 6, while the King is busy on a chat turn: counts gold coins and bites one
      suspiciously.
-   - `command` 6, played once: swells up, thrusts the scepter, bellows; the Queen spawns
+   - `command` 6, played once: swells up, thrusts the scepter, bellows; the King spawns
      a session and a new dwarf walks in from the mine entrance.
    - `call`: the code draws the call rings over `still`.
 5. **`ravenmaster`**: the Envoy. **Faces the camera.** *Visual:* a squat, hunched
@@ -718,8 +713,8 @@ bottom left, the mark centred.
 Each is generated at its largest size and also exported at the listed smaller sizes, so it
 is drawn at a whole-pixel scale. `src/ui/art.rs` would load PNGs with nearest filtering.
 
-54. **`king_avatar`**: replaces `queen.svg` everywhere the Queen appears (graph hub, top
-    bar, Queen button, chat). *Sizes:* 128, 64, 32 and 16 px. *Visual:* a front-facing
+54. **`king_avatar`**: replaces the hub SVG everywhere the King appears (graph hub, top
+    bar, King button, chat). *Sizes:* 128, 64, 32 and 16 px. *Visual:* a front-facing
     portrait of the King: white braided beard, gold crown with a red gem, framed in a
     carved stone hexagon with a gold rim (the hexagon keeps the graph node's shape).
 55. **`empty_connecting`**: "Connecting to Orca". *Size:* 96×96. *Visual:* a dwarf holding
@@ -738,7 +733,7 @@ is drawn at a whole-pixel scale. `src/ui/art.rs` would load PNGs with nearest fi
 - **Effects stay code-drawn, recoloured to the theme:**
   - glow → warm torchlight
   - sparkles → gold glints
-  - the Queen's call rings → the King's horn rings
+  - the call rings → the King's horn rings
   - state-change pops
   - dirt clods → rock chips with sparks
   - snore "z", stars, and the day and night sky
@@ -747,9 +742,7 @@ is drawn at a whole-pixel scale. `src/ui/art.rs` would load PNGs with nearest fi
 - **Phosphor icons stay.** Check the set for pickaxe, lantern or shovel glyphs that fit the
   kinds better.
 - **Farm scale:** the code moves to 48 px cells, and walks go from 2 to 4 frames.
-- **Words:** labels and empty-state copy ("colony", "ants") change to the hold's.
-- **The name:** the app was Myrstack, Swedish for anthill, which no longer fit. Karl renamed it
-  Stronghold on 2026-10-13.
+- **Words:** labels and empty-state copy use the hold's words.
 
 ### 4i. Side view: getting the dwarves to face sideways
 
@@ -801,14 +794,14 @@ So Stronghold ships the original-colour atlases and applies the palette itself:
   colours. Build a per-palette lookup from each distinct colour to its nearest palette
   colour (CIEDE2000, the same metric as Paleccino's `map_to_palette`), then rewrite the
   pixels. Switching palettes rebuilds the textures, which should take well under a second.
-  The farm already recolors its ants at load (`sprites.rs`, `recolor`), so this extends an
+  The hold already recolors its sprites at load (`sprites.rs`, `recolor`), so this extends an
   existing pattern.
 - **Any palette works.** A palette is just a list of hex colours, such as a Lospec JSON
   file, with no fixed size or ordering. "None" shows the originals.
 - **Order at load:** livery recolor (4) → palette mapping → texture. The livery hue swap runs
   on the originals, so every palette sees the same liveried dwarf.
 - **Code-drawn art follows too.** Tiles, effects and sky colours go through the same nearest-
-  colour mapping, so the whole farm changes together. The UI theme accent can take its
+  colour mapping, so the whole hold changes together. The UI theme accent can take its
   colour from the palette as well.
 - **Settings:** a palette picker in Settings, with a few bundled palettes and an option to
   add a Lospec JSON file.

@@ -18,7 +18,7 @@ fn clean() -> Facts {
         processes: Vec::new(),
         dispatches: Vec::new(),
         git: Ok(GitFacts {
-            branch: Some("gylleus/done".into()),
+            branch: Some("karl/done".into()),
             dirty: Vec::new(),
             merged_into: Some("main".into()),
             on_remote: None,
@@ -86,7 +86,7 @@ fn unmerged_unpushed_commits_require_archive() {
 fn pushed_but_unmerged_without_a_pr_is_kept() {
     let mut f = clean();
     unmerged(&mut f);
-    git_mut(&mut f).on_remote = Some("origin/gylleus/x".into());
+    git_mut(&mut f).on_remote = Some("origin/karl/x".into());
     kept_for(&f, "not merged into the base");
 }
 
@@ -112,7 +112,7 @@ fn unknown_pr_state_keeps_it() {
 fn squash_merged_pr_with_pushed_head_is_removed() {
     let mut f = clean();
     unmerged(&mut f);
-    git_mut(&mut f).on_remote = Some("origin/gylleus/x".into());
+    git_mut(&mut f).on_remote = Some("origin/karl/x".into());
     f.pr = PrLookup::Found {
         number: 7,
         state: PrState::Merged,
@@ -121,7 +121,7 @@ fn squash_merged_pr_with_pushed_head_is_removed() {
     assert!(v.remove, "{v:?}");
     assert_eq!(
         v.reasons,
-        vec!["PR #7 merged; HEAD is on origin/gylleus/x".to_string()]
+        vec!["PR #7 merged; HEAD is on origin/karl/x".to_string()]
     );
 }
 
@@ -299,7 +299,7 @@ fn untracked_files_group_by_top_folder() {
 fn save_notes_copies_then_deletes_notes_and_logs() {
     let tmp = tempfile::tempdir().unwrap();
     let wt = tmp.path().join("wt");
-    let dest = tmp.path().join("notes/recommendations/rperf");
+    let dest = tmp.path().join("notes/web/rperf");
     fs::create_dir_all(wt.join("docs")).unwrap();
     fs::write(wt.join("PLAN.md"), "plan").unwrap();
     fs::write(wt.join("docs/REVIEW-1.md"), "review").unwrap();
@@ -406,15 +406,12 @@ fn kept_entries_show_their_size_and_build_output() {
     };
     assert_eq!(e.size_text(), "12.0 GB: target 9.0 GB");
     let e = PlanEntry {
-        repo: "recommendations".into(),
+        repo: "web".into(),
         name: "recs-core-fewer-docs".into(),
         path: "/private/tmp/rperf".into(),
         ..PlanEntry::default()
     };
-    assert_eq!(
-        e.notes_dir(Path::new("/n")),
-        Path::new("/n/recommendations/rperf")
-    );
+    assert_eq!(e.notes_dir(Path::new("/n")), Path::new("/n/web/rperf"));
 }
 
 #[test]
@@ -520,17 +517,17 @@ fn only_the_working_directory_holds_a_worktree() {
         ProcessCwd {
             pid: 66845,
             command: "zsh".into(),
-            cwd: "/Users/k/repo/depict/depict".into(),
+            cwd: "/Users/k/repo/shop/shop".into(),
         },
         ProcessCwd {
             pid: 7,
             command: "sleep".into(),
-            cwd: "/w/recommendations/serving-field/ts".into(),
+            cwd: "/w/web/serving-field/ts".into(),
         },
     ];
     assert_eq!(
         processes_inside(
-            Path::new("/w/recommendations/serving-field"),
+            Path::new("/w/web/serving-field"),
             &list,
             1,
             &HashSet::new(),
@@ -544,7 +541,7 @@ fn worktree(id: &str, path: &str) -> Worktree {
     Worktree {
         id: id.into(),
         path: path.into(),
-        branch: Some("refs/heads/gylleus/x".into()),
+        branch: Some("refs/heads/karl/x".into()),
         ..Worktree::default()
     }
 }
@@ -611,14 +608,14 @@ fn terminals_and_dispatches_match_their_worktree() {
 fn pr_lookup_prefers_linked_then_open_then_newest() {
     let rows = |v: Value| -> Result<Vec<PrRow>, String> { Ok(serde_json::from_value(v).unwrap()) };
     let prs = rows(json!([
-        {"number": 5, "state": "MERGED", "headRefName": "gylleus/x"},
-        {"number": 9, "state": "CLOSED", "headRefName": "gylleus/x"},
-        {"number": 3, "state": "OPEN", "headRefName": "gylleus/x"},
-        {"number": 11, "state": "MERGED", "headRefName": "gylleus/remote-name"},
+        {"number": 5, "state": "MERGED", "headRefName": "karl/x"},
+        {"number": 9, "state": "CLOSED", "headRefName": "karl/x"},
+        {"number": 3, "state": "OPEN", "headRefName": "karl/x"},
+        {"number": 11, "state": "MERGED", "headRefName": "karl/remote-name"},
     ]));
     let mut w = worktree("r::/w/a", "/w/a");
     assert_eq!(
-        pr_for(&w, Some("gylleus/x"), &prs),
+        pr_for(&w, Some("karl/x"), &prs),
         PrLookup::Found {
             number: 3,
             state: PrState::Open
@@ -628,7 +625,7 @@ fn pr_lookup_prefers_linked_then_open_then_newest() {
 
     w.push_target = Some(PushTarget {
         remote_name: Some("origin".into()),
-        branch_name: Some("gylleus/remote-name".into()),
+        branch_name: Some("karl/remote-name".into()),
     });
     assert_eq!(
         pr_for(&w, Some("local-name"), &prs),
@@ -640,7 +637,7 @@ fn pr_lookup_prefers_linked_then_open_then_newest() {
 
     w.linked_pr = Some(json!(5));
     assert_eq!(
-        pr_for(&w, Some("gylleus/x"), &prs),
+        pr_for(&w, Some("karl/x"), &prs),
         PrLookup::Found {
             number: 5,
             state: PrState::Merged
@@ -671,7 +668,7 @@ fn census_counts_linked_worktrees_per_repo() {
         worktree("a::/y", "/home/orca/workspaces/stronghold/two"),
         worktree("b::/z", "/tmp/elsewhere"),
     ];
-    list[2].project_id = Some("github:depict-org/depict".into());
+    list[2].project_id = Some("github:acme/shop".into());
     let mut main = worktree("a::/r", "/repo/stronghold");
     main.is_main_worktree = true;
     list.push(main);
@@ -679,7 +676,7 @@ fn census_counts_linked_worktrees_per_repo() {
         census(&list),
         Census {
             total: 3,
-            per_repo: vec![("stronghold".into(), 2), ("depict".into(), 1)]
+            per_repo: vec![("stronghold".into(), 2), ("shop".into(), 1)]
         }
     );
 }

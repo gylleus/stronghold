@@ -5,8 +5,8 @@
     "repos": [
       {
         "id": "f2c8fcb1-8fa7-4763-8986-a597cba57cdd",
-        "path": "/Users/gylleus/repo/hackathon/commerce-platform",
-        "displayName": "commerce-platform",
+        "path": "/Users/k/repo/hackathon/storefront",
+        "displayName": "storefront",
         "badgeColor": "#737373",
         "addedAt": 1788349549023,
         "kind": "git",
@@ -15,15 +15,15 @@
         "worktreeBaseRef": "origin/main",
         "repoIcon": {
           "type": "image",
-          "src": "https://github.com/depict-org.png?size=64",
+          "src": "https://github.com/acme.png?size=64",
           "source": "github",
-          "label": "depict-org/commerce-platform"
+          "label": "acme/storefront"
         },
         "upstream": null,
         "gitRemoteIdentity": {
-          "canonicalKey": "github.com/depict-org/commerce-platform",
+          "canonicalKey": "github.com/acme/storefront",
           "remoteName": "origin",
-          "remoteUrl": "git@github.com:depict-org/commerce-platform.git"
+          "remoteUrl": "git@github.com:acme/storefront.git"
         },
         "projectHostSetupMethod": "cloned",
         "hookSettings": {
@@ -39,8 +39,8 @@
       },
       {
         "id": "82b955aa-5767-4b8c-8b59-2bfaf1425c9f",
-        "path": "/Users/gylleus/repo/depict/depict",
-        "displayName": "depict",
+        "path": "/Users/k/repo/shop/shop",
+        "displayName": "shop",
         "badgeColor": "#737373",
         "addedAt": 1786617273450,
         "kind": "git",
@@ -50,15 +50,15 @@
         "worktreeBaseRef": "origin/main",
         "repoIcon": {
           "type": "image",
-          "src": "https://github.com/depict-org.png?size=64",
+          "src": "https://github.com/acme.png?size=64",
           "source": "github",
-          "label": "depict-org/depict"
+          "label": "acme/shop"
         },
         "upstream": null,
         "gitRemoteIdentity": {
-          "canonicalKey": "github.com/depict-org/depict",
+          "canonicalKey": "github.com/acme/shop",
           "remoteName": "origin",
-          "remoteUrl": "git@github.com:depict-org/depict.git"
+          "remoteUrl": "git@github.com:acme/shop.git"
         },
         "hookSettings": {
           "mode": "auto",
@@ -72,7 +72,7 @@
       },
       {
         "id": "03a82853-617b-4fb2-b502-ad9f0df97007",
-        "path": "/Users/gylleus/repo/saker/fitness-rpg",
+        "path": "/Users/k/repo/saker/fitness-rpg",
         "displayName": "fitness-rpg",
         "badgeColor": "#737373",
         "addedAt": 1790000855689,

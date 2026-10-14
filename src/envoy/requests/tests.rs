@@ -145,11 +145,11 @@ fn karl_aliases_and_labeled_mentions_are_refused() {
     for target in [
         " Karl   GYLLEUS ",
         " @KaRl ",
-        "<@u0ammlgsfl0|Karl Gylleus>",
-        " <@ U0AMMLGSFL0 | Karl > ",
+        "<@u000karl001|Karl Gylleus>",
+        " <@ U000KARL001 | Karl > ",
     ] {
         assert!(
-            refuse_karl(target, "U0AMMLGSFL0")
+            refuse_karl(target, "U000KARL001")
                 .unwrap_err()
                 .contains("ask_karl")
         );

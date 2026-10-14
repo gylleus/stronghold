@@ -447,7 +447,7 @@ mod tests {
         let prompts = [
             // Codex rate-limit model switch menu.
             "about switching models.   Press enter to confirm or esc to go back   \
-             › Ask Codex to do anything   gpt-5.6-luna medium · ~/orca/workspaces/depict/x",
+             › Ask Codex to do anything   gpt-5.6-luna medium · ~/orca/workspaces/shop/x",
             // Claude AskUserQuestion menu.
             "  4. Type something.\n  5. Chat about this\n\
              Enter to select · ↑/↓ to navigate · Esc to cancel",
@@ -480,7 +480,7 @@ mod tests {
             "────────────────────────────────\n❯",
             "new task? /clear to save 680.7k tokens",
             "direnv: error /Users/x/.envrc is blocked. Run `direnv allow` to approve its content\n\
-             workspaces/realtime/x  gylleus/x ✔             7d1h",
+             workspaces/api/x  karl/x ✔             7d1h",
             "⚠ MCP startup incomplete (failed: cloudflare-observability)  \
              › Ask Codex to do anything   gpt-6-astra high · ~/orca/workspaces/x",
             "Resume this session with:\nclaude --resume 742c2274-c303-4c79-bcd5-46a66143ab40",

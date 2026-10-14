@@ -6,7 +6,7 @@
       "id": "task_4e5f6a7b8c9d",
       "run_id": "run_7c25cdcf46e0",
       "parent_id": null,
-      "task_title": "Spawned from Myrstack",
+      "task_title": "Spawned from Stronghold",
       "display_name": null,
       "spec": "Fix the flaky checkout test.",
       "status": "ready",

@@ -6,4 +6,4 @@
 
 › Ask Codex to do anything
 
-  gpt-6-astra high · ~/repo/saker/myrstack
+  gpt-6-astra high · ~/repo/saker/stronghold

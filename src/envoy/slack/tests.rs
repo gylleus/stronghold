@@ -19,7 +19,7 @@ impl SlackSender for Fake {
 impl SlackIo for Fake {
     fn pr_head(&mut self, _: &str, repo: &str, number: u64) -> Result<Option<String>, String> {
         self.methods.push(format!("pr_head {repo}#{number}"));
-        Ok((number != 404).then(|| format!("gylleus/{repo}-{number}")))
+        Ok((number != 404).then(|| format!("karl/{repo}-{number}")))
     }
     fn api(&mut self, method: &str, params: &[(&str, String)]) -> Result<Value, String> {
         self.methods.push(method.into());
@@ -457,11 +457,11 @@ fn pr_refs_resolve_to_head_branches_once() {
     )
     .unwrap()
     .remove(0);
-    e.text = "realtime#694 and realtime#404, also #12 and VROOM-1".into();
+    e.text = "api#694 and api#404, also #12 and ACME-1".into();
     c.resolve_prs(std::slice::from_ref(&e));
-    assert_eq!(c.inbox.pr_heads["realtime#694"], "gylleus/realtime-694");
+    assert_eq!(c.inbox.pr_heads["api#694"], "karl/api-694");
     assert_eq!(
-        c.inbox.pr_heads["realtime#404"], "",
+        c.inbox.pr_heads["api#404"], "",
         "a missing PR is cached too"
     );
     assert_eq!(
@@ -496,7 +496,7 @@ fn karls_id_is_resolved_from_auth_test() {
     );
     assert_eq!(c.settings.karl_user_id, "W0NEWID");
     c.io.replies
-        .push_back(json!({"ok":true,"user_id":"C0BHZLG3X63"}));
+        .push_back(json!({"ok":true,"user_id":"C000AGENT01"}));
     assert!(
         c.resolve_karl().is_err(),
         "a conversation id is not a member id"
