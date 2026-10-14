@@ -527,7 +527,7 @@ impl StrongholdApp {
         }
     }
 
-    /// The control API's `notify`: an agent's notification to Karl. The node is the one the
+    /// The control API's `notify`: an agent's notification to the user. The node is the one the
     /// agent named, else the caller's own terminal.
     pub(super) fn control_notify(&mut self, notice: AgentNotice) -> Result<Value, ControlError> {
         // An unknown `agent` is not worth losing the notification over.

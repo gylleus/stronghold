@@ -47,13 +47,13 @@ pub enum WhipAction {
         via: NudgeVia,
         text: String,
     },
-    /// Nudges were ignored: notify Karl and mark the node red. Sent once per stall.
+    /// Nudges were ignored: notify the user and mark the node red. Sent once per stall.
     Escalate {
         target: StallTarget,
         reason: StallReason,
         evidence: String,
     },
-    /// A terminal has waited on Karl longer than the threshold. Sent once per wait.
+    /// A terminal has waited on the user longer than the threshold. Sent once per wait.
     NotifyNeedsInput { handle: String, since_ms: i64 },
     /// Real bus events typed into the Runs' coordinator; see [`crate::whip::forward`]. Live
     /// even in dry run.
@@ -64,14 +64,14 @@ pub enum WhipAction {
         keys: Vec<String>,
         text: String,
     },
-    /// A Run's events have waited on an unreachable coordinator: notify Karl. Once per outage.
+    /// A Run's events have waited on an unreachable coordinator: notify the user. Once per outage.
     CoordinatorUnreachable {
         run_id: String,
         waiting: usize,
         first: String,
     },
     /// Forwarding a Run's events has failed [`crate::whip::forward::ALERT_AFTER_FAILURES`]
-    /// times in a row: notify Karl. Once per failure streak.
+    /// times in a row: notify the user. Once per failure streak.
     ForwardFailing {
         run_id: String,
         handle: String,
@@ -271,9 +271,10 @@ pub fn quiet_run_text(run_id: &str, idle_ms: i64) -> String {
 /// is no longer dispatched), typed into it.
 pub fn terminal_nudge_text(idle_ms: i64) -> String {
     format!(
-        "{NUDGE_PREFIX} Karl asks for a status check (your last output was {} ago). Reply with \
+        "{NUDGE_PREFIX} {user} asks for a status check (your last output was {} ago). Reply with \
          your current phase and a one-line status, then continue — or say what's blocking you.",
-        fmt_duration(idle_ms)
+        fmt_duration(idle_ms),
+        user = crate::user::name()
     )
 }
 
@@ -303,7 +304,7 @@ pub struct WhipLogEntry {
     pub dry_run: bool,
     /// `sent`, `dry-run`, `failed: …`, `notifications off`.
     pub outcome: String,
-    /// Asked for by Karl ("Whip" button, `w`, control API), not decided by a tick.
+    /// Asked for by the user ("Whip" button, `w`, control API), not decided by a tick.
     pub manual: bool,
 }
 

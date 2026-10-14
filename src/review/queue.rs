@@ -1,8 +1,8 @@
 //! The review queue: PRs agents marked ready, keyed by PR URL, with their latest GitHub status
-//! and what Karl did with them. Pure state; the app feeds it marks and statuses, and saves it
+//! and what the user did with them. Pure state; the app feeds it marks and statuses, and saves it
 //! to `<data dir>/review-queue.json`.
 //!
-//! An entry is shown until Karl dismisses it or marks it reviewed (a later mark shows it
+//! An entry is shown until the user dismisses it or marks it reviewed (a later mark shows it
 //! again, and so does a new push after "reviewed"), or until GitHub says it merged or closed
 //! and [`GONE_GRACE_MS`] passed. Drafts are never shown. Entries from the bus (a worker's
 //! `merge_ready` to its coordinator) show only once GitHub says the PR carries the
@@ -29,7 +29,7 @@ pub const RESOLVED_TTL_MS: i64 = 14 * 24 * 3_600_000;
 /// Most entries kept; the oldest marks go first.
 pub const MAX_ENTRIES: usize = 200;
 
-/// What Karl did with an entry.
+/// What the user did with an entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Resolution {
@@ -115,7 +115,7 @@ impl Entry {
             .unwrap_or_default()
     }
 
-    /// Karl dismissed or reviewed it after its newest mark, and no push followed the review.
+    /// The user dismissed or reviewed it after its newest mark, and no push followed the review.
     pub fn is_resolved(&self) -> bool {
         match &self.resolution {
             None => false,
@@ -251,8 +251,8 @@ impl ReviewQueue {
 
     /// Whether `entry` is listed: not resolved, not gone for long, not a draft, and (for bus
     /// entries) carrying a `✅` ready marker on its head. A `merge_ready` message is a worker's
-    /// hand-off to its coordinator, not a request to Karl; only the coordinator's marker or
-    /// `mark_pr_ready` puts a PR in front of him.
+    /// hand-off to its coordinator, not a request to the user; only the coordinator's marker or
+    /// `mark_pr_ready` puts a PR in front of them.
     pub fn is_visible(&self, entry: &Entry, now_ms: i64) -> bool {
         let status = entry.status.as_ref();
         !entry.is_resolved()

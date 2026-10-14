@@ -44,7 +44,7 @@ pub struct StatusView {
     /// Current playbook version and who fetched which; set by the app after [`StatusView::build`].
     #[serde(default)]
     pub playbook: PlaybookView,
-    /// The King's chat is in auto mode (its actions run without Karl's confirmation).
+    /// The King's chat is in auto mode (its actions run without the user's confirmation).
     /// Set by the app after [`StatusView::build`]; read-only for API clients.
     #[serde(default)]
     pub king_auto: bool,
@@ -67,11 +67,11 @@ pub struct ClanSummary {
     pub live: usize,
     pub by_kind: BTreeMap<String, usize>,
     pub by_state: BTreeMap<String, usize>,
-    /// Ids of nodes waiting on Karl.
+    /// Ids of nodes waiting on the user.
     pub needs_input: Vec<String>,
     /// Ids of stalled nodes (escalated by the whip).
     pub stalled: Vec<String>,
-    /// Ids of agents Karl parked in the resting area ([`crate::park`]). They count in
+    /// Ids of agents the user parked in the resting area ([`crate::park`]). They count in
     /// `agents`, `live` and `by_kind` but not in `by_state`, `needs_input` or `stalled`.
     #[serde(default)]
     pub parked: Vec<String>,
@@ -95,7 +95,7 @@ pub struct RunView {
     /// Worker nodes, live or not.
     pub workers: usize,
     pub by_state: BTreeMap<String, usize>,
-    /// Some node of the run waits on Karl.
+    /// Some node of the run waits on the user.
     pub needs_input: bool,
     /// Some node of the run is stalled.
     pub stalled: bool,
@@ -157,7 +157,7 @@ pub struct AgentView {
     pub last_output_ms: Option<i64>,
     /// Seconds since the last output, as of the response.
     pub idle_secs: Option<i64>,
-    /// Set while the node waits on Karl.
+    /// Set while the node waits on the user.
     pub needs_input: Option<PromptView>,
     pub stalled: bool,
     /// The whip escalated this node's terminal.
@@ -165,7 +165,7 @@ pub struct AgentView {
     pub tokens: Option<TokensView>,
     /// Released worker / finished subagent, fading out.
     pub released: bool,
-    /// Parked by Karl ([`crate::park`]): asleep, its session kept; never `needs_input` or
+    /// Parked by the user ([`crate::park`]): asleep, its session kept; never `needs_input` or
     /// `stalled`. Sending it text wakes it.
     #[serde(default)]
     pub parked: bool,
@@ -254,7 +254,7 @@ pub struct WhipLogView {
     pub reason: String,
     pub dry_run: bool,
     pub outcome: String,
-    /// Sent because Karl (or an agent through the API) asked, not by a tick.
+    /// Sent because the user (or an agent through the API) asked, not by a tick.
     #[serde(default)]
     pub manual: bool,
     pub handle: Option<String>,

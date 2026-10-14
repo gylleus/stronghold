@@ -109,7 +109,7 @@ fn allowed_tools() -> Vec<String> {
                 "clan_status",
                 "list_agents",
                 "get_agent",
-                "ask_karl",
+                "ask_user",
             ]
             .into_iter()
             .chain(super::control::METHODS.iter().copied())
@@ -675,7 +675,7 @@ mod tests {
                 "clan_status",
                 "list_agents",
                 "get_agent",
-                "ask_karl",
+                "ask_user",
             ]
             .map(|n| format!("mcp__stronghold__{n}")),
         );

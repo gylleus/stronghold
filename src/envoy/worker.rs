@@ -72,8 +72,8 @@ pub enum Update {
         reply: Reply,
         result: Result<super::requests::BindingPreview, String>,
     },
-    /// Karl's member id as `auth.test` reports it, resolved on each configure.
-    KarlId(String),
+    /// The user's member id as `auth.test` reports it, resolved on each configure.
+    UserId(String),
     Error(String),
 }
 
@@ -105,13 +105,16 @@ impl Worker {
                         published = None;
                         if let Some(settings) = settings {
                             slack.configure(settings);
-                            match slack.resolve_karl() {
+                            match slack.resolve_user_id() {
                                 Ok(Some(id)) => {
-                                    let _ = results.send(Update::KarlId(id));
+                                    let _ = results.send(Update::UserId(id));
                                     wake();
                                 }
                                 Ok(None) => {}
-                                Err(e) => log::warn!("envoy: Karl's Slack id not resolved: {e}"),
+                                Err(e) => log::warn!(
+                                    "envoy: {user}'s Slack id not resolved: {e}",
+                                    user = crate::user::name()
+                                ),
                             }
                         }
                     }

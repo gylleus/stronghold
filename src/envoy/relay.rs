@@ -4,7 +4,12 @@ use super::{inbox, secrets};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-pub const RELAY_PREFIX: &str = "Envoy (relayed from Slack, not Karl's instruction):";
+const RELAY_PREFIX: &str = "Envoy (relayed from Slack, not {user}'s instruction):";
+
+/// What a relayed message starts with.
+pub fn relay_prefix() -> String {
+    crate::user::fill(RELAY_PREFIX)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelayRequest {
@@ -17,8 +22,11 @@ pub struct RelayRequest {
 impl RelayRequest {
     pub fn text(&self) -> String {
         format!(
-            "{RELAY_PREFIX} {} | {} | Why: {}",
-            self.summary, self.slack_link, self.why
+            "{} {} | {} | Why: {}",
+            relay_prefix(),
+            self.summary,
+            self.slack_link,
+            self.why
         )
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
@@ -132,7 +140,7 @@ mod tests {
         let mut limiter = RelayLimiter::load(&path).unwrap();
         assert_eq!(limiter.records().len(), 6);
         assert!(limiter.reserve(request(6), false, 3_600_000).is_ok());
-        assert!(request(0).text().starts_with(RELAY_PREFIX));
+        assert!(request(0).text().starts_with(&relay_prefix()));
     }
 }
 
@@ -202,7 +210,7 @@ mod traffic_tests {
                 .collect(),
             skipped: vec![],
         };
-        let text = format!("{RELAY_PREFIX} Context");
+        let text = format!("{} Context", relay_prefix());
         attribute_broadcast(&mut plan, "term_envoy", &text);
         let mut sender = Sender(Vec::new());
         let traffic = Traffic::default();
@@ -222,7 +230,7 @@ mod traffic_tests {
                 .0
                 .iter()
                 .all(|m| m.from.as_deref() == Some("term_envoy")
-                    && m.subject.starts_with(RELAY_PREFIX)
+                    && m.subject.starts_with(&relay_prefix())
                     && m.body.as_deref() == Some(&text))
         );
     }

@@ -1,7 +1,7 @@
 //! Where everything in the farm goes: a function of the snapshot, the view's rect and the
 //! room plan ([`super::rooms`]), so the state → position mapping is testable without drawing.
 //!
-//! The farm is a side view: sky above the surface, the "Karl" landing on the surface at the
+//! The farm is a side view: sky above the surface, the "the user" landing on the surface at the
 //! left, the throne hall under the surface in the middle, the storage chamber at the
 //! right, a gallery running under them and one tunnel per run (or per repo for loose
 //! terminals) dropping from the gallery. A coordinator stands at its tunnel's mouth, its
@@ -26,7 +26,7 @@ use super::rooms::{Demand, LABEL_GAP, RoomPlan};
 
 /// Side of a sprite cell in texels.
 pub const CELL: f32 = 16.0;
-/// Karl's rune portal in texels.
+/// The user's rune portal in texels.
 pub const PORTAL_W: f32 = 32.0;
 pub const PORTAL_H: f32 = 40.0;
 /// Characters of a tunnel label before it is cut.
@@ -67,7 +67,7 @@ pub enum TunnelKey {
 pub enum Spot {
     King,
     Comms,
-    /// On the surface waiting for Karl, the nth in line.
+    /// On the surface waiting for the user, the nth in line.
     Landing(usize),
     /// In the storage chamber with its crumb, the nth on the pile.
     Storage(usize),
@@ -114,7 +114,7 @@ pub enum Pose {
     Build,
     /// Lying still (idle or stalled).
     Sleep,
-    /// Waving on the landing for Karl.
+    /// Waving on the landing for the user.
     Wait,
     /// Holding its crumb in storage.
     Carry,
@@ -126,7 +126,7 @@ pub enum Pose {
 /// The bubble over a dwarf, so its state does not rely on pose or color alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mark {
-    /// Waiting on Karl.
+    /// Waiting on the user.
     Alert,
     /// Idle.
     Sleep,
@@ -245,7 +245,7 @@ pub struct Scene {
     pub surface_y: f32,
     /// The passage under the surface linking the chambers and tunnel mouths.
     pub gallery: Rect,
-    /// Where dwarves waiting on Karl stand, on the surface.
+    /// Where dwarves waiting on the user stand, on the surface.
     pub landing: Rect,
     pub throne_hall: Rect,
     pub comms: Option<CommsRoom>,
@@ -273,7 +273,7 @@ impl Scene {
 
     /// Texture foot, with the stone threshold sunk into the turf. The drawing has two
     /// texels of padding below its base, so this seats the stone one texel into the rock.
-    pub fn karl_portal(&self) -> Pos2 {
+    pub fn user_portal(&self) -> Pos2 {
         let left = self.landing.right();
         pos2(
             left + 0.3 * self.cell() + PORTAL_W / 2.0 * self.px,
@@ -282,8 +282,8 @@ impl Scene {
     }
 
     /// The heart of the portal, where scrolls materialise and disappear.
-    pub fn karl_portal_focus(&self) -> Pos2 {
-        self.karl_portal() - vec2(0.0, PORTAL_H * 0.525 * self.px)
+    pub fn user_portal_focus(&self) -> Pos2 {
+        self.user_portal() - vec2(0.0, PORTAL_H * 0.525 * self.px)
     }
 
     pub fn dwarf(&self, id: &NodeId) -> Option<&Dwarf> {
@@ -460,7 +460,7 @@ pub enum Home {
     Trail,
 }
 
-/// The state → place rule: waiting on Karl goes to the landing, done (or idle with a PR ready
+/// The state → place rule: waiting on the user goes to the landing, done (or idle with a PR ready
 /// for review) goes to storage, all else stays at its post (a coordinator at the mouth, a
 /// worker in the chamber), failed ones turning red there. Subagents trail their parent
 /// whatever their state.

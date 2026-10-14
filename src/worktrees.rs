@@ -398,7 +398,7 @@ pub struct GitFacts {
     /// Untracked logs (`*.log`), relative paths: deleted before removal.
     pub logs: Vec<String>,
     /// Other untracked files, grouped by their top-level folder (`demo-check/`) or file, with
-    /// their size: they keep the worktree until Karl decides.
+    /// their size: they keep the worktree until the user decides.
     pub untracked: Vec<(String, u64)>,
     /// A base branch HEAD is an ancestor of, e.g. `main` or `origin/main`.
     pub merged_into: Option<String>,
@@ -424,7 +424,7 @@ pub struct GitFacts {
 pub struct Facts {
     pub is_main: bool,
     pub pinned: bool,
-    /// An agent Karl parked ([`crate::park`]) lives in it.
+    /// An agent the user parked ([`crate::park`]) lives in it.
     pub parked: bool,
     pub exists: bool,
     /// Milliseconds since Orca created it, when known.

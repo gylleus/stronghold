@@ -108,11 +108,11 @@ pub struct StrongholdApp {
     /// through it.
     notifier: Arc<Notifier>,
     needs_input_detector: NeedsInputDetector,
-    /// Questions agents asked Karl with `ask_karl`, until answered.
+    /// Questions agents asked the user with `ask_user`, until answered.
     asks: crate::ask::Asks,
     /// Sessions that ended themselves with `finish_session`, shown done while they fade.
     finished: crate::finish::FinishLog,
-    /// Agents Karl parked in the resting area ([`crate::park`]).
+    /// Agents the user parked in the resting area ([`crate::park`]).
     parking: crate::park::Parking,
     /// Self-finished terminals waiting to be closed, once the agent got its reply.
     finish_closes: Vec<lifecycle::PendingClose>,
@@ -499,7 +499,7 @@ impl StrongholdApp {
                 // Typing to a parked agent wakes it.
                 self.wake_for_message(&id.0);
                 self.traffic.push(crate::traffic::AgentMessage::new(
-                    "karl",
+                    "user",
                     handle.clone(),
                     crate::traffic::MessageKind::Instruction,
                 ));

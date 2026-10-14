@@ -292,7 +292,7 @@ pub struct Requests {
     saved: Saved,
 }
 
-pub fn refuse_karl(to: &str, karl: &str) -> Result<(), String> {
+pub fn refuse_user(to: &str, user_id: &str) -> Result<(), String> {
     let normalized = to.split_whitespace().collect::<Vec<_>>().join(" ");
     let to = normalized.trim();
     let mention = to
@@ -300,12 +300,16 @@ pub fn refuse_karl(to: &str, karl: &str) -> Result<(), String> {
         .and_then(|v| v.strip_suffix('>'))
         .and_then(|v| v.split('|').next())
         .map(str::trim);
-    if ["karl", "karl gylleus", "@karl", "me", karl]
-        .iter()
-        .any(|name| to.eq_ignore_ascii_case(name))
-        || mention.is_some_and(|id| id.eq_ignore_ascii_case(karl))
+    let mut names = vec!["me".to_owned(), user_id.to_owned()];
+    for word in crate::user::own_words() {
+        names.push(format!("@{word}"));
+        names.push(word);
+    }
+    names.push(crate::user::name());
+    if names.iter().any(|name| to.eq_ignore_ascii_case(name))
+        || mention.is_some_and(|id| id.eq_ignore_ascii_case(user_id))
     {
-        return Err("To reach Karl, use ask_karl".into());
+        return Err(crate::user::fill("To reach {user}, use ask_user"));
     }
     Ok(())
 }
@@ -353,10 +357,10 @@ impl Requests {
         &mut self,
         who: Requester,
         args: ReachOut,
-        karl: &str,
+        user_id: &str,
         now: i64,
     ) -> Result<Accepted, String> {
-        refuse_karl(&args.to, karl)?;
+        refuse_user(&args.to, user_id)?;
         for (value, max) in [(&args.to, 1000), (&args.ask, 35_000), (&args.why, 4000)] {
             if value.trim().is_empty() || value.len() > max {
                 return Err("Request text is empty or too long".into());
@@ -563,7 +567,10 @@ impl Requests {
                     text: format!(
                         "Envoy: request {} declined: {}",
                         request.id,
-                        turn.error.as_deref().unwrap_or("Karl rejected the draft")
+                        turn.error
+                            .as_deref()
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| crate::user::fill("{user} rejected the draft"))
                     ),
                     event: None,
                     delivered: false,
@@ -618,9 +625,8 @@ impl Requests {
             r.deliveries.push(Delivery {
                 id: event.id(),
                 text: format!(
-                    "Envoy: reply from {} to your request {} (relayed from Slack, not Karl's instruction): {} | {}",
-                    event.user_name, r.id, summary, event.permalink.as_deref().unwrap_or("")
-                ),
+                    "Envoy: reply from {} to your request {} (relayed from Slack, not {user}'s instruction): {} | {}",
+                    event.user_name, r.id, summary, event.permalink.as_deref().unwrap_or(""), user = crate::user::name()),
                 event: Some(event.clone()),
                 delivered: false,
                 dry_run: false,

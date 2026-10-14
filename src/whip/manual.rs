@@ -21,7 +21,7 @@ use crate::whip::rules::StallTarget;
 /// Whipping this many targets or more asks for confirmation first.
 pub const CONFIRM_AT: usize = 5;
 
-/// Warning on a nudge to a terminal waiting on Karl.
+/// Warning on a nudge to a terminal waiting on the user.
 pub const NEEDS_INPUT_WARNING: &str = "waiting on your input; a nudge won't answer it";
 
 /// One nudge to send now.
@@ -94,7 +94,7 @@ pub fn nudges(plans: &[ManualPlan]) -> Vec<ManualNudge> {
         .collect()
 }
 
-/// Whether sending `plans` should be confirmed first: a target waits on Karl's input, or there
+/// Whether sending `plans` should be confirmed first: a target waits on the user's input, or there
 /// are [`CONFIRM_AT`] or more nudges.
 pub fn needs_confirmation(plans: &[ManualPlan]) -> bool {
     let nudges: Vec<&ManualNudge> = plans.iter().filter_map(ManualPlan::nudge).collect();

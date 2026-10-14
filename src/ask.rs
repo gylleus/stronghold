@@ -1,7 +1,7 @@
-//! Agents waiting on Karl's answer to a plain question, which no prompt on their screen shows.
+//! Agents waiting on the user's answer to a plain question, which no prompt on their screen shows.
 //!
-//! Two sources, so a question reaches Karl even when the agent forgets the tool:
-//! - the `ask_karl` MCP tool records a [`PendingAsk`] (and notifies Karl straight away);
+//! Two sources, so a question reaches the user even when the agent forgets the tool:
+//! - the `ask_user` MCP tool records a [`PendingAsk`] (and notifies the user straight away);
 //! - a Claude session whose last turn ended on a question ([`crate::claude::turns`]).
 //!
 //! Except for the Envoy (which keeps taking batches), either way the node shows NeedsInput
@@ -30,7 +30,7 @@ pub const MAX_QUESTION_CHARS: usize = 500;
 /// Longest context kept.
 pub const MAX_CONTEXT_CHARS: usize = 1_000;
 
-/// An `ask_karl` call, carried to the app as the control API's `ask` params.
+/// An `ask_user` call, carried to the app as the control API's `ask` params.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AskRequest {
     pub question: String,
@@ -83,7 +83,7 @@ impl AskRequest {
     }
 }
 
-/// A question an agent asked Karl with `ask_karl`.
+/// A question an agent asked the user with `ask_user`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingAsk {
     pub question: String,
@@ -127,7 +127,7 @@ impl Asks {
         self.by_handle.len() != before
     }
 
-    /// Every terminal waiting on Karl, with its question: the open asks, then the Claude
+    /// Every terminal waiting on the user, with its question: the open asks, then the Claude
     /// sessions whose last turn ended on a question.
     pub fn waiting(
         &self,
@@ -154,7 +154,7 @@ impl Asks {
     }
 }
 
-/// Whether `ask` no longer stands: its terminal left, Karl answered in the transcript, or (with
+/// Whether `ask` no longer stands: its terminal left, the user answered in the transcript, or (with
 /// no transcript to read) the terminal went on well after it.
 fn answered(handle: &str, ask: &PendingAsk, data: &ClanData, claude: Option<&ClaudeData>) -> bool {
     let Some(terminal) = data.terminal(handle) else {

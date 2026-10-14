@@ -10,7 +10,7 @@ pub fn definitions() -> Vec<Value> {
     let specs = [
         (
             "reach_out",
-            "Ask the Envoy to reach someone; replies arrive automatically. Use ask_karl for Karl.",
+            "Ask the Envoy to reach someone; replies arrive automatically. Use ask_user for {user}.",
             json!({"to":string,"ask":string,"why":string,"thread":string,"request_id":string,"urgency":{"type":"string","enum":["normal","soon","blocking"]},"expect_reply":{"type":"boolean"}}),
             vec!["to", "ask", "why"],
         ),
@@ -40,7 +40,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_link_reply",
-            "Link a retained reply; assigning an unknown thread requires reason and proposes a recipient for Karl to accept in the Inbox.",
+            "Link a retained reply; assigning an unknown thread requires reason and proposes a recipient for {user} to accept in the Inbox.",
             json!({"request_id":string,"event_id":string,"requester":string,"reason":string}),
             vec!["request_id"],
         ),
@@ -58,7 +58,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_draft",
-            "Queue an answer under Karl's destination approval policy. Set manual_approval for a recommended decision Karl hasn't made; it cannot auto-send. Rationale stays private.",
+            "Queue an answer under {user}'s destination approval policy. Set manual_approval for a recommended decision {user} hasn't made; it cannot auto-send. Rationale stays private.",
             json!({"in_reply_to":{"type":"object","properties":{"conversation":string,"ts":string},"required":["conversation","ts"]},"thread_ts":string,"text":string,"rationale":string,"manual_approval":{"type":"boolean"}}),
             vec!["in_reply_to", "text", "rationale"],
         ),
@@ -76,7 +76,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_propose_task",
-            "Queue a proposed task for Karl; approval hands it to the King.",
+            "Queue a proposed task for {user}; approval hands it to the King.",
             json!({"summary":string,"repo":string,"why":string,"slack_link":string}),
             vec!["summary", "why", "slack_link"],
         ),

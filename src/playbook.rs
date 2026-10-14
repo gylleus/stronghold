@@ -92,7 +92,7 @@ impl Role {
             }
             Role::Worker => "Standing rules for a dispatched worker: the agent protocol.",
             Role::Envoy => {
-                "Standing rules for the Envoy, Karl's Slack diplomat: the Envoy playbook only \
+                "Standing rules for the Envoy, {user}'s Slack diplomat: the Envoy playbook only \
                  (it is not a worker)."
             }
         }
@@ -136,11 +136,11 @@ impl Role {
 /// prefix and survives a context reset.
 pub fn envoy_system_prompt(playbook: &Playbook) -> Result<String> {
     let served = playbook.get(&Target::Role(Role::Envoy), None)?;
-    Ok(format!(
+    Ok(crate::user::fill(&format!(
         "# Envoy standing rules\n\n{}\n\n{}",
         served.version.header(),
         served.body
-    ))
+    )))
 }
 
 /// The first prompt of the Envoy session.
@@ -148,14 +148,14 @@ pub fn envoy_launch_prompt(dry_run: bool) -> String {
     let mode = if dry_run {
         "Dry-run is ON: drafts and relays are recorded and shown, nothing leaves."
     } else {
-        "Dry-run is OFF: drafts Karl approves are posted and relays are delivered."
+        "Dry-run is OFF: drafts {user} approves are posted and relays are delivered."
     };
-    format!(
+    crate::user::fill(&format!(
         "You are the Envoy. Your standing rules are the Envoy playbook in your system prompt; \
          follow them. {mode} Then wait: Stronghold types each new event into this terminal as \
          an `Envoy event:` line. Don't poll, and don't load the playbook again: it is already \
          there."
-    )
+    ))
 }
 
 /// What to serve: a role's docs or one file.
@@ -704,7 +704,7 @@ pub fn short_hash(text: &str) -> String {
 pub fn run_cli(args: &[String]) -> Option<Result<()>> {
     let (cmd, rest) = args.split_first()?;
     (cmd == "playbook").then(|| {
-        let text = cli_text(rest)?;
+        let text = crate::user::fill(&cli_text(rest)?);
         println!("{}", text.trim_end());
         Ok(())
     })

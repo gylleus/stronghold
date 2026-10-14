@@ -48,7 +48,7 @@ enum ExecMsg {
 enum Stage {
     Evaluating(Receiver<Result<Plan, String>>),
     Failed(String),
-    /// The plan, with the removable ids Karl left ticked.
+    /// The plan, with the removable ids the user left ticked.
     Review {
         plan: Plan,
         chosen: BTreeSet<String>,

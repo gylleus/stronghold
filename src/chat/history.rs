@@ -29,7 +29,7 @@ pub enum HistoryRecord {
     /// A prompt: typed by the user or sent by another agent.
     Prompt(String),
     Inbox(Box<crate::king_inbox::InboxMessage>),
-    /// A prompt Karl spoke to the King.
+    /// A prompt the user spoke to the King.
     VoicePrompt(String),
     /// An assistant message or tool results, as the CLI streams them.
     Message(Incoming),
@@ -182,7 +182,7 @@ fn strip_notes(mut text: &str) -> (bool, &str) {
             (auto_mode::NOTE_ON, false),
             (auto_mode::NOTE_OFF, false),
         ] {
-            if let Some(rest) = text.strip_prefix(note) {
+            if let Some(rest) = text.strip_prefix(crate::user::fill(note).as_str()) {
                 voice |= spoken;
                 text = rest.trim_start();
             }
@@ -561,8 +561,8 @@ mod tests {
     fn notes_to_the_king_are_taken_off() {
         let voiced = format!(
             "{}\n\n{}\n\nHow many agents?",
-            voice::VOICE_NOTE,
-            auto_mode::NOTE_ON
+            crate::user::fill(voice::VOICE_NOTE),
+            auto_mode::note(true)
         );
         let spoken = format!("{}\n\nStatus?", voice::SPEAK_NOTE);
         let t = transcript_of(&jsonl(&[prompt(&voiced), prompt(&spoken)]));

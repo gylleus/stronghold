@@ -20,7 +20,7 @@ pub fn definitions() -> Vec<Value> {
     vec![json!({
         "name": TOOL,
         "title": "Clean up Orca worktrees",
-        "description": "Plans cleanup of idle worktrees listed by Orca or registered with Git under ~/orca/workspaces. Live terminals, processes, dispatches, parked agents, pins, main checkouts, open PRs and the age gate always keep a worktree. Merged work is removable; unmerged HEAD on no remote with known no open PR is removable after a verified local archive. Pushed unmerged work is never automatically removed. Untracked .orca/ and .local/ are saved under <agents dir>/notes/<repo>/<worktree>/ (50 MB cap; the agents dir is ~/Documents/agents unless STRONGHOLD_AGENTS_DIR is set). Other git-work keep reasons expose archivable and archive_blockers. dry_run defaults true. Show Karl the plan before dry_run=false: ids selects ordinary removable entries; archive_ids explicitly archives and removes eligible kept entries. Archives under <agents dir>/archive/<repo>/<worktree>-<timestamp>/ contain verified branch.bundle, binary working and staged patches, untracked copies (200 MB cap), and README restore commands. Fresh guards are checked before mutation, then removal uses orca worktree rm, or git worktree remove for unlisted entries, without force. The local branch is retained; nothing is pushed. Archive paths are logged.",
+        "description": "Plans cleanup of idle worktrees listed by Orca or registered with Git under ~/orca/workspaces. Live terminals, processes, dispatches, parked agents, pins, main checkouts, open PRs and the age gate always keep a worktree. Merged work is removable; unmerged HEAD on no remote with known no open PR is removable after a verified local archive. Pushed unmerged work is never automatically removed. Untracked .orca/ and .local/ are saved under <agents dir>/notes/<repo>/<worktree>/ (50 MB cap; the agents dir is ~/Documents/agents unless STRONGHOLD_AGENTS_DIR is set). Other git-work keep reasons expose archivable and archive_blockers. dry_run defaults true. Show {user} the plan before dry_run=false: ids selects ordinary removable entries; archive_ids explicitly archives and removes eligible kept entries. Archives under <agents dir>/archive/<repo>/<worktree>-<timestamp>/ contain verified branch.bundle, binary working and staged patches, untracked copies (200 MB cap), and README restore commands. Fresh guards are checked before mutation, then removal uses orca worktree rm, or git worktree remove for unlisted entries, without force. The local branch is retained; nothing is pushed. Archive paths are logged.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -61,7 +61,7 @@ fn clean(args: &Value) -> Result<ToolOutput, String> {
     let ids = selected_ids(args, "ids")?;
     let archive_ids = selected_ids(args, "archive_ids")?;
     if !dry_run && ids.is_empty() && archive_ids.is_empty() {
-        return Err("dry_run=false needs ids or archive_ids from a plan Karl approved".into());
+        return Err("dry_run=false needs ids or archive_ids from a plan {user} approved".into());
     }
     let client = OrcaClient::new().without_sender_identity();
     let plan = worktrees::evaluate(&client, &HashMap::new(), now_ms())?;
@@ -69,7 +69,7 @@ fn clean(args: &Value) -> Result<ToolOutput, String> {
         let mut text = format!("DRY RUN: nothing was removed.\n{}", plan.text());
         if plan.removable().next().is_some() {
             text.push_str(
-                "\nTo remove, confirm with Karl, then call clean_worktrees with dry_run=false \
+                "\nTo remove, confirm with {user}, then call clean_worktrees with dry_run=false \
                  and ids = the removable ids in structuredContent.",
             );
         }

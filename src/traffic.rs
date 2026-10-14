@@ -1,4 +1,4 @@
-//! Who talks to whom: one [`AgentMessage`] per message between agents, the King, Karl and the
+//! Who talks to whom: one [`AgentMessage`] per message between agents, the King, the user and the
 //! outside world, which the farm draw as an envelope flying from sender to
 //! receiver.
 //!
@@ -7,10 +7,10 @@
 //!   merge_ready, status and worker_done between workers, coordinators and the King's
 //!   broadcasts;
 //! - control API commands: `send` (`send_to_agent`, from its caller or the King), `notify` and
-//!   `ask` (an agent to Karl), and the generic `agent_message {from, to, kind}`;
-//! - Karl typing into a terminal from Stronghold, and the whip's nudges ([`from_whip`]).
+//!   `ask` (an agent to the user), and the generic `agent_message {from, to, kind}`;
+//! - the user typing into a terminal from Stronghold, and the whip's nudges ([`from_whip`]).
 //! - `orca terminal send`s Claude terminals run, read from their transcripts
-//!   ([`crate::claude::forwards::SendWatch`]). Stronghold's own sends (the whip's, Karl's) run in
+//!   ([`crate::claude::forwards::SendWatch`]). Stronghold's own sends (the whip's, the user's) run in
 //!   its process, never in a transcript, so they are not drawn twice.
 //! - Ledger lookups and filings, from Claude transcripts and Codex rollouts
 //!   ([`ledger::LedgerWatch`]) and the King's chat ([`ledger::message`]).
@@ -38,11 +38,11 @@ pub const FRESH_MS: i64 = 2 * 60_000;
 /// What a message is, which picks its look.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MessageKind {
-    /// Karl or the King telling an agent what to do, a broadcast or a dispatch.
+    /// The user or the King telling an agent what to do, a broadcast or a dispatch.
     Instruction,
     /// One agent writing to another.
     Message,
-    /// A question or escalation, or an agent asking Karl for something.
+    /// A question or escalation, or an agent asking the user for something.
     Ask,
     /// A worker's branch is ready to merge.
     MergeReady,
@@ -86,7 +86,7 @@ impl MessageKind {
 }
 
 /// A message from `from` to `to`, named as the sender knows them: a node id, a terminal handle,
-/// Orca's `run:<id>` (its coordinator) or `dispatch:<id>`, or `king`, `envoy`, `karl`, `slack` or
+/// Orca's `run:<id>` (its coordinator) or `dispatch:<id>`, or `king`, `envoy`, `user`, `slack` or
 /// `ledger`; see [`resolve`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentMessage {
@@ -136,8 +136,8 @@ impl AgentMessage {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Endpoint {
     Node(NodeId),
-    /// Karl himself; the farm draws him as the King.
-    Karl,
+    /// The user themselves; the farm draws them as the King.
+    User,
     /// The world outside the clan (Slack); the farm draws it as the King too.
     Outside,
     /// The Ledger, the clan's knowledge store; the farm draws it as its chamber.
@@ -163,7 +163,7 @@ pub fn resolve(snapshot: &ClanSnapshot, key: &str) -> Option<Endpoint> {
             .map(|n| Endpoint::Node(n.id.clone()))
     };
     match key.to_ascii_lowercase().as_str() {
-        "karl" | "human" => return Some(Endpoint::Karl),
+        "user" | "karl" | "human" => return Some(Endpoint::User),
         "slack" | "outside" => return Some(Endpoint::Outside),
         "ledger" => return Some(Endpoint::Ledger),
         "king" | "queen" => return node(NodeId::king()),

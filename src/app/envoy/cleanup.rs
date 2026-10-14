@@ -1,4 +1,4 @@
-//! UI cleanup is saved separately so queued ingestion snapshots cannot undo Karl's decisions.
+//! UI cleanup is saved separately so queued ingestion snapshots cannot undo the user's decisions.
 
 use super::*;
 use serde::{Deserialize, Serialize};

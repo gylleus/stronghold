@@ -3,7 +3,7 @@
 //!
 //! Stored as JSON in the user's config dir (`~/Library/Application Support/Stronghold/settings.json`
 //! on macOS) with one top-level key per section (`whip`, `king`, `voice`, `notifications`, `envoy`,
-//! `spawn`, `dwarves`, `art`). Missing sections and fields take their defaults, so older files load. A missing file gives the defaults; an
+//! `spawn`, `dwarves`, `art`, `user`). Missing sections and fields take their defaults, so older files load. A missing file gives the defaults; an
 //! unreadable or invalid one gives the defaults plus a warning.
 
 use std::fs;
@@ -35,7 +35,7 @@ pub struct Settings {
     #[serde(alias = "queen")]
     pub king: KingSettings,
     pub voice: VoiceSettings,
-    /// How notifications reach Karl: pop-ups, sounds, quiet mode.
+    /// How notifications reach the user: pop-ups, sounds, quiet mode.
     pub notifications: NotifySettings,
     /// The Envoy session and its channels.
     pub envoy: EnvoySettings,
@@ -46,6 +46,8 @@ pub struct Settings {
     pub dwarves: DwarfSettings,
     /// What the farm's figures look like.
     pub art: ArtSettings,
+    /// The user's name, as agents and the King call them.
+    pub user: crate::user::UserSettings,
 }
 
 /// Global whip configuration. Durations are in ms.
@@ -55,7 +57,7 @@ pub struct WhipSettings {
     /// Master switch: when off the whip evaluates nothing and sends nothing.
     pub enabled: bool,
     /// Log intended nudges, escalations and NeedsInput notifications without sending them. On
-    /// until Karl turns it off. Event forwarding (`forward_events`) stays live: it only
+    /// until the user turns it off. Event forwarding (`forward_events`) stays live: it only
     /// delivers facts to coordinators.
     pub dry_run: bool,
     /// Silence longer than this is a stall.
@@ -248,6 +250,14 @@ mod tests {
         assert!(s.notify);
         assert_eq!(s.abandon_after_ms, 24 * 60 * MIN);
         assert_eq!(s.validate(), Ok(()));
+    }
+
+    #[test]
+    fn the_user_section_holds_the_name() {
+        let s: Settings = serde_json::from_str(r#"{"user": {"name": "Ada"}}"#).unwrap();
+        assert_eq!(s.user.name.as_deref(), Some("Ada"));
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.user.name, None);
     }
 
     #[test]

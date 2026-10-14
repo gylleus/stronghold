@@ -131,7 +131,7 @@ pub struct Node {
     /// When a released worker's terminal was released, or a subagent finished; the UI fades
     /// these out.
     pub released_at_ms: Option<i64>,
-    /// When Karl parked the agent ([`crate::park`]): its terminal and worktree are kept, but
+    /// When the user parked the agent ([`crate::park`]): its terminal and worktree are kept, but
     /// it sleeps out of the live clan until woken.
     pub parked_at_ms: Option<i64>,
 }
@@ -412,7 +412,7 @@ impl ClanSnapshot {
             .collect();
     }
 
-    /// Marks the live agent terminals in `waiting` (by handle: the question they wait on Karl
+    /// Marks the live agent terminals in `waiting` (by handle: the question they wait on the user
     /// to answer) as NeedsInput, with the question as their preview. Done, failed and
     /// non-live nodes keep their state. Envoy questions never block intake; call
     /// `mark_envoy` first so explicit asks and inferred transcript questions both stay
@@ -510,7 +510,7 @@ impl ClanSnapshot {
         }
     }
 
-    /// Marks the nodes Karl parked ([`crate::park`]) and takes them off the King's spokes and
+    /// Marks the nodes the user parked ([`crate::park`]) and takes them off the King's spokes and
     /// out of his state. Entries without a node here are skipped. Updates the king.
     pub fn mark_parked<'a>(
         &mut self,

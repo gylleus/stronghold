@@ -1,6 +1,6 @@
 //! Notifications in the window: pop-ups (toasts) at the top right, the notifications panel
 //! (the history, newest first, with a strip showing the unread count while collapsed) and the
-//! top bar's bell that opens it. They report what Karl clicked; the app acts on it.
+//! top bar's bell that opens it. They report what the user clicked; the app acts on it.
 
 use std::collections::HashSet;
 
@@ -45,7 +45,7 @@ fn toast_lifetime_s(severity: Severity) -> Option<f64> {
     }
 }
 
-/// What Karl did with a toast or inbox entry.
+/// What the user did with a toast or inbox entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeAction {
     /// Select the entry's node; with `open_url` also open its link.
@@ -313,7 +313,7 @@ pub fn collapsed_strip(ui: &mut Ui, entries: &[Entry], quiet: bool) -> bool {
     response.clicked()
 }
 
-/// What Karl did in the notifications panel.
+/// What the user did in the notifications panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelAction {
     Notice(NoticeAction),
@@ -454,7 +454,7 @@ fn icon_text(ui: &Ui, icon: char) -> RichText {
     RichText::new(icon.to_string()).family(icons::family(ui.ctx()))
 }
 
-/// What Karl did with one entry of the panel.
+/// What the user did with one entry of the panel.
 struct RowResponse {
     /// Its header was clicked: expand or collapse it.
     toggled: bool,

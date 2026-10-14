@@ -443,7 +443,7 @@ impl Supervisor {
                                     let answer = if allow {
                                         PermissionAnswer::Allow
                                     } else {
-                                        PermissionAnswer::Deny { message: "Karl denied this in the Stronghold chat.".into() }
+                                        PermissionAnswer::Deny { message: crate::user::fill("{user} denied this in the Stronghold chat.") }
                                     };
                                     write_line(&mut stdin, &protocol::permission_response(&request, &answer))
                                 }

@@ -11,9 +11,9 @@
 //! The surface carries a heap per worktree: the
 //! agents' own and a few with nobody in them, or `--heaps N` of them; `--hammer` runs the worktree
 //! cleanup's hammer on one. Every few seconds one worker
-//! flips between working and waiting on Karl, so dwarves walk; B broadcasts, S asks for a status
+//! flips between working and waiting on the user, so dwarves walk; B broadcasts, S asks for a status
 //! report, N hatches a new worker, M sends a burst of messages between dwarves, T toggles the
-//! King thinking, R delivers a message to the Envoy (he casts) and X closes a worktree (its heap
+//! King thinking, R delivers a message to the Envoy (it casts) and X closes a worktree (its heap
 //! bursts). With `--shot`, it saves a
 //! screenshot once settled and another while a worker walks, a new one emerges, a broadcast
 //! ripples and messages fly (`-walk`), plus rubble burst (`-break`) and cleared

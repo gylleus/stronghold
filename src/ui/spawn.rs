@@ -392,7 +392,7 @@ impl SpawnDialog {
         }
     }
 
-    /// Draws the dialog; returns the plan to launch when Karl pressed Launch (or ⌘↩).
+    /// Draws the dialog; returns the plan to launch when the user pressed Launch (or ⌘↩).
     pub fn show(
         &mut self,
         ctx: &egui::Context,

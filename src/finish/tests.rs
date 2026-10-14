@@ -116,7 +116,7 @@ fn finished(at_ms: i64) -> FinishedSession {
         handle: Some("t1".into()),
         label: "dwarf".into(),
         outcome: FinishOutcome::Done,
-        approval: Approval::Karl,
+        approval: Approval::User,
         summary: "did it".into(),
         pr_url: None,
         forced: Vec::new(),
@@ -249,7 +249,7 @@ mod clan {
         let request = FinishRequest {
             summary: "done".into(),
             outcome: FinishOutcome::HandedOver,
-            approval: Some(Approval::Karl),
+            approval: Some(Approval::User),
             pr_url: Some("https://github.com/o/r/pull/3".into()),
             force: true,
             forced: vec!["dirty".into()],

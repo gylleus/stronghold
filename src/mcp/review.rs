@@ -1,5 +1,5 @@
 //! The review queue's MCP tools: `mark_pr_ready` for agents that finished a PR, and
-//! `review_queue` for Karl (through the King) to see what is waiting.
+//! `review_queue` for the user (through the King) to see what is waiting.
 
 use std::path::PathBuf;
 
@@ -48,8 +48,8 @@ pub fn definitions() -> Vec<Value> {
         json!({
             "name": "mark_pr_ready",
             "title": "Mark PR ready for review",
-            "description": "Tells Stronghold (Karl's clan dashboard) that a pull request is ready \
-                for Karl's review, so it shows in his review queue attributed to your terminal. \
+            "description": "Tells Stronghold ({user}'s clan dashboard) that a pull request is ready \
+                for {user}'s review, so it shows in their review queue attributed to your terminal. \
                 Call it right after sending merge_ready for a gate-ready PR, or when setting the \
                 ✅ ready marker. It only records locally: nothing is posted to GitHub or sent to \
                 other agents. Works even when Stronghold isn't running (it shows on start).",
@@ -73,7 +73,7 @@ pub fn definitions() -> Vec<Value> {
         json!({
             "name": "review_queue",
             "title": "Review queue",
-            "description": "PRs agents marked ready for Karl's review that he hasn't reviewed \
+            "description": "PRs agents marked ready for {user}'s review that they haven't reviewed \
                 yet, newest first: repo, number, title, the agent that marked it (with its node \
                 id), CI, the Ankra verdict (stale when it reviewed an older commit than the \
                 head), the ready marker, and age. Merged or closed PRs drop off.",
@@ -256,7 +256,7 @@ fn entry_line(entry: &Value, now: i64) -> String {
         parts.push(format!("review: {}", d.to_lowercase().replace('_', " ")));
     }
     if r.updated_since_review {
-        parts.push("pushed to since Karl's review".into());
+        parts.push("pushed to since {user}'s review".into());
     }
     parts.push(format!(
         "marked {} ago",

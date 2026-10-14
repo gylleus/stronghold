@@ -55,9 +55,9 @@ pub fn is_auto_approved(tool: &str) -> bool {
 /// How a `can_use_tool` request is answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
-    /// Show a card and wait for Karl.
+    /// Show a card and wait for the user.
     Ask,
-    /// Allowed without a card: a read-only Stronghold tool, or one Karl always-allowed.
+    /// Allowed without a card: a read-only Stronghold tool, or one the user always-allowed.
     Allow,
     /// Allowed without a card only because auto mode is on.
     Auto,

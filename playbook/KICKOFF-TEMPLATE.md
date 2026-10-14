@@ -16,7 +16,7 @@ below is only what is specific to this track.
 - **Ticket:** <TICKET-###> — <one-line title>
 - **Port range:** <track-number>00–<track-number>99
 - **Risk:** <standard | gated>. `gated` (auth/security, write paths, live merchant data, or
-  Karl flagged it) means the coordinator approves the plan before you implement; `standard`
+  {user} flagged it) means the coordinator approves the plan before you implement; `standard`
   proceeds on your reviewers' APPROVED.
 
 ## Scope
@@ -27,7 +27,7 @@ below is only what is specific to this track.
 deliberately not this PR.>
 
 **Open decisions:** <none>. The coordinator dispatches only when this says none: product
-questions are settled with Karl before the track starts.
+questions are settled with {user} before the track starts.
 
 ## Blockers and dependencies
 

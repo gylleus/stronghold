@@ -1,4 +1,4 @@
-//! Which of Karl's dwarves an inbound event concerns: thread ownership first, then shared refs
+//! Which of the user's dwarves an inbound event concerns: thread ownership first, then shared refs
 //! (ticket keys like `ABC-123`, `repo#45`, PR links, branch names), then distinctive label keywords.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -50,14 +50,12 @@ const COMMON: &[&str] = &[
     "fix",
     "fixes",
     "from",
-    "gylleus",
     "headless",
     "index",
     "ingestion",
     "into",
     "issue",
     "issues",
-    "karl",
     "kickoff",
     "live",
     "main",
@@ -287,9 +285,11 @@ fn singular(w: &str) -> String {
 
 /// Distinctive words of a label or branch.
 fn words_of(s: &str) -> BTreeSet<String> {
+    // The user's own name and login prefix their branches and labels.
+    let own = crate::user::own_words();
     words(&s.to_lowercase())
         .into_iter()
-        .filter(|w| w.len() >= 4 && !COMMON.contains(&w.as_str()))
+        .filter(|w| w.len() >= 4 && !COMMON.contains(&w.as_str()) && !own.contains(w))
         .filter(|w| !w.chars().all(|c| c.is_ascii_digit()))
         .collect()
 }

@@ -205,7 +205,9 @@ impl BroadcastComposer {
             egui::TextEdit::multiline(&mut self.text)
                 .desired_rows(4)
                 .desired_width(f32::INFINITY)
-                .hint_text("Sent as \"King: …\" — agents treat it as Karl's instruction"),
+                .hint_text(crate::user::fill(
+                    "Sent as \"King: …\" — agents treat it as {user}'s instruction",
+                )),
         );
         crate::ui::widgets::focus_ring(ui, &response);
 

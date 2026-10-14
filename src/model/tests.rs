@@ -878,7 +878,7 @@ fn finished(node_id: &str, at_ms: i64) -> crate::finish::FinishedSession {
         handle: node_id.strip_prefix("term:").map(str::to_string),
         label: "dwarf".into(),
         outcome: crate::finish::FinishOutcome::Done,
-        approval: crate::finish::Approval::Karl,
+        approval: crate::finish::Approval::User,
         summary: "merged into main".into(),
         pr_url: None,
         forced: Vec::new(),

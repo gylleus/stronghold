@@ -49,7 +49,7 @@ fn channel(dir: &Path) -> SlackChannel<Fake> {
         dir.into(),
         EnvoySettings {
             channels: vec!["C123".into()],
-            karl_user_id: "U0KARL0001".into(),
+            user_id: "U0KARL0001".into(),
             github_owner: "acme-org".into(),
             ..EnvoySettings::default()
         },
@@ -328,7 +328,7 @@ fn search_and_history_bound_catchup_and_report_skipped_older_messages() {
     );
     assert_eq!(c.io.methods.len(), 5);
     assert_eq!(
-        c.inbox.poll_watermarks[&format!("mention:{}", c.settings.karl_user_id)],
+        c.inbox.poll_watermarks[&format!("mention:{}", c.settings.user_id)],
         NOW
     );
     c.io.methods.clear();
@@ -477,30 +477,30 @@ fn pr_refs_resolve_to_head_branches_once() {
 fn karls_id_is_resolved_from_auth_test() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = channel(dir.path());
-    assert_eq!(c.settings.karl_user_id, "U0KARL0001");
+    assert_eq!(c.settings.user_id, "U0KARL0001");
     c.io.replies
         .push_back(json!({"ok":true,"user":"karl","user_id":"u0karl0002","team":"Acme"}));
-    assert_eq!(c.resolve_karl().unwrap().as_deref(), Some("U0KARL0002"));
+    assert_eq!(c.resolve_user_id().unwrap().as_deref(), Some("U0KARL0002"));
     c.io.replies
         .push_back(json!({"ok":true,"user":"karl","user_id":"W0NEWID","team":"Acme"}));
-    assert_eq!(c.resolve_karl().unwrap().as_deref(), Some("W0NEWID"));
+    assert_eq!(c.resolve_user_id().unwrap().as_deref(), Some("W0NEWID"));
     assert_eq!(
-        c.settings.karl_user_id, "W0NEWID",
+        c.settings.user_id, "W0NEWID",
         "the resolved id replaces the configured one"
     );
     c.io.replies.push_back(json!({"ok":true,"team":"Acme"}));
     assert_eq!(
-        c.resolve_karl().unwrap(),
+        c.resolve_user_id().unwrap(),
         None,
         "no id: the configured one stands"
     );
-    assert_eq!(c.settings.karl_user_id, "W0NEWID");
+    assert_eq!(c.settings.user_id, "W0NEWID");
     c.io.replies
         .push_back(json!({"ok":true,"user_id":"C000AGENT01"}));
     assert!(
-        c.resolve_karl().is_err(),
+        c.resolve_user_id().is_err(),
         "a conversation id is not a member id"
     );
-    assert_eq!(c.settings.karl_user_id, "W0NEWID");
+    assert_eq!(c.settings.user_id, "W0NEWID");
     assert_eq!(c.io.methods.iter().filter(|m| *m == "auth.test").count(), 4);
 }

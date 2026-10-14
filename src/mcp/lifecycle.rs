@@ -1,4 +1,4 @@
-//! `ask_karl` and `finish_session`: an agent asking Karl a question it waits on, and an agent
+//! `ask_user` and `finish_session`: an agent asking the user a question it waits on, and an agent
 //! ending its own session once nothing is left. Both are attributed to the caller's Orca
 //! terminal like `notify`; see [`crate::ask`] and [`crate::finish`].
 
@@ -16,25 +16,25 @@ use crate::mcp::notify::reply_text;
 use crate::mcp::tools::ToolOutput;
 use crate::review::mark::Origin;
 
-/// When to call `ask_karl` and `finish_session`, as the clan playbook says it. A macro so the
+/// When to call `ask_user` and `finish_session`, as the clan playbook says it. A macro so the
 /// server instructions can `concat!` the same text.
 macro_rules! rules_text {
     () => {
-        "Waiting on Karl: whenever you end a turn waiting for Karl's answer to a question you \
-asked in plain text (which way to go, may I merge, which account), call ask_karl with the \
+        "Waiting on {user}: whenever you end a turn waiting for {user}'s answer to a question you \
+asked in plain text (which way to go, may I merge, which account), call ask_user with the \
 question first, then end your turn. Stronghold only sees prompts and menus on your screen, so a \
-question in the chat reaches Karl only through ask_karl (Stronghold also flags a turn that ends \
+question in the chat reaches {user} only through ask_user (Stronghold also flags a turn that ends \
 on a question, as a backstop). Don't use it for permission prompts or AskUserQuestion menus \
 (already detected) or for status; workers under a coordinator ask their coordinator instead. \
-Envoy exception: ask_karl puts the question in Karl's inbox and notifies him, but never marks \
-the Envoy needs input. Keep taking batches while he decides; he can answer in your terminal. \
-Done: when you think you're done, don't close yourself: Karl often has follow-ups or feedback. \
-Call ask_karl (severity info) with \"Done: <one line>. Anything else, or can I close?\" (that is \
-your handover; put the PR in url) and stay. Call finish_session only once Karl says you can go \
-(approval karl), or for a tiny one-shot task with nothing to follow up (approval trivial). It \
+Envoy exception: ask_user puts the question in {user}'s inbox and notifies them, but never marks \
+the Envoy needs input. Keep taking batches while they decide; they can answer in your terminal. \
+Done: when you think you're done, don't close yourself: {user} often has follow-ups or feedback. \
+Call ask_user (severity info) with \"Done: <one line>. Anything else, or can I close?\" (that is \
+your handover; put the PR in url) and stay. Call finish_session only once {user} says you can go \
+(approval user), or for a tiny one-shot task with nothing to follow up (approval trivial). It \
 records the outcome, shows you done and closes your terminal; your worktree and branch are kept. \
 It refuses while you have uncommitted changes, commits neither merged nor pushed, or a PR still \
-waiting on Karl's review; pass force only when Karl said to stop anyway. Workers under a \
+waiting on {user}'s review; pass force only when {user} said to stop anyway. Workers under a \
 coordinator report to it instead; it releases them."
     };
 }
@@ -47,26 +47,25 @@ pub const RULES: &str = rules_text!();
 pub fn definitions() -> Vec<Value> {
     vec![
         json!({
-            "name": "ask_karl",
-            "title": "Ask Karl",
+            "name": "ask_user",
+            "title": "Ask {user}",
             "description": format!(
-                "Asks Karl, the human who runs this clan, a question you are waiting on, \
-                 through Stronghold (his clan dashboard): he gets a notification with the \
-                 question, and your node shows needs input until he answers in your terminal. \
-                 Envoy exception: the question goes to Karl's inbox without marking needs input; \
-                 keep taking batches while he decides. He can still answer in your terminal. \
-                 Call it whenever you are about to end your turn waiting for his answer to a \
+                "Asks {user}, the human who runs this clan, a question you are waiting on, \
+                 through Stronghold (their clan dashboard): they get a notification with the \
+                 question, and your node shows needs input until they answer in your terminal. \
+                 Envoy exception: the question goes to {user}'s inbox without marking needs input; \
+                 keep taking batches while they decide. They can still answer in your terminal. \
+                 Call it whenever you are about to end your turn waiting for their answer to a \
                  plain-text question (a decision, a go-ahead, a missing fact), then end your \
                  turn; don't keep working on anything that depends on the answer. Without it \
                  a question in the chat can sit unseen: Stronghold only detects permission \
                  prompts and menus by itself. When you think you're done, ask it here too \
                  (severity info): \"Done: <one line>. Anything else, or can I close?\", with \
-                 the PR in url; that is your handover, and Karl may have follow-ups, so stay \
-                 until he answers. Not for permission prompts or AskUserQuestion menus \
+                 the PR in url; that is your handover, and {user} may have follow-ups, so stay \
+                 until they answer. Not for permission prompts or AskUserQuestion menus \
                  (already detected) or progress. Workers under a \
                  coordinator ask the coordinator instead. If Stronghold isn't running it \
-                 errors: ask in the chat and end your turn."
-            ),
+                 errors: ask in the chat and end your turn.", user = crate::user::name()),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -76,23 +75,23 @@ pub fn definitions() -> Vec<Value> {
                     },
                     "context": {
                         "type": "string",
-                        "description": format!("What Karl needs to answer: the options and your recommendation, what it blocks (up to {MAX_CONTEXT_CHARS} characters)."),
+                        "description": format!("What {user} needs to answer: the options and your recommendation, what it blocks (up to {MAX_CONTEXT_CHARS} characters).", user = crate::user::name()),
                     },
                     "severity": {
                         "type": "string",
                         "enum": ["info", "warn", "urgent"],
                         "default": "warn",
-                        "description": "info for \"I'm done, can I close?\"; warn when work waits on the answer; urgent only when it's stalled and can't wait (it gets through Karl's quiet mode).",
+                        "description": "info for \"I'm done, can I close?\"; warn when work waits on the answer; urgent only when it's stalled and can't wait (it gets through {user}'s quiet mode).",
                     },
                     "url": {
                         "type": "string",
-                        "description": "An http(s) link that helps him answer: the PR, issue or doc.",
+                        "description": "An http(s) link that helps them answer: the PR, issue or doc.",
                     },
                 },
                 "required": ["question"],
             },
             "annotations": {
-                "title": "Ask Karl",
+                "title": "Ask {user}",
                 "readOnlyHint": false,
                 "destructiveHint": false,
                 "idempotentHint": false,
@@ -102,21 +101,21 @@ pub fn definitions() -> Vec<Value> {
         json!({
             "name": "finish_session",
             "title": "Finish this session",
-            "description": "Ends your own session, once Karl said you can go. Don't close \
-                yourself just because you think you're done: Karl often has follow-up questions \
-                or feedback, so first ask him with ask_karl (\"Done: <one line>. Anything else, \
-                or can I close?\") and stay; call this when he says go (approval: karl). The \
+            "description": "Ends your own session, once {user} said you can go. Don't close \
+                yourself just because you think you're done: {user} often has follow-up questions \
+                or feedback, so first ask them with ask_user (\"Done: <one line>. Anything else, \
+                or can I close?\") and stay; call this when they say go (approval: user). The \
                 only exception is a tiny one-shot task with nothing to follow up, such as a \
                 lookup or a one-line fix (approval: trivial). Stronghold records the outcome (shown to \
-                Karl in his inbox), shows your node as done and closes your terminal a couple of \
+                {user} in their inbox), shows your node as done and closes your terminal a couple of \
                 seconds after replying, so make it your last call and end your turn right \
                 after. Your git worktree and branch are kept (cleanup is the coordinator's or \
-                Karl's). Guards: it refuses while your worktree has uncommitted changes or \
+                {user}'s). Guards: it refuses while your worktree has uncommitted changes or \
                 commits neither merged into the default branch nor pushed, while a PR of yours \
-                waits in Karl's review queue (stay to address his comments; finish once it's \
-                merged or Karl says you're not needed), and while a coordinator's run has open \
-                tasks; fix those first, or pass force: true only when Karl explicitly told you to \
-                stop anyway (the overridden problems are recorded and shown to him). A worker \
+                waits in {user}'s review queue (stay to address their comments; finish once it's \
+                merged or {user} says you're not needed), and while a coordinator's run has open \
+                tasks; fix those first, or pass force: true only when {user} explicitly told you to \
+                stop anyway (the overridden problems are recorded and shown to them). A worker \
                 under a coordinator can't finish itself: report to your coordinator \
                 (worker_done, merge_ready) and it reuses or releases you.",
             "inputSchema": {
@@ -130,7 +129,7 @@ pub fn definitions() -> Vec<Value> {
                         "type": "string",
                         "enum": ["done", "handed_over", "abandoned"],
                         "default": "done",
-                        "description": "done: the work landed or nothing was needed. handed_over: someone else carries it on (a PR Karl takes from here, another agent) and your terminal isn't needed. abandoned: Karl called it off.",
+                        "description": "done: the work landed or nothing was needed. handed_over: someone else carries it on (a PR {user} takes from here, another agent) and your terminal isn't needed. abandoned: {user} called it off.",
                     },
                     "pr_url": {
                         "type": "string",
@@ -138,13 +137,13 @@ pub fn definitions() -> Vec<Value> {
                     },
                     "approval": {
                         "type": "string",
-                        "enum": ["karl", "trivial"],
-                        "description": "karl: Karl told you that you can go. trivial: a tiny one-shot task with nothing he could follow up on. Anything else: ask him first and stay.",
+                        "enum": ["user", "trivial"],
+                        "description": "user: {user} told you that you can go. trivial: a tiny one-shot task with nothing they could follow up on. Anything else: ask them first and stay.",
                     },
                     "force": {
                         "type": "boolean",
                         "default": false,
-                        "description": "Leave despite the guards' problems. Only when Karl said so.",
+                        "description": "Leave despite the guards' problems. Only when {user} said so.",
                     },
                 },
                 "required": ["summary", "approval"],
@@ -170,7 +169,7 @@ pub fn call(
     args: &Value,
 ) -> Option<ToolOutput> {
     match name {
-        "ask_karl" => Some(ask_karl(control, origin, args)),
+        "ask_user" => Some(ask_user(control, origin, args)),
         "finish_session" => Some(finish_session(control, origin, cwd, args)),
         _ => None,
     }
@@ -184,7 +183,7 @@ fn error(text: String) -> ToolOutput {
     }
 }
 
-fn ask_karl(control: &mut dyn Control, origin: &Origin, args: &Value) -> ToolOutput {
+fn ask_user(control: &mut dyn Control, origin: &Origin, args: &Value) -> ToolOutput {
     let mut params = args.clone();
     if !params.is_object() {
         params = json!({});
@@ -198,24 +197,24 @@ fn ask_karl(control: &mut dyn Control, origin: &Origin, args: &Value) -> ToolOut
         Ok(reply) => reply,
         Err(CallError::NotRunning) => {
             return error(
-                "Stronghold isn't running, so Karl can't be told through it. Ask in the chat and \
-                 end your turn; if it can't wait, summon him another way (the osascript dialog)."
+                "Stronghold isn't running, so {user} can't be told through it. Ask in the chat and \
+                 end your turn; if it can't wait, summon them another way (the osascript dialog)."
                     .into(),
             );
         }
-        Err(e) => return error(format!("Couldn't ask Karl: {e}")),
+        Err(e) => return error(format!("Couldn't ask {{user}}: {e}")),
     };
     let mut text = reply_text(&reply);
     if reply["waiting"] == true {
         text.push_str(
-            " Your node shows needs input until Karl answers. End your turn now and wait for \
-             his reply; don't act on what the answer decides.",
+            " Your node shows needs input until {user} answers. End your turn now and wait for \
+             their reply; don't act on what the answer decides.",
         );
     } else if reply["nonblocking"] == true {
         text.push_str(
             " This Envoy question does not mark your node needs input. Keep taking batches \
-             while Karl decides; he can answer in your terminal. Don't act on what the answer \
-             decides until he replies.",
+             while {user} decides; they can answer in your terminal. Don't act on what the answer \
+             decides until they reply.",
         );
     } else {
         text.push_str(
@@ -275,7 +274,7 @@ fn finish_session(
             Some(a) => a,
             None => {
                 return error(format!(
-                    "Invalid arguments: unknown approval {a:?}; use karl or trivial"
+                    "Invalid arguments: unknown approval {a:?}; use user or trivial"
                 ));
             }
         },
@@ -295,8 +294,8 @@ fn finish_session(
         Ok(reply) => reply,
         Err(CallError::NotRunning) => {
             return error(
-                "Stronghold isn't running, so it can't close your terminal. Tell Karl in the chat \
-                 that you're done (your summary) and stop working; he'll close you."
+                "Stronghold isn't running, so it can't close your terminal. Tell {user} in the chat \
+                 that you're done (your summary) and stop working; they'll close you."
                     .into(),
             );
         }
@@ -324,10 +323,11 @@ fn finish_session(
         let list: Vec<String> = problems.iter().map(|p| format!("- {p}")).collect();
         return ToolOutput {
             text: format!(
-                "Not finished; your terminal stays open. Fix these first:\n{}\nIf Karl \
+                "Not finished; your terminal stays open. Fix these first:\n{}\nIf {user} \
                  explicitly told you to stop anyway, call finish_session again with force: \
-                 true (the problems are recorded and shown to him).",
-                list.join("\n")
+                 true (the problems are recorded and shown to them).",
+                list.join("\n"),
+                user = crate::user::name()
             ),
             structured: Some(json!({ "finished": false, "problems": problems })),
             is_error: true,

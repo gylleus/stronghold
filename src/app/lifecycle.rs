@@ -1,4 +1,4 @@
-//! The app side of agents asking Karl a question (`ask`) and ending their own sessions
+//! The app side of agents asking the user a question (`ask`) and ending their own sessions
 //! (`finish`): see [`crate::ask`] and [`crate::finish`].
 
 use serde_json::{Value, json};
@@ -32,8 +32,8 @@ impl StrongholdApp {
         self.snapshot.as_ref()?.node(&agent.id)
     }
 
-    /// The control API's `ask`: notifies Karl of the question and shows the caller waiting on
-    /// him until he answers, except the Envoy which keeps taking batches.
+    /// The control API's `ask`: notifies the user of the question and shows the caller waiting on
+    /// them until they answer, except the Envoy which keeps taking batches.
     pub(super) fn control_ask(&mut self, ask: AskRequest) -> Result<Value, ControlError> {
         let now = now_ms();
         let node = self.caller(&ask.origin).cloned();
@@ -56,7 +56,7 @@ impl StrongholdApp {
     }
 
     /// The control API's `finish`: checks the clan's guards, then records the outcome,
-    /// notifies Karl and closes the caller's terminal shortly after replying. With `dry_run`
+    /// notifies the user and closes the caller's terminal shortly after replying. With `dry_run`
     /// only reports the caller's node and the problems.
     pub(super) fn control_finish(&mut self, req: FinishRequest) -> Result<Value, ControlError> {
         let now = now_ms();

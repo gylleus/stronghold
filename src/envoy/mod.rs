@@ -1,6 +1,6 @@
-//! The Envoy: Karl's long-running listener dwarf for the outside world (Slack now, other
-//! protocols later). The app ingests channel events, keeps the drafts Karl approves and sends
-//! only on his approval; the Envoy session reads, triages and drafts.
+//! The Envoy: the user's long-running listener dwarf for the outside world (Slack now, other
+//! protocols later). The app ingests channel events, keeps the drafts the user approves and sends
+//! only on their approval; the Envoy session reads, triages and drafts.
 
 pub mod addressee;
 pub mod channel;
@@ -56,7 +56,7 @@ pub enum BridgeStatus {
 pub struct EnvoyStatus {
     pub session: SessionState,
     pub bridge: BridgeStatus,
-    /// Drafts waiting on Karl's approve/edit/reject.
+    /// Drafts waiting on the user's approve/edit/reject.
     pub pending_drafts: usize,
     /// Approval records a would-be send instead of posting.
     pub dry_run: bool,
@@ -88,7 +88,7 @@ pub enum EnvoyHealth {
 
 impl EnvoyStatus {
     /// Events not reaching the Envoy, then a dead poll loop, then a down bridge, all outrank
-    /// pending drafts: Karl must know when the Envoy is deaf.
+    /// pending drafts: the user must know when the Envoy is deaf.
     pub fn health(&self) -> EnvoyHealth {
         match self.session {
             SessionState::Stopped => EnvoyHealth::Stopped,

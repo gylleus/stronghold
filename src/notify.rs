@@ -1,4 +1,4 @@
-//! Notifications to Karl: from agents (the `notify` MCP tool), escalations, terminals waiting
+//! Notifications to the user: from agents (the `notify` MCP tool), escalations, terminals waiting
 //! on input and PRs ready for review.
 //!
 //! Every notification goes through one path. Sources build an [`Incoming`] (the whip does so

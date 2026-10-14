@@ -172,9 +172,12 @@ impl SlackSender for SlackCli {
     fn send(&mut self, message: &OutboundMessage) -> Result<SendReceipt, String> {
         validate_conversation(&message.conversation)?;
         super::secrets::scan(&message.text)?;
-        if ![super::drafts::ATTRIBUTION, super::drafts::AUTO_ATTRIBUTION]
-            .iter()
-            .any(|a| message.text.ends_with(a))
+        if ![
+            super::drafts::attribution(),
+            super::drafts::auto_attribution(),
+        ]
+        .iter()
+        .any(|a| message.text.ends_with(a))
         {
             return Err("Outbound attribution is required".into());
         }
@@ -330,14 +333,14 @@ pub fn parse_bridge_line(line: &[u8]) -> Result<BridgeLine, String> {
 pub fn parse_search(
     value: &Value,
     kind: EventKind,
-    karl: &str,
+    user_id: &str,
 ) -> Result<Vec<InboundEvent>, String> {
     let matches = value["messages"]["matches"]
         .as_array()
         .ok_or("Slack search is missing messages.matches")?;
     matches
         .iter()
-        .filter(|v| v["user"] != karl)
+        .filter(|v| v["user"] != user_id)
         .filter(|v| {
             kind != EventKind::Dm
                 || v["channel"]["is_im"] == true
@@ -396,10 +399,10 @@ impl<I: SlackIo> SlackChannel<I> {
         }
     }
 
-    /// Karl's member id as Slack reports it (`auth.test`, what `slackmsg whoami` prints). A
+    /// The user's member id as Slack reports it (`auth.test`, what `slackmsg whoami` prints). A
     /// resolved id replaces the configured one for drops, searches and the addressee check;
     /// `Ok(None)` means Slack gave none and the configured id stands.
-    pub fn resolve_karl(&mut self) -> Result<Option<String>, String> {
+    pub fn resolve_user_id(&mut self) -> Result<Option<String>, String> {
         let value = self.io.api("auth.test", &[])?;
         let Some(id) = value["user_id"].as_str().map(str::trim) else {
             return Ok(None);
@@ -408,7 +411,7 @@ impl<I: SlackIo> SlackChannel<I> {
             return Err(format!("auth.test gave an invalid user id {id:?}"));
         }
         let id = id.to_ascii_uppercase();
-        self.settings.karl_user_id = id.clone();
+        self.settings.user_id = id.clone();
         Ok(Some(id))
     }
 
@@ -425,14 +428,14 @@ impl<I: SlackIo> SlackChannel<I> {
     }
 
     fn ingest(&mut self, e: InboundEvent, batch: &mut PollBatch) -> bool {
-        if e.user != self.settings.karl_user_id && !self.capture_reply(&e) {
+        if e.user != self.settings.user_id && !self.capture_reply(&e) {
             return false;
         }
         let fresh = self
             .inbox
             .first_enabled_ms
             .is_none_or(|start| timestamp_us(&e.ts).is_some_and(|ts| ts / 1000 >= start));
-        if fresh && e.user != self.settings.karl_user_id && self.inbox.insert(e.clone()) {
+        if fresh && e.user != self.settings.user_id && self.inbox.insert(e.clone()) {
             batch.events.push(e);
         }
         true
@@ -511,10 +514,12 @@ impl<I: SlackIo> SlackChannel<I> {
         now_ms: i64,
         batch: &mut PollBatch,
     ) -> Result<(), String> {
-        if self.settings.karl_user_id.is_empty() {
-            return Err("No Slack member id for Karl yet (auth.test or settings)".into());
+        if self.settings.user_id.is_empty() {
+            return Err(crate::user::fill(
+                "No Slack member id for {user} yet (auth.test or settings)",
+            ));
         }
-        let key = format!("{}:{}", kind.name(), self.settings.karl_user_id);
+        let key = format!("{}:{}", kind.name(), self.settings.user_id);
         let start = self.inbox.first_enabled_ms.unwrap_or(now_ms);
         let since = self
             .inbox
@@ -529,8 +534,8 @@ impl<I: SlackIo> SlackChannel<I> {
             .to_zoned(jiff::tz::TimeZone::UTC)
             .date();
         let query = match kind {
-            EventKind::Mention => format!("<@{}> after:{date}", self.settings.karl_user_id),
-            _ => format!("to:{} is:dm after:{date}", self.settings.karl_user_id),
+            EventKind::Mention => format!("<@{}> after:{date}", self.settings.user_id),
+            _ => format!("to:{} is:dm after:{date}", self.settings.user_id),
         };
         for page in 1..=5 {
             let value = self.io.api(
@@ -543,7 +548,7 @@ impl<I: SlackIo> SlackChannel<I> {
                     ("page", page.to_string()),
                 ],
             )?;
-            let events = parse_search(&value, kind, &self.settings.karl_user_id)?;
+            let events = parse_search(&value, kind, &self.settings.user_id)?;
             let old = value["messages"]["matches"].as_array().is_some_and(|ms| {
                 ms.iter().any(|v| {
                     v["ts"]
@@ -614,7 +619,7 @@ impl<I: SlackIo> SlackChannel<I> {
             found.extend(parse_search(
                 &value,
                 EventKind::Pin,
-                &self.settings.karl_user_id,
+                &self.settings.user_id,
             )?);
             let pages = value["messages"]["paging"]["pages"].as_u64().unwrap_or(0);
             if page >= pages {

@@ -227,7 +227,7 @@ pub struct SpeakerConfig {
     pub release: ModelRelease,
     /// onnxruntime threads for synthesis.
     pub threads: i32,
-    /// Download the model when it is missing. Off in the app, which asks Karl first; the
+    /// Download the model when it is missing. Off in the app, which asks the user first; the
     /// backend then fails with [`kokoro::NOT_INSTALLED`] until the model is installed.
     pub allow_download: bool,
 }

@@ -1,9 +1,9 @@
 # Envoy gateway
 
 Agents reach people through `reach_out`. The app stores the request, the Envoy routes it,
-and the draft follows Karl's destination approval policy. Replies arrive at the asking
+and the draft follows the user's destination approval policy. Replies arrive at the asking
 terminal when its agent is idle at an empty prompt; `reach_out_status` also retains them.
-Karl remains on `ask_karl` / `notify`.
+The user remains on `ask_user` / `notify`.
 
 ## Tools available to every dwarf
 
@@ -21,15 +21,15 @@ open `request_id` or the same owned thread has a separate 30/hour conversation a
 Exact duplicate asks merge without spending either budget; retrying a declined ask on an open request creates a new turn and spends the applicable allowance. A settled request stays closed: start a new `reach_out` without that `request_id`. Follow-ups wait for the earlier
 turn and a confirmed root thread; a failed or unknown send is never automatically retried.
 
-Errors include missing Origin, invalid/oversized text, invalid urgency/permalink, Karl as
-destination (use `ask_karl`), foreign/settled request, conflicting thread, ambiguous thread,
+Errors include missing Origin, invalid/oversized text, invalid urgency/permalink, the user as
+destination (use `ask_user`), foreign/settled request, conflicting thread, ambiguous thread,
 rate limit and unavailable storage. Foreign and unknown request ids both report
 `Request unavailable`.
 
 ## Envoy-only tools
 
 These require the persisted Envoy terminal identity. They are in its launch allowlist;
-`reach_out` and `reach_out_status` are not. Karl must restart an existing Envoy session to
+`reach_out` and `reach_out_status` are not. The user must restart an existing Envoy session to
 pick up the new launch tools after installing the app.
 
 | Tool | Arguments | Result |
@@ -45,7 +45,7 @@ replace the ask. Rewriting is allowed only for a verified human DM: the app chec
 users.info and rejects bot/app recipients. Channels and channel threads always require
 `destination_kind: "agent"`; a caller's person label cannot override that. For a verified
 person, `draft_text` is required and the original ask remains beside the editable draft.
-Rewritten asks always require manual approval, regardless of policy. Karl is refused by
+Rewritten asks always require manual approval, regardless of policy. The user is refused by
 name (including full name and @karl), id, labeled mention and resolved DM recipient.
 
 `turn_id` is required when multiple turns are queued. Route retries return the existing
@@ -54,7 +54,7 @@ dispatched send. To reconcile an ambiguous failed send, link a retained event in
 thread; that records an explicit reconciliation, without sending again or granting reply-watch permission. An adopted request's
 `requester` accepts a live clan agent id or terminal; a known owner cannot be reassigned.
 For borrowed or unknown-owner threads, it creates a proposal with the root message's first
-line, Slack link, recipient and Envoy reason in the Inbox. Only Karl's deliberate Accept
+line, Slack link, recipient and Envoy reason in the Inbox. Only the user's deliberate Accept
 click grants reply delivery and caller access; before acceptance and after Reject, replies
 stay in the Inbox. Proposals persist across restart. Linking a dwarf's own `reach_out`
 request to that same dwarf needs no approval. Missing/invalid reason, unavailable root preview,
@@ -107,7 +107,7 @@ remove their registry entries, even when a dwarf request already references that
 Keep retains an orphan; Close only settles its app request. For a thread the Envoy owns,
 Close removes its subscription only after a real send and after all active requests finish;
 dry-run records that removal intent. Threadless simulations settle locally. The one-week direct-post
-detector is deferred to migration after Karl picks its start date.
+detector is deferred to migration after the user picks its start date.
 
 ## Delivery gate and stall signals
 
@@ -155,12 +155,12 @@ stating the dry-run mode. A failed `/clear` is logged, batches go into the old c
 the next reset is tried after ten minutes. Settings → Envoy holds all three thresholds; they
 apply on the next Start.
 
-Every typed event line also carries an addressee verdict, ` — addressee: Karl | not Karl |
+Every typed event line also carries an addressee verdict, ` — addressee: the user | not the user |
 unclear (<why>)`, computed from the message's mentions (`src/envoy/addressee.rs`): a DM or a
-`<@KARL>` mention is for Karl; another person, agent or group tagged without Karl is not for
-Karl, unless the thread is Karl's (a dwarf's `reach_out` thread, a watched thread, one the Envoy
-posted in, or one whose earlier messages mention Karl), which leaves it unclear for the Envoy
-to judge; no mention is unclear. Karl's id is the `envoy.karl_user_id` setting until the
+`<@USER_ID>` mention is for the user; another person, agent or group tagged without the user is not for
+the user, unless the thread is the user's (a dwarf's `reach_out` thread, a watched thread, one the Envoy
+posted in, or one whose earlier messages mention the user), which leaves it unclear for the Envoy
+to judge; no mention is unclear. The user's id is the `envoy.user_id` setting until the
 worker's `auth.test` call (what `slackmsg whoami` prints) answers, on every configure; the
 resolved id then drives drops, searches and the verdict. The playbook's _Who it's for_ section
 tells the Envoy what to do with each verdict.

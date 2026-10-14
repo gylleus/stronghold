@@ -31,7 +31,7 @@ pub const DUPLICATE_WINDOW_MS: i64 = 30 * 60_000;
 pub enum Source {
     /// An Envoy draft or channel-health transition.
     Envoy,
-    /// An agent's `notify` tool call (or `stronghold notify-karl`, the control API's `notify`).
+    /// An agent's `notify` tool call (or the control API's `notify`).
     Agent,
     /// A node entered NeedsInput, or the whip saw it wait too long.
     NeedsInput,
@@ -71,7 +71,7 @@ pub struct Incoming {
     pub severity: Severity,
     pub title: String,
     pub message: String,
-    /// A link to open when Karl clicks it.
+    /// A link to open when the user clicks it.
     pub url: Option<String>,
     /// What a click selects: a node id, terminal handle or PR URL; the cooldown keys on it.
     pub target: Option<String>,

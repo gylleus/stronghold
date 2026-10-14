@@ -712,13 +712,13 @@ const OLD_WHIP_SENDER: &str = "myrstack-whip";
 pub fn is_whip_sender(from: &str) -> bool {
     from == WHIP_SENDER || from == OLD_WHIP_SENDER
 }
-/// `--from` of messages Karl broadcasts from Stronghold.
+/// `--from` of messages the user broadcasts from Stronghold.
 pub const BROADCAST_SENDER: &str = "king";
 /// [`BROADCAST_SENDER`] before the dwarf theme. Orca keeps run history, so older broadcasts
 /// still carry it.
 const OLD_BROADCAST_SENDER: &str = "queen";
 
-/// Whether `from` is Karl's broadcast sender, now or before the dwarf theme.
+/// Whether `from` is the user's broadcast sender, now or before the dwarf theme.
 pub fn is_broadcast_sender(from: &str) -> bool {
     from == BROADCAST_SENDER || from == OLD_BROADCAST_SENDER
 }

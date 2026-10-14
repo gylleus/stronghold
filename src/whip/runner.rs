@@ -37,7 +37,7 @@ pub type ExecutorFactory = Box<dyn Fn() -> Box<dyn WhipExecutor> + Send>;
 /// Called after each published status, e.g. to repaint the UI.
 pub type Repaint = Box<dyn Fn() + Send>;
 
-/// What the whip evaluates: one poll plus the terminals currently waiting on Karl.
+/// What the whip evaluates: one poll plus the terminals currently waiting on the user.
 #[derive(Debug, Clone, Default)]
 pub struct WhipInput {
     pub data: ClanData,
@@ -225,7 +225,7 @@ impl WhipLoop {
         Some(self.take_status())
     }
 
-    /// Sends manual nudges now through the live executor, even in dry-run: they are Karl's
+    /// Sends manual nudges now through the live executor, even in dry-run: they are the user's
     /// explicit request. Threshold and cooldown do not apply. Returns the status carrying the
     /// new log entries.
     pub fn manual(

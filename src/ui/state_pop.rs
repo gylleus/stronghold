@@ -1,6 +1,6 @@
 //! A short "pop" on an agent that just changed state, shared by the farm:
 //! a green burst when it is done, a softer one when it goes idle, an amber one when it starts
-//! waiting on Karl (whose lasting pulse the views already draw).
+//! waiting on the user (whose lasting pulse the views already draw).
 //!
 //! [`Transitions`] finds the changes between polls, [`Pops`] keeps the pops on screen and
 //! [`Pops::frames`] says how far along each is; the views draw them.

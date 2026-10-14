@@ -8,7 +8,7 @@ The hold is the only clan view. Settings → Art controls pixel size and palette
 `f` or Fit shows the whole hold, and selecting a run or repo focuses its rooms.
 
 **Dwarf**: one dedicated agent session working on a task (what the King, or "New dwarf…",
-starts). The clan is all of Karl's dwarves; the King is its hub.
+starts). The clan is all of the user's dwarves; the King is its hub.
 
 ## Run
 
@@ -32,7 +32,7 @@ actual file with macOS `open`.
 Search uses the local basic-memory MCP service at `http://127.0.0.1:8643/mcp`, project
 `ledger`. If it is unavailable, the pane says so and searches local files for all the
 query's literal terms, ignoring case. Results are limited to 30. Reading uses the files in
-`~/Documents/agents/ledger`; the pane never writes or deletes entries. Searches and file
+`ledger/` under the agents dir (see [Configuration](#configuration)); the pane never writes or deletes entries. Searches and file
 reads run on a background thread. The HTTP transport uses `ureq`, without a CLI or shell
 PATH dependency, and accepts both JSON and SSE responses after MCP initialization.
 
@@ -80,7 +80,35 @@ signature, which changes with every build: after a reinstall, macOS may ask for 
 again. To keep permissions across builds, sign with a stable identity, e.g. a self-signed
 "Stronghold Dev" code-signing certificate made in Keychain Access:
 `STRONGHOLD_SIGN_IDENTITY="Stronghold Dev" scripts/install.sh`. To forget a decision:
-`tccutil reset Microphone com.gylleus.stronghold`.
+`tccutil reset Microphone com.gylleus.stronghold`. Builds before the bundle id became
+`com.gylleus.stronghold` had another one, so the first install of a newer build asks for
+notification and microphone access again.
+
+## Configuration
+
+Settings live in `~/Library/Application Support/Stronghold/settings.json` (`STRONGHOLD_SETTINGS`
+points elsewhere), one section per Settings tab; missing keys take their defaults. The ones a
+new install should look at:
+
+| Key | Default | What it is |
+| --- | --- | --- |
+| `user.name` | first word of the macOS account's full name, else the login | What the King, the Envoy, the playbook and agents call you (Settings → General). Prompts, tool texts and the playbook say `{user}` where it goes. Sessions already running keep the name they started with. |
+| `envoy.channels` | empty | Slack channels the Envoy listens to in full, e.g. your agent-to-agent channel. |
+| `envoy.user_id` | empty | Your Slack member id. Slack's `auth.test` fills it in when the Envoy starts; mention and DM polls wait until there is one. Older files call it `karl_user_id`. |
+| `envoy.github_owner` | empty | GitHub owner of the repos Slack names as `repo#N`; empty turns those PR lookups off. |
+
+Environment variables:
+
+| Variable | Default | What it is |
+| --- | --- | --- |
+| `STRONGHOLD_AGENTS_DIR` | `~/Documents/agents` | The clan's shared folder: the Ledger (`ledger/`), worktree archives (`archive/`), saved notes (`notes/`) and the playbook fallback. |
+| `STRONGHOLD_DATA_DIR` | `~/Library/Application Support/Stronghold` | The app's own state. Set it to a scratch folder when testing. |
+| `STRONGHOLD_SETTINGS` | `<data dir>/settings.json` | The settings file. |
+| `STRONGHOLD_PLAYBOOK_DIR` | the repo's `playbook/`, else the agents dir | Where the playbook is read from. |
+| `STRONGHOLD_CONTROL_SOCKET` | `<data dir>/control.sock` | The control API socket. |
+| `STRONGHOLD_CLAUDE_BIN`, `STRONGHOLD_GH_BIN` | `claude` / `gh` on `PATH` | The CLIs the King, the Envoy and the review queue run. |
+| `STRONGHOLD_CHAT_MODEL` | Settings → King | Overrides the King's model. |
+| `STRONGHOLD_SIGN_IDENTITY` | ad hoc | Code-signing identity for `scripts/install.sh`. |
 
 ## Talk to it from a chat
 

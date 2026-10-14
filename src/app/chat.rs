@@ -9,9 +9,9 @@ use crate::model::{ClanSnapshot, NodeId};
 use crate::traffic::{AgentMessage, MessageKind, Traffic};
 use crate::ui::chat::{ChatAction, ChatPanelState, ChatView, chat_ui};
 
-/// Karl writing (or speaking) to the King in the chat.
-pub(super) fn karl_to_king() -> AgentMessage {
-    AgentMessage::new("karl", "king", MessageKind::Instruction)
+/// The user writing (or speaking) to the King in the chat.
+pub(super) fn user_to_king() -> AgentMessage {
+    AgentMessage::new("user", "king", MessageKind::Instruction)
 }
 
 pub(super) struct AppChat {
@@ -33,7 +33,7 @@ impl AppChat {
     }
 
     /// Draws the chat and runs what the user did; returns a node whose link was clicked. What
-    /// Karl sends flies to the King on `traffic`.
+    /// The user sends flies to the King on `traffic`.
     pub(super) fn ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -52,7 +52,7 @@ impl AppChat {
             match action {
                 ChatAction::Send(text) => {
                     if self.session.send(&text) {
-                        traffic.push(karl_to_king());
+                        traffic.push(user_to_king());
                     }
                 }
                 ChatAction::Interrupt => self.session.interrupt(),

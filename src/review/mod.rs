@@ -1,5 +1,5 @@
 //! The review queue: PRs agents finished and marked ready, shown in the King panel with their
-//! GitHub state until Karl reviews them or they merge.
+//! GitHub state until the user reviews them or they merge.
 //!
 //! Marks come from the `mark_pr_ready` MCP tool and `stronghold pr-ready` (both carry the
 //! caller's Orca identity), and from `merge_ready` bus messages (listed only with a `✅` marker

@@ -145,7 +145,7 @@ impl ChatSession {
         self.auto_mode
     }
 
-    /// Karl's auto mode toggle: saves it, applies it to the running session (same process and
+    /// The user's auto mode toggle: saves it, applies it to the running session (same process and
     /// conversation), shows a notice, and tells the King with the next message.
     pub fn set_auto_mode(&mut self, on: bool) {
         if on == self.auto_mode {
@@ -159,7 +159,7 @@ impl ChatSession {
         self.transcript.push_system(auto_mode::notice(on));
     }
 
-    /// The text the CLI gets for Karl's `text`: prefixed with a Stronghold note when the King
+    /// The text the CLI gets for the user's `text`: prefixed with a Stronghold note when the King
     /// has not been told the current auto mode (nothing to tell while it is off and he was
     /// never told it was on).
     fn outgoing(&mut self, text: &str) -> String {
@@ -355,7 +355,7 @@ impl ChatSession {
         self.send_as(text, false)
     }
 
-    /// Sends a message Karl spoke: his bubble gets the voice marker and the King gets
+    /// Sends a message the user spoke: their bubble gets the voice marker and the King gets
     /// [`voice::VOICE_NOTE`] with it (not shown), asking for a `<say>` line to speak.
     pub fn send_voice(&mut self, text: &str) -> bool {
         self.send_as(text, true)
@@ -369,7 +369,7 @@ impl ChatSession {
         let mut outgoing = self.outgoing(text);
         if voice {
             self.transcript.push_voice_user(text);
-            outgoing = format!("{}\n\n{outgoing}", voice::VOICE_NOTE);
+            outgoing = format!("{}\n\n{outgoing}", crate::user::fill(voice::VOICE_NOTE));
         } else {
             self.transcript.push_user(text);
             if self.speak_replies {
