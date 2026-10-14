@@ -423,7 +423,7 @@ impl FarmView {
 
     /// The open worktrees' heaps and the cleanup breaking them down, if one runs.
     pub fn set_rubble(&mut self, sites: Vec<rubble::Site>, hammer: Option<rubble::CleanupJob>) {
-        self.rubble.set(sites, hammer);
+        self.rubble.set_stale(sites, hammer);
     }
 
     pub fn set_envoy_receipt(&mut self, receipt: crate::ui::envoy_receipt::ReceiptCue) {

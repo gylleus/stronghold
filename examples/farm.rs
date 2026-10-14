@@ -255,6 +255,29 @@ fn worktrees(snapshot: &ClanSnapshot, count: Option<usize>) -> Vec<Worktree> {
     out
 }
 
+/// Synthetic planner verdicts; production uses the real cleanup evaluation.
+fn stale_plan(trees: &[Worktree]) -> stronghold::worktrees::Plan {
+    use stronghold::worktrees::{Plan, PlanEntry, Verdict};
+    Plan {
+        entries: trees
+            .iter()
+            .enumerate()
+            .map(|(i, w)| PlanEntry {
+                id: w.id.clone(),
+                name: w.name().into(),
+                path: w.path.clone(),
+                verdict: Verdict {
+                    remove: i % 3 != 2,
+                    archivable: i % 3 == 2,
+                    ..Verdict::default()
+                },
+                ..PlanEntry::default()
+            })
+            .collect(),
+        ..Plan::default()
+    }
+}
+
 /// Names for worktrees nobody works in any more.
 const STALE: [&str; 6] = [
     "graph-trackpad-pan",
@@ -421,8 +444,14 @@ impl eframe::App for Demo {
                     panel.tick(None, now_ms);
                     panel.cleanup_job()
                 });
-                self.farm
-                    .set_rubble(rubble::sites(&self.worktrees, &self.snapshot.nodes), hammer);
+                self.farm.set_rubble(
+                    rubble::sites(
+                        &self.worktrees,
+                        &self.snapshot.nodes,
+                        Some(&stale_plan(&self.worktrees)),
+                    ),
+                    hammer,
+                );
                 let response = self.farm.show(ui, &self.snapshot, &mut self.clan);
                 if let Some(id) = &response.clicked {
                     self.clan.click_node(id, false);

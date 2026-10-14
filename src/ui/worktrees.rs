@@ -86,6 +86,9 @@ pub struct WorktreePanel {
     /// The hammer's pixel art, for the menu and the floor.
     hammer: egui::TextureHandle,
     demolisher: hammer::Demolisher,
+    stale_plan: Option<Plan>,
+    stale_scan: Option<Receiver<Result<Plan, String>>>,
+    next_stale_ms: i64,
 }
 
 impl WorktreePanel {
@@ -112,6 +115,9 @@ impl WorktreePanel {
             next_marker_check_ms: 0,
             reduced_motion,
             demolisher: hammer::Demolisher::default(),
+            stale_plan: None,
+            stale_scan: None,
+            next_stale_ms: 0,
             hammer: ctx.load_texture(
                 "worktrees/hammer",
                 hammer::render([26, 40], Outline::Fine),
@@ -148,16 +154,68 @@ impl WorktreePanel {
                 .then(|| worktrees::running_sweep(&worktrees::default_marker_path(), now_ms))
                 .flatten();
         }
-        self.poll_stage()
+        let finished = self.poll_stage();
+        if finished {
+            self.next_stale_ms = 0;
+        }
+        self.poll_stale(worktrees.is_some(), now_ms);
+        finished
+    }
+
+    pub fn stale_plan(&self) -> Option<&Plan> {
+        self.stale_plan.as_ref()
+    }
+
+    fn poll_stale(&mut self, connected: bool, now_ms: i64) {
+        if let Some(rx) = &self.stale_scan {
+            match rx.try_recv() {
+                Ok(result) => {
+                    self.stale_plan = result.ok();
+                    self.stale_scan = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.stale_plan = None;
+                    self.stale_scan = None;
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+        if !connected {
+            self.stale_plan = None;
+            return;
+        }
+        if self.stale_scan.is_none()
+            && now_ms >= self.next_stale_ms
+            && !matches!(
+                self.stage,
+                Some(Stage::Evaluating(_) | Stage::Running { .. })
+            )
+            && self.external.is_none()
+        {
+            self.next_stale_ms = now_ms + 60_000;
+            let client = self.client.clone();
+            let ctx = self.ctx.clone();
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            let _ = thread::Builder::new()
+                .name("worktree-stale".into())
+                .spawn(move || {
+                    let _ = tx.send(worktrees::evaluate_stale(&client, now_ms));
+                    ctx.request_repaint();
+                });
+            self.stale_scan = Some(rx);
+        }
     }
 
     fn poll_stage(&mut self) -> bool {
         let next = match &mut self.stage {
             Some(Stage::Evaluating(rx)) => match rx.try_recv() {
-                Ok(Ok(plan)) => Some(Stage::Review {
-                    chosen: plan.removable().map(|e| e.id.clone()).collect(),
-                    plan,
-                }),
+                Ok(Ok(plan)) => {
+                    self.stale_plan = Some(plan.clone());
+                    Some(Stage::Review {
+                        chosen: plan.removable().map(|e| e.id.clone()).collect(),
+                        plan,
+                    })
+                }
                 Ok(Err(e)) => Some(Stage::Failed(e)),
                 Err(TryRecvError::Disconnected) => {
                     Some(Stage::Failed("the evaluation stopped".into()))

@@ -1527,3 +1527,36 @@ fn archive_respects_detection_merge_proofs_and_nonempty_age_exception() {
     assert!(!decide(&f).remove);
     assert!(!decide(&f).archivable);
 }
+
+#[test]
+fn protected_worktrees_never_appear_in_the_stale_strip() {
+    let protected: Vec<fn(&mut Facts)> = vec![
+        |f| f.pinned = true,
+        |f| f.parked = true,
+        |f| f.terminals.push("terminal".into()),
+        |f| f.processes.push("process".into()),
+        |f| f.dispatches.push("dispatch".into()),
+        |f| {
+            f.pr = PrLookup::Found {
+                number: 1,
+                state: PrState::Open,
+            }
+        },
+        |f| {
+            f.age_ms = Some(1000);
+            git_mut(f).ahead = Some(0);
+        },
+    ];
+    for protect in protected {
+        let mut facts = clean();
+        protect(&mut facts);
+        let verdict = decide(&facts);
+        assert!(!verdict.remove && !verdict.archivable, "{verdict:?}");
+        git_mut(&mut facts).dirty.push(" M src/main.rs".into());
+        let verdict = decide(&facts);
+        assert!(
+            !verdict.remove && !verdict.archivable,
+            "in-use dirty work is hidden: {verdict:?}"
+        );
+    }
+}
