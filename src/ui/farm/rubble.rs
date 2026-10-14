@@ -205,7 +205,8 @@ pub fn place(scene: &Scene, sites: &[Site]) -> Rubble {
         };
     }
     // Heaps run from where the biggest silhouette clears the strip's left end.
-    let left = (start + heap_w as f32 * full / 2.0).min(right_end);
+    // Leave space for the demolition dwarf beside the first stale heap.
+    let left = (start + heap_w as f32 * full / 2.0 + 48.0 * scene.px).min(right_end);
     let fill = (room as f32 / FILL_AT as f32).min(1.0);
     let reach = left + (right_end - heap_w as f32 * full * SMALLEST / 2.0 - left).max(0.0) * fill;
     let gap = (reach - left) / room as f32;
