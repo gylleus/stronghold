@@ -2,11 +2,11 @@
 //! nothing needs any more.
 //!
 //! The cleanup is evaluate → plan → confirm → execute. [`evaluate`] gathers [`Facts`] for every
-//! linked worktree Orca lists (git state, live terminals and processes, dispatches, the PR) and
+//! linked worktree Orca or git lists (git state, live terminals and processes, dispatches, the PR) and
 //! [`decide`] turns them into a [`Verdict`]. A worktree is removed only when nothing argues for
 //! keeping it: losing unmerged work is far worse than leaving a stale worktree, so anything
 //! unknown keeps it. [`execute`] re-checks every candidate right before removing it through
-//! `orca worktree rm` (never a raw `rm`), and logs each removal to `worktree-cleanup.jsonl`.
+//! `orca worktree rm` or `git worktree remove` for unlisted entries (never forced), and logs each removal to `worktree-cleanup.jsonl`.
 //!
 //! The rules match `finish_session`'s guards and the playbook's post-merge cleanup: clean
 //! `git status`, and HEAD's work already in the base or on GitHub. That is HEAD an ancestor of
@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::orca::spawn::Worktree;
+use crate::orca::spawn::{Repo, Worktree};
 use crate::orca::{
     DispatchStatus, OrcaClient, OrcaError, Terminal, Worker, WorkerState, WorkerTerminalState,
 };
@@ -35,7 +35,7 @@ pub const LOG_FILE: &str = "worktree-cleanup.jsonl";
 /// Present next to the log while a cleanup runs, from the app or the MCP tool, so the app
 /// shows the saw whoever started it.
 pub const SWEEP_FILE: &str = "worktree-sweep.json";
-/// A worktree created this recently is kept: an agent may be about to start in it.
+/// An empty branch created this recently is kept: an agent may be about to start in it.
 pub const MIN_AGE_MS: i64 = 2 * 60 * 60 * 1000;
 /// `orca worktree rm` deletes the whole directory, which takes a while for a big one.
 pub const REMOVE_TIMEOUT: Duration = Duration::from_secs(180);
@@ -96,29 +96,131 @@ pub fn repo_name(w: &Worktree) -> &str {
     w.repo().unwrap_or("?")
 }
 
-/// Directories under the workspaces root (`<root>/<repo>/<name>`) that Orca doesn't list:
-/// left behind by a git-only remove or created outside Orca. Shown, never removed here.
+/// Directories under the workspaces root (`<root>/<repo>/<name>`) with no known worktree
+/// or git registration. Shown, never removed here. Check git too for the UI's Orca-only list.
 /// Hidden ones (Orca's `.orca-worktree-trash`) are skipped.
 pub fn orphan_dirs(root: &Path, worktrees: &[Worktree]) -> Vec<PathBuf> {
-    let known: HashSet<&Path> = worktrees.iter().map(|w| Path::new(&w.path)).collect();
+    let known: Vec<PathBuf> = worktrees
+        .iter()
+        .map(|w| canonical_path(Path::new(&w.path)))
+        .collect();
+    let registered = |path: &Path| {
+        known.iter().any(|w| canonical_path(path).starts_with(w))
+            || Command::new("git")
+                .env("GIT_NO_LAZY_FETCH", "1")
+                .arg("-C")
+                .arg(path)
+                .args(["rev-parse", "--show-toplevel"])
+                .output()
+                .is_ok_and(|o| o.status.success())
+    };
     let mut orphans = Vec::new();
     let Ok(repos) = fs::read_dir(root) else {
         return orphans;
     };
     for repo in repos.flatten().filter(|e| e.path().is_dir()) {
+        if registered(&repo.path()) {
+            continue;
+        }
         let Ok(entries) = fs::read_dir(repo.path()) else {
             continue;
         };
         for entry in entries.flatten() {
             let path = entry.path();
             let hidden = entry.file_name().to_string_lossy().starts_with('.');
-            if path.is_dir() && !hidden && !known.contains(path.as_path()) {
+            if path.is_dir() && !hidden && !registered(&path) {
                 orphans.push(path);
             }
         }
     }
     orphans.sort();
     orphans
+}
+
+fn canonical_path(path: &Path) -> PathBuf {
+    path.canonicalize()
+        .unwrap_or_else(|_| match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => canonical_path(parent).join(name),
+            _ => path.to_path_buf(),
+        })
+}
+
+/// Git's NUL-delimited porcelain keeps spaces, quotes and newlines in paths unambiguous.
+/// The first record is the main checkout (or bare repo), even if Orca imported a linked one.
+fn registered_worktrees(repo: &Repo) -> Result<Vec<Worktree>, String> {
+    let out = Command::new("git")
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .arg("-C")
+        .arg(&repo.path)
+        .args(["worktree", "list", "--porcelain", "-z"])
+        .output()
+        .map_err(|e| format!("git worktrees for {}: {e}", repo.name()))?;
+    if !out.status.success() {
+        return Err(format!(
+            "git worktrees for {}: {}",
+            repo.name(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let text = std::str::from_utf8(&out.stdout).map_err(|e| format!("git worktree paths: {e}"))?;
+    let mut worktrees = Vec::new();
+    for record in text.split("\0\0").filter(|r| !r.is_empty()) {
+        let fields: Vec<_> = record.split('\0').collect();
+        let path = fields
+            .first()
+            .and_then(|s| s.strip_prefix("worktree "))
+            .ok_or_else(|| "unreadable git worktree record".to_owned())?;
+        let created_at = fs::metadata(path)
+            .ok()
+            .and_then(|m| m.created().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .and_then(|d| i64::try_from(d.as_millis()).ok());
+        worktrees.push(Worktree {
+            id: format!("git:{path}"),
+            repo_id: Some(repo.id.clone()),
+            path: path.to_owned(),
+            display_name: Path::new(path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned()),
+            branch: fields
+                .iter()
+                .find_map(|s| s.strip_prefix("branch "))
+                .map(str::to_owned),
+            is_main_worktree: worktrees.is_empty(),
+            is_pinned: fields
+                .iter()
+                .any(|s| *s == "locked" || s.starts_with("locked ")),
+            base_ref: Some("origin/main".into()),
+            created_at,
+            ..Worktree::default()
+        });
+    }
+    if worktrees.is_empty() {
+        return Err(format!("git listed no worktrees for {}", repo.name()));
+    }
+    Ok(worktrees)
+}
+
+/// Preserve Orca's metadata and add every git registration absent from its list. Failure to
+/// enumerate a git repo aborts the census rather than silently dropping unknown worktrees.
+fn all_worktrees(listed: &[Worktree], repos: &[Repo]) -> Result<Vec<Worktree>, String> {
+    let mut all = listed.to_vec();
+    for repo in repos.iter().filter(|r| r.kind.as_deref() != Some("folder")) {
+        for w in registered_worktrees(repo)? {
+            let path = canonical_path(Path::new(&w.path));
+            if let Some(existing) = all
+                .iter_mut()
+                .find(|e| canonical_path(Path::new(&e.path)) == path)
+            {
+                existing.branch = w.branch;
+                existing.is_main_worktree |= w.is_main_worktree;
+                existing.is_pinned |= w.is_pinned;
+            } else {
+                all.push(w);
+            }
+        }
+    }
+    Ok(all)
 }
 
 /// `~/orca/workspaces`, where Orca creates worktrees.
@@ -295,6 +397,8 @@ pub struct GitFacts {
     /// A merged PR whose head commit is HEAD or has HEAD in its history, so GitHub keeps every
     /// commit (`refs/pull/<n>/head`) even after the branch is deleted.
     pub merged_pr_head: Option<u64>,
+    /// A matching merged PR whose head tree already contains all of HEAD's changes.
+    pub content_in_merged_pr: Option<u64>,
 }
 
 /// Everything [`decide`] looks at for one worktree.
@@ -363,6 +467,12 @@ pub fn decide(facts: &Facts) -> Verdict {
     }
     if let Some(age) = facts.age_ms
         && age < MIN_AGE_MS
+        && facts
+            .git
+            .as_ref()
+            .ok()
+            .and_then(|g| g.ahead)
+            .is_none_or(|n| n == 0)
     {
         keep.push(format!("created {} min ago", (age / 60_000).max(0)));
     }
@@ -430,6 +540,10 @@ pub fn decide(facts: &Facts) -> Verdict {
         Some(format!("its changes are already in {base} (squash-merged)"))
     } else if let Some(number) = git.merged_pr_head {
         Some(format!("HEAD is in merged PR #{number}'s head"))
+    } else if let Some(number) = git.content_in_merged_pr {
+        Some(format!(
+            "its changes are in merged PR #{number}'s head (squash-merged)"
+        ))
     } else {
         let ahead = match git.ahead {
             Some(n) => format!("{n} commit{}", plural(n as usize)),
@@ -640,23 +754,71 @@ pub fn parse_lsof_cwd(text: &str) -> Vec<ProcessCwd> {
 /// The processes working inside `dir`, as `command (pid)`, excluding `own_pid`. Only the
 /// working directory counts: a process elsewhere whose command line merely mentions the path
 /// (an orphaned watch loop from a dead session) doesn't hold the worktree.
-pub fn processes_inside(dir: &Path, processes: &[ProcessCwd], own_pid: u32) -> Vec<String> {
+pub fn processes_inside(
+    dir: &Path,
+    processes: &[ProcessCwd],
+    own_pid: u32,
+    daemon_pids: &HashSet<u32>,
+    has_terminal: bool,
+) -> Vec<String> {
+    let dir = canonical_path(dir);
     processes
         .iter()
-        .filter(|p| p.pid != own_pid && p.cwd.starts_with(dir))
+        .filter(|p| p.pid != own_pid && canonical_path(&p.cwd).starts_with(&dir))
+        .filter(|p| has_terminal || !daemon_pids.contains(&p.pid))
         .map(|p| format!("{} ({})", p.command, p.pid))
         .collect()
 }
 
+/// PID and parent links from one full `ps` snapshot, including ancestors outside worktrees.
+fn codex_daemon_pids(ps: &str) -> HashSet<u32> {
+    let mut parents = HashMap::new();
+    let mut daemons = HashSet::new();
+    for line in ps.lines() {
+        let Some((pid, rest)) = line.trim().split_once(char::is_whitespace) else {
+            continue;
+        };
+        let Some((ppid, args)) = rest.trim_start().split_once(char::is_whitespace) else {
+            continue;
+        };
+        let (Ok(pid), Ok(ppid)) = (pid.parse::<u32>(), ppid.parse::<u32>()) else {
+            continue;
+        };
+        parents.insert(pid, ppid);
+        let mut words = args.split_whitespace();
+        let executable = words.next().unwrap_or_default();
+        if executable.contains("app-server-daemon")
+            || (Path::new(executable).file_name() == Some("codex".as_ref())
+                && words.next() == Some("app-server"))
+        {
+            daemons.insert(pid);
+        }
+    }
+    // Missing ancestors and cycles cannot establish daemon ancestry, so they remain active.
+    loop {
+        let descendants: Vec<_> = parents
+            .iter()
+            .filter(|(pid, parent)| !daemons.contains(pid) && daemons.contains(parent))
+            .map(|(pid, _)| *pid)
+            .collect();
+        if descendants.is_empty() {
+            break;
+        }
+        daemons.extend(descendants);
+    }
+    daemons
+}
+
 /// The Orca terminals open in a worktree, by title (else handle).
 pub fn terminals_in(w: &Worktree, terminals: &[Terminal]) -> Vec<String> {
+    let dir = canonical_path(Path::new(&w.path));
     terminals
         .iter()
         .filter(|t| {
             t.worktree_id.as_deref() == Some(w.id.as_str())
                 || t.worktree_path
                     .as_deref()
-                    .is_some_and(|p| Path::new(p).starts_with(&w.path))
+                    .is_some_and(|p| canonical_path(Path::new(p)).starts_with(&dir))
         })
         .map(|t| {
             t.title
@@ -671,10 +833,19 @@ pub fn terminals_in(w: &Worktree, terminals: &[Terminal]) -> Vec<String> {
 
 /// The live dispatches whose worker resource is this worktree.
 pub fn dispatches_in(w: &Worktree, workers: &[Worker]) -> Vec<String> {
+    let path = canonical_path(Path::new(&w.path));
     workers
         .iter()
         .filter(|d| {
-            d.resource.as_ref().and_then(|r| r.worktree_id.as_deref()) == Some(w.id.as_str())
+            d.resource
+                .as_ref()
+                .and_then(|r| r.worktree_id.as_deref())
+                .is_some_and(|id| {
+                    id == w.id
+                        || id
+                            .split_once("::")
+                            .is_some_and(|(_, p)| canonical_path(Path::new(p)) == path)
+                })
         })
         .filter(|d| worker_is_live(d))
         .map(|d| d.dispatch_id.clone())
@@ -691,6 +862,70 @@ pub struct PrRow {
     pub head_ref_name: String,
     #[serde(default)]
     pub head_ref_oid: String,
+}
+
+fn pr_branches<'a>(w: &'a Worktree, branch: Option<&'a str>) -> Vec<&'a str> {
+    let mut heads: Vec<_> = w
+        .push_target
+        .as_ref()
+        .and_then(|t| t.branch_name.as_deref())
+        .into_iter()
+        .chain(branch)
+        .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b))
+        .collect();
+    heads.sort_unstable();
+    heads.dedup();
+    heads
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum PrQuery {
+    Number(u64),
+    Head(String),
+}
+
+/// Fill holes in the bounded bulk list before evaluating any worktree. Cache targeted
+/// results (including failures), deduplicate by PR number, and retain per-worktree failures.
+fn complete_prs(
+    rows: &mut Vec<PrRow>,
+    worktrees: &[&Worktree],
+    mut fetch: impl FnMut(&PrQuery) -> Result<Vec<PrRow>, String>,
+) -> HashMap<String, String> {
+    let mut errors = HashMap::new();
+    let mut queried = HashMap::new();
+    for w in worktrees {
+        let mut queries = Vec::new();
+        if let Some(number) = w.linked_pr_number()
+            && !rows.iter().any(|p| p.number == number)
+        {
+            queries.push(PrQuery::Number(number));
+        }
+        for head in pr_branches(w, w.branch_name()) {
+            if !rows.iter().any(|p| p.head_ref_name == head) {
+                queries.push(PrQuery::Head(head.to_owned()));
+            }
+        }
+        for query in queries {
+            let result = queried
+                .entry(query.clone())
+                .or_insert_with(|| fetch(&query));
+            match result {
+                Ok(found) => {
+                    for row in found {
+                        if let Some(existing) = rows.iter_mut().find(|p| p.number == row.number) {
+                            *existing = row.clone();
+                        } else {
+                            rows.push(row.clone());
+                        }
+                    }
+                }
+                Err(e) => {
+                    errors.insert(w.id.clone(), e.clone());
+                }
+            }
+        }
+    }
+    errors
 }
 
 /// The PR for a worktree: its linked PR when Orca knows one, else the PRs whose head is the
@@ -714,13 +949,7 @@ pub fn pr_for(w: &Worktree, branch: Option<&str>, prs: &Result<Vec<PrRow>, Strin
             .map(found)
             .unwrap_or_else(|| PrLookup::Unknown(format!("linked PR #{number} not found")));
     }
-    let heads: Vec<&str> = w
-        .push_target
-        .as_ref()
-        .and_then(|t| t.branch_name.as_deref())
-        .into_iter()
-        .chain(branch)
-        .collect();
+    let heads = pr_branches(w, branch);
     let mut matching: Vec<&PrRow> = prs
         .iter()
         .filter(|p| heads.contains(&p.head_ref_name.as_str()))
@@ -742,8 +971,11 @@ pub fn pr_for(w: &Worktree, branch: Option<&str>, prs: &Result<Vec<PrRow>, Strin
 /// One linked worktree in the plan.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlanEntry {
-    /// Orca's `<repoId>::<path>`.
+    /// Orca's `<repoId>::<path>`, or `git:<path>` for an unlisted registration.
     pub id: String,
+    /// Registered with git but absent from Orca; removed through git, keeping its branch.
+    #[serde(default)]
+    pub unlisted: bool,
     pub name: String,
     pub repo: String,
     pub path: String,
@@ -827,9 +1059,10 @@ impl Plan {
             out.push("Remove:".into());
             for e in &removable {
                 out.push(format!(
-                    "- {}/{} ({}): {}",
+                    "- {}/{}{} ({}): {}",
                     e.repo,
                     e.name,
+                    if e.unlisted { " [unlisted]" } else { "" },
                     e.bytes.map_or("size ?".into(), format_bytes),
                     e.verdict.reasons.join("; ")
                 ));
@@ -846,9 +1079,10 @@ impl Plan {
             for e in kept {
                 let size = e.size_text();
                 out.push(format!(
-                    "- {}/{}{}: {}",
+                    "- {}/{}{}{}: {}",
                     e.repo,
                     e.name,
+                    if e.unlisted { " [unlisted]" } else { "" },
                     if size.is_empty() {
                         String::new()
                     } else {
@@ -860,7 +1094,7 @@ impl Plan {
         }
         if !self.orphans.is_empty() {
             out.push(format!(
-                "Directories Orca doesn't list (not touched): {}",
+                "Directories without git registration (not touched): {}",
                 self.orphans.join(", ")
             ));
         }
@@ -876,10 +1110,13 @@ struct Context {
     terminals: Vec<Terminal>,
     workers: Vec<Worker>,
     processes: Vec<ProcessCwd>,
+    daemon_pids: HashSet<u32>,
     /// Worktree paths of parked agents.
     parked: BTreeSet<String>,
     /// PRs per repo id.
     prs: HashMap<String, Result<Vec<PrRow>, String>>,
+    /// A targeted lookup failure belongs to that worktree, not every worktree in its repo.
+    pr_errors: HashMap<String, String>,
     now_ms: i64,
 }
 
@@ -895,12 +1132,23 @@ impl Context {
             .map_err(|e| format!("worker list: {e}"))?
             .workers;
         let processes = process_cwds()?;
+        let ps = Command::new("ps")
+            .args(["-axo", "pid=,ppid=,args="])
+            .output();
+        // If ps is unavailable, ignore no processes: the cwd list still keeps them safe.
+        let daemon_pids = ps
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| codex_daemon_pids(&String::from_utf8_lossy(&o.stdout)))
+            .unwrap_or_default();
         Ok(Self {
             terminals,
             workers,
             processes,
+            daemon_pids,
             parked: crate::park::parked_worktrees(&crate::park::Parking::default_path()),
             prs: HashMap::new(),
+            pr_errors: HashMap::new(),
             now_ms,
         })
     }
@@ -919,18 +1167,41 @@ impl Context {
             && g.merged_into.is_none()
         {
             g.merged_pr_head = merged_pr_containing(path, &g.head, rows);
+            if g.merged_pr_head.is_none() {
+                g.content_in_merged_pr =
+                    merged_pr_with_content(path, &g.head, w, g.branch.as_deref(), rows);
+            }
         }
         let branch = git.as_ref().ok().and_then(|g| g.branch.clone());
+        let pr = if git.is_ok() && branch.as_deref() != w.branch_name() {
+            PrLookup::Unknown("branch changed during evaluation".into())
+        } else {
+            self.pr_errors.get(&w.id).map_or_else(
+                || pr_for(w, branch.as_deref(), prs),
+                |e| PrLookup::Unknown(e.clone()),
+            )
+        };
+        let terminals = terminals_in(w, &self.terminals);
+        let processes = processes_inside(
+            path,
+            &self.processes,
+            std::process::id(),
+            &self.daemon_pids,
+            !terminals.is_empty(),
+        );
         Facts {
             is_main: w.is_main_worktree,
             pinned: w.is_pinned,
-            parked: self.parked.contains(w.path.trim_end_matches('/')),
+            parked: self
+                .parked
+                .iter()
+                .any(|p| canonical_path(Path::new(p)) == canonical_path(path)),
             exists,
             age_ms: w.created_at.map(|c| self.now_ms - c),
-            terminals: terminals_in(w, &self.terminals),
-            processes: processes_inside(path, &self.processes, std::process::id()),
+            terminals,
+            processes,
             dispatches: dispatches_in(w, &self.workers),
-            pr: pr_for(w, branch.as_deref(), prs),
+            pr,
             git,
         }
     }
@@ -979,6 +1250,62 @@ fn repo_prs(repo_path: &Path) -> Result<Vec<PrRow>, String> {
     serde_json::from_slice(&out.stdout).map_err(|e| format!("gh pr list: {e}"))
 }
 
+fn targeted_prs(repo_path: &Path, query: &PrQuery) -> Result<Vec<PrRow>, String> {
+    let mut cmd = Command::new(gh_binary());
+    cmd.current_dir(repo_path).arg("pr");
+    match query {
+        PrQuery::Number(n) => {
+            cmd.args(["view", &n.to_string()]);
+        }
+        PrQuery::Head(branch) => {
+            cmd.args([
+                "list",
+                "--head",
+                branch,
+                "--state",
+                "all",
+                "--limit",
+                &PR_LIST_LIMIT.to_string(),
+            ]);
+        }
+    }
+    let out = cmd
+        .args(["--json", "number,state,headRefName,headRefOid"])
+        .output()
+        .map_err(|e| format!("gh {query:?}: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "gh {query:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .next()
+                .unwrap_or("failed")
+        ));
+    }
+    match query {
+        PrQuery::Number(_) => serde_json::from_slice::<PrRow>(&out.stdout).map(|p| vec![p]),
+        PrQuery::Head(_) => serde_json::from_slice(&out.stdout),
+    }
+    .map_err(|e| format!("gh {query:?}: {e}"))
+}
+
+fn worktree_prs(
+    repo: Option<&Repo>,
+    worktrees: &[&Worktree],
+) -> (Result<Vec<PrRow>, String>, HashMap<String, String>) {
+    let mut prs = repo.map_or_else(
+        || Err("repo not in Orca's repo list".to_owned()),
+        |r| repo_prs(Path::new(&r.path)),
+    );
+    let errors = match (&mut prs, repo) {
+        (Ok(rows), Some(repo)) => {
+            complete_prs(rows, worktrees, |q| targeted_prs(Path::new(&repo.path), q))
+        }
+        _ => HashMap::new(),
+    };
+    (prs, errors)
+}
+
 /// `gh` from `PATH`, else Homebrew's (apps launched from Finder lack the shell `PATH`).
 fn gh_binary() -> PathBuf {
     for dir in ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"] {
@@ -993,6 +1320,7 @@ fn gh_binary() -> PathBuf {
 pub fn git_facts(dir: &Path, base_ref: Option<&str>) -> Result<GitFacts, String> {
     let git = |args: &[&str]| -> Result<(bool, String), String> {
         let out = Command::new("git")
+            .env("GIT_NO_LAZY_FETCH", "1")
             .arg("-C")
             .arg(dir)
             .args(args)
@@ -1077,6 +1405,7 @@ pub fn git_facts(dir: &Path, base_ref: Option<&str>) -> Result<GitFacts, String>
         patches_in,
         content_in,
         merged_pr_head: None,
+        content_in_merged_pr: None,
         head,
     })
 }
@@ -1109,6 +1438,7 @@ pub fn merged_pr_containing(dir: &Path, head: &str, prs: &[PrRow]) -> Option<u64
     }
     // One walk: nothing left of HEAD once every merged head is excluded means some head has it.
     let out = Command::new("git")
+        .env("GIT_NO_LAZY_FETCH", "1")
         .arg("-C")
         .arg(dir)
         .args(["rev-list", "--count", head, "--not"])
@@ -1120,12 +1450,59 @@ pub fn merged_pr_containing(dir: &Path, head: &str, prs: &[PrRow]) -> Option<u64
     }
     merged.into_iter().find_map(|p| {
         Command::new("git")
+            .env("GIT_NO_LAZY_FETCH", "1")
             .arg("-C")
             .arg(dir)
             .args(["merge-base", "--is-ancestor", head, &p.head_ref_oid])
             .status()
             .is_ok_and(|s| s.success())
             .then_some(p.number)
+    })
+}
+
+/// Squash containment is only evidence for this worktree's own merged PRs, and only when
+/// their head objects are already local. A conflict or failed git command proves nothing.
+fn merged_pr_with_content(
+    dir: &Path,
+    head: &str,
+    w: &Worktree,
+    branch: Option<&str>,
+    prs: &[PrRow],
+) -> Option<u64> {
+    let heads = pr_branches(w, branch);
+    let mut matching: Vec<_> = prs
+        .iter()
+        .filter(|p| PrState::parse(&p.state) == Some(PrState::Merged))
+        .filter(|p| is_oid(&p.head_ref_oid))
+        .filter(|p| {
+            w.linked_pr_number() == Some(p.number) || heads.contains(&p.head_ref_name.as_str())
+        })
+        .collect();
+    matching.sort_by_key(|p| std::cmp::Reverse(p.number));
+    let present = present_commits(dir, matching.iter().map(|p| p.head_ref_oid.as_str()));
+    matching.into_iter().find_map(|p| {
+        if !present.contains(&p.head_ref_oid) {
+            return None;
+        }
+        let merged = Command::new("git")
+            .env("GIT_NO_LAZY_FETCH", "1")
+            .arg("-C")
+            .arg(dir)
+            .args(["merge-tree", "--write-tree", &p.head_ref_oid, head])
+            .output()
+            .ok()?;
+        let tree = Command::new("git")
+            .env("GIT_NO_LAZY_FETCH", "1")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", &format!("{}^{{tree}}", p.head_ref_oid)])
+            .output()
+            .ok()?;
+        (merged.status.success()
+            && tree.status.success()
+            && String::from_utf8_lossy(&merged.stdout).lines().next()
+                == Some(String::from_utf8_lossy(&tree.stdout).trim()))
+        .then_some(p.number)
     })
 }
 
@@ -1137,6 +1514,7 @@ fn is_oid(s: &str) -> bool {
 fn present_commits<'a>(dir: &Path, oids: impl Iterator<Item = &'a str>) -> HashSet<String> {
     let input: String = oids.map(|o| format!("{o}\n")).collect();
     let child = Command::new("git")
+        .env("GIT_NO_LAZY_FETCH", "1")
         .arg("-C")
         .arg(dir)
         .args(["cat-file", "--batch-check"])
@@ -1192,7 +1570,7 @@ pub fn base_branches(base_ref: Option<&str>, exists: impl Fn(&str) -> bool) -> V
     bases
 }
 
-/// Evaluates every linked worktree Orca lists. Every worktree is measured with its build
+/// Evaluates every linked worktree Orca or git lists. Every worktree is measured with its build
 /// output; `sizes` are known disk usages by path, used where measuring fails.
 pub fn evaluate(
     client: &OrcaClient,
@@ -1206,29 +1584,32 @@ pub fn evaluate(
         return Err("Orca's worktree list was truncated".into());
     }
     let repos = client.repo_list().map_err(|e| format!("repo list: {e}"))?;
+    let worktrees = all_worktrees(&list.worktrees, &repos)?;
     let mut ctx = Context::fetch(client, now_ms)?;
-    let linked: Vec<&Worktree> = list
-        .worktrees
-        .iter()
-        .filter(|w| !w.is_main_worktree)
-        .collect();
+    let linked: Vec<&Worktree> = worktrees.iter().filter(|w| !w.is_main_worktree).collect();
     let repo_ids: HashSet<&str> = linked.iter().filter_map(|w| w.repo()).collect();
-    ctx.prs = std::thread::scope(|s| {
+    let fetched: Vec<_> = std::thread::scope(|s| {
         let handles: Vec<_> = repo_ids
             .into_iter()
             .map(|id| {
                 let repo = repos.iter().find(|r| r.id == id);
+                let worktrees: Vec<_> = linked
+                    .iter()
+                    .copied()
+                    .filter(|w| w.repo() == Some(id))
+                    .collect();
                 s.spawn(move || {
-                    let prs = match repo {
-                        Some(r) => repo_prs(Path::new(&r.path)),
-                        None => Err("repo not in Orca's repo list".to_owned()),
-                    };
-                    (id.to_owned(), prs)
+                    let (prs, errors) = worktree_prs(repo, &worktrees);
+                    (id.to_owned(), prs, errors)
                 })
             })
             .collect();
         handles.into_iter().filter_map(|h| h.join().ok()).collect()
     });
+    for (id, prs, errors) in fetched {
+        ctx.prs.insert(id, prs);
+        ctx.pr_errors.extend(errors);
+    }
     let mut entries = Vec::new();
     for chunk in linked.chunks(PARALLEL) {
         let ctx = &ctx;
@@ -1244,6 +1625,12 @@ pub fn evaluate(
     let paths: Vec<PathBuf> = entries.iter().map(|e| PathBuf::from(&e.path)).collect();
     let measured = disk_breakdowns(&paths);
     for e in &mut entries {
+        if e.unlisted
+            && let Some(w) = worktrees.iter().find(|w| w.id == e.id)
+            && let Some(repo) = repos.iter().find(|r| Some(r.id.as_str()) == w.repo())
+        {
+            e.repo = repo.name().to_owned();
+        }
         let path = PathBuf::from(&e.path);
         match measured.get(&path) {
             Some(m) => {
@@ -1261,7 +1648,7 @@ pub fn evaluate(
             .then_with(|| a.name.cmp(&b.name))
     });
     let orphans = workspaces_root()
-        .map(|root| orphan_dirs(&root, &list.worktrees))
+        .map(|root| orphan_dirs(&root, &worktrees))
         .unwrap_or_default()
         .into_iter()
         .map(|p| p.display().to_string())
@@ -1293,6 +1680,7 @@ fn disk_breakdowns(paths: &[PathBuf]) -> HashMap<PathBuf, DiskBreakdown> {
 fn plan_entry(w: &Worktree, facts: &Facts) -> PlanEntry {
     PlanEntry {
         id: w.id.clone(),
+        unlisted: w.id.starts_with("git:"),
         name: w.name().to_owned(),
         repo: repo_name(w).to_owned(),
         path: w.path.clone(),
@@ -1351,6 +1739,62 @@ pub fn worktree_rm_args(id: &str) -> Vec<String> {
     ]
 }
 
+fn git_worktree_rm_args(repo: &Repo, path: &str) -> Vec<String> {
+    ["-C", &repo.path, "worktree", "remove", "--", path]
+        .map(str::to_owned)
+        .to_vec()
+}
+
+fn remove_unlisted(repo: &Repo, path: &str) -> Outcome {
+    match Command::new("git")
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .args(git_worktree_rm_args(repo, path))
+        .output()
+    {
+        Ok(out) if out.status.success() => Outcome::Removed,
+        Ok(out) => Outcome::Failed {
+            error: format!(
+                "git worktree remove: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+        },
+        Err(e) => Outcome::Failed {
+            error: format!("git worktree remove: {e}"),
+        },
+    }
+}
+
+/// A fresh census, PR lookup and activity snapshot for each removal, including unlisted
+/// registrations. Never trust a caller-supplied path, origin flag or an earlier candidate's
+/// terminal/process snapshot when deciding how to remove the next one.
+fn recheck(
+    client: &OrcaClient,
+    entry: &PlanEntry,
+    now_ms: i64,
+) -> Result<(Worktree, Option<Repo>, Verdict), String> {
+    let list = client
+        .worktree_list()
+        .map_err(|e| format!("worktree list: {e}"))?;
+    if list.truncated {
+        return Err("Orca's worktree list was truncated".into());
+    }
+    let repos = client.repo_list().map_err(|e| format!("repo list: {e}"))?;
+    let worktrees = all_worktrees(&list.worktrees, &repos)?;
+    let w = worktrees
+        .into_iter()
+        .find(|w| w.id == entry.id && w.path == entry.path)
+        .ok_or_else(|| "no longer in the worktree census".to_owned())?;
+    let repo = repos.into_iter().find(|r| Some(r.id.as_str()) == w.repo());
+    let (prs, errors) = worktree_prs(repo.as_ref(), &[&w]);
+    let mut ctx = Context::fetch(client, now_ms)?;
+    if let Some(id) = w.repo() {
+        ctx.prs.insert(id.to_owned(), prs);
+    }
+    ctx.pr_errors = errors;
+    let verdict = decide(&ctx.facts(&w));
+    Ok((w, repo, verdict))
+}
+
 /// Removes the plan's removable worktrees, re-checking each first, and logs every attempt to
 /// `log`. `progress` is told after each one.
 pub fn execute(
@@ -1360,11 +1804,6 @@ pub fn execute(
     now_ms: impl Fn() -> i64,
     mut progress: impl FnMut(&Removal),
 ) -> Result<Vec<Removal>, String> {
-    let list = client
-        .worktree_list()
-        .map_err(|e| format!("worktree list: {e}"))?;
-    let repos = client.repo_list().map_err(|e| format!("repo list: {e}"))?;
-    let mut ctx = Context::fetch(client, now_ms())?;
     let remover = client.clone().timeout(REMOVE_TIMEOUT);
     let marker = log.with_file_name(SWEEP_FILE);
     let total = plan.removable().count();
@@ -1393,21 +1832,11 @@ pub fn execute(
             outcome: Outcome::Removed,
             at_ms: 0,
         };
-        removal.outcome = match list.worktrees.iter().find(|w| w.id == entry.id) {
-            None => Outcome::Skipped {
-                reasons: vec!["no longer in Orca's list".into()],
+        removal.outcome = match recheck(client, entry, now_ms()) {
+            Err(reason) => Outcome::Skipped {
+                reasons: vec![reason],
             },
-            Some(w) => {
-                if let Some(repo_id) = w.repo()
-                    && !ctx.prs.contains_key(repo_id)
-                {
-                    let prs = match repos.iter().find(|r| r.id == repo_id) {
-                        Some(r) => repo_prs(Path::new(&r.path)),
-                        None => Err("repo not in Orca's repo list".to_owned()),
-                    };
-                    ctx.prs.insert(repo_id.to_owned(), prs);
-                }
-                let verdict = decide(&ctx.facts(w));
+            Ok((w, repo, verdict)) => {
                 let tidied = if !verdict.remove {
                     Err(Outcome::Skipped {
                         reasons: verdict.reasons,
@@ -1440,6 +1869,12 @@ pub fn execute(
                 };
                 match tidied {
                     Err(outcome) => outcome,
+                    Ok(()) if w.id.starts_with("git:") => match repo.as_ref() {
+                        Some(repo) => remove_unlisted(repo, &w.path),
+                        None => Outcome::Failed {
+                            error: "repo no longer listed".into(),
+                        },
+                    },
                     Ok(()) => match remover.call_value(&worktree_rm_args(&w.id)) {
                         Ok(_) => Outcome::Removed,
                         Err(e) => Outcome::Failed {

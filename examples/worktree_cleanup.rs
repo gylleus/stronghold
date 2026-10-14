@@ -16,6 +16,7 @@ const GB: u64 = 1024 * 1024 * 1024;
 
 fn entry(repo: &str, name: &str, bytes: Option<u64>, remove: bool, reason: &str) -> PlanEntry {
     PlanEntry {
+        unlisted: false,
         id: format!("{repo}::{name}"),
         name: name.into(),
         repo: repo.into(),
