@@ -1159,6 +1159,7 @@ impl eframe::App for StrongholdApp {
                 now,
             );
             snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_status());
+            snapshot.mark_lorekeeper(self.lorekeeper.session.handle());
             self.asks.prune(data, self.claude_data.as_ref());
             snapshot.mark_waiting(&self.asks.waiting(data, self.claude_data.as_ref()));
             self.finished.prune(now, crate::model::RELEASED_FADE_MS);

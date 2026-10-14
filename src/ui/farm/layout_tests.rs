@@ -2170,3 +2170,39 @@ fn uneven_workspaces_never_share_an_excavated_row() {
         assert_eq!(scene.beds.iter().filter(|b| b.sleeper.is_some()).count(), 1);
     }
 }
+
+#[test]
+fn lorekeeper_reads_in_ink_robes_and_can_rest() {
+    use crate::ui::dwarf::{Action, Garment, Role, Tool};
+    let mut s = snapshot();
+    let mut librarian = node("lorekeeper", NodeKind::Lorekeeper, None, NodeState::Working);
+    librarian.agent = Some(crate::orca::AgentIdentity::Claude);
+    s.nodes.push(librarian);
+    let active = scene(&s);
+    let reader = dwarf(&active, "lorekeeper");
+    assert_eq!(reader.pose, Pose::Stand);
+    assert_eq!(
+        super::dwarf_action(reader, false, false, false),
+        Action::Read
+    );
+    let look = super::dwarf_look(reader);
+    assert_eq!(
+        (look.role, look.garment, look.tool),
+        (Role::Librarian, Garment::Robe, Tool::Book)
+    );
+    assert_eq!(
+        look.tunic,
+        crate::ui::dwarf::Look::for_role(Role::Librarian, 0).tunic
+    );
+    assert_eq!(
+        home(NodeKind::Lorekeeper, NodeState::NeedsInput, false),
+        Home::Landing
+    );
+    s.nodes.last_mut().unwrap().parked_at_ms = Some(1);
+    let parked = scene(&s);
+    assert_eq!(dwarf(&parked, "lorekeeper").pose, Pose::Sleep);
+    assert_eq!(
+        super::dwarf_action(dwarf(&parked, "lorekeeper"), false, false, false),
+        Action::Sleep
+    );
+}
