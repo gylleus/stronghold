@@ -18,6 +18,7 @@ pub mod envoy;
 pub mod finish;
 pub mod health;
 pub mod hotkey;
+pub mod ledger;
 pub mod legacy;
 pub mod logfile;
 pub mod mcp;

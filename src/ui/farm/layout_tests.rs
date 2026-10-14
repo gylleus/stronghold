@@ -723,6 +723,80 @@ fn a_resize_moves_dwarves_without_walking() {
     );
 }
 
+/// Hovering the Ledger's chamber shows its count and newest entries.
+#[test]
+fn hovering_the_ledger_chamber_lists_its_newest_entries() {
+    use eframe::egui::{self, Event};
+    let s = snapshot();
+    let mut clan = crate::ui::clan_view::ClanView::new();
+    clan.sync(&s);
+    let mut farm = FarmView::new();
+    farm.set_ledger(crate::ledger::Shelf {
+        count: 2,
+        newest: vec![crate::ledger::Entry {
+            title: "Setup gotchas".into(),
+            folder: "stronghold".into(),
+            kind: Some("finding".into()),
+            modified_ms: 0,
+        }],
+    });
+    let ctx = egui::Context::default();
+    let mut time = 0.0;
+    let mut frame = |events: Vec<Event>, farm: &mut FarmView| {
+        time += 0.25;
+        let input = egui::RawInput {
+            screen_rect: Some(RECT),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        let mut rect = Rect::NOTHING;
+        let mut output = ctx.run_ui(input, |ui| {
+            rect = ui.available_rect_before_wrap();
+            farm.show(ui, &s, &mut clan);
+        });
+        output.textures_delta.clear();
+        (rect, output)
+    };
+    let texts = |output: &egui::FullOutput| {
+        fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        output.shapes.iter().for_each(|c| walk(&c.shape, &mut out));
+        out
+    };
+    let (rect, output) = frame(vec![], &mut farm);
+    assert!(texts(&output).iter().any(|t| t == "LEDGER · 2"));
+    let pr_ready = HashSet::new();
+    let hidden = BTreeSet::new();
+    let input = FarmInput {
+        snapshot: &s,
+        hidden: &hidden,
+        pr_ready: &pr_ready,
+        building: &HashSet::new(),
+        now_ms: 0,
+    };
+    let room = layout(&input, rect).ledger.unwrap();
+    frame(vec![Event::PointerMoved(room.center())], &mut farm);
+    let mut shown = Vec::new();
+    for _ in 0..6 {
+        shown = texts(&frame(vec![], &mut farm).1);
+    }
+    let tooltip = shown
+        .iter()
+        .find(|t| t.starts_with("The Ledger:"))
+        .expect("the chamber's tooltip");
+    assert!(
+        tooltip
+            .starts_with("The Ledger: 2 entries\nNewest:\n• Setup gotchas (stronghold, finding, ")
+    );
+}
+
 /// Clicking a dwarf reports it, as clicking a node does in the clan; clicking soil reports
 /// an empty click.
 #[test]

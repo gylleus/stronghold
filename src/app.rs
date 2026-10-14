@@ -140,6 +140,8 @@ pub struct StrongholdApp {
     cleanup_in_farm: bool,
     /// Who fetched which playbook version, re-read off the UI thread.
     playbook_watch: playbook::PlaybookWatch,
+    /// What the Ledger's folder holds, for its chamber in the hold.
+    ledger: crate::ledger::ShelfWatch,
     /// The King's chat, drawn in the conversation column.
     chat: chat::AppChat,
     /// Manual whips in flight, their confirmation popover and result toast.
@@ -247,6 +249,10 @@ impl StrongholdApp {
             worktrees: ui::worktrees::WorktreePanel::new(ctx),
             cleanup_in_farm: false,
             playbook_watch: playbook::PlaybookWatch::spawn(repaint_once(ctx)),
+            ledger: crate::ledger::ShelfWatch::spawn(
+                crate::ledger::default_dir(),
+                repaint_once(ctx),
+            ),
             chat,
             whip_now: whip_now::WhipNowState::default(),
             spawn: spawn::AppSpawn::start(ctx),

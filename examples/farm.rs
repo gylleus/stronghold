@@ -24,6 +24,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
+use stronghold::ledger::{Entry, Shelf};
 use stronghold::model::{
     ClanSnapshot, Edge, EdgeKind, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
 };
@@ -372,6 +373,7 @@ impl eframe::App for Demo {
                 ReceiptCue::at(Some(0), elapsed, self.reduced_motion)
             });
         self.farm.set_envoy_receipt(receipt);
+        self.farm.set_ledger(demo_ledger());
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
@@ -712,4 +714,40 @@ fn clan() -> ClanSnapshot {
         });
     }
     s
+}
+
+/// A Ledger of a dozen entries, for the chamber's sign and hover text.
+fn demo_ledger() -> Shelf {
+    let entry = |title: &str, folder: &str, kind: &str, age_min: i64| Entry {
+        title: title.into(),
+        folder: folder.into(),
+        kind: Some(kind.into()),
+        modified_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as i64)
+            - age_min * 60_000,
+    };
+    Shelf {
+        count: 12,
+        newest: vec![
+            entry(
+                "Reranker eval needs the warm cache",
+                "recommendations",
+                "finding",
+                4,
+            ),
+            entry(
+                "Billing invoices migrate per market",
+                "billing",
+                "decision",
+                55,
+            ),
+            entry(
+                "Run the flaky poller test alone",
+                "stronghold",
+                "how-to",
+                180,
+            ),
+        ],
+    }
 }
