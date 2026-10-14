@@ -102,7 +102,7 @@ pub(super) fn paint(painter: &Painter, sprites: &Sprites, scene: &Scene, count: 
         pos2(room.center().x + 8.0 * px, scene.gallery.center().y),
     );
     sprites.passage(painter, shaft, px);
-    sprites.shoring(painter, shaft, px);
+    sprites.ladder(painter, shaft, px);
     sprites.masonry(painter, room);
     painter.text(
         room.min + vec2(5.0, 3.0) * px,
@@ -317,7 +317,7 @@ mod tests {
                         }
                         others.extend(scene.comms.map(|c| c.chamber));
                         others.extend(scene.comms.map(|c| c.shaft));
-                        others.extend(scene.tunnels.iter().flat_map(|t| [t.chamber, t.shaft]));
+                        others.extend(scene.tunnels.iter().map(|t| t.chamber));
                         others.push(Rect::from_min_max(
                             pos2(scene.entrance_x() - 0.6 * scene.cell(), scene.surface_y),
                             pos2(scene.entrance_x() + 0.6 * scene.cell(), scene.gallery.top()),

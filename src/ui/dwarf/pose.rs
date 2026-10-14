@@ -22,6 +22,8 @@ pub enum Action {
     /// Hammering at chest height (editing, building).
     Build,
     Walk,
+    /// Alternating hands and feet on a ladder, with the tool stowed.
+    Climb,
     /// Braced against a minecart rim, tool stowed; only used during travel.
     Ride,
     /// Walking with a gold nugget held overhead.
@@ -35,7 +37,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 13] = [
+    pub const ALL: [Action; 14] = [
         Action::Still,
         Action::Wait,
         Action::Study,
@@ -44,6 +46,7 @@ impl Action {
         Action::Mine,
         Action::Build,
         Action::Walk,
+        Action::Climb,
         Action::Ride,
         Action::Carry,
         Action::Hold,
@@ -61,6 +64,7 @@ impl Action {
                 | Action::Mine
                 | Action::Build
                 | Action::Walk
+                | Action::Climb
                 | Action::Ride
                 | Action::Carry
         )
@@ -254,6 +258,16 @@ pub fn pose(action: Action, t: f64) -> Pose {
                 lean: 0.1 * window(u, 0.05, 0.4),
                 brows: lerp(-0.8, 1.0, scratch),
                 question: grow(window(u, 0.5, 0.92)),
+                ..rest
+            }
+        }
+        Action::Climb => {
+            let s = (t as f32 * TAU / 0.7).sin();
+            Pose {
+                arm: -1.8 + 0.45 * s,
+                back_arm: -1.8 - 0.45 * s,
+                stride: 4.0 * s,
+                stowed: true,
                 ..rest
             }
         }

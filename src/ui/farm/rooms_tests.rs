@@ -77,7 +77,6 @@ fn assert_kept(before: &Scene, after: &Scene) {
             .find(|u| u.key == t.key)
             .unwrap_or_else(|| panic!("{:?} kept", t.key));
         assert_eq!(t.chamber, u.chamber, "{:?} chamber moved", t.key);
-        assert_eq!(t.shaft, u.shaft, "{:?} shaft moved", t.key);
         assert_eq!(t.label_top, u.label_top, "{:?} label moved", t.key);
     }
     assert_eq!(before.px, after.px, "the scale is kept");
@@ -96,13 +95,13 @@ fn assert_laid_out(scene: &Scene) {
         for u in tunnels.iter().skip(i + 1) {
             assert!(!t.chamber.intersects(u.chamber), "{:?}, {:?}", t.key, u.key);
             assert!(
-                !t.shaft.intersects(u.chamber),
+                !scene.work_ladder().intersects(u.chamber),
                 "{:?} crosses {:?}",
                 t.key,
                 u.key
             );
             assert!(
-                !u.shaft.intersects(t.chamber),
+                !scene.work_ladder().intersects(t.chamber),
                 "{:?} crosses {:?}",
                 u.key,
                 t.key
@@ -160,8 +159,8 @@ fn growth_within_the_margin_moves_nothing() {
         {
             let u = after.tunnels.iter().find(|u| u.key == t.key).unwrap();
             assert_eq!(
-                (t.chamber, t.shaft),
-                (u.chamber, u.shaft),
+                (t.chamber, t.label_top),
+                (u.chamber, u.label_top),
                 "{:?} moved",
                 t.key
             );

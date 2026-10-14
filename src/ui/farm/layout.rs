@@ -3,13 +3,9 @@
 //!
 //! The farm is a side view: sky above the surface, the "the user" landing on the surface at the
 //! left, the throne hall under the surface in the middle, the storage chamber at the
-//! right, a gallery running under them and one tunnel per run (or per repo for loose
-//! terminals) dropping from the gallery. A coordinator stands at its tunnel's mouth, its
-//! workers in the chamber at the tunnel's end. The room plan fits a grid of chambers under the
-//! gallery to the view, as big as their dwarves allow, and keeps each chamber in its cell while
-//! its dwarves come and go; when the dwarves can be drawn bigger that way, the grid has more levels:
-//! chambers stacked in a column, the lower ones' shafts passing beside the upper chambers. Parked agents sleep in beds in the resting area's
-//! chamber, there only while someone is parked (and for the grace an emptied room gets).
+//! right, and horizontal working galleries cut into the rock below. Runs and repos keep
+//! their rooms in a fitted grid, with a shared ladder at the left joining every work row.
+//! Parked agents sleep in the resting area's beds; coordinators stand at their room's mouth.
 
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -31,19 +27,15 @@ pub const PORTAL_W: f32 = 32.0;
 pub const PORTAL_H: f32 = 40.0;
 /// Characters of a tunnel label before it is cut.
 const LABEL_CHARS: usize = 28;
-/// Tunnel depth, as a share of the room below the gallery, for a run without task counts.
-const UNKNOWN_PROGRESS_DEPTH: f32 = 0.6;
-/// Shallowest tunnel, as a share of the room below the gallery (a run with nothing done).
-const MIN_DEPTH: f32 = 0.35;
 /// Distance between rows of dwarves, in cells: room for a row's bubbles above and name tags
 /// below.
-const ROW: f32 = 2.5;
+pub(super) const ROW: f32 = 2.5;
 /// Width of a dwarf's slot in a row, in cells: room for its name tag.
 pub(super) const SLOT: f32 = 2.4;
 /// Room under a dwarf for its name tag, in cells.
-const TAG: f32 = 0.85;
-/// Width beside an upper chamber for the shaft down to the chamber under it, in cells.
-pub(super) const SHAFT_GAP: f32 = 1.8;
+pub(super) const TAG: f32 = 0.85;
+/// Width reserved at the left of all work levels for their shared ladder.
+pub(super) const LADDER_GAP: f32 = 1.8;
 /// A bed in texels: its size, and the mattress top's height above the floor.
 pub const BED_W: f32 = 20.0;
 pub const BED_H: f32 = 9.0;
@@ -166,8 +158,6 @@ pub struct Dwarf {
 pub struct Tunnel {
     pub key: TunnelKey,
     pub label: String,
-    /// The shaft from the gallery down to the chamber.
-    pub shaft: Rect,
     /// The chamber at the tunnel's end.
     pub chamber: Rect,
     /// Completed share of the run's tasks, when known.
@@ -264,6 +254,42 @@ impl Scene {
     /// Side of a normal dwarf's cell in points.
     pub fn cell(&self) -> f32 {
         CELL * self.px
+    }
+
+    /// The one ladder serving every underground work row, outside the room columns.
+    pub fn work_ladder(&self) -> Rect {
+        let a = self.cell();
+        let bottom = self
+            .tunnels
+            .iter()
+            .map(|t| t.chamber.bottom() - TAG * a)
+            .fold(self.gallery.center().y, f32::max);
+        Rect::from_min_max(
+            pos2(self.rect.left() + 0.3 * a, self.gallery.center().y),
+            pos2(self.rect.left() + 1.5 * a, bottom),
+        )
+    }
+
+    /// Excavated horizontal rows, merged across adjacent rooms on the same level.
+    pub fn work_galleries(&self) -> Vec<Rect> {
+        let a = self.cell();
+        let mut rows: Vec<Rect> = Vec::new();
+        for t in &self.tunnels {
+            let mut top = t.chamber.top();
+            while top + a < t.chamber.bottom() {
+                let row = Rect::from_min_max(
+                    pos2(self.work_ladder().left(), top),
+                    pos2(t.chamber.right(), (top + 1.4 * a).min(t.chamber.bottom())),
+                );
+                if let Some(existing) = rows.iter_mut().find(|r| (r.top() - top).abs() < self.px) {
+                    *existing = existing.union(row);
+                } else {
+                    rows.push(row);
+                }
+                top += ROW * a;
+            }
+        }
+        rows
     }
 
     /// The mine portal stands beside the waiting queue, clear of the rune stone.
@@ -674,12 +700,12 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     // their parents: the plan digs for those, so the dwarves fit at any scale.
     let mut chamber_nodes: Vec<Vec<&Node>> = vec![Vec::new(); keys.len()];
     for node in &visible {
-        if homes[&node.id] == Home::Chamber {
+        if matches!(homes[&node.id], Home::Chamber | Home::Mouth) {
             chamber_nodes[tunnel_of[&tunnel_key(node, &repos)]].push(node);
         }
     }
     for nodes in &mut chamber_nodes {
-        nodes.sort_by_key(|n| chamber_rank(n.state));
+        nodes.sort_by_key(|n| (homes[&n.id] == Home::Mouth, chamber_rank(n.state)));
     }
     let count = |home: Home| homes.values().filter(|h| **h == home).count();
     let envoy = count(Home::Comms) > 0;
@@ -785,9 +811,8 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         )),
     };
 
-    // The plan's rooms, emptied ones too while they wait out their grace. A room's chamber
-    // fills its cell; a lower room's shaft comes down at the right of its column, beside the
-    // chambers over it.
+    // Rooms retain their cells and grow downwards. Every room on a level starts at
+    // the same height, so its rows join continuous horizontal galleries.
     let dwarves_of: HashMap<&TunnelKey, &Vec<&Node>> = keys.iter().zip(&chamber_nodes).collect();
     let none = Vec::new();
     let band_top = |level: usize| {
@@ -820,7 +845,6 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             per_rows.push(per_row);
             packed.push((places, rows));
             let left = rect.left() + ground.chamber_left(room.col);
-            let shaft_x = rect.left() + ground.shaft_x(room.level, room.col);
             let height = rows_height(room.rows.max(rows), a);
             let tasks = match key {
                 TunnelKey::Run(id) => snapshot
@@ -833,24 +857,9 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
                 TunnelKey::Repo(_) | TunnelKey::RestingArea => None,
             };
             let progress = tasks.map(|(done, total)| done as f32 / total as f32);
-            let depth = progress.map_or(UNKNOWN_PROGRESS_DEPTH, |p| {
-                MIN_DEPTH + (1.0 - MIN_DEPTH) * p
-            });
-            let room_h = (ground.band_h - height).max(0.0);
-            let top = band_top(room.level) + room_h * depth;
+            let top = band_top(room.level);
             let chamber = Rect::from_min_size(pos2(left, top), vec2(chamber_w, height));
-            let shaft = Rect::from_min_max(
-                pos2(shaft_x - 0.6 * a, gallery.center().y),
-                pos2(shaft_x + 0.6 * a, chamber.top() + 0.5 * a),
-            );
-            let label_top = if room.level == 0 {
-                pos2(shaft_x, gallery.bottom() + 3.0 * px)
-            } else {
-                pos2(
-                    chamber.center().x,
-                    band_top(room.level) - LABEL_GAP * a + 3.0 * px,
-                )
-            };
+            let label_top = pos2(chamber.center().x, top - LABEL_GAP * a + 3.0 * px);
             let label = match key {
                 TunnelKey::Run(id) => snapshot
                     .runs
@@ -864,7 +873,6 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             Tunnel {
                 key: key.clone(),
                 label: cut(label),
-                shaft,
                 chamber,
                 progress,
                 tasks,
@@ -872,15 +880,9 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             }
         })
         .collect();
-    let room_of: HashMap<&TunnelKey, usize> = tunnels
-        .iter()
-        .enumerate()
-        .map(|(i, t)| (&t.key, i))
-        .collect();
     // Slots, in snapshot order within each place.
     let mut landing_n = 0;
     let mut storage_n = 0;
-    let mut mouth_n = vec![0usize; tunnels.len()];
     let mut dwarves: Vec<Dwarf> = Vec::new();
     let mut pr_ready = 0;
     let mut trailing: Vec<&Node> = Vec::new();
@@ -892,7 +894,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
                 trailing.push(node);
                 continue;
             }
-            Home::Chamber => continue,
+            Home::Chamber | Home::Mouth => continue,
             Home::Comms => (
                 Spot::Comms,
                 comms.expect("Envoy has a room").dwarf_position(),
@@ -918,16 +920,6 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
                     storage.bottom() - (0.5 + TAG) * a - row as f32 * ROW * a,
                 );
                 (Spot::Storage(k), pos)
-            }
-            Home::Mouth => {
-                let key = tunnel_key(node, &repos);
-                let t = room_of[&key];
-                let k = mouth_n[t];
-                mouth_n[t] += 1;
-                let shaft = tunnels[t].shaft;
-                let side = if k.is_multiple_of(2) { 1.0 } else { -1.0 };
-                let x = shaft.center().x + side * (k.div_ceil(2) as f32) * a;
-                (Spot::Mouth(key, k), pos2(x, gallery.bottom() - 0.5 * a))
             }
         };
         let size = if home == Home::Comms {
@@ -955,7 +947,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         let slot = |row: usize, col: usize| {
             pos2(
                 chamber.right() - a - col as f32 * slot_ws[t],
-                chamber.bottom() - (0.5 + TAG) * a - row as f32 * ROW * a,
+                chamber.top() + (0.9 + row as f32 * ROW) * a,
             )
         };
         if tunnels[t].key == TunnelKey::RestingArea {
@@ -979,18 +971,19 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
                 });
             }
         }
+        let mut mouth_n = 0;
         for (k, (node, &(row, col))) in nodes.iter().zip(&packed[t].0).enumerate() {
             let pos = slot(row, col);
             let is_pr = input.pr_ready.contains(&node.id);
-            dwarves.push(dwarf(
-                node,
-                Spot::Chamber(tunnels[t].key.clone(), k),
-                pos,
-                a,
-                Home::Chamber,
-                is_pr,
-                input.now_ms,
-            ));
+            let home = homes[&node.id];
+            let spot = if home == Home::Mouth {
+                let spot = Spot::Mouth(tunnels[t].key.clone(), mouth_n);
+                mouth_n += 1;
+                spot
+            } else {
+                Spot::Chamber(tunnels[t].key.clone(), k)
+            };
+            dwarves.push(dwarf(node, spot, pos, a, home, is_pr, input.now_ms));
         }
     }
     let parked: HashSet<&NodeId> = visible
