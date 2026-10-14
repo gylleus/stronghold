@@ -19,7 +19,7 @@ fn site(name: &str) -> Site {
     Site {
         id: format!("repo::/w/{name}"),
         name: name.into(),
-        health: Health::Empty,
+        health: Health::Removable,
     }
 }
 
@@ -31,50 +31,62 @@ fn farm() -> Scene {
     scene(&snapshot())
 }
 
-/// Linked, unarchived worktrees grow one heap each, oldest first, and look like what is in
-/// them: an agent at work, only resting ones, or none.
 #[test]
-fn a_heap_per_linked_worktree_looking_like_its_agents() {
-    let mut main = worktree("main", 0);
-    main.is_main_worktree = true;
-    let mut archived = worktree("archived", 1);
-    archived.is_archived = true;
-    let worktrees = vec![
-        worktree("empty", 50),
-        worktree("busy", 10),
-        main,
-        archived,
-        worktree("resting", 20),
-        worktree("parked", 30),
-        worktree("gone", 40),
-    ];
-    let mut nodes = Vec::new();
-    for (name, path, state) in [
-        ("a", "/w/busy", NodeState::Working),
-        ("b", "/w/busy/", NodeState::Idle),
-        ("c", "/w/resting", NodeState::Done),
-        ("d", "/w/parked", NodeState::Working),
-        ("e", "/w/gone", NodeState::Working),
-    ] {
-        let mut n = node(name, NodeKind::Terminal, None, state);
-        n.worktree_path = Some(path.into());
-        nodes.push(n);
-    }
-    nodes[3].parked_at_ms = Some(1);
-    nodes[4].live = false;
-    let got: Vec<(String, Health)> = rubble::sites(&worktrees, &nodes)
-        .into_iter()
-        .map(|g| (g.name, g.health))
-        .collect();
-    let want = [
-        ("busy", Health::Active),
-        ("resting", Health::Resting),
-        ("parked", Health::Resting),
-        ("gone", Health::Empty),
-        ("empty", Health::Empty),
+fn only_planner_stale_entries_are_drawn_and_archive_work_is_distinct() {
+    use crate::worktrees::{Plan, PlanEntry, Verdict};
+    let mut trees: Vec<_> = [
+        "remove",
+        "archive",
+        "kept",
+        "busy",
+        "parked",
+        "pinned",
+        "auto_archive",
     ]
-    .map(|(n, h)| (n.to_string(), h));
-    assert_eq!(got, want);
+    .iter()
+    .enumerate()
+    .map(|(i, n)| worktree(n, i as i64))
+    .collect();
+    trees[5].is_pinned = true;
+    let plan = Plan {
+        entries: trees
+            .iter()
+            .map(|w| PlanEntry {
+                id: w.id.clone(),
+                path: w.path.clone(),
+                name: w.name().into(),
+                verdict: Verdict {
+                    remove: w.name() != "kept" && w.name() != "archive",
+                    archivable: w.name() == "archive",
+                    archive_required: w.name() == "auto_archive",
+                    ..Verdict::default()
+                },
+                ..PlanEntry::default()
+            })
+            .collect(),
+        ..Plan::default()
+    };
+    let mut busy = node("worker", NodeKind::Terminal, None, NodeState::Done);
+    busy.worktree_path = Some("/w/busy/".into());
+    let mut parked = busy.clone();
+    parked.worktree_path = Some("/w/parked".into());
+    parked.live = false;
+    parked.parked_at_ms = Some(1);
+    let nodes = [busy, parked];
+    let got: Vec<_> = rubble::sites(&trees, &nodes, Some(&plan))
+        .into_iter()
+        .map(|s| (s.name, s.health))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("remove".into(), Health::Removable),
+            ("archive".into(), Health::Archive),
+            ("auto_archive".into(), Health::Archive)
+        ]
+    );
+    assert!(rubble::sites(&trees, &nodes, None).is_empty());
+    assert!(rubble::sites(&trees, &nodes, Some(&Plan::default())).is_empty());
 }
 
 /// Every heap stands on the surface across the farm, sized by its id, the same
@@ -350,4 +362,24 @@ fn impact_shake_kicks_only_at_contact_and_decays_to_rest() {
         );
     }
     assert_eq!(rubble::impact_shake(CONTACT + IMPACT_SPAN), vec2(0.0, 0.0));
+}
+
+#[test]
+fn a_heap_becoming_protected_disappears_without_a_demolition_burst() {
+    let scene = farm();
+    let mut view = RubbleView::default();
+    view.set_stale(sites(2), None);
+    view.layout(&scene, 0.0, false, false);
+    view.set_stale(sites(1), None);
+    view.layout(&scene, 0.1, false, false);
+    assert_eq!(view.burst_count(), 0);
+    view.set_stale(
+        vec![],
+        Some(CleanupJob {
+            cleared: vec![site("wt-0").id],
+            ..CleanupJob::default()
+        }),
+    );
+    view.layout(&scene, 0.2, false, false);
+    assert_eq!(view.burst_count(), 1, "reported removals still break apart");
 }

@@ -1,8 +1,8 @@
-//! Excavation spoil on the mountainside: one heap per linked worktree, oldest first.
-//! Fresh stone and a small survey pennant mark active work; abandoned heaps are weathered.
+//! Stale worktrees on the mountainside, filtered by the cleanup planner.
+//! Plain heaps can be removed; amber pennants mark work requiring an archive decision.
 //! Cleanup strikes with a hammer, then the removed heap bursts into scattered stone.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Vec2, pos2, vec2};
 
@@ -11,8 +11,9 @@ use super::sprites::{Palette, Sprites};
 use super::world::{
     Canvas, GOLD, INK, Prop, STONE, STONE_DARK, STONE_LIGHT, WOOD, WOOD_DARK, WOOD_LIGHT, pts, rgb,
 };
-use crate::model::{Node, NodeState};
+use crate::model::Node;
 use crate::orca::spawn::Worktree;
+use crate::worktrees::Plan;
 
 /// Chunk flight and fade duration, in seconds.
 pub(super) const BREAK_S: f64 = 1.35;
@@ -37,28 +38,21 @@ const BACK_TINT: u8 = 165;
 /// What is in a worktree, as its heap shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Health {
-    /// An agent works in it, or waits on the user.
-    Active,
-    /// Its agents are idle, done, failed or parked.
-    Resting,
-    /// No agent is in it.
-    Empty,
+    Removable,
+    Archive,
 }
 
 impl Health {
     fn variant(self) -> u8 {
         match self {
-            Self::Active => 0,
-            Self::Resting => 1,
-            Self::Empty => 2,
+            Self::Removable => 2,
+            Self::Archive => 0,
         }
     }
-
     fn describe(self) -> &'static str {
         match self {
-            Health::Active => "an agent is working in it",
-            Health::Resting => "its agents are idle, done or parked",
-            Health::Empty => "no agent in it: may be eligible for cleanup",
+            Self::Removable => "stale: safe to remove",
+            Self::Archive => "stale: archive required before removal (amber pennant)",
         }
     }
 }
@@ -82,46 +76,47 @@ pub struct CleanupJob {
     pub cleared: Vec<String>,
 }
 
-/// The heaps of the linked worktrees (main checkouts and archived ones grow none), oldest
-/// first, each with its [`Health`] from the agents in `nodes` whose worktree it is.
-pub fn sites(worktrees: &[Worktree], nodes: &[Node]) -> Vec<Site> {
-    let trim = |p: &str| p.trim_end_matches('/').to_string();
-    let mut agents: HashMap<String, Health> = HashMap::new();
-    for node in nodes {
-        let Some(path) = node.worktree_path.as_deref() else {
-            continue;
-        };
-        let health = if node.is_parked() || !node.live {
-            if !node.is_parked() {
-                continue;
-            }
-            Health::Resting
-        } else if matches!(
-            node.state,
-            NodeState::Working | NodeState::NeedsInput | NodeState::Stalled
-        ) {
-            Health::Active
-        } else {
-            Health::Resting
-        };
-        let entry = agents.entry(trim(path)).or_insert(health);
-        if health == Health::Active {
-            *entry = Health::Active;
-        }
-    }
-    let mut linked: Vec<&Worktree> = worktrees
+/// Only the planner's stale entries become rubble. A new live/parked agent or pin
+/// suppresses a cached verdict immediately; missing or failed evaluations show no heaps.
+pub fn sites(worktrees: &[Worktree], nodes: &[Node], plan: Option<&Plan>) -> Vec<Site> {
+    let Some(plan) = plan else {
+        return Vec::new();
+    };
+    let trim = |p: &str| p.trim_end_matches('/').to_owned();
+    let occupied: HashSet<String> = nodes
         .iter()
-        .filter(|w| !w.is_main_worktree && !w.is_archived)
+        .filter(|n| n.live || n.parked_at_ms.is_some())
+        .filter_map(|n| n.worktree_path.as_deref().map(trim))
         .collect();
-    linked.sort_by(|a, b| {
-        (a.created_at.unwrap_or(i64::MAX), &a.id).cmp(&(b.created_at.unwrap_or(i64::MAX), &b.id))
-    });
-    linked
+    let mut entries: Vec<_> = plan
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            if !(entry.verdict.remove || entry.verdict.archivable)
+                || occupied.contains(&trim(&entry.path))
+            {
+                return None;
+            }
+            let tree = worktrees.iter().find(|w| w.id == entry.id);
+            if tree.is_some_and(|w| w.is_main_worktree || w.is_archived || w.is_pinned)
+                || (tree.is_none() && !entry.unlisted)
+            {
+                return None;
+            }
+            Some((tree.and_then(|w| w.created_at).unwrap_or(i64::MAX), entry))
+        })
+        .collect();
+    entries.sort_by(|a, b| (a.0, &a.1.id).cmp(&(b.0, &b.1.id)));
+    entries
         .into_iter()
-        .map(|w| Site {
-            id: w.id.clone(),
-            name: w.name().to_string(),
-            health: agents.get(&trim(&w.path)).copied().unwrap_or(Health::Empty),
+        .map(|(_, entry)| Site {
+            id: entry.id.clone(),
+            name: entry.name.clone(),
+            health: if entry.verdict.archivable || entry.verdict.archive_required {
+                Health::Archive
+            } else {
+                Health::Removable
+            },
         })
         .collect()
 }
@@ -293,6 +288,17 @@ impl RubbleView {
     pub fn set(&mut self, sites: Vec<Site>, hammer: Option<CleanupJob>) {
         self.sites = sites;
         self.hammer = hammer;
+    }
+
+    /// Eligibility changes hide heaps quietly; only a reported demolition breaks one.
+    pub fn set_stale(&mut self, sites: Vec<Site>, hammer: Option<CleanupJob>) {
+        self.shown.retain(|id, _| {
+            sites.iter().any(|s| &s.id == id)
+                || hammer
+                    .as_ref()
+                    .is_some_and(|job| job.cleared.contains(id) || job.current.as_ref() == Some(id))
+        });
+        self.set(sites, hammer);
     }
 
     /// This frame's heaps, without those the hammer has cleared. Heaps gone since the last frame
@@ -759,7 +765,7 @@ pub(super) fn draw(c: &mut Canvas, health: u8, seed: u8) {
     for (x, y) in [(11.0, 20.0), (30.0, 20.0), (32.0, 18.0), (19.0, 21.0)] {
         c.detail(x, y, 1.0, 0.8, STONE_LIGHT);
     }
-    // A survey pennant means this worktree still has agents; no pennant means empty.
+    // Amber pennants mark stale work that must be archived before removal.
     if health != 2 {
         c.line((8.0, 14.0), (7.0, 2.0), 0.7, WOOD_DARK);
         c.cut(

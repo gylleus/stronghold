@@ -1683,6 +1683,21 @@ pub fn evaluate(
     sizes: &HashMap<PathBuf, u64>,
     now_ms: i64,
 ) -> Result<Plan, String> {
+    evaluate_inner(client, sizes, now_ms, true)
+}
+
+/// Refresh the surface's eligibility without repeatedly measuring every build directory.
+/// Uses exactly the same facts and decisions as the cleanup planner.
+pub fn evaluate_stale(client: &OrcaClient, now_ms: i64) -> Result<Plan, String> {
+    evaluate_inner(client, &HashMap::new(), now_ms, false)
+}
+
+fn evaluate_inner(
+    client: &OrcaClient,
+    sizes: &HashMap<PathBuf, u64>,
+    now_ms: i64,
+    measure: bool,
+) -> Result<Plan, String> {
     let list = client
         .worktree_list()
         .map_err(|e| format!("worktree list: {e}"))?;
@@ -1729,7 +1744,11 @@ pub fn evaluate(
         entries.extend(decided);
     }
     let paths: Vec<PathBuf> = entries.iter().map(|e| PathBuf::from(&e.path)).collect();
-    let measured = disk_breakdowns(&paths);
+    let measured = if measure {
+        disk_breakdowns(&paths)
+    } else {
+        HashMap::new()
+    };
     for e in &mut entries {
         if e.unlisted
             && let Some(w) = worktrees.iter().find(|w| w.id == e.id)
