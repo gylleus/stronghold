@@ -6,7 +6,7 @@ use crossbeam_channel::Receiver;
 use eframe::egui;
 use serde_json::{Value, json};
 
-use super::{MyrstackApp, now_ms};
+use super::{StrongholdApp, now_ms};
 use crate::control::{ControlError, ErrorCode, Reply};
 use crate::model::NodeId;
 use crate::whip::manual::{ManualNudge, ManualPlan, ManualSkip, nudges, plan_manual_whip};
@@ -35,7 +35,7 @@ enum PendingKind {
     Stalled,
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// The manual whip plan for `ids` against the current clan; `None` before the first poll.
     fn plan_whip(&self, ids: &[NodeId]) -> Option<Vec<ManualPlan>> {
         let (Some(data), Some(snapshot)) = (&self.data, &self.snapshot) else {
@@ -282,13 +282,13 @@ mod tests {
                 to: "dispatch:ctx_1".into(),
                 run_id: Some("r".into()),
             },
-            text: "Myrstack: hi".into(),
+            text: "Stronghold: hi".into(),
             warn: None,
         };
         let skip = ManualSkip {
             node: NodeId::king(),
             label: "King".into(),
-            reason: "the King is Myrstack itself".into(),
+            reason: "the King is Stronghold itself".into(),
         };
         let report = WhipNowReport {
             ran: true,
@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(v["nudges"][0]["id"], "term:w");
         assert_eq!(v["nudges"][0]["via"]["bus"], "dispatch:ctx_1");
         assert_eq!(v["nudges"][0]["seq"], 4);
-        assert_eq!(v["skipped"][0]["reason"], "the King is Myrstack itself");
+        assert_eq!(v["skipped"][0]["reason"], "the King is Stronghold itself");
     }
 
     #[test]

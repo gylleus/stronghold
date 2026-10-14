@@ -68,7 +68,7 @@ impl Origin {
 pub enum MarkSource {
     /// The `mark_pr_ready` MCP tool.
     Tool,
-    /// `myrstack pr-ready`.
+    /// `stronghold pr-ready`.
     Cli,
     /// A `merge_ready` bus message.
     Bus { message_id: String },
@@ -207,9 +207,9 @@ pub fn submit(
         Ok(reply) => Ok(Submitted::App(reply)),
         Err(CallError::NotRunning) => {
             let path =
-                pending.ok_or("Myrstack isn't running and there is no data dir to queue in")?;
+                pending.ok_or("Stronghold isn't running and there is no data dir to queue in")?;
             append_pending(path, mark)
-                .map_err(|e| format!("Myrstack isn't running and queuing failed: {e}"))?;
+                .map_err(|e| format!("Stronghold isn't running and queuing failed: {e}"))?;
             Ok(Submitted::Queued(path.to_path_buf()))
         }
         Err(e) => Err(e.to_string()),

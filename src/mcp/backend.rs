@@ -38,13 +38,13 @@ impl std::fmt::Display for CallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CallError::NotRunning => f.write_str(NOT_RUNNING),
-            CallError::Transport(e) => write!(f, "couldn't talk to Myrstack: {e}"),
+            CallError::Transport(e) => write!(f, "couldn't talk to Stronghold: {e}"),
             CallError::Control(e) => write!(f, "{e}"),
         }
     }
 }
 
-pub const NOT_RUNNING: &str = "Myrstack isn't running — start it with `myrstack`.";
+pub const NOT_RUNNING: &str = "Stronghold isn't running — start it with `stronghold`.";
 
 /// Something that answers control API methods.
 pub trait Control {
@@ -97,11 +97,11 @@ impl Control for SocketControl {
                 let result = ControlClient::connect(&path)
                     .and_then(|mut c| c.call(&Request::new(&method, params)));
                 if let Err(e) = result {
-                    log::debug!("myrstack mcp: {method} not drawn: {e}");
+                    log::debug!("stronghold mcp: {method} not drawn: {e}");
                 }
             });
         if let Err(e) = sent {
-            log::debug!("myrstack mcp: cannot start emit thread: {e}");
+            log::debug!("stronghold mcp: cannot start emit thread: {e}");
         }
     }
 
@@ -111,7 +111,7 @@ impl Control for SocketControl {
             .as_ref()
             .is_some_and(|(at, _)| at.elapsed() < HEADLESS_TTL);
         if !fresh {
-            log::info!("myrstack mcp: app not running; polling Orca once");
+            log::info!("stronghold mcp: app not running; polling Orca once");
             self.headless = Some((Instant::now(), HeadlessControl::poll(OrcaClient::new())));
         }
         Ok(&mut self.headless.as_mut().expect("just set").1)

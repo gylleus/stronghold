@@ -92,7 +92,7 @@ impl Catalog {
         self.worktrees.iter().find(|w| w.id == id)
     }
 
-    /// The Orca repo behind a sidebar repo name (which Myrstack derives from worktree paths):
+    /// The Orca repo behind a sidebar repo name (which Stronghold derives from worktree paths):
     /// its display name, its path's repo name, or the repo name of one of its worktrees.
     pub fn repo_for_sidebar(&self, name: &str) -> Option<&Repo> {
         let by = |f: &dyn Fn(&Repo) -> bool| self.repos.iter().find(|r| f(r));

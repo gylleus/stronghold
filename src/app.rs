@@ -47,7 +47,7 @@ const REPAINT_SOON: Duration = Duration::from_millis(1);
 const AUTOSAVE: Duration = Duration::from_secs(5);
 
 /// Top-level application state.
-pub struct MyrstackApp {
+pub struct StrongholdApp {
     /// Global show-window hotkey; `None` if registration failed.
     hotkey: Option<Hotkey>,
     poller: Poller,
@@ -159,7 +159,7 @@ pub struct MyrstackApp {
     health: health::AppHealth,
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         ui::theme::install(&cc.egui_ctx);
         let hotkey = Hotkey::register(&cc.egui_ctx)
@@ -921,7 +921,7 @@ impl MyrstackApp {
 /// Every change of the selected node is recorded once per frame, whoever made it (a click,
 /// the keyboard, the palette, a notification, the King's `focus_agent`, a spawned session
 /// being selected), so back always returns to what was on screen before the jump.
-impl MyrstackApp {
+impl StrongholdApp {
     /// Records the selected node if it changed since the last frame.
     fn record_selection(&mut self) {
         self.history.record(self.selected.as_ref());
@@ -945,7 +945,7 @@ impl MyrstackApp {
 }
 
 /// Multi-selection: several nodes selected in the clan (box or Shift/Cmd-click).
-impl MyrstackApp {
+impl StrongholdApp {
     /// The "N selected" panel, in the conversation column while 2+ nodes are selected.
     fn selection_contents(&mut self, ui: &mut egui::Ui) {
         let selection = self.clan.selection();
@@ -980,7 +980,7 @@ impl MyrstackApp {
 /// Closing (killing) sessions: requests from the terminal panel, the clan's context menu, `x`
 /// and the sidebar's "Close shown…" open one confirmation dialog; confirmed steps run on the
 /// action runner.
-impl MyrstackApp {
+impl StrongholdApp {
     fn request_close(&mut self, ids: Vec<NodeId>) {
         self.close.request(ui::close::CloseRequest::Nodes(ids));
     }
@@ -1015,7 +1015,7 @@ impl MyrstackApp {
 }
 
 /// Saving and restoring UI state between launches.
-impl MyrstackApp {
+impl StrongholdApp {
     fn restore_state(&mut self, storage: Option<&dyn eframe::Storage>) {
         let Some(state) = storage.and_then(PersistedState::load) else {
             return;
@@ -1048,7 +1048,7 @@ impl MyrstackApp {
     }
 }
 
-impl eframe::App for MyrstackApp {
+impl eframe::App for StrongholdApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         let state = self.persisted_state();
         state.save(storage);
@@ -1144,6 +1144,7 @@ impl eframe::App for MyrstackApp {
                 &self.whip_status.escalated,
                 now,
             );
+            snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_status());
             self.asks.prune(data, self.claude_data.as_ref());
             snapshot.mark_waiting(&self.asks.waiting(data, self.claude_data.as_ref()));
             self.finished.prune(now, crate::model::RELEASED_FADE_MS);
@@ -1156,7 +1157,6 @@ impl eframe::App for MyrstackApp {
                 );
             }
             snapshot.mark_parked(self.parking.entries());
-            snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_status());
             self.clan.set_hidden(&self.filter.hidden(&snapshot));
             self.clan.sync(&snapshot);
             if let Some(claude) = &self.claude_data {

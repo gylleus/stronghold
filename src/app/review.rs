@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use eframe::egui;
 use serde_json::{Value, json};
 
-use super::{MyrstackApp, now_ms, repaint_once};
+use super::{StrongholdApp, now_ms, repaint_once};
 use crate::control::{ControlError, ErrorCode};
 use crate::model::NodeId;
 use crate::notify::{Incoming, Severity, Source};
@@ -52,7 +52,7 @@ impl AppReview {
         let taken = mark::take_pending(&pending);
         if !taken.is_empty() {
             log::info!(
-                "review: {} marks queued while Myrstack was down",
+                "review: {} marks queued while Stronghold was down",
                 taken.len()
             );
         }
@@ -91,7 +91,7 @@ impl AppReview {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// The node of the agent with identity `origin`, in the current snapshot.
     pub(super) fn review_agent(&self, origin: &Origin) -> Option<AgentRef> {
         let snapshot = self.snapshot.as_ref()?;
@@ -195,7 +195,7 @@ impl MyrstackApp {
             body.push_str(&format!(": {summary}"));
         }
         let title = format!(
-            "Myrstack: PR ready for review: {}{}",
+            "Stronghold: PR ready for review: {}{}",
             entry.pr.short(),
             if title.is_empty() {
                 String::new()

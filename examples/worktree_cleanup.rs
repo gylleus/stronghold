@@ -8,8 +8,8 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use myrstack::ui::worktrees::WorktreePanel;
-use myrstack::worktrees::{BuildDir, Plan, PlanEntry, SweepMarker, Verdict};
+use stronghold::ui::worktrees::WorktreePanel;
+use stronghold::worktrees::{BuildDir, Plan, PlanEntry, SweepMarker, Verdict};
 
 const WINDOW: [f32; 2] = [1100.0, 720.0];
 const GB: u64 = 1024 * 1024 * 1024;
@@ -50,14 +50,14 @@ fn plan() -> Plan {
     Plan {
         entries: vec![
             entry(
-                "myrstack",
+                "stronghold",
                 "farm-view",
                 Some(12 * GB),
                 true,
                 "everything is in origin/main",
             ),
             entry(
-                "myrstack",
+                "stronghold",
                 "graph-trackpad-pan",
                 Some(6 * GB),
                 true,
@@ -186,17 +186,17 @@ fn main() -> eframe::Result {
     };
     let data = tempfile::tempdir().expect("temp dir");
     // SAFETY: set before any thread starts.
-    unsafe { std::env::set_var("MYRSTACK_DATA_DIR", data.path()) };
+    unsafe { std::env::set_var("STRONGHOLD_DATA_DIR", data.path()) };
     let marker = SweepMarker {
         started_at_ms: now_ms(),
         updated_at_ms: now_ms() + 3_600_000,
         total: 4,
         done: 1,
         current: Some("graph-trackpad-pan".into()),
-        current_id: Some("myrstack::graph-trackpad-pan".into()),
+        current_id: Some("stronghold::graph-trackpad-pan".into()),
     };
     std::fs::write(
-        myrstack::worktrees::default_marker_path(),
+        stronghold::worktrees::default_marker_path(),
         serde_json::to_vec(&marker).unwrap(),
     )
     .unwrap();
@@ -204,10 +204,12 @@ fn main() -> eframe::Result {
         "worktree cleanup",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default().with_inner_size(window),
+            persist_window: false,
+            persistence_path: Some(data.path().join("app.ron")),
             ..Default::default()
         },
         Box::new(move |cc| {
-            myrstack::ui::theme::install(&cc.egui_ctx);
+            stronghold::ui::theme::install(&cc.egui_ctx);
             cc.egui_ctx.set_theme(if light {
                 egui::Theme::Light
             } else {

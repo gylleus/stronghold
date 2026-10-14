@@ -23,19 +23,19 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use myrstack::model::{
+use stronghold::model::{
     ClanSnapshot, Edge, EdgeKind, Node, NodeId, NodeKind, NodeState, RunSummary, TaskCounts,
 };
-use myrstack::orca::AgentIdentity;
-use myrstack::orca::spawn::Worktree;
-use myrstack::traffic::{AgentMessage, MessageKind};
-use myrstack::ui::clan_view::ClanView;
-use myrstack::ui::envoy_receipt::ReceiptCue;
-use myrstack::ui::farm::art::{ArtSettings, Pixels};
-use myrstack::ui::farm::rubble;
-use myrstack::ui::farm::{FarmView, Pulse};
-use myrstack::ui::worktrees::WorktreePanel;
-use myrstack::worktrees::SweepMarker;
+use stronghold::orca::AgentIdentity;
+use stronghold::orca::spawn::Worktree;
+use stronghold::traffic::{AgentMessage, MessageKind};
+use stronghold::ui::clan_view::ClanView;
+use stronghold::ui::envoy_receipt::ReceiptCue;
+use stronghold::ui::farm::art::{ArtSettings, Pixels};
+use stronghold::ui::farm::rubble;
+use stronghold::ui::farm::{FarmView, Pulse};
+use stronghold::ui::worktrees::WorktreePanel;
+use stronghold::worktrees::SweepMarker;
 
 const WINDOW: [f32; 2] = [1280.0, 800.0];
 const FLIP_EVERY: Duration = Duration::from_secs(3);
@@ -49,13 +49,13 @@ fn main() -> eframe::Result {
     let light = args.iter().any(|a| a == "--light");
     let scrying = args.iter().any(|a| a == "--scrying");
     let health = if args.iter().any(|a| a == "--stopped") {
-        myrstack::envoy::EnvoyHealth::Stopped
+        stronghold::envoy::EnvoyHealth::Stopped
     } else if args.iter().any(|a| a == "--bridge-down") {
-        myrstack::envoy::EnvoyHealth::BridgeDown
+        stronghold::envoy::EnvoyHealth::BridgeDown
     } else if args.iter().any(|a| a == "--approval") {
-        myrstack::envoy::EnvoyHealth::AwaitingApproval
+        stronghold::envoy::EnvoyHealth::AwaitingApproval
     } else {
-        myrstack::envoy::EnvoyHealth::Listening
+        stronghold::envoy::EnvoyHealth::Listening
     };
     let receipt_at_ms = args.iter().position(|a| a == "--receipt-at-ms").map(|i| {
         args[i + 1]
@@ -82,9 +82,9 @@ fn main() -> eframe::Result {
         },
         palette: value("--palette").unwrap_or_default(),
         outline: match value("--outline").as_deref() {
-            None | Some("fine") => myrstack::ui::dwarf::cutout::Outline::Fine,
-            Some("regular") => myrstack::ui::dwarf::cutout::Outline::Regular,
-            Some("bold") => myrstack::ui::dwarf::cutout::Outline::Bold,
+            None | Some("fine") => stronghold::ui::dwarf::cutout::Outline::Fine,
+            Some("regular") => stronghold::ui::dwarf::cutout::Outline::Regular,
+            Some("bold") => stronghold::ui::dwarf::cutout::Outline::Bold,
             _ => panic!("--outline fine, regular or bold"),
         },
     };
@@ -99,7 +99,7 @@ fn main() -> eframe::Result {
             ..Default::default()
         },
         Box::new(move |cc| {
-            myrstack::ui::theme::install(&cc.egui_ctx);
+            stronghold::ui::theme::install(&cc.egui_ctx);
             cc.egui_ctx.set_theme(if light {
                 egui::Theme::Light
             } else {
@@ -114,7 +114,13 @@ fn main() -> eframe::Result {
             }
             if parked {
                 for name in ["sleepy", "dozy", "napper"] {
-                    let mut n = node(name, NodeKind::Terminal, None, NodeState::Idle, "myrstack");
+                    let mut n = node(
+                        name,
+                        NodeKind::Terminal,
+                        None,
+                        NodeState::Idle,
+                        "stronghold",
+                    );
                     n.parked_at_ms = Some(1);
                     snapshot.nodes.push(n);
                 }
@@ -154,7 +160,7 @@ fn main() -> eframe::Result {
                     farm.set_reduce_motion(reduced_motion);
                     farm.set_king_focused(true);
                     farm.set_envoy_health(health);
-                    if health == myrstack::envoy::EnvoyHealth::AwaitingApproval {
+                    if health == stronghold::envoy::EnvoyHealth::AwaitingApproval {
                         farm.set_envoy_pending(2);
                     }
                     farm
@@ -208,7 +214,7 @@ fn worktrees(snapshot: &ClanSnapshot, count: Option<usize>) -> Vec<Worktree> {
     out.truncate(count);
     for i in 0..count.saturating_sub(out.len()) {
         out.push(worktree(&format!(
-            "/x/orca/workspaces/myrstack/{}",
+            "/x/orca/workspaces/stronghold/{}",
             STALE[i % STALE.len()]
         )));
     }
@@ -234,7 +240,7 @@ const STALE: [&str; 6] = [
 fn worktree(path: &str) -> Worktree {
     let name = path.rsplit('/').next().unwrap_or(path);
     Worktree {
-        id: format!("myrstack::{name}"),
+        id: format!("stronghold::{name}"),
         path: path.into(),
         branch: Some(format!("refs/heads/gylleus/{name}")),
         ..Worktree::default()
@@ -245,7 +251,7 @@ fn worktree(path: &str) -> Worktree {
 fn sweep_marker() -> tempfile::TempDir {
     let data = tempfile::tempdir().expect("temp dir");
     // SAFETY: set before any thread starts.
-    unsafe { std::env::set_var("MYRSTACK_DATA_DIR", data.path()) };
+    unsafe { std::env::set_var("STRONGHOLD_DATA_DIR", data.path()) };
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64);
@@ -255,10 +261,10 @@ fn sweep_marker() -> tempfile::TempDir {
         total: 4,
         done: 1,
         current: Some("graph-trackpad-pan".into()),
-        current_id: Some("myrstack::graph-trackpad-pan".into()),
+        current_id: Some("stronghold::graph-trackpad-pan".into()),
     };
     std::fs::write(
-        myrstack::worktrees::default_marker_path(),
+        stronghold::worktrees::default_marker_path(),
         serde_json::to_vec(&marker).unwrap(),
     )
     .unwrap();
@@ -274,7 +280,7 @@ impl Demo {
             NodeKind::Worker,
             Some("run2"),
             NodeState::Working,
-            "myrstack",
+            "stronghold",
         );
         worker.label = "Fresh hatchling".into();
         self.snapshot.nodes.push(worker);
@@ -482,7 +488,7 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState, repo: &
         dispatch_id: None,
         agent: if matches!(kind, NodeKind::King | NodeKind::Envoy) {
             None
-        } else if myrstack::ui::dwarf::seed_of(name).is_multiple_of(2) {
+        } else if stronghold::ui::dwarf::seed_of(name).is_multiple_of(2) {
             Some(AgentIdentity::Claude)
         } else {
             Some(AgentIdentity::Codex)
@@ -537,7 +543,7 @@ fn taskmasters(s: &mut ClanSnapshot) {
         NodeKind::Coordinator,
         Some("run0"),
         NodeState::Idle,
-        "myrstack",
+        "stronghold",
     );
     parked.parked_at_ms = Some(1);
     s.nodes.push(parked);
@@ -546,7 +552,7 @@ fn taskmasters(s: &mut ClanSnapshot) {
         NodeKind::Attendant,
         Some("run0"),
         NodeState::Working,
-        "myrstack",
+        "stronghold",
     ));
 }
 
@@ -554,7 +560,13 @@ fn taskmasters(s: &mut ClanSnapshot) {
 /// subagents under a worker and a terminal.
 fn clan() -> ClanSnapshot {
     let mut s = ClanSnapshot::default();
-    let mut envoy = node("envoy", NodeKind::Envoy, None, NodeState::Idle, "myrstack");
+    let mut envoy = node(
+        "envoy",
+        NodeKind::Envoy,
+        None,
+        NodeState::Idle,
+        "stronghold",
+    );
     envoy.label = "Envoy · listening".into();
     s.nodes.push(envoy);
     s.nodes
@@ -599,12 +611,12 @@ fn clan() -> ClanSnapshot {
             NodeKind::Coordinator,
             Some(&run),
             coord_state,
-            "myrstack",
+            "stronghold",
         ));
         for w in 0..(3 + r % 3) {
             let name = format!("{run}-w{w}");
             let state = states[(w + r) % states.len()];
-            let mut worker = node(&name, NodeKind::Worker, Some(&run), state, "myrstack");
+            let mut worker = node(&name, NodeKind::Worker, Some(&run), state, "stronghold");
             worker.label = TASKS[(r * 5 + w) % TASKS.len()].into();
             if w == 0 {
                 worker.label = format!("{} and tidy the follow-ups", worker.label);

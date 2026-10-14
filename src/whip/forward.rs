@@ -15,7 +15,7 @@
 //! ([`retry_delay_ms`]); after [`ALERT_AFTER_FAILURES`] failures in a row Karl gets one
 //! notification per Run. Forwarding is live even when the whip is in dry run: it only delivers
 //! facts. The forwarded set survives restarts ([`load_forwarded`] / [`save_forwarded`],
-//! `forwarded.json` next to `settings.json`), so events that arrived while Myrstack was down are
+//! `forwarded.json` next to `settings.json`), so events that arrived while Stronghold was down are
 //! forwarded on start, up to [`MAX_EVENT_AGE_MS`] old. Without that file the first tick counts
 //! events older than [`STARTUP_REPLAY_MS`] as already handled. Runs with an attendant (see
 //! [`crate::clan::RunRoles`]) are left to it.
@@ -37,7 +37,7 @@ use crate::whip::rules::{StallFinding, StallReason, StallTarget};
 /// Events older than this are history, never forwarded.
 pub const MAX_EVENT_AGE_MS: i64 = 6 * 60 * 60_000;
 /// Without a saved forwarded set, events younger than this are still forwarded on the first
-/// tick (they may have arrived while Myrstack was restarting); older ones count as handled.
+/// tick (they may have arrived while Stronghold was restarting); older ones count as handled.
 pub const STARTUP_REPLAY_MS: i64 = 10 * 60_000;
 /// How long a Run's events may wait for an unreachable coordinator before Karl is told.
 pub const UNREACHABLE_GRACE_MS: i64 = 5 * 60_000;

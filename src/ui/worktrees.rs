@@ -361,7 +361,7 @@ impl WorktreePanel {
                     egui::Button::image_and_text(hammer, label),
                 )
                 .on_hover_text(
-                    "Check which worktrees (the heaps in the farm) are still needed and \
+                    "Check which worktrees (the heaps in the hold) are still needed and \
                      plan clearing the rest. Nothing is removed until you confirm.",
                 )
                 .clicked();

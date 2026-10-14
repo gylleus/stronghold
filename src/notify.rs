@@ -10,13 +10,13 @@
 //! [`Post`]; it collapses bursts into one summary, caps posts per minute ([`PostLimiter`]),
 //! posts through a [`Poster`] and plays the sound with `afplay`.
 //!
-//! Running from `Myrstack.app`, notifications go through `UNUserNotificationCenter`
-//! ([`native`]) under Myrstack's name, carrying their targets and inbox ids as a
-//! [`payload`](encode_payload); clicking one activates Myrstack and [`Notifier::clicked`] hands
+//! Running from `Stronghold.app`, notifications go through `UNUserNotificationCenter`
+//! ([`native`]) under Stronghold's name, carrying their targets and inbox ids as a
+//! [`payload`](encode_payload); clicking one activates Stronghold and [`Notifier::clicked`] hands
 //! them to the app, which selects the node and opens the link like an inbox entry. Unbundled
 //! (`cargo run`) there is no bundle identity to post under, so [`OsascriptPoster`] posts via
 //! `display notification`: those show under Script Editor and clicking them cannot reach
-//! Myrstack, leaving the inbox.
+//! Stronghold, leaving the inbox.
 
 pub mod agent;
 pub mod dispatch;
@@ -116,7 +116,7 @@ pub struct Outgoing {
 }
 
 impl Outgoing {
-    /// A plain notification, as `myrstack notify` posts.
+    /// A plain notification, as `stronghold notify` posts.
     pub fn simple(title: &str, body: &str, targets: Vec<String>) -> Self {
         Self {
             title: title.to_owned(),
@@ -221,15 +221,15 @@ pub fn collapse(posts: Vec<Post>) -> Outgoing {
     }
 }
 
-const TITLE_PREFIX: &str = "Myrstack: ";
+const TITLE_PREFIX: &str = "Stronghold: ";
 
 // ---------------------------------------------------------------------------
 // Sources
 
 /// A whip notification, from the engine's title and body.
 ///
-/// The engine titles are `Myrstack: <handle> is waiting on you` and
-/// `Myrstack: worker <handle> task <id> is stalled` / `Myrstack: coordinator <handle> run <id>
+/// The engine titles are `Stronghold: <handle> is waiting on you` and
+/// `Stronghold: worker <handle> task <id> is stalled` / `Stronghold: coordinator <handle> run <id>
 /// is stalled`; the target is the handle. Unknown titles use the whole title as the target.
 pub fn whip_request(title: &str, body: &str) -> Incoming {
     let subject = title.strip_prefix(TITLE_PREFIX).unwrap_or(title);
@@ -307,7 +307,7 @@ impl NeedsInputDetector {
 // Click routing
 
 /// `userInfo` key of a native notification's payload.
-pub const PAYLOAD_KEY: &str = "myrstack";
+pub const PAYLOAD_KEY: &str = "stronghold";
 
 /// What a clicked notification covered.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -377,7 +377,7 @@ pub fn init() {
     }
 }
 
-/// `myrstack notify <title> [body] [--target <node id or handle>]... [--quiet]`: posts one
+/// `stronghold notify <title> [body] [--target <node id or handle>]... [--quiet]`: posts one
 /// notification the way the app would, for checking that notifications work. From the app
 /// bundle, `--quiet` asks for provisional permission, which needs no prompt: the notification
 /// lands quietly in Notification Center. `None` for other commands.
@@ -408,7 +408,7 @@ fn notify_cli(args: &[String]) -> anyhow::Result<()> {
     }
     let [title, rest @ ..] = &texts[..] else {
         anyhow::bail!(
-            "usage: myrstack notify <title> [body] [--target <node id or handle>]... [--quiet]"
+            "usage: stronghold notify <title> [body] [--target <node id or handle>]... [--quiet]"
         );
     };
     let notification = Outgoing::simple(title, &rest.join(" "), targets);
@@ -419,7 +419,7 @@ fn notify_cli(args: &[String]) -> anyhow::Result<()> {
         } else {
             native::Permission::Ask
         });
-        // The first time, macOS asks whether Myrstack may notify; give the user time to answer.
+        // The first time, macOS asks whether Stronghold may notify; give the user time to answer.
         return native::NativePoster::new()
             .with_authorization_wait(Duration::from_secs(60))
             .post(&notification);
@@ -441,7 +441,7 @@ pub trait Player: Send {
     fn play(&self, path: &Path, volume: f32) -> anyhow::Result<()>;
 }
 
-/// The poster for this process: native when running from `Myrstack.app`, else `osascript`.
+/// The poster for this process: native when running from `Stronghold.app`, else `osascript`.
 pub fn default_poster() -> Box<dyn Poster> {
     #[cfg(target_os = "macos")]
     if native::is_bundled() {
@@ -660,7 +660,7 @@ fn run(
         {
             failed.push(format!("sound: {err:#}"));
         }
-        // A failed post (e.g. notifications turned off for Myrstack) is still in the inbox.
+        // A failed post (e.g. notifications turned off for Stronghold) is still in the inbox.
         if out.native {
             match poster.post(&out) {
                 Ok(()) => log::info!("notified: {}", out.title),
