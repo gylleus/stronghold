@@ -15,6 +15,7 @@ pub fn kind_label(kind: NodeKind) -> &'static str {
         NodeKind::Worker => "worker",
         NodeKind::Terminal => "terminal",
         NodeKind::Envoy => "envoy",
+        NodeKind::Lorekeeper => "lorekeeper",
         NodeKind::Subagent => "subagent",
         NodeKind::King => "king",
     }

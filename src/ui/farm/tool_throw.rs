@@ -118,6 +118,7 @@ impl Throws {
                 let role = match t.body.kind {
                     NodeKind::Coordinator | NodeKind::Attendant => Role::Foreman,
                     NodeKind::Envoy => Role::RunePriest,
+                    NodeKind::Lorekeeper => Role::Librarian,
                     _ => Role::Miner,
                 };
                 let mut look = Look::for_role(role, t.body.seed);

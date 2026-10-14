@@ -492,7 +492,11 @@ pub fn home(kind: NodeKind, state: NodeState, pr_ready: bool) -> Home {
         NodeKind::King => return Home::King,
         NodeKind::Envoy => return Home::Comms,
         NodeKind::Subagent => return Home::Trail,
-        NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {}
+        NodeKind::Coordinator
+        | NodeKind::Attendant
+        | NodeKind::Worker
+        | NodeKind::Terminal
+        | NodeKind::Lorekeeper => {}
     }
     match state {
         NodeState::NeedsInput => Home::Landing,
@@ -513,6 +517,9 @@ pub fn home(kind: NodeKind, state: NodeState, pr_ready: bool) -> Home {
 
 pub fn pose(kind: NodeKind, state: NodeState, home: Home) -> Pose {
     if kind == NodeKind::Envoy {
+        return Pose::Stand;
+    }
+    if kind == NodeKind::Lorekeeper && state == NodeState::Working {
         return Pose::Stand;
     }
     if kind == NodeKind::King {
@@ -1105,7 +1112,9 @@ fn dwarf(
         facing_right: pose == Pose::Dig || node.kind == NodeKind::Envoy,
         tag: match node.kind {
             NodeKind::Envoy => Some("Envoy".into()),
-            NodeKind::Worker | NodeKind::Terminal => Some(node.label.clone()),
+            NodeKind::Worker | NodeKind::Terminal | NodeKind::Lorekeeper => {
+                Some(node.label.clone())
+            }
             NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Subagent | NodeKind::King => {
                 None
             }

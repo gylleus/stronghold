@@ -26,16 +26,19 @@ pub enum Role {
     Apprentice,
     /// The Envoy: a broad rune hat, long robe and beard, rune staff and blue crystal.
     RunePriest,
+    /// The Lorekeeper: ink robes, spectacles and a book.
+    Librarian,
     /// The King: a crown, heavy brows, white braids and embroidered regalia.
     King,
 }
 
 impl Role {
-    pub const ALL: [Role; 5] = [
+    pub const ALL: [Role; 6] = [
         Role::Miner,
         Role::Foreman,
         Role::Apprentice,
         Role::RunePriest,
+        Role::Librarian,
         Role::King,
     ];
 
@@ -155,17 +158,19 @@ pub enum Tool {
     Lantern,
     /// The rune priest's crystal-topped staff.
     Staff,
+    Book,
     /// Empty hands, including the King.
     None,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 6] = [
+    pub const ALL: [Tool; 7] = [
         Tool::Pickaxe,
         Tool::Hammer,
         Tool::Shovel,
         Tool::Lantern,
         Tool::Staff,
+        Tool::Book,
         Tool::None,
     ];
     /// What miners carry.
@@ -369,6 +374,17 @@ impl Look {
                 look.tool = Tool::Lantern;
                 look.extras = Extras::default();
                 look.girth = 0.92;
+            }
+            Role::Librarian => {
+                look.beard = Beard::Short;
+                look.hair = HAIRS[5];
+                look.brows = Brows::Thin;
+                look.hair_style = Hair::Short;
+                look.hat = Hat::Bald;
+                look.garment = Garment::Robe;
+                look.tunic = Color32::from_rgb(0x38, 0x40, 0x50);
+                look.tool = Tool::Book;
+                look.extras = Extras::default();
             }
             Role::RunePriest => {
                 look.beard = Beard::Braided;
@@ -651,6 +667,7 @@ mod tests {
             Role::Foreman,
             Role::Apprentice,
             Role::RunePriest,
+            Role::Librarian,
         ] {
             for s in 0..300 {
                 let look = Look::for_role(role, s);

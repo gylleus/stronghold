@@ -93,7 +93,7 @@ impl ClanView {
             ui.add(egui::Label::new(egui::RichText::new(&node.label).strong()).truncate());
             ui.separator();
             let refusal = match node.kind {
-                NodeKind::Envoy => None,
+                NodeKind::Envoy | NodeKind::Lorekeeper => None,
                 NodeKind::Subagent => Some(crate::close::SUBAGENT_REFUSAL),
                 NodeKind::King => Some(crate::close::KING_REFUSAL),
                 NodeKind::Coordinator
@@ -103,6 +103,7 @@ impl ClanView {
             };
             let whip_refusal = match node.kind {
                 NodeKind::Envoy => Some("The Envoy listens while idle."),
+                NodeKind::Lorekeeper => Some("The Lorekeeper finishes its own maintenance pass."),
                 NodeKind::Subagent => Some("Subagents have no terminal to nudge."),
                 NodeKind::King => Some("The King is Stronghold itself."),
                 NodeKind::Coordinator
