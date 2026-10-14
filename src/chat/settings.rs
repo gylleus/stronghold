@@ -1,5 +1,5 @@
 //! The King's saved model settings (the `king` section of `settings.json`) and how they
-//! combine with the `MYRSTACK_CHAT_MODEL` override.
+//! combine with the `STRONGHOLD_CHAT_MODEL` override.
 
 use serde::{Deserialize, Serialize};
 
@@ -67,7 +67,7 @@ impl KingSettings {
 /// Where the King's model comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelSource {
-    /// `MYRSTACK_CHAT_MODEL` is set and wins over the settings.
+    /// `STRONGHOLD_CHAT_MODEL` is set and wins over the settings.
     Env(String),
     Settings(String),
     /// Neither: the CLI picks its default.
@@ -84,7 +84,7 @@ impl ModelSource {
     }
 }
 
-/// The model the King runs with: `env` (the value of `MYRSTACK_CHAT_MODEL`) when non-empty,
+/// The model the King runs with: `env` (the value of `STRONGHOLD_CHAT_MODEL`) when non-empty,
 /// else the settings' model, else the CLI default.
 pub fn resolve_model(settings: &KingSettings, env: Option<String>) -> ModelSource {
     if let Some(env) = env.map(|e| e.trim().to_owned()).filter(|e| !e.is_empty()) {
@@ -96,9 +96,9 @@ pub fn resolve_model(settings: &KingSettings, env: Option<String>) -> ModelSourc
     }
 }
 
-/// [`resolve_model`] with this process's `MYRSTACK_CHAT_MODEL`.
+/// [`resolve_model`] with this process's `STRONGHOLD_CHAT_MODEL`.
 pub fn resolve_model_from_env(settings: &KingSettings) -> ModelSource {
-    resolve_model(settings, std::env::var(MODEL_ENV).ok())
+    resolve_model(settings, crate::legacy::env(MODEL_ENV))
 }
 
 #[cfg(test)]

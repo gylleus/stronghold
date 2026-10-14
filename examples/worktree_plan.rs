@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use myrstack::orca::OrcaClient;
-use myrstack::worktrees;
+use stronghold::orca::OrcaClient;
+use stronghold::worktrees;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var_os("STRONGHOLD_DATA_DIR").is_none_or(|dir| dir.is_empty()) {

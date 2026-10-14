@@ -1,5 +1,5 @@
 //! Orca worktrees in the top bar: how many there are and how much disk they take, and the
-//! cleanup window (evaluate → plan → confirm → clean up). While it runs, a hammer breaks the
+//! cleanup side panel (evaluate → plan → confirm → clean up). While it runs, a hammer breaks the
 //! removed worktrees' heaps in the farm ([`crate::ui::farm::rubble`]), or runs along
 //! the bottom of the window in the other views.
 //!
@@ -73,6 +73,8 @@ pub struct WorktreePanel {
     size_scan: Option<Receiver<Sizes>>,
     next_scan_ms: i64,
     stage: Option<Stage>,
+    /// Visibility is independent of the background job and the review selection.
+    open: bool,
     /// The last cleanup's summary, for the top-bar menu.
     last_summary: Option<String>,
     /// A cleanup started elsewhere (the MCP tool), from the marker file.
@@ -101,6 +103,7 @@ impl WorktreePanel {
             size_scan: None,
             next_scan_ms: 0,
             stage: None,
+            open: false,
             last_summary: None,
             external: None,
             next_marker_check_ms: 0,
@@ -228,6 +231,7 @@ impl WorktreePanel {
     }
 
     fn start_evaluation(&mut self) {
+        self.open = true;
         let client = self.client.clone();
         let sizes = self.sizes.by_path.clone();
         let ctx = self.ctx.clone();
@@ -276,8 +280,9 @@ impl WorktreePanel {
         });
     }
 
-    /// Opens the window on an already evaluated plan (for `examples/worktree_cleanup.rs`).
+    /// Opens the panel on an already evaluated plan (for `examples/worktree_cleanup.rs`).
     pub fn show_plan(&mut self, plan: Plan) {
+        self.open = true;
         self.stage = Some(Stage::Review {
             chosen: plan.removable().map(|e| e.id.clone()).collect(),
             plan,
@@ -334,23 +339,35 @@ impl WorktreePanel {
         if let Some(bytes) = total_bytes {
             title.push_str(&format!(" · {}", format_bytes(bytes)));
         }
+        if let Some((done, total)) = self.progress() {
+            title.push_str(&format!(" · clearing {done}/{total}"));
+        } else if matches!(self.stage, Some(Stage::Evaluating(_))) {
+            title.push_str(" · checking…");
+        }
         let mut clean = false;
         ui.menu_button(RichText::new(title).weak(), |ui| {
             ui.set_min_width(260.0);
             self.census_menu(ui, &census, &linked);
             ui.separator();
-            let busy = matches!(
-                self.stage,
-                Some(Stage::Evaluating(_) | Stage::Running { .. })
-            ) || self.external.is_some();
             let hammer = egui::Image::new(&self.hammer).fit_to_exact_size(vec2(16.0, 24.0));
+            let label = if self.stage.is_some() {
+                "Show cleanup…"
+            } else {
+                "Clear…"
+            };
             clean = ui
-                .add_enabled(!busy, egui::Button::image_and_text(hammer, "Clear…"))
+                .add_enabled(
+                    self.stage.is_some() || self.external.is_none(),
+                    egui::Button::image_and_text(hammer, label),
+                )
                 .on_hover_text(
-                    "Check which worktrees (the heaps in the farm) are still needed and \
+                    "Check which worktrees (the heaps in the hold) are still needed and \
                      plan clearing the rest. Nothing is removed until you confirm.",
                 )
                 .clicked();
+            if clean {
+                ui.close();
+            }
             if let Some(summary) = &self.last_summary {
                 ui.weak(format!("Last cleanup: {summary}"));
             }
@@ -358,7 +375,15 @@ impl WorktreePanel {
         .response
         .on_hover_text("Orca worktrees (linked, not main checkouts) and their disk usage");
         if clean {
+            self.open_cleanup();
+        }
+    }
+
+    fn open_cleanup(&mut self) {
+        if self.stage.is_none() {
             self.start_evaluation();
+        } else {
+            self.open = true;
         }
     }
 
@@ -424,23 +449,49 @@ impl WorktreePanel {
         }
     }
 
-    /// The cleanup window, while a cleanup is open.
-    pub fn window(&mut self, ctx: &egui::Context) {
+    /// Consumes Escape before the app's selection and terminal shortcuts.
+    pub fn handle_escape(&mut self, ctx: &egui::Context) {
+        if self.open && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            self.open = false;
+        }
+    }
+
+    /// Reserves space beside the dock without covering or disabling the other panes.
+    pub fn show(&mut self, ui: &mut egui::Ui) {
+        self.handle_escape(ui.ctx());
+        if !self.open {
+            return;
+        }
         let Some(stage) = self.stage.as_mut() else {
             return;
         };
-        let running = matches!(stage, Stage::Running { .. });
-        let mut open = true;
         let mut action = None;
-        let max_height = ctx.content_rect().height() * 0.7;
-        egui::Window::new("Clear worktrees")
-            .open(&mut open)
-            .collapsible(false)
+        let max_width = (ui.available_width() * 0.6).max(260.0);
+        egui::Panel::right("worktree_cleanup")
             .resizable(true)
-            .default_width(620.0)
-            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                action = stage_view(ui, stage, max_height);
+            .default_size(460.0_f32.min(max_width))
+            .size_range(260.0..=max_width)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Clear worktrees");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button("Close")
+                            .on_hover_text("Hide cleanup (Esc)")
+                            .clicked()
+                        {
+                            action = Some(Action::Close);
+                        }
+                    });
+                });
+                ui.separator();
+                if matches!(stage, Stage::Evaluating(_) | Stage::Running { .. }) {
+                    ui.weak("You can close this panel; work continues in the background.");
+                }
+                let stage_action = stage_view(ui, stage, ui.available_height());
+                if action.is_none() {
+                    action = stage_action;
+                }
             });
         match action {
             Some(Action::Remove) => {
@@ -450,8 +501,7 @@ impl WorktreePanel {
                 }
             }
             Some(Action::Retry) => self.start_evaluation(),
-            Some(Action::Close) => self.stage = None,
-            None if !open && !running => self.stage = None,
+            Some(Action::Close) => self.open = false,
             None => {}
         }
     }
@@ -543,7 +593,7 @@ fn stage_view(ui: &mut egui::Ui, stage: &mut Stage, max_height: f32) -> Option<A
             })
             .inner
         }
-        Stage::Review { plan, chosen } => review_view(ui, plan, chosen, max_height),
+        Stage::Review { plan, chosen } => review_view(ui, plan, chosen),
         Stage::Running { total, done, .. } => {
             ui.label(format!("Clearing worktrees… {}/{total}", done.len()));
             ui.add(egui::ProgressBar::new(
@@ -562,17 +612,12 @@ fn stage_view(ui: &mut egui::Ui, stage: &mut Stage, max_height: f32) -> Option<A
                 "Logged to {}",
                 worktrees::default_log_path().display()
             ));
-            ui.button("Close").clicked().then_some(Action::Close)
+            ui.button("Check again").clicked().then_some(Action::Retry)
         }
     }
 }
 
-fn review_view(
-    ui: &mut egui::Ui,
-    plan: &Plan,
-    chosen: &mut BTreeSet<String>,
-    max_height: f32,
-) -> Option<Action> {
+fn review_view(ui: &mut egui::Ui, plan: &Plan, chosen: &mut BTreeSet<String>) -> Option<Action> {
     let removable: Vec<_> = plan.removable().collect();
     let kept: Vec<_> = plan.kept().collect();
     let freed: u64 = removable
@@ -580,24 +625,54 @@ fn review_view(
         .filter(|e| chosen.contains(&e.id))
         .filter_map(|e| e.bytes)
         .sum();
-    ui.label(format!(
-        "{} linked worktrees: {} can be cleared, {} are kept (holding {}).",
-        plan.entries.len(),
-        removable.len(),
-        kept.len(),
-        format_bytes(plan.kept_bytes())
-    ));
-    ui.weak(
-        "A worktree goes only if nothing runs in it, it has no uncommitted changes, untracked \
-         files (other than notes and logs) or open PR, and its work is in the base or on \
-         GitHub (merged, rebase- or squash-merged, or in a merged PR's head). Notes are saved \
-         and logs deleted first. Each is checked again right before removal.",
-    );
-    ui.add_space(4.0);
-    egui::ScrollArea::vertical()
-        .max_height(max_height - 140.0)
-        .auto_shrink([false, true])
+    let action = egui::Panel::bottom("worktree_review_actions")
+        .frame(egui::Frame::NONE)
         .show(ui, |ui| {
+            ui.separator();
+            ui.horizontal_wrapped(|ui| {
+                let n = chosen.len();
+                let remove = ui
+                    .add_enabled(
+                        n > 0,
+                        egui::Button::new(
+                            RichText::new(format!(
+                                "Clear {n} worktree{} ({})",
+                                if n == 1 { "" } else { "s" },
+                                format_bytes(freed)
+                            ))
+                            .color(ui.visuals().error_fg_color),
+                        ),
+                    )
+                    .on_hover_text("Runs `orca worktree rm`, or `git worktree remove` for unlisted entries; no --force")
+                    .clicked();
+                if remove {
+                    return Some(Action::Remove);
+                }
+                if ui.button("Re-check").clicked() {
+                    return Some(Action::Retry);
+                }
+                ui.button("Cancel").clicked().then_some(Action::Close)
+            })
+            .inner
+        })
+        .inner;
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.label(format!(
+                "{} linked worktrees: {} can be cleared, {} are kept (holding {}).",
+                plan.entries.len(),
+                removable.len(),
+                kept.len(),
+                format_bytes(plan.kept_bytes())
+            ));
+            ui.weak(
+                "A worktree goes only if nothing runs in it, it has no uncommitted changes, untracked \
+                 files (other than notes and logs) or open PR, and its work is in the base or on \
+                 GitHub (merged, rebase- or squash-merged, or in a merged PR's head). Notes are saved \
+                 and logs deleted first. Each is checked again right before removal.",
+            );
+            ui.add_space(4.0);
             egui::CollapsingHeader::new(format!("Clear ({})", removable.len()))
                 .default_open(true)
                 .show(ui, |ui| {
@@ -606,16 +681,18 @@ fn review_view(
                     }
                     for e in &removable {
                         let mut on = chosen.contains(&e.id);
-                        ui.horizontal(|ui| {
-                            if ui.checkbox(&mut on, "").changed() {
+                        ui.horizontal_wrapped(|ui| {
+                            if ui
+                                .checkbox(&mut on, format!("{}/{}", e.repo, e.name))
+                                .on_hover_text(&e.path)
+                                .changed()
+                            {
                                 if on {
                                     chosen.insert(e.id.clone());
                                 } else {
                                     chosen.remove(&e.id);
                                 }
                             }
-                            ui.label(format!("{}/{}", e.repo, e.name))
-                                .on_hover_text(&e.path);
                             if e.unlisted {
                                 ui.weak("unlisted");
                             }
@@ -661,37 +738,12 @@ fn review_view(
                 });
             }
         });
-    ui.separator();
-    ui.horizontal(|ui| {
-        let n = chosen.len();
-        let remove = ui
-            .add_enabled(
-                n > 0,
-                egui::Button::new(
-                    RichText::new(format!(
-                        "Clear {n} worktree{} ({})",
-                        if n == 1 { "" } else { "s" },
-                        format_bytes(freed)
-                    ))
-                    .color(ui.visuals().error_fg_color),
-                ),
-            )
-            .on_hover_text("Runs `orca worktree rm`, or `git worktree remove` for unlisted entries; no --force")
-            .clicked();
-        if remove {
-            return Some(Action::Remove);
-        }
-        if ui.button("Re-check").clicked() {
-            return Some(Action::Retry);
-        }
-        ui.button("Cancel").clicked().then_some(Action::Close)
-    })
-    .inner
+    action
 }
 
 fn removal_list(ui: &mut egui::Ui, removals: &[Removal], max_height: f32) {
     egui::ScrollArea::vertical()
-        .max_height(max_height - 120.0)
+        .max_height((max_height - 120.0).max(0.0))
         .auto_shrink([false, true])
         .stick_to_bottom(true)
         .show(ui, |ui| {
@@ -750,3 +802,6 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
+
+#[cfg(test)]
+mod tests;

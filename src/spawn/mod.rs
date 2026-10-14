@@ -1,4 +1,4 @@
-//! Starting new agent sessions from Myrstack: in an existing worktree, in a new worktree, or as
+//! Starting new agent sessions from Stronghold: in an existing worktree, in a new worktree, or as
 //! a worker of an existing run.
 //!
 //! A [`SpawnRequest`] (what Karl or the King asked for, resolved to Orca ids) becomes a
@@ -108,7 +108,7 @@ pub struct SpawnRequest {
     pub effort: Option<String>,
     /// Initial prompt; for a worker, the task spec.
     pub prompt: String,
-    /// Short name Myrstack shows for the agent: the worktree's Orca display name (new or
+    /// Short name Stronghold shows for the agent: the worktree's Orca display name (new or
     /// existing worktree), or a worker's task display name.
     pub label: Option<String>,
 }
@@ -130,11 +130,11 @@ pub enum Step {
         coordinator: String,
         spec: String,
         title: String,
-        /// `--display-name`: the worker's name in Myrstack.
+        /// `--display-name`: the worker's name in Stronghold.
         display_name: Option<String>,
     },
     /// `orca worktree set --display-name`: names the agent's worktree (shown by Orca and, for
-    /// its terminals, by Myrstack). `worktree_id` `None` means the one an earlier step created.
+    /// its terminals, by Stronghold). `worktree_id` `None` means the one an earlier step created.
     NameWorktree {
         worktree_id: Option<String>,
         name: String,
@@ -568,7 +568,7 @@ pub fn build_plan(request: &SpawnRequest) -> Result<SpawnPlan, PlanError> {
 }
 
 /// Codex's never-ask flag. Orca adds its configured default args only to a bare `codex`, so
-/// every Codex command Myrstack builds carries it itself.
+/// every Codex command Stronghold builds carries it itself.
 pub const CODEX_NEVER_ASK: &str = "--dangerously-bypass-approvals-and-sandbox";
 
 /// The command `terminal create` runs: `claude [--model m] [--effort e] '<prompt>'` (Codex
@@ -673,7 +673,7 @@ pub fn validate_name(name: &str) -> Result<String, PlanError> {
 /// A task title from the prompt's first non-empty line, shortened.
 pub fn title_from(prompt: &str) -> String {
     let line = prompt.lines().map(str::trim).find(|l| !l.is_empty());
-    let line = line.unwrap_or("Task from Myrstack");
+    let line = line.unwrap_or("Task from Stronghold");
     if line.chars().count() <= TITLE_CHARS {
         return line.to_string();
     }

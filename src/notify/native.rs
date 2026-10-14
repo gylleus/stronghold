@@ -1,8 +1,8 @@
-//! Notifications through `UNUserNotificationCenter`, for Myrstack running from `Myrstack.app`.
+//! Notifications through `UNUserNotificationCenter`, for Stronghold running from `Stronghold.app`.
 //!
 //! The notification center needs a bundle identity: calling it from an unbundled binary throws,
 //! so everything here is only used when [`is_bundled`]. [`install`] sets a delegate that shows
-//! notifications even while Myrstack is frontmost and turns clicks into their payload's targets
+//! notifications even while Stronghold is frontmost and turns clicks into their payload's targets
 //! on the [`clicks`] channel, and asks for permission to notify.
 
 use std::ptr::NonNull;
@@ -24,13 +24,13 @@ use objc2_user_notifications::{
 
 use super::{Clicked, Outgoing, PAYLOAD_KEY, Poster, Repaint, decode_payload, encode_payload};
 
-/// `CFBundleIdentifier` of `Myrstack.app`.
-pub const BUNDLE_ID: &str = "ai.depict.myrstack";
+/// `CFBundleIdentifier` of `Stronghold.app`.
+pub const BUNDLE_ID: &str = "ai.depict.stronghold";
 
 /// Action identifier of a plain click on a notification.
 const DEFAULT_ACTION: &str = "com.apple.UNNotificationDefaultActionIdentifier";
 
-/// Whether this process runs from `Myrstack.app` (its main bundle has Myrstack's identifier).
+/// Whether this process runs from `Stronghold.app` (its main bundle has Stronghold's identifier).
 pub fn is_bundled() -> bool {
     NSBundle::mainBundle()
         .bundleIdentifier()
@@ -69,7 +69,9 @@ pub fn install_with(permission: Permission) {
                     "notification permission request failed: {}",
                     error.localizedDescription()
                 )),
-                None => Err("notifications for Myrstack are turned off in System Settings".into()),
+                None => {
+                    Err("notifications for Stronghold are turned off in System Settings".into())
+                }
             };
             if let Err(reason) = &answer {
                 log::warn!("{reason}");
@@ -115,8 +117,8 @@ fn clicked(what: Clicked) {
     }
 }
 
-/// The notification permission macOS has on record for Myrstack, for error messages and the
-/// health check. Only for `Myrstack.app` ([`is_bundled`]): an unbundled process has no
+/// The notification permission macOS has on record for Stronghold, for error messages and the
+/// health check. Only for `Stronghold.app` ([`is_bundled`]): an unbundled process has no
 /// notification center.
 pub fn authorization_status() -> &'static str {
     let (tx, rx) = crossbeam_channel::bounded(1);
@@ -129,7 +131,7 @@ pub fn authorization_status() -> &'static str {
     match rx.recv_timeout(Duration::from_secs(2)) {
         Ok(UNAuthorizationStatus::NotDetermined) => "not asked yet",
         Ok(UNAuthorizationStatus::Denied) => {
-            "denied; allow Myrstack in System Settings > Notifications"
+            "denied; allow Stronghold in System Settings > Notifications"
         }
         Ok(UNAuthorizationStatus::Authorized) => "allowed",
         Ok(UNAuthorizationStatus::Provisional) => "provisional",
@@ -172,7 +174,7 @@ fn authorization() -> &'static Authorization {
 define_class!(
     // SAFETY: NSObject has no subclassing requirements and `Delegate` does not implement Drop.
     #[unsafe(super(NSObject))]
-    #[name = "MyrstackNotificationDelegate"]
+    #[name = "StrongholdNotificationDelegate"]
     struct Delegate;
 
     unsafe impl NSObjectProtocol for Delegate {}
@@ -185,7 +187,7 @@ define_class!(
             _notification: &UNNotification,
             completion_handler: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
         ) {
-            // No `Sound`: Myrstack plays the sound chosen in Settings itself.
+            // No `Sound`: Stronghold plays the sound chosen in Settings itself.
             completion_handler
                 .call((UNNotificationPresentationOptions::Banner
                     | UNNotificationPresentationOptions::List,));
@@ -207,7 +209,7 @@ define_class!(
                     .map(|s| s.to_string());
                 match payload.as_deref().and_then(decode_payload) {
                     Some(what) => clicked(what),
-                    None => log::debug!("clicked notification has no Myrstack payload"),
+                    None => log::debug!("clicked notification has no Stronghold payload"),
                 }
             }
             completion_handler.call(());
@@ -289,7 +291,7 @@ impl Poster for NativePoster {
 fn request_id() -> String {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     format!(
-        "myrstack-{}-{}-{}",
+        "stronghold-{}-{}-{}",
         std::process::id(),
         super::now_ms(),
         NEXT.fetch_add(1, Ordering::Relaxed)

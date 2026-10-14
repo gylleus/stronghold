@@ -418,7 +418,7 @@ fn seed_envoy_panel_fixture() {
     queue
         .create(Draft::proposal(
             "Review the fixture build".into(),
-            Some("myrstack".into()),
+            Some("stronghold".into()),
             "Casey offered to check it.".into(),
             "https://example.slack.com/archives/C123/p1790000000000002".into(),
             now_ms(),
@@ -1602,4 +1602,174 @@ fn clearing_stuck_events_resolves_warning_and_resets_the_wait_clock() {
     assert!(core.pending_since_ms.is_none());
     assert!(core.notice_resolved(&notices.history.entries()[0]));
     assert!(core.stall_notices(now_ms() + RENOTIFY_MS).is_empty());
+}
+
+#[test]
+fn envoy_asks_karl_then_delivers_a_new_event_before_the_answer() {
+    use crate::ask::{AskRequest, Asks};
+    use crate::clan::ClanData;
+    use crate::model::{ClanSnapshot, NodeId, NodeState};
+    use crate::review::mark::Origin;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let handle = "term_envoy";
+    core.handle = Some(handle.into());
+    let now = 1_791_300_000_000;
+    let question = "Should tartine go live? Do you want to proceed?";
+    let screen: Vec<String> = format!("Claude Code\n{question}\n❯\n? for shortcuts")
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    let agent = AgentIdentity::Claude;
+    let verdict = crate::detect::detect_prompt(&screen, Some(&agent));
+    assert_eq!(verdict, None, "question text above the composer is history");
+    let data = ClanData {
+        terminals: vec![Terminal {
+            handle: handle.into(),
+            connected: true,
+            writable: true,
+            agent_identity: Some(agent.clone()),
+            preview: Some(screen.join("\n")),
+            ..Terminal::default()
+        }],
+        needs_input: [(handle.into(), verdict)].into(),
+        composers: [(
+            handle.into(),
+            crate::detect::composer_state(&screen, Some(&agent)),
+        )]
+        .into(),
+        ..ClanData::default()
+    };
+    let mut snapshot = ClanSnapshot::build(&data, now);
+    snapshot.mark_envoy(
+        Some(handle),
+        EnvoyStatus {
+            session: crate::envoy::SessionState::Running,
+            bridge: BridgeStatus::Ok,
+            pending_drafts: 0,
+            dry_run: true,
+            stuck_events: 0,
+            poll_stale: false,
+        },
+    );
+    let mut asks = Asks::new();
+    let request = AskRequest {
+        question: question.into(),
+        context: "Elion asked in Slack; awaiting Karl's decision.".into(),
+        url: Some("https://example.slack.com/archives/C123/p1791300000000001".into()),
+        severity: Severity::Warn,
+        origin: Origin {
+            terminal_handle: Some(handle.into()),
+            ..Origin::default()
+        },
+    };
+    let (notice, waiting) = super::super::lifecycle::prepare_ask(
+        &mut asks,
+        snapshot.node(&NodeId::terminal(handle)),
+        &request,
+        now,
+    );
+    assert_eq!(notice.source, Source::Agent);
+    assert_eq!(notice.target.as_deref(), Some("term:term_envoy"));
+    assert_eq!(notice.url, request.url);
+    assert!(notice.message.contains(question));
+    assert!(notice.message.contains(&request.context));
+    let mut notifications = crate::notify::NotificationCenter::default();
+    let outcome = notifications.dispatch(notice, &crate::notify::NotifySettings::default(), now);
+    assert!(matches!(outcome, crate::notify::Outcome::Delivered { .. }));
+    snapshot.mark_waiting(&asks.waiting(&data, None));
+
+    let event = receipt_event("1791300000.000001");
+    let mut inbox = Inbox::default();
+    inbox.insert(event.clone());
+    core.merge_polled(inbox, vec![event]);
+    assert_eq!(
+        target_blocked(Some(&data), Some(&snapshot), handle, false),
+        None
+    );
+    assert!(!waiting);
+    assert!(asks.is_empty());
+    assert_eq!(
+        snapshot.node(&NodeId::terminal(handle)).unwrap().state,
+        NodeState::Idle
+    );
+    struct TerminalSink(crossbeam_channel::Sender<Action>);
+    impl crate::actions::ActionExecutor for TerminalSink {
+        fn execute(&self, action: &Action) -> Result<(), String> {
+            self.0.send(action.clone()).map_err(|e| e.to_string())
+        }
+    }
+    let (sent, received) = crossbeam_channel::unbounded();
+    let mut runner = crate::actions::ActionRunner::spawn(TerminalSink(sent), None);
+    let (action, batch) = core.next_forward(now, &[]).expect("pending batch");
+    let id = runner.submit(action);
+    core.forwarding = Some((id, batch));
+    let result = runner
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("delivery result");
+    assert!(result.outcome.is_ok());
+    assert_eq!(received.try_recv().unwrap(), result.action);
+    let Action::Send { handle: to, input } = &result.action else {
+        panic!("typed batch")
+    };
+    assert_eq!(to, handle);
+    assert!(input.enter);
+    assert!(input.text.as_deref().unwrap().contains("Fixture message"));
+    let mut traffic = Vec::new();
+    core.forward_done(&result, now, |m| traffic.push(m));
+    assert_eq!(traffic.len(), 1);
+    assert!(core.pending.is_empty());
+    assert!(core.inbox.unforwarded().is_empty());
+    let entry = &notifications.history.entries()[0];
+    assert!(
+        !entry.read,
+        "delivering a Slack batch must not dismiss Karl's question"
+    );
+    assert_eq!(entry.target.as_deref(), Some("term:term_envoy"));
+    assert!(entry.message.contains(question));
+
+    assert_eq!(
+        target_blocked(Some(&data), Some(&snapshot), handle, true),
+        Some("input pending")
+    );
+    let mut busy = snapshot.clone();
+    busy.nodes
+        .iter_mut()
+        .find(|n| n.id == NodeId::terminal(handle))
+        .unwrap()
+        .state = NodeState::Working;
+    assert_eq!(
+        target_blocked(Some(&data), Some(&busy), handle, false),
+        Some("not idle")
+    );
+    let mut prompt = data.clone();
+    let permission: Vec<String> = "Do you want to proceed?\n❯ 1. Yes\n  2. No"
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    prompt.needs_input.insert(
+        handle.into(),
+        crate::detect::detect_prompt(&permission, Some(&agent)),
+    );
+    let mut blocked = ClanSnapshot::build(&prompt, now);
+    blocked.mark_envoy(
+        Some(handle),
+        EnvoyStatus {
+            session: crate::envoy::SessionState::Running,
+            bridge: BridgeStatus::Ok,
+            pending_drafts: 0,
+            dry_run: true,
+            stuck_events: 0,
+            poll_stale: false,
+        },
+    );
+    assert_eq!(
+        blocked.node(&NodeId::terminal(handle)).unwrap().state,
+        NodeState::NeedsInput
+    );
+    assert_eq!(
+        target_blocked(Some(&prompt), Some(&blocked), handle, false),
+        Some("not idle")
+    );
 }

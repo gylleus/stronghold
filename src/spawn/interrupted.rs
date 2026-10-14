@@ -1,7 +1,7 @@
 //! Spawns whose `spawn_session` call was cancelled (or whose client went away) after the session
 //! had started: the caller never saw the result, so it may spawn the same work again.
 //!
-//! The MCP server records them in a small JSON file in the data dir; `fleet_status` and
+//! The MCP server records them in a small JSON file in the data dir; `clan_status` and
 //! `list_agents` show them until the agent is gone or [`MAX_AGE_MS`] passed.
 
 use std::fs;
@@ -54,7 +54,7 @@ impl InterruptedSpawn {
         }
     }
 
-    /// One line for `fleet_status`; `state` is the agent's current state when known.
+    /// One line for `clan_status`; `state` is the agent's current state when known.
     pub fn line(&self, state: Option<&str>, now_ms: i64) -> String {
         let agent = self
             .node
@@ -150,7 +150,7 @@ pub fn current(
     shown
 }
 
-/// The `fleet_status` / `list_agents` section for `shown`, empty when there is nothing.
+/// The `clan_status` / `list_agents` section for `shown`, empty when there is nothing.
 pub fn section(shown: &[(InterruptedSpawn, Option<String>)], now_ms: i64) -> String {
     if shown.is_empty() {
         return String::new();

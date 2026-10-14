@@ -505,10 +505,10 @@ fn finish_one(shared: &Shared, generation: u64) {
     }
 }
 
-const SAY_USAGE: &str = "usage: myrstack say [--wav <file>] [--voice <name>] [--speed <x>] \
+const SAY_USAGE: &str = "usage: stronghold say [--wav <file>] [--voice <name>] [--speed <x>] \
                          [--volume <0-1>] <markdown text…>";
 
-/// `myrstack say …`: speaks (or renders to a WAV file) text with the King's voice,
+/// `stronghold say …`: speaks (or renders to a WAV file) text with the King's voice,
 /// downloading the model on first use.
 pub fn run_cli(args: &[String]) -> Option<anyhow::Result<()>> {
     let (cmd, rest) = args.split_first()?;
@@ -742,13 +742,13 @@ mod tests {
         wait_until(|| *attempts.lock().unwrap() == 2);
     }
 
-    /// Needs the model: set `MYRSTACK_DATA_DIR` to a dir whose `speech-models/` has (or may
-    /// download) it. Renders to `$MYRSTACK_TTS_WAV` if set.
+    /// Needs the model: set `STRONGHOLD_DATA_DIR` to a dir whose `speech-models/` has (or may
+    /// download) it. Renders to `$STRONGHOLD_TTS_WAV` if set.
     /// `cargo test --release --lib kokoro_synthesizes -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn kokoro_synthesizes_plausible_speech() {
-        let release = match std::env::var("MYRSTACK_TTS_MODEL").as_deref() {
+        let release = match std::env::var("STRONGHOLD_TTS_MODEL").as_deref() {
             Ok("int8") => kokoro::KOKORO_INT8_V1_0,
             _ => kokoro::DEFAULT,
         };
@@ -761,7 +761,7 @@ mod tests {
         assert_eq!(names, KOKORO_V1_0_VOICES);
 
         let t = Instant::now();
-        let threads = std::env::var("MYRSTACK_TTS_THREADS")
+        let threads = std::env::var("STRONGHOLD_TTS_THREADS")
             .ok()
             .and_then(|t| t.parse().ok())
             .unwrap_or(SpeakerConfig::default().threads);
@@ -786,7 +786,7 @@ mod tests {
         // ~13 words: 2.5–8 s of speech.
         assert!((2.5..8.0).contains(&secs), "duration {secs}");
         assert!(rms(&audio.samples) > 0.02, "silent");
-        if let Some(path) = std::env::var_os("MYRSTACK_TTS_WAV") {
+        if let Some(path) = std::env::var_os("STRONGHOLD_TTS_WAV") {
             crate::voice::audio_out::write_wav(path.as_ref(), &audio.samples, 24_000).unwrap();
         }
     }

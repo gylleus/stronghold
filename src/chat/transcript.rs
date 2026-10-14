@@ -18,6 +18,8 @@ const INTERRUPTED_NOTE: &str = "[Request interrupted by user]";
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatItem {
     User(String),
+    /// Incoming ant data, never a Karl bubble.
+    Ant(Box<crate::queen_inbox::AntMessage>),
     /// Karl's message spoken with hold-to-talk (drawn with a 🎤 marker).
     VoiceUser(String),
     /// Reply text as streamed, `<say>` tags included; the pane shows the say-line apart
@@ -29,7 +31,7 @@ pub enum ChatItem {
     Tool(ToolCall),
     Permission(PermissionCard),
     Notice(String),
-    /// A note from Myrstack itself (e.g. auto mode changed), not typed by Karl.
+    /// A note from Stronghold itself (e.g. auto mode changed), not typed by Karl.
     System(String),
     Error(String),
 }
@@ -117,7 +119,7 @@ impl Transcript {
         }
     }
 
-    /// Myrstack-authored messages are timed at creation, never during rendering.
+    /// Stronghold-authored messages are timed at creation, never during rendering.
     fn push_local(&mut self, item: ChatItem) {
         self.timestamps
             .insert(self.items.len(), jiff::Timestamp::now());
@@ -129,6 +131,18 @@ impl Transcript {
         let start = self.items.len();
         self.apply(message);
         self.set_timestamps(start, Some(timestamp));
+    }
+
+    pub fn push_ant(&mut self, message: &crate::queen_inbox::AntMessage) {
+        if let Some(ChatItem::Ant(existing)) = self
+            .items
+            .iter_mut()
+            .find(|item| matches!(item, ChatItem::Ant(m) if m.id == message.id))
+        {
+            **existing = message.clone();
+        } else {
+            self.push_local(ChatItem::Ant(Box::new(message.clone())));
+        }
     }
 
     pub fn push_user(&mut self, text: &str) {

@@ -543,7 +543,7 @@ fn url_domain(core: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_owned())
 }
 
-/// Myrstack/Orca ids: `term:term_ab12cd…` → `terminal ab12`, `run_7c25cdcf46e0` → `run 7c25`,
+/// Stronghold/Orca ids: `term:term_ab12cd…` → `terminal ab12`, `run_7c25cdcf46e0` → `run 7c25`,
 /// UUIDs and long hex hashes → their first four characters.
 fn speak_id(core: &str) -> Option<String> {
     let (core, forced_terminal) = match core.strip_prefix("term:") {

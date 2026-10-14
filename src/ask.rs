@@ -4,7 +4,8 @@
 //! - the `ask_karl` MCP tool records a [`PendingAsk`] (and notifies Karl straight away);
 //! - a Claude session whose last turn ended on a question ([`crate::claude::turns`]).
 //!
-//! Either way the node shows NeedsInput (see [`crate::model::ClanSnapshot::mark_waiting`]),
+//! Except for the Envoy (which keeps taking batches), either way the node shows NeedsInput
+//! (see [`crate::model::ClanSnapshot::mark_waiting`]),
 //! which the dashboard and the needs-input notification pick up. An ask is answered once the
 //! transcript shows a prompt after it; for agents without a Claude transcript (Codex), once
 //! the terminal has produced output [`ASK_SETTLE_MS`] after it.
@@ -277,5 +278,43 @@ mod tests {
             asks.waiting(&data(&[("t1", None)]), Some(&claude))["t1"],
             "Which DB?"
         );
+    }
+
+    #[test]
+    fn envoy_transcript_questions_and_old_explicit_asks_do_not_mark_waiting() {
+        use crate::model::{ClanSnapshot, NodeId, NodeKind, NodeState};
+        let mut data = data(&[("t1", None)]);
+        data.terminals[0].connected = true;
+        let transcript = claude(
+            "t1",
+            Turn {
+                last_prompt_ms: None,
+                question: Some(OpenQuestion {
+                    text: "Should tartine go live?".into(),
+                    at_ms: AT,
+                }),
+            },
+        );
+        for explicit in [false, true] {
+            let mut asks = Asks::new();
+            if explicit {
+                asks.insert("t1", ask());
+            }
+            let waiting = asks.waiting(&data, Some(&transcript));
+            assert!(waiting.contains_key("t1"));
+            let mut snapshot = ClanSnapshot::build(&data, AT);
+            snapshot
+                .nodes
+                .iter_mut()
+                .find(|n| n.id == NodeId::terminal("t1"))
+                .unwrap()
+                .kind = NodeKind::Envoy;
+            snapshot.mark_waiting(&waiting);
+            assert_eq!(
+                snapshot.node(&NodeId::terminal("t1")).unwrap().state,
+                NodeState::Idle
+            );
+            assert_eq!(snapshot.king().unwrap().state, NodeState::Idle);
+        }
     }
 }

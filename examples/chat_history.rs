@@ -10,14 +10,14 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use myrstack::chat::history::HistoryReader;
-use myrstack::chat::{SessionState, Transcript};
-use myrstack::claude::SessionLocator;
-use myrstack::model::{Node, NodeId, NodeKind, NodeState};
-use myrstack::orca::{AgentIdentity, OrcaClient, Terminal};
-use myrstack::poller::ScreenUpdate;
-use myrstack::ui;
-use myrstack::ui::chat::TranscriptView;
+use stronghold::chat::history::HistoryReader;
+use stronghold::chat::{SessionState, Transcript};
+use stronghold::claude::SessionLocator;
+use stronghold::model::{Node, NodeId, NodeKind, NodeState};
+use stronghold::orca::{AgentIdentity, OrcaClient, Terminal};
+use stronghold::poller::ScreenUpdate;
+use stronghold::ui;
+use stronghold::ui::chat::TranscriptView;
 
 const SETTLE_TIME: Duration = Duration::from_secs(3);
 const SCROLL_AT: Duration = Duration::from_secs(1);
@@ -87,8 +87,8 @@ fn agent(handle: &str, show_screen: bool) -> Content {
         .find(|t| t.handle == handle)
         .expect("no such terminal");
     terminal.agent_identity = Some(AgentIdentity::Claude);
-    let hooks = myrstack::claude::hook::load_hook_mappings(
-        &myrstack::claude::hook::default_session_map_path(),
+    let hooks = stronghold::claude::hook::load_hook_mappings(
+        &stronghold::claude::hook::default_session_map_path(),
     );
     let sessions = SessionLocator::default().map_terminals(&[terminal.clone()], Some(&hooks));
     let view = sessions.get(handle).and_then(|m| m.session()).map(|info| {
@@ -145,12 +145,12 @@ fn agent(handle: &str, show_screen: bool) -> Content {
 
 /// The King's resumed conversation, as the chat loads it at start.
 fn king() -> Content {
-    let dir = myrstack::claude::hook::data_dir().join("chat");
-    let record = myrstack::chat::session::SessionStore::saved(&dir).expect("no King session");
+    let dir = stronghold::claude::hook::data_dir().join("chat");
+    let record = stronghold::chat::session::SessionStore::saved(&dir).expect("no King session");
     let info = SessionLocator::default()
         .find_session(&record.session_id, Some(&dir))
         .expect("no King transcript");
-    let transcript = myrstack::chat::history::load(&info.transcript_path).expect("read");
+    let transcript = stronghold::chat::history::load(&info.transcript_path).expect("read");
     eprintln!(
         "{}: {} items",
         info.transcript_path.display(),

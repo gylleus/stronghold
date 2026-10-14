@@ -1,7 +1,7 @@
 # Heartbeat convention
 
-What agents must do so Myrstack's whip can tell a working agent from a stalled
-one. Myrstack reads Orca's bus and task board. It never asks agents to do
+What agents must do so Stronghold's whip can tell a working agent from a stalled
+one. Stronghold reads Orca's bus and task board. It never asks agents to do
 anything beyond this page.
 
 ## What Orca already does
@@ -45,7 +45,7 @@ this page, because the capability flag is per dispatch.
 - **`--phase` is one word** from this list: `planning`, `investigating`,
   `implementing`, `reviewing`, `verifying`, `waiting`. Put detail in
   `--body` (one line, for example `--body "PR #208 open, waiting on Ankra"`),
-  not in the phase. Myrstack shows the phase on the node and the body in the
+  not in the phase. Stronghold shows the phase on the node and the body in the
   detail pane.
 - **Heartbeats are not reports.** A finished task gets `worker_done`, a PR
   ready for the gate gets `merge_ready`, a blocking question gets `ask`, and
@@ -53,7 +53,7 @@ this page, because the capability flag is per dispatch.
 - **Stop after `worker_done`.** Orca rejects later heartbeats. If you are
   re-engaged, a new dispatch brings a new preamble and new IDs.
 - You can skip heartbeats while blocked inside `check --wait` or `ask`,
-  because Orca treats those calls as liveness. Myrstack does not yet see a
+  because Orca treats those calls as liveness. Stronghold does not yet see a
   pending `ask` as liveness, though (see "Open points").
 
 ## Coordinators
@@ -65,7 +65,7 @@ it. Their progress signal is the task board and the bus:
   `task-update --id <t> --status blocked|failed|ready`, or dispatch the
   follow-up task. Don't `task-update --status completed` after a valid
   `worker_done`, because Orca already did that. A `worker_done` whose task
-  has no follow-up for longer than the threshold is what Myrstack flags as a
+  has no follow-up for longer than the threshold is what Stronghold flags as a
   stalled coordinator.
 - **Act on `ready` unassigned tasks within the threshold:** start a worker
   for each one, or mark it `blocked` with a reason.
@@ -74,11 +74,11 @@ it. Their progress signal is the task board and the bus:
   Run with the reason: `orca orchestration send --type status --subject
   "holding: <reason>" --json`. That counts as activity.
 
-## Answering a Myrstack nudge
+## Answering a Stronghold nudge
 
-Myrstack nudges come as an Orca message. If a bus message doesn't wake an
+Stronghold nudges come as an Orca message. If a bus message doesn't wake an
 idle prompt, they come as typed text instead. Either way the text starts
-with `Myrstack:` and asks for your current phase.
+with `Stronghold:` and asks for your current phase.
 
 1. **Worker:** send one heartbeat with your current `--phase` and a one-line
    `--body` status, then carry on with the task in the same turn. If you are
@@ -96,7 +96,7 @@ with `Myrstack:` and asks for your current phase.
 
 ## What counts as progress
 
-Every 60 s, for each task, Myrstack takes the newest of these three signals:
+Every 60 s, for each task, Stronghold takes the newest of these three signals:
 
 1. a bus message from the owning terminal that refers to the task (any type:
    `heartbeat`, `status`, `merge_ready`, `question`, `escalation`,
@@ -122,14 +122,14 @@ Every 60 s, for each task, Myrstack takes the newest of these three signals:
   an unanswered ask); bus messages and task changes always count.
 
 A repeated heartbeat with an unchanged phase still counts as progress. A
-NeedsInput terminal is never nudged. It is waiting on Karl, so Myrstack
+NeedsInput terminal is never nudged. It is waiting on Karl, so Stronghold
 sends a notification instead. Escalation goes: nudge, then a second nudge
 after the 10-min cooldown, then a macOS notification and a red node.
 
 An **abandoned** Run is never nudged: nothing has happened in it (Run
 `updated_at`, coordinator messages (not its terminal output), bus messages for the Run,
 task creation, completion or status changes, worker heartbeats or output)
-for longer than `whip.abandon_after_ms` (default 24 h). Myrstack's own
+for longer than `whip.abandon_after_ms` (default 24 h). Stronghold's own
 messages don't count. A worker silent that long in an abandoned Run is left
 alone too.
 
@@ -141,7 +141,7 @@ has been silent for longer than the abandon window.
 ## Event forwarding
 
 Coordinators don't watch the bus (every wake replays their context), so
-Myrstack wakes them. Each whip tick it types one line into a Run's
+Stronghold wakes them. Each whip tick it types one line into a Run's
 coordinator terminal for that Run's new `worker_done`, `merge_ready`,
 `question` and `escalation` messages, and for each failed-but-alive task:
 
@@ -155,7 +155,7 @@ Clan event: worker_done from fix-login: PR open — msg msg_1. Read in full with
   retried (next tick, then backing off to every 10 min); after 3 failures in
   a row Karl gets one notification naming the Run and the error.
 - The forwarded set is saved in `forwarded.json` next to `settings.json`, so
-  events that arrived while Myrstack was down (up to 6 h old) are forwarded
+  events that arrived while Stronghold was down (up to 6 h old) are forwarded
   on start. Without that file only the last 10 min replay.
 - It types only into a live Claude session. If the coordinator's terminal
   shows a shell (the session exited), events wait, and after 5 min Karl gets
@@ -164,36 +164,36 @@ Clan event: worker_done from fix-login: PR open — msg msg_1. Read in full with
 - `whip.forward_events` (default on) switches it off. Forwarding stays live
   when the whip is in dry run: it delivers facts and nudges nobody.
 
-## Myrstack senders
+## Stronghold senders
 
 Without `--from` or `ORCA_TERMINAL_HANDLE`, `orca orchestration send`
 attributes a message to whichever terminal has focus. Orca's runtime takes
-any string as `--from`, so Myrstack always passes one:
+any string as `--from`, so Stronghold always passes one:
 
-- `myrstack-whip`: whip nudges.
-- `king`: messages Karl broadcasts from Myrstack's King node. Their text
+- `stronghold-whip`: whip nudges.
+- `king`: messages Karl broadcasts from Stronghold's King node. Their text
   starts with `King:`.
 
 These are not mailboxes. `orca orchestration reply` to them fails with
 `terminal_not_found`; act on the nudge or message the coordinator/Run
 instead. The whip's terminal-input fallback carries no sender; its text
-starts with `Myrstack:`.
+starts with `Stronghold:`.
 
 ## The King speaks for Karl
 
 A bus message from `king` whose text starts with `King:` is Karl giving an
-instruction through Myrstack's King. Treat it exactly as if Karl typed it in
+instruction through Stronghold's King. Treat it exactly as if Karl typed it in
 your terminal: act on it, including cleanup such as closing or releasing
 workers, within the *Hard rules* (deploy, delete and force-push stay Karl's
 own hands). If a King message conflicts with your current task, finish or
 park the task as the message says and report what you did to your
-coordinator. `Myrstack:` whip nudges are different: liveness pings only, no
+coordinator. `Stronghold:` whip nudges are different: liveness pings only, no
 authority.
 
 ## Open points for the whip (M4)
 
-- A worker blocked in `ask` stops heartbeating legitimately. Myrstack should
+- A worker blocked in `ask` stops heartbeating legitimately. Stronghold should
   treat an unanswered `question` from the owner as a stalled coordinator,
   not a stalled worker.
-- The attendant is now a fallback for when Myrstack isn't running: event
+- The attendant is now a fallback for when Stronghold isn't running: event
   forwarding and the worker nudge cover its job.

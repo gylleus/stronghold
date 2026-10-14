@@ -1,15 +1,15 @@
-//! The worktree cleanup window on a synthetic plan, with the hammer running along the bottom
+//! The worktree cleanup side panel on a synthetic plan, with the hammer running along the bottom
 //! (driven by a sweep marker in a temporary data dir, as when the King runs `clean_worktrees`).
 //! `cargo run --example farm -- --hammer` shows it breaking heaps in the farm.
 //!
-//! `cargo run --example worktree_cleanup [--shot out.png] [--light]`: with `--shot`, saves a
+//! `cargo run --example worktree_cleanup -- [--shot out.png] [--light] [--small]`: with `--shot`, saves a
 //! screenshot after a moment and exits.
 
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use myrstack::ui::worktrees::WorktreePanel;
-use myrstack::worktrees::{BuildDir, Plan, PlanEntry, SweepMarker, Verdict};
+use stronghold::ui::worktrees::WorktreePanel;
+use stronghold::worktrees::{BuildDir, Plan, PlanEntry, SweepMarker, Verdict};
 
 const WINDOW: [f32; 2] = [1100.0, 720.0];
 const GB: u64 = 1024 * 1024 * 1024;
@@ -51,14 +51,14 @@ fn plan() -> Plan {
     Plan {
         entries: vec![
             entry(
-                "myrstack",
+                "stronghold",
                 "farm-view",
                 Some(12 * GB),
                 true,
                 "everything is in origin/main",
             ),
             entry(
-                "myrstack",
+                "stronghold",
                 "graph-trackpad-pan",
                 Some(6 * GB),
                 true,
@@ -125,6 +125,7 @@ struct Demo {
     shot: Option<String>,
     since: Instant,
     shooting: bool,
+    clicks: usize,
     /// Holds the sweep marker.
     _data: tempfile::TempDir,
 }
@@ -132,11 +133,18 @@ struct Demo {
 impl eframe::App for Demo {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.panel.tick(None, now_ms());
+        egui::Panel::top("top_bar").show(ui, |ui| {
+            self.panel.top_bar(ui, &[]);
+        });
+        self.panel.show(ui);
         egui::CentralPanel::default().show(ui, |ui| {
             ui.heading("Farm goes here");
+            if ui.button("Keep working").clicked() {
+                self.clicks += 1;
+            }
+            ui.label(format!("Workspace clicks: {}", self.clicks));
         });
-        self.panel.tick(None, now_ms());
-        self.panel.window(&ctx);
         self.panel.hammer(&ctx);
         let Some(path) = &self.shot else { return };
         if !self.shooting && self.since.elapsed() > Duration::from_millis(2500) {
@@ -172,33 +180,42 @@ fn main() -> eframe::Result {
         .position(|a| a == "--shot")
         .and_then(|i| args.get(i + 1).cloned());
     let light = args.iter().any(|a| a == "--light");
+    let window = if args.iter().any(|a| a == "--small") {
+        [640.0, 400.0]
+    } else {
+        WINDOW
+    };
     let data = tempfile::tempdir().expect("temp dir");
     // SAFETY: set before any thread starts.
-    unsafe { std::env::set_var("MYRSTACK_DATA_DIR", data.path()) };
+    unsafe { std::env::set_var("STRONGHOLD_DATA_DIR", data.path()) };
     let marker = SweepMarker {
         started_at_ms: now_ms(),
         updated_at_ms: now_ms() + 3_600_000,
         total: 4,
         done: 1,
         current: Some("graph-trackpad-pan".into()),
-        current_id: Some("myrstack::graph-trackpad-pan".into()),
+        current_id: Some("stronghold::graph-trackpad-pan".into()),
     };
     std::fs::write(
-        myrstack::worktrees::default_marker_path(),
+        stronghold::worktrees::default_marker_path(),
         serde_json::to_vec(&marker).unwrap(),
     )
     .unwrap();
     eframe::run_native(
         "worktree cleanup",
         eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size(WINDOW),
+            viewport: egui::ViewportBuilder::default().with_inner_size(window),
+            persist_window: false,
+            persistence_path: Some(data.path().join("app.ron")),
             ..Default::default()
         },
         Box::new(move |cc| {
-            myrstack::ui::theme::install(&cc.egui_ctx);
-            if light {
-                cc.egui_ctx.set_theme(egui::Theme::Light);
-            }
+            stronghold::ui::theme::install(&cc.egui_ctx);
+            cc.egui_ctx.set_theme(if light {
+                egui::Theme::Light
+            } else {
+                egui::Theme::Dark
+            });
             let mut panel = WorktreePanel::new(&cc.egui_ctx);
             panel.show_plan(plan());
             Ok(Box::new(Demo {
@@ -206,6 +223,7 @@ fn main() -> eframe::Result {
                 shot,
                 since: Instant::now(),
                 shooting: false,
+                clicks: 0,
                 _data: data,
             }))
         }),

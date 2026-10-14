@@ -670,7 +670,7 @@ mod tests {
         assert_eq!(rec.built(), 1);
         assert_eq!(
             rec.calls(),
-            vec![format!("notify Myrstack: {HANDLE} is waiting on you")]
+            vec![format!("notify Stronghold: {HANDLE} is waiting on you")]
         );
         // Nothing to do on the next tick: the executor is not even built.
         let next = whip.tick(now + MIN, &|| factory()).unwrap();
@@ -905,7 +905,7 @@ mod tests {
                 to: "dispatch:ctx_t1".into(),
                 run_id: Some(RUN.into()),
             },
-            text: "Myrstack: now".into(),
+            text: "Stronghold: now".into(),
             warn: None,
         }
     }

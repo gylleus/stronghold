@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use super::{MyrstackApp, repaint_once};
+use super::{StrongholdApp, repaint_once};
 use crate::ui::dictation::{self as ui_dictation, DictationKey, KeyState, Pill, PillAction};
 use crate::voice::dictation::{DictationError, DictationOutput, MicDictation, Phase};
 use crate::voice::models::{self, Download, DownloadStatus};
@@ -139,7 +139,7 @@ impl AppDictation {
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// Runs dictation for this frame: takes ⌘E/Esc before other shortcuts see them, delivers a
     /// finished transcript and draws the pill. Call first in `ui`.
     pub(super) fn dictation_frame(&mut self, ctx: &egui::Context) {

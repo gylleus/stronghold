@@ -162,7 +162,7 @@ fn plan_node(
         NodeKind::Envoy => {
             return Err("the Envoy listens while idle; it does not need nudging".into());
         }
-        NodeKind::King => return Err("the King is Myrstack itself".into()),
+        NodeKind::King => return Err("the King is Stronghold itself".into()),
         NodeKind::Subagent => return Err("subagents have no terminal to nudge".into()),
         NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {}
     }
@@ -390,7 +390,7 @@ mod tests {
         assert!(
             nudge
                 .text
-                .starts_with("Myrstack: no progress on task t1 (Fix login) for 20m."),
+                .starts_with("Stronghold: no progress on task t1 (Fix login) for 20m."),
             "{}",
             nudge.text
         );
@@ -412,7 +412,7 @@ mod tests {
         assert!(
             nudge
                 .text
-                .starts_with("Myrstack: Karl asks for a status check")
+                .starts_with("Stronghold: Karl asks for a status check")
         );
         assert_eq!(nudge.target_label(), "terminal term_worker");
     }
@@ -436,7 +436,7 @@ mod tests {
             }]
         );
         assert!(
-            nudge.text.starts_with("Myrstack: run run_1"),
+            nudge.text.starts_with("Stronghold: run run_1"),
             "{}",
             nudge.text
         );
@@ -472,7 +472,7 @@ mod tests {
         let data = clan("dispatched");
         assert_eq!(
             skip_reason(&data, NodeId::king()),
-            "the King is Myrstack itself"
+            "the King is Stronghold itself"
         );
         assert_eq!(
             skip_reason(&data, NodeId("nope".into())),

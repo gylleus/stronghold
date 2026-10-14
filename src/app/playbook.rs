@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 
-use super::MyrstackApp;
+use super::StrongholdApp;
 use crate::playbook::Playbook;
 use crate::playbook::fetches::{self, FetchSummary, PlaybookStatus};
 
@@ -67,7 +67,7 @@ fn run(path: &std::path::Path, tx: &Sender<FetchSummary>, repaint: &(dyn Fn() + 
     }
 }
 
-impl MyrstackApp {
+impl StrongholdApp {
     /// Takes the reader thread's newest fetch summary.
     pub(super) fn poll_playbook(&mut self) {
         self.playbook_watch.poll();

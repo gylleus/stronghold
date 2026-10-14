@@ -13,7 +13,7 @@ pub(crate) mod hammer;
 pub mod layout;
 #[cfg(test)]
 mod layout_tests;
-mod library;
+mod ledger;
 pub mod mail;
 pub mod motion;
 pub mod nature;
@@ -145,6 +145,8 @@ pub struct FarmResponse {
     /// Empty ground was clicked (clears the selection, as in the clan).
     pub clicked_empty: bool,
     pub open_envoy: bool,
+    /// Open the read-only Ledger pane.
+    pub open_ledger: bool,
     pub hovered: Option<NodeId>,
     /// Dwarves inside a selection box dragged from empty ground, when it was released this
     /// frame, and whether Shift/Cmd was held (add to the selection rather than replace it).
@@ -205,6 +207,8 @@ pub struct FarmView {
     envoy_health: Option<crate::envoy::EnvoyHealth>,
     envoy_pending: usize,
     envoy_receipt: crate::ui::envoy_receipt::ReceiptCue,
+    /// What the Ledger holds: its count on the chamber's sign, the newest entries on hover.
+    ledger: crate::ledger::Shelf,
     /// Messages carried between dwarves; see [`mail`].
     mail: crate::ui::envelope::Flights,
     /// Tool calls beaming from their callers; see [`beams`].
@@ -309,6 +313,7 @@ struct FrameShape {
     throne_hall: Rect,
     storage: Rect,
     comms: Option<layout::CommsRoom>,
+    ledger: Option<Rect>,
 }
 
 impl FrameShape {
@@ -321,6 +326,7 @@ impl FrameShape {
             throne_hall: scene.throne_hall,
             storage: scene.storage,
             comms: scene.comms,
+            ledger: scene.ledger,
         }
     }
 
@@ -344,6 +350,10 @@ impl FrameShape {
                 }),
                 (_, to) => to,
             },
+            ledger: match (self.ledger, to.ledger) {
+                (Some(a), Some(b)) => Some(rect(a, b)),
+                (_, to) => to,
+            },
         }
     }
 
@@ -360,6 +370,7 @@ impl FrameShape {
         scene.throne_hall = self.throne_hall;
         scene.storage = self.storage;
         scene.comms = self.comms;
+        scene.ledger = self.ledger;
     }
 }
 
@@ -417,6 +428,11 @@ impl FarmView {
 
     pub fn set_envoy_receipt(&mut self, receipt: crate::ui::envoy_receipt::ReceiptCue) {
         self.envoy_receipt = receipt;
+    }
+
+    /// What the Ledger holds, for its chamber.
+    pub fn set_ledger(&mut self, shelf: crate::ledger::Shelf) {
+        self.ledger = shelf;
     }
 
     /// The room plan, to save between launches.
@@ -487,7 +503,10 @@ impl FarmView {
             }
         }
         if bounds.is_finite() && bounds.is_positive() {
-            self.camera.focus(scene.rect, bounds);
+            match focus {
+                Focus::Nodes(_) => self.camera.pan_to(scene.rect, bounds.center()),
+                Focus::Run(_) | Focus::Repo(_) => self.camera.focus(scene.rect, bounds),
+            }
         }
     }
 
@@ -579,6 +598,9 @@ impl FarmView {
             .filter(|_| !tray_hovered && hovered.is_none())
             .and_then(|p| rubble::hit(&heaps, p))
             .cloned();
+        let ledger_hovered = pointer
+            .filter(|_| !tray_hovered && hovered.is_none() && heap_hovered.is_none())
+            .is_some_and(|p| scene.ledger.is_some_and(|room| room.contains(p)));
         let portal_frame = world::portal_frame(
             now_s,
             mail::portal_flare(self.mail.tick(now_s), now_s),
@@ -594,6 +616,7 @@ impl FarmView {
             portal_frame,
             &self.rubble,
             &heaps,
+            self.ledger.count,
         );
 
         self.envoy_receipt.repaint(ui.ctx());
@@ -691,7 +714,7 @@ impl FarmView {
             self.camera.transform(rect),
             painter.clip_rect(),
         );
-        if response.double_clicked() && hovered.is_none() && !tray_hovered {
+        if response.double_clicked() && hovered.is_none() && !tray_hovered && !ledger_hovered {
             self.camera = Camera::default();
         }
 
@@ -732,6 +755,15 @@ impl FarmView {
                 .clone()
                 .on_hover_ui_at_pointer(|ui| clan.node_tooltip_ui(ui, id));
         }
+        if ledger_hovered {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as i64);
+            response
+                .clone()
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text_at_pointer(crate::ledger::describe(&self.ledger, now_ms));
+        }
         if let Some(heap) = &heap_hovered {
             response
                 .clone()
@@ -753,8 +785,10 @@ impl FarmView {
             clicked_empty: response.clicked()
                 && hovered.is_none()
                 && !tray_hovered
+                && !ledger_hovered
                 && heap_hovered.is_none(),
             open_envoy: response.clicked() && tray_hovered,
+            open_ledger: response.clicked() && ledger_hovered,
             hovered,
             close_requested: menu.close,
             whip_requested: menu.whip,
@@ -1108,6 +1142,7 @@ fn paint_ground(
     portal_frame: u8,
     rubble_view: &rubble::RubbleView,
     heaps: &rubble::Rubble,
+    ledger_count: usize,
 ) {
     let px = scene.px;
     let a = scene.cell();
@@ -1175,7 +1210,7 @@ fn paint_ground(
     for plant in &plants {
         sprites.deco(painter, plant.deco, plant.foot, px, 1.0);
     }
-    library::paint(painter, sprites, scene);
+    ledger::paint(painter, sprites, scene, ledger_count);
     sprites.masonry(painter, scene.throne_hall);
     sprites.throne_hall(painter, scene.throne_hall, px);
     sprites.masonry(painter, scene.storage);

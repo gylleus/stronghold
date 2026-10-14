@@ -1,8 +1,8 @@
 //! The `SessionStart` hook that records exact terminal-to-session mappings.
 //!
-//! `hooks/myrstack-session-hook.sh` appends one JSON line per Claude session
-//! start to `session-map.jsonl` in the Myrstack data dir; [`load_hook_mappings`]
-//! reads it back. `myrstack install-hook` / `uninstall-hook` copy the script
+//! `hooks/stronghold-session-hook.sh` appends one JSON line per Claude session
+//! start to `session-map.jsonl` in the Stronghold data dir; [`load_hook_mappings`]
+//! reads it back. `stronghold install-hook` / `uninstall-hook` copy the script
 //! and add or remove its entry in Claude's `settings.json`.
 
 use std::collections::HashMap;
@@ -18,18 +18,21 @@ use serde_json::{Map, Value, json};
 use super::sessions::HookMappings;
 
 /// The hook script, installed into the data dir by `install-hook`.
-pub const HOOK_SCRIPT: &str = include_str!("../../hooks/myrstack-session-hook.sh");
+pub const HOOK_SCRIPT: &str = include_str!("../../hooks/stronghold-session-hook.sh");
 /// File name of the installed script; also how our settings entry is recognised.
-pub const HOOK_SCRIPT_NAME: &str = "myrstack-session-hook.sh";
+pub const HOOK_SCRIPT_NAME: &str = "stronghold-session-hook.sh";
+/// The script's name while the app was Myrstack; an entry running it is still ours, and
+/// `install-hook` points it at the new script.
+const OLD_HOOK_SCRIPT_NAME: &str = "myrstack-session-hook.sh";
 /// File the hook appends to, inside the data dir.
 pub const SESSION_MAP_FILE: &str = "session-map.jsonl";
 
 const HOOK_EVENT: &str = "SessionStart";
 
-/// `$MYRSTACK_DATA_DIR`, else `<platform data dir>/Myrstack`
-/// (`~/Library/Application Support/Myrstack` on macOS, as in the script).
+/// `$STRONGHOLD_DATA_DIR`, else `<platform data dir>/Stronghold`
+/// (`~/Library/Application Support/Stronghold` on macOS, as in the script).
 pub fn data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("MYRSTACK_DATA_DIR").filter(|d| !d.is_empty()) {
+    if let Some(dir) = crate::legacy::env_os("STRONGHOLD_DATA_DIR").filter(|d| !d.is_empty()) {
         return PathBuf::from(dir);
     }
     directories::BaseDirs::new()
@@ -118,7 +121,7 @@ pub fn hook_command(script: &Path) -> String {
 fn is_our_hook(hook: &Value) -> bool {
     hook.get("command")
         .and_then(Value::as_str)
-        .is_some_and(|c| c.contains(HOOK_SCRIPT_NAME))
+        .is_some_and(|c| c.contains(HOOK_SCRIPT_NAME) || c.contains(OLD_HOOK_SCRIPT_NAME))
 }
 
 /// Whether `settings` has our `SessionStart` entry.
@@ -245,7 +248,7 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     let name = path.file_name().context("path has no file name")?;
     let tmp = dir.join(format!(
-        ".{}.myrstack-tmp-{}",
+        ".{}.stronghold-tmp-{}",
         name.to_string_lossy(),
         std::process::id()
     ));
@@ -264,7 +267,7 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     result.with_context(|| format!("writing {}", path.display()))
 }
 
-/// Backs up `path` to `<path>.myrstack-bak-<unix ms>` (never overwriting an
+/// Backs up `path` to `<path>.stronghold-bak-<unix ms>` (never overwriting an
 /// earlier backup) and writes `settings`.
 fn save_settings(path: &Path, settings: &Value) -> Result<Option<PathBuf>> {
     let backup = if path.exists() {
@@ -272,7 +275,7 @@ fn save_settings(path: &Path, settings: &Value) -> Result<Option<PathBuf>> {
         let backup = (0..)
             .map(|n| {
                 let mut name = path.as_os_str().to_owned();
-                name.push(format!(".myrstack-bak-{stamp}"));
+                name.push(format!(".stronghold-bak-{stamp}"));
                 if n > 0 {
                     name.push(format!("-{n}"));
                 }
@@ -365,7 +368,7 @@ pub fn uninstall(opts: &HookCliOptions) -> Result<()> {
         return Ok(());
     };
     if !uninstall_hook_entry(&mut settings)? {
-        println!("{} has no Myrstack hook", opts.settings.display());
+        println!("{} has no Stronghold hook", opts.settings.display());
         return Ok(());
     }
     if opts.dry_run {
@@ -396,7 +399,7 @@ mod tests {
     use super::*;
     use std::process::{Command, Stdio};
 
-    const CMD: &str = "\"/data/Myrstack/myrstack-session-hook.sh\"";
+    const CMD: &str = "\"/data/Stronghold/stronghold-session-hook.sh\"";
 
     fn line(pane: &str, tab: &str, session: &str, at: i64) -> String {
         format!(
@@ -493,11 +496,28 @@ mod tests {
         assert!(!install_hook_entry(&mut v, CMD).unwrap());
         assert_eq!(v, once);
 
-        let moved = "\"/elsewhere/myrstack-session-hook.sh\"";
+        let moved = "\"/elsewhere/stronghold-session-hook.sh\"";
         assert!(install_hook_entry(&mut v, moved).unwrap());
         let start = v["hooks"]["SessionStart"].as_array().unwrap();
         assert_eq!(start.len(), 1);
         assert_eq!(start[0]["hooks"][0]["command"], moved);
+    }
+
+    #[test]
+    fn install_takes_over_the_entry_from_before_the_rename() {
+        let old = "\"/data/Myrstack/myrstack-session-hook.sh\"";
+        let mut settings = json!({"hooks": {"SessionStart": [
+            {"hooks": [{"type": "command", "command": old}]}
+        ]}});
+        assert!(hook_installed(&settings));
+        let new = "\"/data/Stronghold/stronghold-session-hook.sh\"";
+        assert!(install_hook_entry(&mut settings, new).unwrap());
+        assert_eq!(
+            settings,
+            json!({"hooks": {"SessionStart": [
+                {"hooks": [{"type": "command", "command": new}]}
+            ]}})
+        );
     }
 
     #[test]
@@ -514,7 +534,7 @@ mod tests {
         ]}});
         assert!(!hook_installed(&settings));
         assert!(!hook_installed(&Value::Null));
-        install_hook_entry(&mut settings, "\"/x/myrstack-session-hook.sh\"").unwrap();
+        install_hook_entry(&mut settings, "\"/x/stronghold-session-hook.sh\"").unwrap();
         assert!(hook_installed(&settings));
     }
 
@@ -571,7 +591,7 @@ mod tests {
         fs::read_dir(dir)
             .unwrap()
             .map(|e| e.unwrap().path())
-            .filter(|p| p.to_string_lossy().contains(".myrstack-bak-"))
+            .filter(|p| p.to_string_lossy().contains(".stronghold-bak-"))
             .collect()
     }
 
@@ -660,7 +680,7 @@ mod tests {
             .join(HOOK_SCRIPT_NAME);
         let mut cmd = Command::new("sh");
         cmd.arg(script)
-            .env("MYRSTACK_DATA_DIR", data)
+            .env("STRONGHOLD_DATA_DIR", data)
             .env_remove("ORCA_PANE_KEY")
             .env_remove("ORCA_TAB_ID")
             .env_remove("ORCA_WORKTREE_ID")
