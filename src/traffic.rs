@@ -12,11 +12,14 @@
 //! - `orca terminal send`s Claude terminals run, read from their transcripts
 //!   ([`crate::claude::forwards::SendWatch`]). Stronghold's own sends (the whip's, Karl's) run in
 //!   its process, never in a transcript, so they are not drawn twice.
+//! - Ledger lookups and filings, from Claude transcripts and Codex rollouts
+//!   ([`ledger::LedgerWatch`]) and the King's chat ([`ledger::message`]).
 //!
 //! In-process emitters (the Envoy's relays, say) push through a [`TrafficSender`]; other
 //! processes call the control API's `agent_message`.
 
 pub mod beam;
+pub mod ledger;
 
 use std::collections::HashSet;
 
@@ -49,6 +52,8 @@ pub enum MessageKind {
     Nudge,
     /// A status report or an FYI.
     Status,
+    /// Knowledge read from or filed in the Ledger.
+    Ledger,
 }
 
 impl MessageKind {
@@ -61,6 +66,7 @@ impl MessageKind {
             "relay" | "slack" | "envoy" => Self::Relay,
             "nudge" | "whip" => Self::Nudge,
             "status" | "worker_done" | "notify" => Self::Status,
+            "ledger" => Self::Ledger,
             _ => Self::Message,
         }
     }
@@ -74,13 +80,14 @@ impl MessageKind {
             Self::Relay => "relay",
             Self::Nudge => "nudge",
             Self::Status => "status",
+            Self::Ledger => "ledger",
         }
     }
 }
 
 /// A message from `from` to `to`, named as the sender knows them: a node id, a terminal handle,
-/// Orca's `run:<id>` (its coordinator) or `dispatch:<id>`, or `king`, `envoy`, `karl` or `slack`; see
-/// [`resolve`].
+/// Orca's `run:<id>` (its coordinator) or `dispatch:<id>`, or `king`, `envoy`, `karl`, `slack` or
+/// `ledger`; see [`resolve`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentMessage {
     pub from: String,
@@ -133,6 +140,8 @@ pub enum Endpoint {
     Karl,
     /// The world outside the clan (Slack); the farm draws it as the King too.
     Outside,
+    /// The Ledger, the clan's knowledge store; the farm draws it as its chamber.
+    Ledger,
 }
 
 /// A message resolved to the snapshot's nodes.
@@ -156,6 +165,7 @@ pub fn resolve(snapshot: &ClanSnapshot, key: &str) -> Option<Endpoint> {
     match key.to_ascii_lowercase().as_str() {
         "karl" | "human" => return Some(Endpoint::Karl),
         "slack" | "outside" => return Some(Endpoint::Outside),
+        "ledger" => return Some(Endpoint::Ledger),
         "king" | "queen" => return node(NodeId::king()),
         whip if is_whip_sender(whip) => return node(NodeId::king()),
         "envoy" => {

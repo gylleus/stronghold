@@ -297,6 +297,8 @@ impl Demo {
     /// One message of each kind, plus a repeat that joins its envelope.
     fn mail(&mut self, now_s: f64) {
         for (from, to, kind) in [
+            ("ledger", "run1-coord", MessageKind::Ledger),
+            ("run0-w1", "ledger", MessageKind::Ledger),
             ("run0-w1", "run0-coord", MessageKind::MergeReady),
             ("run2-w2", "run2-coord", MessageKind::Ask),
             ("run2-w2", "run2-coord", MessageKind::Ask),
