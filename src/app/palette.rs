@@ -45,6 +45,7 @@ impl StrongholdApp {
         match commands::dispatch(id) {
             Dispatch::Key(command) => self.run_key_command(ctx, command),
             Dispatch::OpenChat => self.open_chat(),
+            Dispatch::OpenLedger => self.ledger_panel.open_requested = true,
             Dispatch::Dictate => self.start_dictation(),
             Dispatch::TalkToKing => self.start_talk(),
             Dispatch::StopSpeaking => self.stop_speaking(),

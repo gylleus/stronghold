@@ -15,9 +15,9 @@ const LIMIT: usize = 30;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Mode {
-    #[default]
     Auto,
     Meaning,
+    #[default]
     Text,
 }
 

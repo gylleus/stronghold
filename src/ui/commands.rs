@@ -10,6 +10,7 @@ use crate::ui::keys::KeyCommand;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActionId {
     OpenChat,
+    OpenLedger,
     Dictate,
     TalkToKing,
     StopSpeaking,
@@ -78,6 +79,13 @@ const fn action(
 
 /// Every action, in the order `>` lists them.
 pub const ACTIONS: &[Action] = &[
+    action(
+        ActionId::OpenLedger,
+        "open_ledger",
+        "Open Ledger",
+        "knowledge notes memory search ledger",
+        None,
+    ),
     action(
         ActionId::OpenChat,
         "open_chat",
@@ -448,6 +456,7 @@ pub enum Dispatch {
     Key(KeyCommand),
     /// Select the King and focus his chat (unlike ⌘J, never closes it).
     OpenChat,
+    OpenLedger,
     /// Record until ⌘E or Stop, then put the text into the King's chat.
     Dictate,
     /// Record until the talk hotkey or Send, then send it to the King as a voice message.
@@ -484,6 +493,7 @@ pub fn dispatch(id: ActionId) -> Dispatch {
     use ActionId as A;
     match id {
         A::OpenChat => Dispatch::OpenChat,
+        A::OpenLedger => Dispatch::OpenLedger,
         A::Dictate => Dispatch::Dictate,
         A::TalkToKing => Dispatch::TalkToKing,
         A::StopSpeaking => Dispatch::StopSpeaking,
@@ -631,6 +641,7 @@ mod tests {
         use ActionId as A;
         let cases = [
             (A::OpenChat, Dispatch::OpenChat),
+            (A::OpenLedger, Dispatch::OpenLedger),
             (A::Dictate, Dispatch::Dictate),
             (A::TalkToKing, Dispatch::TalkToKing),
             (A::StopSpeaking, Dispatch::StopSpeaking),
