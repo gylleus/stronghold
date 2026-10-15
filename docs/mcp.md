@@ -390,7 +390,7 @@ successful delivery.
 ## Daily standup notes
 
 Ask the King **“standup notes”**. It calls the read-only `standup {}` tool and drafts
-at most 180 words under **Yesterday / Today / Blockers**, in the user's voice, with PR links.
+at most six short bullets and 140 words under **Yesterday / Today / Blockers**, in the user's voice, with PR links.
 The `standup` MCP prompt provides the same briefing (for example, `/mcp__stronghold__standup`
 in Claude Code). No separate skill installation is needed.
 
