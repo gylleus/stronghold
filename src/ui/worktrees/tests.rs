@@ -234,3 +234,82 @@ fn archive_action_requires_a_separate_confirmation() {
     assert!(!h.panel.open);
     assert!(matches!(&h.panel.stage, Some(Stage::ArchiveConfirm { .. })));
 }
+
+#[test]
+fn automatic_empty_plan_finishes_quietly_and_logs_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    let mut panel = WorktreePanel::new(&egui::Context::default());
+    panel.auto_log = dir.path().join("auto.jsonl");
+    panel.auto_running = true;
+    panel.stage = Some(Stage::Evaluating(rx));
+    tx.send(Ok(Plan {
+        entries: vec![PlanEntry {
+            verdict: Verdict {
+                remove: true,
+                archive_required: true,
+                ..Verdict::default()
+            },
+            ..PlanEntry::default()
+        }],
+        ..Plan::default()
+    }))
+    .unwrap();
+    assert!(panel.poll_stage());
+    assert!(!panel.open);
+    assert!(!panel.auto_running());
+    assert!(
+        panel
+            .auto_last()
+            .unwrap()
+            .summary
+            .contains("removed 0 worktrees")
+    );
+    assert!(!panel.poll_stage());
+    assert_eq!(
+        std::fs::read_to_string(&panel.auto_log)
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn automatic_completion_keeps_final_removals_for_the_demolition_frames() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let mut panel = WorktreePanel::new(&egui::Context::default());
+    panel.auto_log = dir.path().join("auto.jsonl");
+    panel.auto_running = true;
+    panel.stage = Some(Stage::Running {
+        rx,
+        queue: vec!["rock".into()],
+        total: 1,
+        done: vec![],
+    });
+    let removal = Removal {
+        id: "rock".into(),
+        outcome: Outcome::Removed,
+        bytes: Some(1024),
+        repo: "repo".into(),
+        name: "rock".into(),
+        path: "/unused".into(),
+        branch: None,
+        reason: "merged".into(),
+        notes_saved_to: None,
+        archive_path: None,
+        at_ms: 1,
+    };
+    tx.send(ExecMsg::Done(Ok(vec![removal]))).unwrap();
+    assert!(panel.poll_stage());
+    assert_eq!(panel.cleanup_job().unwrap().cleared, vec!["rock"]);
+    assert!(!panel.open);
+    assert!(
+        panel
+            .auto_last()
+            .unwrap()
+            .summary
+            .contains("removed 1 worktree")
+    );
+}

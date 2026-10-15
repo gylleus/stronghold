@@ -89,6 +89,9 @@ pub fn path(scene: &Scene, from: (Pos2, bool), to: (Pos2, bool)) -> Vec<Pos2> {
     let leg = |(p, surface): (Pos2, bool)| {
         if surface {
             vec![p, pos2(lx, scene.surface_y), pos2(lx, gy)]
+        } else if p.y > scene.gallery.bottom() {
+            let x = scene.work_ladder().center().x;
+            vec![p, pos2(x, p.y), pos2(x, gy)]
         } else {
             vec![p, pos2(p.x, gy)]
         }

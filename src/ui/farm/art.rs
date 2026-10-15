@@ -53,8 +53,11 @@ impl Pixels {
 }
 
 /// Guild cloth, painted helmets and a shaped crest keep agent identity visible at farm
-/// size. Failed dwarves retain their guild; the red failure bubble shows their state.
+/// size. The librarian keeps its ink robes; failed dwarves retain their guild.
 pub fn dress(look: &mut Look, coat: Coat) {
+    if look.role == dwarf::Role::Librarian {
+        return;
+    }
     look.crest = match coat {
         Coat::Plain => dwarf::Crest::None,
         Coat::Claude => dwarf::Crest::Sun,
@@ -79,6 +82,25 @@ pub struct Figure<'a> {
     pub upside_down: bool,
     pub facing_right: bool,
     pub alpha: f32,
+}
+
+/// A supplied pose can be split around a separately painted prop, using the same
+/// rasterizer, pixel scale and texture cache as the other dwarves.
+pub(super) struct PosedFigure<'a> {
+    pub key: &'a str,
+    pub look: &'a Look,
+    pub pose: &'a dwarf::Pose,
+    pub foot: Pos2,
+    pub height: f32,
+    pub facing_right: bool,
+    pub alpha: f32,
+    pub layer: DwarfLayer,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) enum DwarfLayer {
+    Body,
+    Hands,
 }
 
 /// Draws dwarves for the farm, keeping each pixel dwarf's texture between frames.
@@ -132,8 +154,6 @@ impl DwarfArt {
         farm_px: f32,
         now_s: f64,
     ) {
-        let height = cell.height() * 0.95;
-        let foot = cell.center_bottom();
         let phase = (dwarf::seed_of(figure.key) % 1000) as f64 * 0.013;
         let pose = |t: f64| {
             let mut pose = dwarf::pose(figure.action, t + phase);
@@ -143,27 +163,57 @@ impl DwarfArt {
             }
             pose
         };
-        let palette = art.palette.clone();
+        let t = (now_s * PIXEL_FPS).floor() / PIXEL_FPS;
+        self.paint_posed(
+            painter,
+            art,
+            &PosedFigure {
+                key: figure.key,
+                look: &figure.look,
+                pose: &pose(t),
+                foot: cell.center_bottom(),
+                height: cell.height() * 0.95,
+                facing_right: figure.facing_right,
+                alpha: figure.alpha,
+                layer: DwarfLayer::Body,
+            },
+            farm_px,
+        );
+    }
+
+    pub(super) fn paint_posed(
+        &mut self,
+        painter: &Painter,
+        art: &ArtSettings,
+        figure: &PosedFigure,
+        farm_px: f32,
+    ) {
+        let palette = &art.palette;
         let h = match art.pixels {
             Pixels::Height(h) => h.clamp(8, 256) as f32,
-            _ => (height / farm_px).round().max(8.0),
+            Pixels::Farm => (figure.height / farm_px).round().max(8.0),
         };
-        let t = (now_s * PIXEL_FPS).floor() / PIXEL_FPS;
-        let pose = pose(t);
         let size = [(h * 1.5).ceil() as usize, (h * 1.45).ceil() as usize];
         let canvas_foot = pos2(size[0] as f32 * 0.5, size[1] as f32 - h * 0.08);
         let finish = art.outline.finish(100.0 / (h * figure.look.role.scale()));
-        let drawing = dwarf::draw(
-            canvas_foot,
-            h,
-            &figure.look,
-            &pose,
-            figure.facing_right,
-            &finish,
-        );
+        let pose = figure.pose;
+        let drawing = match figure.layer {
+            DwarfLayer::Body => dwarf::draw(
+                canvas_foot,
+                h,
+                figure.look,
+                pose,
+                figure.facing_right,
+                &finish,
+            ),
+            DwarfLayer::Hands => dwarf::Drawing {
+                shapes: dwarf::held_prop(canvas_foot, h, figure.look, pose, &finish).1,
+                question: None,
+            },
+        };
         let drawn = format!(
-            "{h} {palette} {:?} {pose:?} {} {:?}",
-            figure.look, figure.facing_right, art.outline
+            "{h} {palette} {:?} {pose:?} {} {:?} {:?}",
+            figure.look, figure.facing_right, art.outline, figure.layer
         );
         let frame = self.frame;
         let stale = self
@@ -173,7 +223,7 @@ impl DwarfArt {
         if stale {
             let region = Rect::from_min_size(Pos2::ZERO, vec2(size[0] as f32, size[1] as f32));
             let mut image = pixel::rasterize(&drawing.shapes, region, size, 1);
-            if let Some(mapper) = self.mapper(&palette) {
+            if let Some(mapper) = self.mapper(palette) {
                 mapper.apply(&mut image);
             }
             match self.textures.get_mut(figure.key) {
@@ -202,8 +252,8 @@ impl DwarfArt {
             return;
         };
         cached.used = frame;
-        let scale = height / h;
-        let min = foot - canvas_foot.to_vec2() * scale;
+        let scale = figure.height / h;
+        let min = figure.foot - canvas_foot.to_vec2() * scale;
         painter.image(
             cached.texture.id(),
             Rect::from_min_size(min, vec2(size[0] as f32, size[1] as f32) * scale),

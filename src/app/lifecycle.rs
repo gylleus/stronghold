@@ -114,6 +114,7 @@ impl StrongholdApp {
         let mut forced = req.forced.clone();
         forced.extend(problems);
         let record = FinishedSession {
+            kind: Some(node.kind),
             node_id: node.id.to_string(),
             handle: node.terminal_handle.clone(),
             label: node.label.clone(),
@@ -155,20 +156,30 @@ impl StrongholdApp {
         if !forced.is_empty() {
             message.push_str(&format!("\nLeft despite: {}", forced.join("; ")));
         }
-        let outcome = self.raise(Incoming {
-            source: Source::Agent,
-            severity,
-            title: format!(
-                "{}: {}",
-                req.outcome.verb(),
-                clip(&req.summary, TITLE_CHARS)
-            ),
-            message,
-            url: req.pr_url.clone(),
-            target: Some(node.id.to_string()),
-            sender: node.terminal_handle.clone(),
-            agent_label: Some(node.label.clone()),
-        });
+        // The report notification covers a clean Lorekeeper finish.
+        let reported = lorekeeper_reported(
+            self.lorekeeper.session.saved.as_ref(),
+            node.terminal_handle.as_deref(),
+            &crate::claude::hook::data_dir(),
+        );
+        let outcome = if reported && forced.is_empty() {
+            crate::notify::Outcome::Cooldown
+        } else {
+            self.raise(Incoming {
+                source: Source::Agent,
+                severity,
+                title: format!(
+                    "{}: {}",
+                    req.outcome.verb(),
+                    clip(&req.summary, TITLE_CHARS)
+                ),
+                message,
+                url: req.pr_url.clone(),
+                target: Some(node.id.to_string()),
+                sender: node.terminal_handle.clone(),
+                agent_label: Some(node.label.clone()),
+            })
+        };
         self.publish_control_status();
         Ok(json!({
             "dry_run": false,
@@ -201,6 +212,24 @@ impl StrongholdApp {
             self.close.started(close.plan, close.labels, &ids, now);
         }
     }
+}
+
+fn lorekeeper_reported(
+    saved: Option<&crate::lorekeeper::session::Saved>,
+    terminal: Option<&str>,
+    data: &std::path::Path,
+) -> bool {
+    saved.is_some_and(|s| {
+        s.handle
+            .as_deref()
+            .is_some_and(|h| !h.is_empty() && terminal == Some(h))
+            && crate::lorekeeper::report::read(
+                &data
+                    .join("lorekeeper/reports")
+                    .join(format!("{}.json", s.run_id)),
+            )
+            .is_ok_and(|r| r.run_id == s.run_id && Some(r.terminal.as_str()) == terminal)
+    })
 }
 
 /// Records the question separately from notification delivery so the inbox and node state
@@ -253,6 +282,68 @@ mod tests {
     use crate::clan::ClanData;
     use crate::model::{ClanSnapshot, NodeId, NodeState};
     use crate::orca::Terminal;
+
+    #[test]
+    fn lorekeeper_finish_requires_a_matching_terminal_and_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut saved = crate::lorekeeper::session::Saved {
+            run_id: "00000000000000000001".into(),
+            handle: None,
+            mode: crate::lorekeeper::Mode::DryRun,
+            snapshot: dir.path().join("snapshot"),
+            started_ms: 0,
+        };
+        let reports = dir.path().join("lorekeeper/reports");
+        std::fs::create_dir_all(&reports).unwrap();
+        let report = crate::lorekeeper::report::Report {
+            checked: 0,
+            kept: 0,
+            updated: 0,
+            superseded: 0,
+            merged: 0,
+            deleted: 0,
+            flagged: 0,
+            dry_run: true,
+            items: vec![],
+        };
+        let mut persisted =
+            crate::lorekeeper::report::persist(&reports, &saved, "lorekeeper", report).unwrap();
+        for (handle, terminal, expected) in [
+            (None, None, false),
+            (Some(""), Some(""), false),
+            (None, Some("other"), false),
+            (Some("lorekeeper"), None, false),
+            (Some("lorekeeper"), Some("other"), false),
+            (Some("lorekeeper"), Some("lorekeeper"), true),
+        ] {
+            saved.handle = handle.map(str::to_owned);
+            assert_eq!(
+                lorekeeper_reported(Some(&saved), terminal, dir.path()),
+                expected,
+                "{handle:?} / {terminal:?}"
+            );
+        }
+        let path = reports.join(format!("{}.json", saved.run_id));
+        std::fs::write(&path, "not json").unwrap();
+        assert!(!lorekeeper_reported(
+            Some(&saved),
+            Some("lorekeeper"),
+            dir.path()
+        ));
+        persisted.run_id = "different".into();
+        crate::lorekeeper::write_json(&path, &persisted).unwrap();
+        assert!(!lorekeeper_reported(
+            Some(&saved),
+            Some("lorekeeper"),
+            dir.path()
+        ));
+        saved.run_id = "00000000000000000002".into();
+        assert!(!lorekeeper_reported(
+            Some(&saved),
+            Some("lorekeeper"),
+            dir.path()
+        ));
+    }
 
     #[test]
     fn only_envoy_questions_are_nonblocking() {

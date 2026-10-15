@@ -1,6 +1,6 @@
 //! Orca worktrees in the top bar: how many there are and how much disk they take, and the
-//! cleanup side panel (evaluate → plan → confirm → clean up). While it runs, a hammer breaks the
-//! removed worktrees' heaps in the farm ([`crate::ui::farm::rubble`]), or runs along
+//! cleanup side panel (evaluate → plan → confirm → clean up). While it runs, a dwarf with a sledge breaks the
+//! removed worktrees' heaps in the farm ([`crate::ui::farm::rubble`]), or works at
 //! the bottom of the window in the other views.
 //!
 //! The count comes from the poller's `worktree list` for free; disk usage is measured off the
@@ -21,14 +21,14 @@ use crate::orca::spawn::Worktree;
 use crate::ui::dwarf::cutout::Outline;
 use crate::ui::farm::hammer;
 use crate::ui::farm::rubble::CleanupJob;
-use crate::worktrees::{self, Census, Outcome, Plan, Removal, SweepMarker, format_bytes};
+use crate::worktrees::{
+    self, Census, Outcome, Plan, Removal, SweepMarker, automatic, format_bytes,
+};
 
 /// How often disk usage is measured (`du` over every worktree takes a while).
 pub const SIZE_SCAN_EVERY_MS: i64 = 30 * 60 * 1000;
 /// How often the sweep marker is checked, for a cleanup the King started.
 const MARKER_CHECK_EVERY_MS: i64 = 1_000;
-/// Seconds for the hammer to cross the window once.
-const CROSS_SECONDS: f64 = 7.0;
 /// Points per texel of the hammer along the window's bottom (the farm sizes its own).
 const FLOOR_TEXEL: f32 = 3.0;
 
@@ -87,6 +87,16 @@ pub struct WorktreePanel {
     reduced_motion: Arc<AtomicBool>,
     /// The hammer's pixel art, for the menu and the floor.
     hammer: egui::TextureHandle,
+    demolisher: hammer::Demolisher,
+    stale_plan: Option<Plan>,
+    stale_scan: Option<Receiver<Result<Plan, String>>>,
+    next_stale_ms: i64,
+    auto_schedule: automatic::Schedule,
+    auto_running: bool,
+    auto_requested: bool,
+    auto_last: Option<automatic::Run>,
+    auto_log: PathBuf,
+    recent_job: Option<(CleanupJob, i64)>,
 }
 
 impl WorktreePanel {
@@ -112,6 +122,16 @@ impl WorktreePanel {
             external: None,
             next_marker_check_ms: 0,
             reduced_motion,
+            demolisher: hammer::Demolisher::default(),
+            stale_plan: None,
+            stale_scan: None,
+            next_stale_ms: 0,
+            auto_schedule: automatic::Schedule::default(),
+            auto_running: false,
+            auto_requested: false,
+            auto_last: automatic::Run::load_last(&automatic::log_path()),
+            auto_log: automatic::log_path(),
+            recent_job: None,
             hammer: ctx.load_texture(
                 "worktrees/hammer",
                 hammer::render([26, 40], Outline::Fine),
@@ -123,6 +143,13 @@ impl WorktreePanel {
     /// Collects background results and starts what is due. Returns true when a cleanup just
     /// finished (the clan should be polled again).
     pub fn tick(&mut self, worktrees: Option<&[Worktree]>, now_ms: i64) -> bool {
+        if self
+            .recent_job
+            .as_ref()
+            .is_some_and(|(_, until)| now_ms >= *until)
+        {
+            self.recent_job = None;
+        }
         if let Some(rx) = &self.size_scan {
             match rx.try_recv() {
                 Ok(sizes) => {
@@ -148,16 +175,112 @@ impl WorktreePanel {
                 .then(|| worktrees::running_sweep(&worktrees::default_marker_path(), now_ms))
                 .flatten();
         }
-        self.poll_stage()
+        let finished = self.poll_stage();
+        if finished {
+            self.next_stale_ms = 0;
+        }
+        self.poll_stale(worktrees.is_some(), now_ms);
+        finished
+    }
+
+    pub fn auto_last(&self) -> Option<&automatic::Run> {
+        self.auto_last.as_ref()
+    }
+    pub fn auto_running(&self) -> bool {
+        self.auto_running
+    }
+    pub fn auto_busy(&self) -> bool {
+        self.open
+            || self.external.is_some()
+            || self.stale_scan.is_some()
+            || matches!(
+                self.stage,
+                Some(Stage::Evaluating(_) | Stage::Running { .. })
+            )
+    }
+    pub fn request_auto(&mut self) {
+        self.auto_requested = true;
+    }
+
+    pub fn tick_auto(&mut self, settings: automatic::Settings, now_ms: i64) {
+        if self.auto_schedule.claim(
+            settings.period_ms(),
+            now_ms,
+            self.auto_last.as_ref().map(|r| r.at_ms),
+            self.auto_busy(),
+            self.auto_requested,
+        ) {
+            self.auto_requested = false;
+            self.start_evaluation(true);
+        }
+    }
+
+    fn finish_auto(&mut self, removals: &[Removal], error: Option<&str>) {
+        let run = automatic::finished_run(now_ms(), removals, error);
+        if let Err(error) = run.append(&self.auto_log) {
+            log::warn!("auto-cleanup summary could not be saved: {error}");
+        }
+        log::info!("{}", run.summary);
+        self.last_summary = Some(run.summary.clone());
+        self.auto_schedule.finished(run.at_ms);
+        self.auto_last = Some(run);
+        self.auto_running = false;
+    }
+
+    pub fn stale_plan(&self) -> Option<&Plan> {
+        self.stale_plan.as_ref()
+    }
+
+    fn poll_stale(&mut self, connected: bool, now_ms: i64) {
+        if let Some(rx) = &self.stale_scan {
+            match rx.try_recv() {
+                Ok(result) => {
+                    self.stale_plan = result.ok();
+                    self.stale_scan = None;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.stale_plan = None;
+                    self.stale_scan = None;
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+        if !connected {
+            self.stale_plan = None;
+            return;
+        }
+        if self.stale_scan.is_none()
+            && now_ms >= self.next_stale_ms
+            && !matches!(
+                self.stage,
+                Some(Stage::Evaluating(_) | Stage::Running { .. })
+            )
+            && self.external.is_none()
+        {
+            self.next_stale_ms = now_ms + 60_000;
+            let client = self.client.clone();
+            let ctx = self.ctx.clone();
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            let _ = thread::Builder::new()
+                .name("worktree-stale".into())
+                .spawn(move || {
+                    let _ = tx.send(worktrees::evaluate_stale(&client, now_ms));
+                    ctx.request_repaint();
+                });
+            self.stale_scan = Some(rx);
+        }
     }
 
     fn poll_stage(&mut self) -> bool {
         let next = match &mut self.stage {
             Some(Stage::Evaluating(rx)) => match rx.try_recv() {
-                Ok(Ok(plan)) => Some(Stage::Review {
-                    chosen: plan.removable().map(|e| e.id.clone()).collect(),
-                    plan,
-                }),
+                Ok(Ok(plan)) => {
+                    self.stale_plan = Some(plan.clone());
+                    Some(Stage::Review {
+                        chosen: plan.removable().map(|e| e.id.clone()).collect(),
+                        plan,
+                    })
+                }
                 Ok(Err(e)) => Some(Stage::Failed(e)),
                 Err(TryRecvError::Disconnected) => {
                     Some(Stage::Failed("the evaluation stopped".into()))
@@ -191,9 +314,52 @@ impl WorktreePanel {
             }
             _ => None,
         };
-        let Some(next) = next else {
+        let Some(mut next) = next else {
             return false;
         };
+        if self.auto_running
+            && let Stage::Review { plan, .. } = &next
+        {
+            let plan = automatic::select(plan);
+            if !plan.entries.is_empty() {
+                let chosen = plan.entries.iter().map(|e| e.id.clone()).collect();
+                self.start_removal(&plan, &chosen, false, true);
+                return false;
+            }
+            next = Stage::Finished {
+                removals: Vec::new(),
+                error: None,
+            };
+        }
+        if let Stage::Finished { removals, .. } = &next {
+            self.recent_job = Some((
+                CleanupJob {
+                    done: removals.len(),
+                    total: removals.len(),
+                    current: None,
+                    cleared: removals
+                        .iter()
+                        .filter(|r| r.outcome == Outcome::Removed)
+                        .map(|r| r.id.clone())
+                        .collect(),
+                },
+                now_ms() + 1500,
+            ));
+            if let Some(plan) = &mut self.stale_plan {
+                plan.entries.retain(|e| {
+                    !removals
+                        .iter()
+                        .any(|r| r.id == e.id && r.outcome == Outcome::Removed)
+                });
+            }
+        }
+        if self.auto_running {
+            match &next {
+                Stage::Finished { removals, error } => self.finish_auto(removals, error.as_deref()),
+                Stage::Failed(error) => self.finish_auto(&[], Some(error)),
+                _ => {}
+            }
+        }
         let finished = matches!(next, Stage::Finished { .. });
         self.stage = Some(next);
         if finished {
@@ -234,8 +400,11 @@ impl WorktreePanel {
         rx
     }
 
-    fn start_evaluation(&mut self) {
-        self.open = true;
+    fn start_evaluation(&mut self, automatic: bool) {
+        self.auto_running = automatic;
+        if !automatic {
+            self.open = true;
+        }
         let client = self.client.clone();
         let sizes = self.sizes.by_path.clone();
         let ctx = self.ctx.clone();
@@ -249,7 +418,13 @@ impl WorktreePanel {
         self.stage = Some(Stage::Evaluating(rx));
     }
 
-    fn start_removal(&mut self, plan: &Plan, chosen: &BTreeSet<String>, archive: bool) {
+    fn start_removal(
+        &mut self,
+        plan: &Plan,
+        chosen: &BTreeSet<String>,
+        archive: bool,
+        automatic: bool,
+    ) {
         let mut plan = plan.clone();
         plan.entries.retain(|e| {
             (e.verdict.remove || archive && e.verdict.archivable) && chosen.contains(&e.id)
@@ -269,17 +444,28 @@ impl WorktreePanel {
             .spawn(move || {
                 let progress_tx = tx.clone();
                 let progress_ctx = ctx.clone();
-                let result = worktrees::execute_archives(
-                    &client,
-                    &plan,
-                    &archive_ids,
-                    &worktrees::default_log_path(),
-                    now_ms,
-                    |r| {
-                        let _ = progress_tx.send(ExecMsg::Progress(Box::new(r.clone())));
-                        progress_ctx.request_repaint();
-                    },
-                );
+                let progress = |r: &Removal| {
+                    let _ = progress_tx.send(ExecMsg::Progress(Box::new(r.clone())));
+                    progress_ctx.request_repaint();
+                };
+                let result = if automatic {
+                    worktrees::execute_automatic(
+                        &client,
+                        &plan,
+                        &worktrees::default_log_path(),
+                        now_ms,
+                        progress,
+                    )
+                } else {
+                    worktrees::execute_archives(
+                        &client,
+                        &plan,
+                        &archive_ids,
+                        &worktrees::default_log_path(),
+                        now_ms,
+                        progress,
+                    )
+                };
                 let _ = tx.send(ExecMsg::Done(result));
                 ctx.request_repaint();
             });
@@ -325,7 +511,7 @@ impl WorktreePanel {
                 current: m.current_id.clone(),
                 cleared: Vec::new(),
             }),
-            _ => None,
+            _ => self.recent_job.as_ref().map(|(job, _)| job.clone()),
         }
     }
 
@@ -392,7 +578,7 @@ impl WorktreePanel {
 
     fn open_cleanup(&mut self) {
         if self.stage.is_none() {
-            self.start_evaluation();
+            self.start_evaluation(false);
         } else {
             self.open = true;
         }
@@ -508,7 +694,7 @@ impl WorktreePanel {
             Some(Action::Remove) => {
                 if let Some(Stage::Review { plan, chosen }) = &self.stage {
                     let (plan, chosen) = (plan.clone(), chosen.clone());
-                    self.start_removal(&plan, &chosen, false);
+                    self.start_removal(&plan, &chosen, false, false);
                 }
             }
             Some(Action::Archive(id)) => {
@@ -522,10 +708,10 @@ impl WorktreePanel {
             Some(Action::ConfirmArchive) => {
                 if let Some(Stage::ArchiveConfirm { plan, id }) = &self.stage {
                     let (plan, chosen) = (plan.clone(), BTreeSet::from([id.clone()]));
-                    self.start_removal(&plan, &chosen, true);
+                    self.start_removal(&plan, &chosen, true, false);
                 }
             }
-            Some(Action::Retry) => self.start_evaluation(),
+            Some(Action::Retry) => self.start_evaluation(false),
             Some(Action::Close) => self.open = false,
             None => {}
         }
@@ -533,58 +719,60 @@ impl WorktreePanel {
 
     /// The removal progress, while a cleanup runs here or from the MCP tool.
     fn progress(&self) -> Option<(usize, usize)> {
-        self.cleanup_job().map(|job| (job.done, job.total))
+        match &self.stage {
+            Some(Stage::Running { done, total, .. }) => Some((done.len(), *total)),
+            _ => self.external.as_ref().map(|job| (job.done, job.total)),
+        }
     }
 
-    /// The hammer running along the bottom of the window while worktrees are removed, when
+    /// The demolition dwarf at the bottom of the window while worktrees are removed, when
     /// the farm (where it breaks their heaps) is not on screen.
-    pub fn hammer(&self, ctx: &egui::Context) {
-        let Some((done, total)) = self.progress() else {
-            return;
-        };
+    pub fn hammer(&mut self, ctx: &egui::Context, art: &super::farm::art::ArtSettings) {
+        let progress = self.progress();
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
             egui::Id::new("worktree_hammer"),
         ));
         let screen = ctx.content_rect();
-        let floor = screen.bottom() - 8.0;
-        let label = format!("Clearing worktrees {done}/{total}");
-        let text_color = ctx.global_style().visuals.weak_text_color();
         let t = ctx.input(|i| i.time);
         let reduced = self.reduced_motion();
-        let phase = (t / CROSS_SECONDS).rem_euclid(2.0);
-        let u = if phase < 1.0 { phase } else { 2.0 - phase };
-        let eased = 0.5 - 0.5 * (u * std::f64::consts::PI).cos();
-        let x = if reduced {
-            screen.right() - 170.0
-        } else {
-            screen.left() + 80.0 + (screen.width() - 280.0).max(1.0) * eased as f32
+        let target = progress.map(|_| hammer::Target {
+            id: "floor".into(),
+            impact: pos2(screen.right() - 100.0, screen.bottom() - 28.0),
+            ground: screen.bottom() - 8.0,
+            px: FLOOR_TEXEL * 0.6,
+        });
+        self.demolisher.update(target, t, reduced, false);
+        let Some(frame) = &self.demolisher.frame else {
+            return;
         };
-        let impact = pos2(x, floor - 24.0);
-        let phase = hammer::phase(t, reduced);
-        let (rect, (angle, pivot)) = hammer::placement(impact, FLOOR_TEXEL * 0.6, phase);
-        if !reduced && phase >= 0.68 {
-            draw_chips(&painter, impact, (phase - 0.68) / 0.32);
+        self.demolisher
+            .paint(&painter, art, |rect, (angle, pivot), alpha| {
+                let mut mesh = egui::Mesh::with_texture(self.hammer.id());
+                mesh.add_rect_with_uv(
+                    rect,
+                    egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    Color32::WHITE.gamma_multiply(alpha),
+                );
+                mesh.rotate(egui::emath::Rot2::from_angle(angle), pivot);
+                painter.add(mesh);
+            });
+        if !reduced && let Some(life) = frame.phase.and_then(hammer::impact_life) {
+            draw_chips(&painter, frame.target.impact, life);
         }
-        let mut mesh = egui::Mesh::with_texture(self.hammer.id());
-        mesh.add_rect_with_uv(
-            rect,
-            egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-            Color32::WHITE,
-        );
-        mesh.rotate(egui::emath::Rot2::from_angle(angle), pivot);
-        painter.add(mesh);
-        painter.text(
-            impact - vec2(0.0, 75.0),
-            egui::Align2::CENTER_BOTTOM,
-            label,
-            egui::FontId::proportional(12.0),
-            text_color,
-        );
+        if let Some((done, total)) = progress {
+            painter.text(
+                frame.foot - vec2(0.0, frame.height + 8.0),
+                egui::Align2::CENTER_BOTTOM,
+                format!("Clearing worktrees {done}/{total}"),
+                egui::FontId::proportional(12.0),
+                ctx.global_style().visuals.weak_text_color(),
+            );
+        }
         ctx.request_repaint_after(std::time::Duration::from_millis(if reduced {
             500
         } else {
-            33
+            16
         }));
     }
 }
