@@ -484,6 +484,9 @@ impl<I: SlackIo> SlackChannel<I> {
     }
 
     fn ingest(&mut self, e: InboundEvent, batch: &mut PollBatch) -> bool {
+        if self.inbox.is_deleted(&e.id()) {
+            return true;
+        }
         self.remember_own_thread(&e);
         if e.user != self.settings.user_id && !self.capture_reply(&e) {
             return false;
@@ -788,6 +791,16 @@ impl<I: SlackIo> SlackChannel<I> {
         batch: &mut PollBatch,
     ) -> Result<bool, String> {
         self.backfill(channel, now_ms, true, batch)
+    }
+
+    pub fn delete_events(&mut self, ids: &[String]) -> Result<(), String> {
+        let old = self.inbox.clone();
+        self.inbox.delete(ids);
+        if let Err(error) = self.inbox.save(&self.path) {
+            self.inbox = old;
+            return Err(error.to_string());
+        }
+        Ok(())
     }
 
     pub fn mark_forwarded(&mut self, ids: &[String]) -> Result<(), String> {

@@ -28,6 +28,7 @@ pub enum Work {
         reply: Reply,
     },
     Forwarded(Vec<String>),
+    DeleteEvents(Vec<String>),
     Send {
         id: String,
         message: OutboundMessage,
@@ -40,6 +41,10 @@ pub enum Work {
 }
 
 pub enum Update {
+    DeletedEvents {
+        ids: Vec<String>,
+        result: Result<(), String>,
+    },
     Polled {
         inbox: Inbox,
         events: Vec<InboundEvent>,
@@ -85,6 +90,7 @@ pub enum Update {
 pub struct Worker {
     tx: Sender<Work>,
     rx: Receiver<Update>,
+    cancelled: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl Worker {
@@ -97,6 +103,9 @@ impl Worker {
     ) -> Self {
         let (tx, commands) = unbounded();
         let (results, rx) = unbounded();
+        let cancelled =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+        let worker_cancelled = cancelled.clone();
         std::thread::spawn(move || {
             let mut slack = SlackChannel::new(io, inbox, path, bridge, EnvoySettings::default());
             let mut active = false;
@@ -177,7 +186,16 @@ impl Worker {
                             wake();
                         }
                     }
+                    Ok(Work::DeleteEvents(ids)) => {
+                        let result = slack.delete_events(&ids);
+                        let _ = results.send(Update::DeletedEvents { ids, result });
+                        wake();
+                    }
                     Ok(Work::Send { id, message }) => {
+                        // Cancellation can overtake sends waiting in the command queue.
+                        if worker_cancelled.lock().unwrap().remove(&id) {
+                            continue;
+                        }
                         let result = slack.send(&message);
                         if results.send(Update::Sent { id, result }).is_err() {
                             break;
@@ -245,14 +263,30 @@ impl Worker {
                 }
             }
         });
-        Self { tx, rx }
+        Self { tx, rx, cancelled }
     }
 
     #[cfg(test)]
     pub(crate) fn test_pair() -> (Self, Receiver<Work>, Sender<Update>) {
         let (tx, commands) = unbounded();
         let (results, rx) = unbounded();
-        (Self { tx, rx }, commands, results)
+        (
+            Self {
+                tx,
+                rx,
+                cancelled: Default::default(),
+            },
+            commands,
+            results,
+        )
+    }
+
+    pub fn cancel_send(&self, id: &str) {
+        self.cancelled.lock().unwrap().insert(id.into());
+    }
+
+    pub fn clear_cancelled(&self, id: &str) {
+        self.cancelled.lock().unwrap().remove(id);
     }
 
     pub fn submit(&self, work: Work) -> Result<(), String> {
@@ -320,6 +354,83 @@ pub fn trim_thread(mut thread: Vec<InboundEvent>) -> (Vec<InboundEvent>, usize) 
 #[cfg(test)]
 mod trim_tests {
     use super::*;
+
+    #[test]
+    fn cancellation_overtakes_queued_send_and_worker_deletes_when_inactive() {
+        struct Io {
+            started: std::sync::mpsc::Sender<String>,
+            resume: std::sync::mpsc::Receiver<()>,
+        }
+        impl super::super::slack::SlackSender for Io {
+            fn send(&mut self, message: &OutboundMessage) -> Result<SendReceipt, String> {
+                self.started.send(message.text.clone()).unwrap();
+                self.resume.recv().unwrap();
+                Ok(SendReceipt {
+                    conversation: message.conversation.clone(),
+                    ts: "1.000001".into(),
+                })
+            }
+        }
+        impl SlackIo for Io {
+            fn api(&mut self, _: &str, _: &[(&str, String)]) -> Result<serde_json::Value, String> {
+                panic!("inactive worker polled Slack")
+            }
+            fn subscribe(&mut self, _: &std::path::Path, _: &str) -> Result<(), String> {
+                panic!("inactive worker subscribed")
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let (started, sent) = std::sync::mpsc::channel();
+        let (resume, blocked) = std::sync::mpsc::channel();
+        let worker = Worker::spawn(
+            dir.path().join("inbox.json"),
+            Inbox::default(),
+            Io {
+                started,
+                resume: blocked,
+            },
+            dir.path().join("bridge"),
+            || {},
+        );
+        let send = |id: &str| Work::Send {
+            id: id.into(),
+            message: OutboundMessage {
+                conversation: "C123".into(),
+                thread_ts: None,
+                text: id.into(),
+            },
+        };
+        worker.submit(send("already-started")).unwrap();
+        assert_eq!(
+            sent.recv_timeout(Duration::from_secs(5)).unwrap(),
+            "already-started"
+        );
+        worker.submit(send("deleted")).unwrap();
+        worker.cancel_send("deleted");
+        worker
+            .submit(Work::DeleteEvents(vec!["C123:1.000001".into()]))
+            .unwrap();
+        resume.send(()).unwrap();
+        loop {
+            match worker.rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                Update::Sent { id, result } => {
+                    assert_eq!(id, "already-started");
+                    assert!(result.is_ok());
+                }
+                Update::DeletedEvents { result, .. } => {
+                    result.unwrap();
+                    break;
+                }
+                _ => panic!("unexpected update"),
+            }
+        }
+        assert!(sent.try_recv().is_err());
+        assert!(
+            Inbox::load(&dir.path().join("inbox.json"))
+                .unwrap()
+                .is_deleted("C123:1.000001")
+        );
+    }
 
     #[test]
     fn an_unchanged_poll_is_still_reported_once_a_minute() {

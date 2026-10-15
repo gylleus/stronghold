@@ -280,7 +280,7 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
             "I checked the build; it is ready."
         };
         panel.set_edit(&id, edited);
-        let action = crate::ui::test_util::click_label("Approve", |ui| {
+        let action = crate::ui::test_util::click_label("Send", |ui| {
             panel.show(
                 ui,
                 core.drafts(),

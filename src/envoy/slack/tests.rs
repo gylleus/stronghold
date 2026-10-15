@@ -935,3 +935,42 @@ fn failed_save_retries_the_sleep_recovery_trigger() {
     assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW);
     assert_eq!(c.inbox.recovery_needed_through["C123"], wake + 1);
 }
+
+#[test]
+fn deleted_event_cannot_be_recaptured_as_request_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut channel = channel(dir.path());
+    let event: InboundEvent = serde_json::from_value(json!({"channel_kind":"slack", "conversation":"C123", "ts":"1790000001.000001", "thread_ts":"1790000000.000001", "user":"UOTHER", "user_name":"Avery", "text":"Reply", "kind":"thread_reply"})).unwrap();
+    channel
+        .watches(vec![super::threads::Watch {
+            request_id: "request".into(),
+            thread: crate::envoy::requests::Thread {
+                conversation: "C123".into(),
+                ts: "1790000000.000001".into(),
+            },
+            after_us: 1_790_000_000_000_001,
+            borrowed: true,
+        }])
+        .unwrap();
+    let mut batch = PollBatch::default();
+    assert!(channel.ingest(event.clone(), &mut batch));
+    assert_eq!(channel.inbox.pending_replies.len(), 1);
+    channel.delete_events(&[event.id()]).unwrap();
+    let path = dir.path().join("inbox.json");
+    let mut restarted = SlackChannel::new(
+        Fake::default(),
+        Inbox::load(&path).unwrap(),
+        path,
+        dir.path().into(),
+        channel.settings.clone(),
+    );
+    restarted
+        .inbox
+        .thread_watches
+        .values_mut()
+        .for_each(|s| s.seen.clear());
+    let mut batch = PollBatch::default();
+    assert!(restarted.ingest(event, &mut batch));
+    assert!(batch.events.is_empty());
+    assert!(restarted.inbox.pending_replies.is_empty());
+}
