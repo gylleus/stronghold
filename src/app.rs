@@ -11,6 +11,7 @@ mod dictation;
 pub mod envoy;
 mod envoy_session;
 mod health;
+mod input_focus;
 mod lifecycle;
 mod lorekeeper;
 mod notifications;
@@ -60,6 +61,8 @@ pub struct StrongholdApp {
     farm: ui::farm::FarmView,
     /// Node selected in the clan, shared with the side panels.
     selected: Option<NodeId>,
+    /// A plain hold click waiting for its conversation input to be drawn.
+    hold_input_focus: Option<input_focus::Request>,
     /// The nodes selected so far, for back/forward.
     history: ui::history::SelectionHistory,
     /// The dock's pane arrangement: sidebar, farm, details and conversation.
@@ -212,6 +215,7 @@ impl StrongholdApp {
             clan: ClanView::new(),
             farm: ui::farm::FarmView::new(),
             selected: None,
+            hold_input_focus: None,
             history: ui::history::SelectionHistory::default(),
             panes: ui::dock::PaneLayout::default(),
             bring_forward: None,
@@ -427,6 +431,7 @@ impl StrongholdApp {
         } else {
             self.terminal_contents(ui, now_ms);
         }
+        self.focus_clicked_input(ui.ctx());
     }
 
     /// The selected agent's screen and input box.
@@ -695,6 +700,7 @@ impl StrongholdApp {
                 None
             }
             KeyCommand::Escape => {
+                self.hold_input_focus = None;
                 if let Some(focused) = ctx.memory(|m| m.focused()) {
                     ctx.memory_mut(|m| m.surrender_focus(focused));
                 } else if self.help_open {
@@ -1247,6 +1253,7 @@ impl eframe::App for StrongholdApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let now_ms = now_ms();
+        self.prepare_clicked_input(ui.ctx());
         self.talk_ui(ui.ctx());
         self.dictation_frame(ui.ctx());
         self.sync_voice_target(ui.ctx());
