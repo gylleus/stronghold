@@ -40,6 +40,9 @@ query's literal terms, ignoring case. Results are limited to 30. Reading uses th
 reads run on a background thread. The HTTP transport uses `ureq`, without a CLI or shell
 PATH dependency, and accepts both JSON and SSE responses after MCP initialization.
 
+The existing Lorekeeper controls are under **Ledger maintenance**.
+[Before/after screenshots and validation](docs/assets/tests/ledger-modal/README.md).
+
 The optional live check (requires `ai.basic-memory.server` running) is:
 
 ```bash
