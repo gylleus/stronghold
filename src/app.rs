@@ -161,7 +161,7 @@ pub struct StrongholdApp {
     envoy_session: crate::envoy::session::Session,
     pub envoy_core: envoy::AppEnvoy,
     envoy_panel: ui::envoy::DraftsPanel,
-    ledger_panel: ui::ledger::LedgerPane,
+    ledger_panel: ui::ledger::LedgerModal,
     lorekeeper: lorekeeper::AppLorekeeper,
     /// Health checks for silent misconfigurations, and the badge showing them.
     health: health::AppHealth,
@@ -268,7 +268,7 @@ impl StrongholdApp {
             review: review::AppReview::start(ctx),
             envoy_core: envoy::AppEnvoy::start(ctx),
             envoy_panel: ui::envoy::DraftsPanel::default(),
-            ledger_panel: ui::ledger::LedgerPane::default(),
+            ledger_panel: ui::ledger::LedgerModal::default(),
             lorekeeper: lorekeeper::AppLorekeeper::new(&crate::claude::hook::data_dir()),
             health: health::AppHealth::start(ctx),
         };
@@ -1253,12 +1253,18 @@ impl eframe::App for StrongholdApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let now_ms = now_ms();
-        self.prepare_clicked_input(ui.ctx());
+        let ledger_open = self.ledger_panel.is_open();
+        if !ledger_open {
+            self.prepare_clicked_input(ui.ctx());
+        }
+        self.ledger_modal(ui.ctx(), now_ms);
         self.talk_ui(ui.ctx());
         self.dictation_frame(ui.ctx());
         self.sync_voice_target(ui.ctx());
-        self.search_palette(ui.ctx());
-        self.keyboard(ui.ctx());
+        if !ledger_open {
+            self.search_palette(ui.ctx());
+            self.keyboard(ui.ctx());
+        }
         let top_bar = egui::Panel::top("top_bar")
             .frame(
                 egui::Frame::side_top_panel(ui.style())

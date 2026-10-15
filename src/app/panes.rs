@@ -45,7 +45,7 @@ impl TabViewer for Panes<'_> {
             }
             Pane::Notifications => self.app.notifications_pane(ui, now_ms),
             Pane::Envoy => self.app.envoy_pane(ui),
-            Pane::Ledger => self.app.lorekeeper_pane(ui, now_ms),
+            Pane::Ledger => self.app.ledger_panel.open_requested = true,
         }
     }
 
@@ -82,9 +82,6 @@ impl StrongholdApp {
             self.envoy_panel.set_requests(self.envoy_core.requests());
             self.envoy_panel.open(self.envoy_core.drafts());
             self.panes.open_envoy();
-        }
-        if std::mem::take(&mut self.ledger_panel.open_requested) {
-            self.panes.open_ledger();
         }
         self.panes.set_conversation(self.has_conversation());
         self.panes.sync_notifications();
@@ -241,6 +238,7 @@ impl StrongholdApp {
                 if response.open_ledger {
                     self.ledger_panel.open_requested = true;
                     ui.ctx().request_repaint();
+                    return;
                 }
                 if response.bonk {
                     self.bonk_sound();

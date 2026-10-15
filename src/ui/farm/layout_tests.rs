@@ -887,9 +887,9 @@ fn hovering_the_ledger_chamber_lists_its_newest_entries() {
     );
 }
 
-/// A chamber click opens one Ledger pane and never clears the dwarf selection.
+/// A chamber click requests the Ledger modal without touching the dock or selection.
 #[test]
-fn clicking_the_ledger_chamber_opens_its_pane() {
+fn clicking_the_ledger_chamber_requests_its_modal() {
     use crate::ui::dock::{Pane, PaneLayout};
     use eframe::egui::{self, Event, PointerButton};
 
@@ -897,10 +897,14 @@ fn clicking_the_ledger_chamber_opens_its_pane() {
     let mut clan = crate::ui::clan_view::ClanView::new();
     clan.sync(&snapshot);
     let mut farm = FarmView::new();
-    let mut panes = PaneLayout::default();
+    let panes = PaneLayout::default();
+    let saved = panes.encode().unwrap();
+    let selected = snapshot.nodes[0].id.clone();
+    clan.set_selected(Some(&selected));
+    let mut ledger = crate::ui::ledger::LedgerModal::default();
     let ctx = egui::Context::default();
     let mut time = 0.0;
-    let mut frame = |events: Vec<Event>, panes: &mut PaneLayout| {
+    let mut frame = |events: Vec<Event>, ledger: &mut crate::ui::ledger::LedgerModal| {
         time += 1.0 / 60.0;
         let mut rect = Rect::NOTHING;
         let mut clicked = false;
@@ -918,7 +922,7 @@ fn clicking_the_ledger_chamber_opens_its_pane() {
                     assert!(!response.clicked_empty);
                     assert!(!response.open_envoy);
                     assert!(response.clicked.is_none());
-                    panes.open_ledger();
+                    ledger.open_requested = true;
                     clicked = true;
                 }
             },
@@ -926,7 +930,7 @@ fn clicking_the_ledger_chamber_opens_its_pane() {
         output.textures_delta.clear();
         (rect, clicked)
     };
-    let (rect, _) = frame(vec![], &mut panes);
+    let (rect, _) = frame(vec![], &mut ledger);
     assert!(!panes.contains(Pane::Ledger));
     let scene = layout(
         &FarmInput {
@@ -949,19 +953,14 @@ fn clicking_the_ledger_chamber_opens_its_pane() {
             pressed,
             modifiers: egui::Modifiers::NONE,
         };
-        frame(vec![Event::PointerMoved(target)], &mut panes);
-        frame(vec![button(true)], &mut panes);
-        assert!(frame(vec![button(false)], &mut panes).1);
-        assert!(panes.is_visible(Pane::Ledger));
+        frame(vec![Event::PointerMoved(target)], &mut ledger);
+        frame(vec![button(true)], &mut ledger);
+        assert!(frame(vec![button(false)], &mut ledger).1);
+        assert!(ledger.is_open());
     }
-    let saved = panes.encode().unwrap();
-    let restored = PaneLayout::decode(&saved).expect("valid layout with just one Ledger tab");
-    assert!(restored.is_visible(Pane::Ledger));
-    let path = panes.dock_mut().find_tab(&Pane::Ledger).unwrap();
-    panes.dock_mut().remove_tab(path);
+    assert_eq!(panes.encode().unwrap(), saved);
+    assert_eq!(clan.selected(), Some(selected));
     assert!(!panes.contains(Pane::Ledger));
-    panes.open_ledger();
-    assert!(panes.is_visible(Pane::Ledger));
 }
 
 /// Clicking a dwarf reports it, as clicking a node does in the clan; clicking soil reports

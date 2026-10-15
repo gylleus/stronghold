@@ -111,26 +111,28 @@ impl StrongholdApp {
         }
     }
 
-    pub(super) fn lorekeeper_pane(&mut self, ui: &mut egui::Ui, now: i64) {
+    pub(super) fn ledger_modal(&mut self, ctx: &egui::Context, now: i64) {
         let busy = self.lorekeeper.session.busy();
         let error = self.lorekeeper.session.error.as_deref().or(self
             .lorekeeper
             .reports
             .error
             .as_deref());
-        self.ledger_panel.show(
-            ui,
+        self.ledger_panel.show_modal(
+            ctx,
             self.ledger.poll(),
             now,
-            busy,
-            error,
-            self.lorekeeper.reports.latest.as_ref(),
+            crate::ui::ledger::Maintenance {
+                tending: busy,
+                launch_error: error,
+                report: self.lorekeeper.reports.latest.as_ref(),
+            },
         );
         if std::mem::take(&mut self.ledger_panel.tend_requested)
             && let Err(e) = self
                 .lorekeeper
                 .session
-                .start(self.whip_window.lorekeeper(), repaint_once(ui.ctx()))
+                .start(self.whip_window.lorekeeper(), repaint_once(ctx))
         {
             self.lorekeeper.session.error = Some(e.to_string());
         }

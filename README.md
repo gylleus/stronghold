@@ -23,18 +23,25 @@ palette opens it in Console.
 ## Ledger
 
 Click the Ledger chamber to search and read the clan's knowledge store. With the query
-empty, the pane lists the five newest entries. Enter a query and press Enter or Search;
+empty, the modal lists the five newest entries over the current view, without changing
+its tabs or selection. The command palette's **Open Ledger** action opens the same modal.
+Search is focused on open and matches titles and bodies as you type. Text is the default;
 Auto searches by meaning, switching to text for IDs such as `ABC-123` and `myr-bas`.
 Meaning and Text can also be selected explicitly. Results show title, folder, note type,
-age and a snippet; selecting one renders its Markdown. Open in default editor opens the
+date, age and a snippet; selecting one renders its Markdown. Use ↑/↓ to move through results,
+Enter to open and Esc to close. The query, selected entry and scroll positions stay in the
+session when closed. The large modal fits the window and follows its theme and palette. Open in default editor opens the
 actual file with macOS `open`.
 
 Search uses the local basic-memory MCP service at `http://127.0.0.1:8643/mcp`, project
-`ledger`. If it is unavailable, the pane says so and searches local files for all the
+`ledger`. If it is unavailable, the modal says so and searches local files for all the
 query's literal terms, ignoring case. Results are limited to 30. Reading uses the files in
-`ledger/` under the agents dir (see [Configuration](#configuration)); the pane never writes or deletes entries. Searches and file
+`ledger/` under the agents dir (see [Configuration](#configuration)); the modal never writes or deletes entries. Searches and file
 reads run on a background thread. The HTTP transport uses `ureq`, without a CLI or shell
 PATH dependency, and accepts both JSON and SSE responses after MCP initialization.
+
+The existing Lorekeeper controls are under **Ledger maintenance**.
+[Before/after screenshots and validation](docs/assets/tests/ledger-modal/README.md).
 
 The optional live check (requires `ai.basic-memory.server` running) is:
 

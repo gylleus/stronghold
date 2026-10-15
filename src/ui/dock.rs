@@ -29,7 +29,7 @@ pub enum Pane {
     Notifications,
     /// Pending Envoy drafts and delivery history.
     Envoy,
-    /// Search and read the clan knowledge store.
+    /// Legacy saved tab, removed on load. The Ledger now opens as a modal.
     Ledger,
 }
 
@@ -146,10 +146,16 @@ impl PaneLayout {
 
     /// The layout saved by [`Self::encode`], or `None` if it is unreadable or lacks a pane.
     pub fn decode(saved: &str) -> Option<Self> {
-        let dock: DockState<Pane> = ron::from_str(saved)
+        let mut dock: DockState<Pane> = ron::from_str(saved)
             .inspect_err(|err| log::warn!("dock: ignoring the saved layout: {err}"))
             .ok()?;
-        valid(&dock).then(|| Self::from_dock(dock))
+        if !valid(&dock) {
+            return None;
+        }
+        if let Some(path) = dock.find_tab(&Pane::Ledger) {
+            dock.remove_tab(path);
+        }
+        Some(Self::from_dock(dock))
     }
 
     pub fn contains(&self, pane: Pane) -> bool {
@@ -209,16 +215,6 @@ impl PaneLayout {
                 .split_right(NodeIndex::root(), 0.65, vec![Pane::Envoy]);
         }
         self.activate(Pane::Envoy);
-    }
-
-    /// Opens the Ledger beside the hold, or brings its existing tab forward.
-    pub fn open_ledger(&mut self) {
-        if !self.contains(Pane::Ledger) {
-            self.dock
-                .main_surface_mut()
-                .split_right(NodeIndex::root(), 0.6, vec![Pane::Ledger]);
-        }
-        self.activate(Pane::Ledger);
     }
 
     /// The conversation's tab was closed in the dock; `before` is the layout that had it.
@@ -377,6 +373,34 @@ mod tests {
         place(dock.main_surface(), NodeIndex::root(), rect, &mut out);
         out.sort_by(|a, b| a.1.total_cmp(&b.1));
         out
+    }
+
+    #[test]
+    fn old_ledger_split_is_removed_without_resetting_the_other_panes() {
+        let mut layout = PaneLayout::default();
+        layout
+            .dock
+            .main_surface_mut()
+            .split_below(NodeIndex::root(), 0.7, vec![Pane::Envoy]);
+        let geometry = |layout: &PaneLayout| {
+            ron::to_string(
+                &layout
+                    .dock
+                    .main_surface()
+                    .iter()
+                    .filter(|node| !matches!(node, egui_dock::Node::Empty))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap()
+        };
+        let before = geometry(&layout);
+        layout
+            .dock
+            .main_surface_mut()
+            .split_right(NodeIndex::root(), 0.6, vec![Pane::Ledger]);
+        let restored = PaneLayout::decode(&layout.encode().unwrap()).unwrap();
+        assert!(!restored.contains(Pane::Ledger));
+        assert_eq!(geometry(&restored), before);
     }
 
     #[test]
