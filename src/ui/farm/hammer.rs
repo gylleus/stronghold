@@ -2,7 +2,7 @@
 //! The shared prop cache applies the selected world palette after this pass.
 use std::sync::OnceLock;
 
-use eframe::egui::{Color32, ColorImage, Pos2, Rect, Vec2, vec2};
+use eframe::egui::{Color32, ColorImage, Pos2, Rect, vec2};
 
 use super::world::{GOLD_DARK, INK, IRON, STONE_LIGHT, WOOD, WOOD_DARK, WOOD_LIGHT, rgb};
 use crate::ui::dwarf::{
@@ -97,39 +97,272 @@ pub fn render(size: [usize; 2], outline: Outline) -> ColorImage {
     image
 }
 
-/// Slow backswing, fast strike, then a short hold at contact. Frozen at contact for reduced motion.
+/// One stroke every 650 ms; contact is shared by the pose, shake and chips.
+pub const CYCLE_S: f64 = 0.65;
+pub const CONTACT: f32 = 0.44;
+pub const IMPACT_SPAN: f32 = 0.34;
+const TRAVEL_S: f64 = 0.24;
+const LEAVE_S: f64 = 0.28;
+const DWARF_HEIGHT: f32 = 22.0;
+const SLEDGE_SCALE: f32 = 0.6;
+
 pub fn phase(now_s: f64, still: bool) -> f32 {
     if still {
-        0.7
+        CONTACT
     } else {
-        (now_s / 1.2).rem_euclid(1.0) as f32
+        (now_s / CYCLE_S).rem_euclid(1.0) as f32
     }
 }
 
-/// Upright sprite rotated about its grip; the head meets `impact` at the end of each stroke.
-pub fn placement(impact: Pos2, scale: f32, phase: f32) -> (Rect, (f32, Pos2)) {
-    let angle = if phase < 0.48 {
-        -2.05 + 1.55 * (phase / 0.48)
-    } else if phase < 0.68 {
-        -0.5 - 1.55 * ((phase - 0.48) / 0.2).powi(2)
-    } else {
-        -2.05
-    };
-    let size = vec2(26.0, 40.0) * scale;
-    let contact = head_offset(scale);
-    let pivot = impact - eframe::egui::emath::Rot2::from_angle(-2.05) * contact;
-    let rect = Rect::from_min_size(pivot - vec2(size.x / 2.0, size.y - 4.0 * scale), size);
-    (rect, (angle, pivot))
+pub fn impact_life(phase: f32) -> Option<f32> {
+    (CONTACT..CONTACT + IMPACT_SPAN)
+        .contains(&phase)
+        .then_some((phase - CONTACT) / IMPACT_SPAN)
 }
 
-fn head_offset(scale: f32) -> Vec2 {
-    vec2(0.0, -30.0) * scale
+#[derive(Clone)]
+pub struct Target {
+    pub id: String,
+    pub impact: Pos2,
+    pub ground: f32,
+    pub px: f32,
+}
+
+/// One worker for the entire batch. Travel and departure never delay actual cleanup.
+#[derive(Default)]
+pub struct Demolisher {
+    target: Option<Target>,
+    changed_s: f64,
+    from: Pos2,
+    foot: Pos2,
+    leaving: bool,
+    pub frame: Option<Frame>,
+    art: std::cell::RefCell<super::art::DwarfArt>,
+}
+
+#[derive(Clone)]
+pub struct Frame {
+    pub foot: Pos2,
+    pub height: f32,
+    pub pose: crate::ui::dwarf::Pose,
+    pub phase: Option<f32>,
+    pub alpha: f32,
+    pub target: Target,
+}
+
+fn stance(target: &Target) -> (Pos2, f32) {
+    let k = DWARF_HEIGHT * target.px / 100.0;
+    let reach = 17.5 * k + 30.0 * target.px * SLEDGE_SCALE;
+    let arm = ((target.impact.y - target.ground + 43.0 * k) / reach)
+        .clamp(-0.9, 0.9)
+        .acos();
+    (
+        eframe::egui::pos2(target.impact.x - 5.0 * k - reach * arm.sin(), target.ground),
+        arm,
+    )
+}
+
+impl Demolisher {
+    pub fn update(&mut self, target: Option<Target>, now_s: f64, still: bool, away: bool) {
+        if away {
+            *self = Self::default();
+        }
+        let changed = self.target.as_ref().map(|t| &t.id) != target.as_ref().map(|t| &t.id);
+        if let Some(target) = target {
+            let (to, _) = stance(&target);
+            if changed || self.leaving {
+                self.from = if self.frame.is_some() {
+                    self.foot
+                } else {
+                    to - vec2(45.0 * target.px, 0.0)
+                };
+                self.changed_s = now_s;
+            }
+            self.target = Some(target);
+            self.leaving = false;
+        } else if self.target.is_some() && !self.leaving {
+            self.from = self.foot;
+            self.changed_s = now_s;
+            self.leaving = true;
+        }
+        let Some(target) = self.target.clone() else {
+            return;
+        };
+        let age = (now_s - self.changed_s).max(0.0);
+        if self.leaving && (still || age >= LEAVE_S) {
+            *self = Self::default();
+            return;
+        }
+        let (to, contact_arm) = stance(&target);
+        let travelling = !still && (self.leaving || age < TRAVEL_S);
+        let phase = (!travelling).then(|| phase(age - TRAVEL_S, still));
+        let pose = if travelling {
+            let mut pose = crate::ui::dwarf::pose(crate::ui::dwarf::Action::Walk, age * 1.6);
+            pose.arm = 2.1;
+            pose.back_arm = 2.1;
+            pose.stowed = true;
+            pose.two_handed = true;
+            pose.lean = 0.0;
+            pose.stretch = 0.0;
+            pose
+        } else {
+            crate::ui::dwarf::demolition(phase.unwrap(), contact_arm)
+        };
+        self.foot = if self.leaving {
+            self.from + vec2(age as f32 * 90.0 * target.px, 0.0)
+        } else if still {
+            to
+        } else {
+            self.from.lerp(to, (age / TRAVEL_S).min(1.0) as f32)
+        };
+        self.frame = Some(Frame {
+            foot: self.foot,
+            height: DWARF_HEIGHT * target.px,
+            pose,
+            phase,
+            alpha: if self.leaving {
+                1.0 - (age / LEAVE_S) as f32
+            } else {
+                1.0
+            },
+            target,
+        });
+    }
+}
+
+impl Demolisher {
+    /// The sledge stays attached to the fist, between the pixel body and hands.
+    pub fn paint(
+        &self,
+        painter: &eframe::egui::Painter,
+        art: &super::art::ArtSettings,
+        prop: impl FnOnce(Rect, (f32, Pos2), f32),
+    ) {
+        use super::art::{DwarfLayer, PosedFigure};
+        use crate::ui::dwarf::{self, Beard, Garment, Hat, Look, Tool};
+        let Some(frame) = &self.frame else { return };
+        let look = Look {
+            girth: 1.2,
+            beard: Beard::Bushy,
+            hat: Hat::Bandana,
+            garment: Garment::Apron,
+            tool: Tool::None,
+            ..Look::from_seed(47)
+        };
+        let figure = PosedFigure {
+            key: "demolition/body",
+            look: &look,
+            pose: &frame.pose,
+            foot: frame.foot,
+            height: frame.height,
+            facing_right: true,
+            alpha: frame.alpha,
+            layer: DwarfLayer::Body,
+        };
+        let mut renderer = self.art.borrow_mut();
+        renderer.begin_frame();
+        renderer.paint_posed(painter, art, &figure, frame.target.px);
+        let (grip, _) = dwarf::held_prop(
+            frame.foot,
+            frame.height,
+            &look,
+            &frame.pose,
+            &dwarf::cutout::Finish::INK,
+        );
+        let scale = frame.target.px * SLEDGE_SCALE;
+        let size = vec2(26.0, 40.0) * scale;
+        let pivot = grip.origin;
+        let angle = grip.x.y.atan2(grip.x.x);
+        let rect = Rect::from_min_size(pivot - vec2(size.x / 2.0, size.y - 4.0 * scale), size);
+        prop(rect, (angle, pivot), frame.alpha);
+        renderer.paint_posed(
+            painter,
+            art,
+            &PosedFigure {
+                key: "demolition/hands",
+                layer: DwarfLayer::Hands,
+                ..figure
+            },
+            frame.target.px,
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use eframe::egui::pos2;
+
+    #[test]
+    fn demolition_body_and_hands_are_pixel_textures_at_hold_scale() {
+        let ctx = eframe::egui::Context::default();
+        let mut worker = Demolisher::default();
+        worker.update(
+            Some(Target {
+                id: "rock".into(),
+                impact: pos2(150.0, 100.0),
+                ground: 110.0,
+                px: 2.0,
+            }),
+            0.0,
+            true,
+            false,
+        );
+        let frame = worker.frame.as_ref().unwrap();
+        use super::super::art::{ArtSettings, Pixels};
+        let mut previous = std::collections::HashMap::new();
+        for (art, width) in [
+            (ArtSettings::default(), 33),
+            (
+                ArtSettings {
+                    outline: Outline::Bold,
+                    ..Default::default()
+                },
+                33,
+            ),
+            (
+                ArtSettings {
+                    palette: "apollo".into(),
+                    ..Default::default()
+                },
+                33,
+            ),
+            (
+                ArtSettings {
+                    pixels: Pixels::Height(32),
+                    ..Default::default()
+                },
+                48,
+            ),
+        ] {
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                worker.paint(ui.painter(), &art, |_, _, _| {});
+            });
+            let textures: Vec<_> = std::mem::take(&mut output.textures_delta.set)
+                .into_iter()
+                .filter(|(id, _)| *id != eframe::egui::TextureId::default())
+                .flat_map(|(id, deltas)| deltas.into_iter().map(move |delta| (id, delta)))
+                .collect();
+            output.textures_delta.clear();
+            assert_eq!(
+                textures.len(),
+                2,
+                "body and hands must both refresh for {art:?}"
+            );
+            for (id, delta) in &textures {
+                assert_eq!(delta.options, eframe::egui::TextureOptions::NEAREST);
+                let eframe::egui::ImageData::Color(image) = &delta.image;
+                assert_eq!(image.size[0], width);
+                assert!(image.pixels.iter().all(|p| p.a() == 0 || p.a() == 255));
+                assert!(image.pixels.iter().any(|p| p.a() == 255));
+                if let Some(before) = previous.insert(*id, image.clone()) {
+                    assert_ne!(image, &before, "settings must change the actual pixels");
+                }
+            }
+        }
+        assert!(frame.height / frame.target.px <= 24.0);
+    }
+
     #[test]
     fn sprite_is_hard_alpha_and_outline_changes_it() {
         let fine = render([26, 40], Outline::Fine);
@@ -138,21 +371,57 @@ mod tests {
         assert_ne!(fine, render([26, 40], Outline::Bold));
     }
     #[test]
-    fn strike_contacts_rock_with_the_grip_above_ground() {
-        let impact = pos2(60.0, 50.0);
-        for scale in [0.75, 1.0, 2.0] {
-            let (_, (angle, pivot)) = placement(impact, scale, phase(0.0, true));
-            let head = pivot + eframe::egui::emath::Rot2::from_angle(angle) * head_offset(scale);
-            assert!(head.distance(impact) < 0.001);
-            assert!(pivot.y < impact.y, "grip stays above the rock");
+    fn sledge_reaches_each_heap_from_a_grounded_stance() {
+        for px in [0.75, 1.0, 2.0] {
+            for rock_height in [4.0, 10.0, 20.0] {
+                let target = Target {
+                    id: "rock".into(),
+                    impact: pos2(100.0, 100.0 - rock_height * px),
+                    ground: 100.0,
+                    px,
+                };
+                let (foot, arm) = stance(&target);
+                let pose = crate::ui::dwarf::demolition(CONTACT, arm);
+                let look = crate::ui::dwarf::Look::from_seed(47);
+                let (grip, _) = crate::ui::dwarf::held_prop(
+                    foot,
+                    DWARF_HEIGHT * px,
+                    &look,
+                    &pose,
+                    &crate::ui::dwarf::cutout::Finish::INK,
+                );
+                let tip = grip.origin + grip.y.normalized() * (-30.0 * px * SLEDGE_SCALE);
+                assert!(tip.distance(target.impact) < 0.001);
+                assert_eq!(foot.y, target.ground);
+            }
         }
     }
+
     #[test]
-    fn reduced_motion_freezes_the_strike() {
-        assert_eq!(
-            placement(pos2(50.0, 50.0), 1.0, phase(1.0, true)),
-            placement(pos2(50.0, 50.0), 1.0, phase(2.0, true))
+    fn worker_arrives_before_striking_and_leaves_with_his_tool() {
+        let target = Target {
+            id: "rock".into(),
+            impact: pos2(100.0, 90.0),
+            ground: 100.0,
+            px: 1.0,
+        };
+        let mut worker = Demolisher::default();
+        worker.update(Some(target.clone()), 0.0, false, false);
+        assert!(worker.frame.as_ref().unwrap().phase.is_none());
+        worker.update(
+            Some(target.clone()),
+            TRAVEL_S + CYCLE_S * f64::from(CONTACT),
+            false,
+            false,
         );
-        assert_ne!(phase(1.0, false), phase(1.5, false));
+        assert!((worker.frame.as_ref().unwrap().phase.unwrap() - CONTACT).abs() < 0.001);
+        worker.update(None, 1.0, false, false);
+        assert!(worker.frame.as_ref().unwrap().phase.is_none());
+        worker.update(None, 1.0 + LEAVE_S + 0.01, false, false);
+        assert!(worker.frame.is_none());
+        worker.update(Some(target), 2.0, true, false);
+        assert_eq!(worker.frame.as_ref().unwrap().phase, Some(CONTACT));
+        worker.update(None, 2.1, true, false);
+        assert!(worker.frame.is_none());
     }
 }

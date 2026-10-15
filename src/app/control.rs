@@ -78,6 +78,7 @@ impl AppControl {
         let status = SharedStatus::new();
         let (commands, rx) = AppCommands::channel(Some(repaint_once(ctx)));
         let backend = Backend {
+            github: Arc::new(crate::review::github::GhCli::default()),
             status: status.clone(),
             screens: Arc::new(OrcaClient::new()),
             commands: Arc::new(commands),

@@ -8,6 +8,7 @@ runs the clan; Stronghold fills in the name from Settings → General when it se
 - `_AGENT_PROTOCOL.md`: every dispatched worker.
 - `ATTENDANT-BRIEF-TEMPLATE.md`, `KICKOFF-TEMPLATE.md`: templates filled in per Run / track.
 - `ENVOY-PLAYBOOK.md`: the Envoy, the user's Slack diplomat (role `envoy`). It is not a worker.
+- `LOREKEEPER-PLAYBOOK.md`: the Lorekeeper, keeper of the Ledger (role `lorekeeper`). It is not a worker.
 
 `~/Documents/agents/` holds symlinks to these files, so older kickoff specs and memory files
 that point there keep working.

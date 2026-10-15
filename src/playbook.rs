@@ -1,6 +1,5 @@
-//! The clan playbook: the Markdown rules coordinators, attendants, workers and the Envoy run
-//! by. Stronghold serves them (MCP prompts, resources and tools; `stronghold playbook`) straight from disk on
-//! every request, stamped with the git version they came from. See `playbook/README.md`.
+//! The clan playbook: Markdown standing rules, served from disk over MCP and the CLI.
+//! Every request is stamped with its git version. See `playbook/README.md`.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -25,9 +24,18 @@ pub const ATTENDANT_BRIEF: &str = "ATTENDANT-BRIEF-TEMPLATE.md";
 pub const KICKOFF: &str = "KICKOFF-TEMPLATE.md";
 pub const README: &str = "README.md";
 pub const ENVOY: &str = "ENVOY-PLAYBOOK.md";
+pub const LOREKEEPER: &str = "LOREKEEPER-PLAYBOOK.md";
 
 /// The known files, in listing order.
-pub const FILES: [&str; 6] = [PLAYBOOK, PROTOCOL, ATTENDANT_BRIEF, KICKOFF, ENVOY, README];
+pub const FILES: [&str; 7] = [
+    PLAYBOOK,
+    PROTOCOL,
+    ATTENDANT_BRIEF,
+    KICKOFF,
+    ENVOY,
+    LOREKEEPER,
+    README,
+];
 
 /// The line a prompt puts before the docs.
 pub const STANDING_RULES: &str = "These are your standing rules for this session; follow them.";
@@ -39,6 +47,7 @@ pub enum Role {
     Attendant,
     Worker,
     Envoy,
+    Lorekeeper,
 }
 
 /// One piece of a role's docs: a whole file, or some of its `## ` sections.
@@ -49,11 +58,12 @@ pub struct Part {
 }
 
 impl Role {
-    pub const ALL: [Role; 4] = [
+    pub const ALL: [Role; 5] = [
         Role::Coordinator,
         Role::Attendant,
         Role::Worker,
         Role::Envoy,
+        Role::Lorekeeper,
     ];
 
     pub fn name(self) -> &'static str {
@@ -62,6 +72,7 @@ impl Role {
             Role::Attendant => "attendant",
             Role::Worker => "worker",
             Role::Envoy => "envoy",
+            Role::Lorekeeper => "lorekeeper",
         }
     }
 
@@ -77,6 +88,7 @@ impl Role {
             Role::Attendant => "Attendant brief",
             Role::Worker => "Worker protocol",
             Role::Envoy => "Envoy playbook",
+            Role::Lorekeeper => "Lorekeeper playbook",
         }
     }
 
@@ -94,6 +106,10 @@ impl Role {
             Role::Envoy => {
                 "Standing rules for the Envoy, {user}'s Slack diplomat: the Envoy playbook only \
                  (it is not a worker)."
+            }
+            Role::Lorekeeper => {
+                "Standing rules for the Lorekeeper, keeper of {user}'s Ledger: the Lorekeeper \
+                 playbook only (it is not a worker)."
             }
         }
     }
@@ -122,6 +138,10 @@ impl Role {
             Role::Worker => &[WHOLE_PROTOCOL],
             Role::Envoy => &[Part {
                 file: ENVOY,
+                sections: None,
+            }],
+            Role::Lorekeeper => &[Part {
+                file: LOREKEEPER,
                 sections: None,
             }],
         }
@@ -156,6 +176,31 @@ pub fn envoy_launch_prompt(dry_run: bool) -> String {
          an `Envoy event:` line. Don't poll, and don't load the playbook again: it is already \
          there."
     ))
+}
+
+/// Appended system rules survive context resets.
+pub fn lorekeeper_system_prompt(playbook: &Playbook) -> Result<String> {
+    let served = playbook.get(&Target::Role(Role::Lorekeeper), None)?;
+    Ok(crate::user::fill(&format!(
+        "# Lorekeeper standing rules\n\n{}\n\n{}",
+        served.version.header(),
+        served.body
+    )))
+}
+
+pub fn lorekeeper_launch_prompt(dry_run: bool, budget: usize) -> String {
+    let mode = if dry_run {
+        "DRY RUN: verify and report proposed actions; change nothing in the Ledger."
+    } else {
+        "LIVE: verify and apply the playbook's actions through the ledger MCP tools."
+    };
+    let today = jiff::Zoned::now().date();
+    format!(
+        "You are the Lorekeeper. Your standing rules are the Lorekeeper playbook in your \
+         system prompt; follow its loop. {mode} Budget: at most {budget} entries. \
+         Today: {today}. Finish with exactly one lorekeeper_report, then finish_session \
+         with approval trivial and the counts line as summary."
+    )
 }
 
 /// What to serve: a role's docs or one file.
@@ -710,7 +755,7 @@ pub fn run_cli(args: &[String]) -> Option<Result<()>> {
     })
 }
 
-const USAGE: &str = "usage: stronghold playbook [coordinator|attendant|worker|envoy|<file>] \
+const USAGE: &str = "usage: stronghold playbook [coordinator|attendant|worker|envoy|lorekeeper|<file>] \
                      [--section <title>] [--list]\n       \
                      stronghold playbook attendant-brief <run_id>\n       \
                      stronghold playbook kickoff <task_id>";

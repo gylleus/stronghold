@@ -292,8 +292,8 @@ pub fn tool_definitions() -> Vec<Value> {
             "title": "Get playbook",
             "description": "The clan playbook rules for a role (coordinator: playbook + worker \
                 protocol; attendant: attendant brief + Coordinator duties and Token economy; \
-                worker: agent protocol; envoy: Envoy playbook) or one playbook file, optionally \
-                just one `## ` section. Starts with a version line (git commit, dirty flag, \
+                worker: agent protocol; envoy: Envoy playbook; lorekeeper: Lorekeeper playbook) \
+                or one playbook file, optionally just one `## ` section. Starts with a version line (git commit, dirty flag, \
                 content hash). Works without the app running.",
             "inputSchema": {
                 "type": "object",

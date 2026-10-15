@@ -228,6 +228,11 @@ agent rules (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`): search it before you 
 before you say there is no record; when you finish, file at most three entries the next agent
 would need.
 
+Filers may set frontmatter `last_verified: YYYY-MM-DD` to the filing date; the Lorekeeper
+refreshes it after verification. Set `volatile: true` for rollout state, live customers,
+current config/flags, versions or other facts that drift. Re-check after 14 days if volatile,
+60 for findings or 180 for decisions/how-tos (`how_to`); never verified means due now.
+
 ## Complexity discipline
 
 1. **Name the failure mode before writing a guard.** "If X happens this prevents Y", where X

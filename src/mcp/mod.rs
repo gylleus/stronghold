@@ -14,6 +14,7 @@ pub mod notify;
 pub mod playbook;
 pub mod review;
 pub mod server;
+pub mod standup;
 #[cfg(test)]
 mod tests;
 pub mod tools;
