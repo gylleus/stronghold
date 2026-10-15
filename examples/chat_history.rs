@@ -5,7 +5,8 @@
 //! [--scroll-up <points>] [--shot out.png]`: `--terminal` shows that Orca terminal's agent with
 //! its session transcript (`--screen`: its live screen), `--king` the King's chat with his
 //! resumed session. `--scroll-up` scrolls the list up once drawn. With `--shot`, it saves a
-//! screenshot once settled and exits.
+//! screenshot once settled and exits. `--rollout <jsonl>` and `--markdown <md>` load
+//! reproducible fixtures without reading or mutating app/session state.
 
 use std::time::{Duration, Instant};
 
@@ -34,10 +35,25 @@ fn main() -> eframe::Result {
     let shot = arg("--shot");
     let light = flag("--light");
     let scroll_up = arg("--scroll-up").and_then(|s| s.parse::<f32>().ok());
-    let content = match arg("--terminal") {
-        Some(handle) => agent(&handle, flag("--screen")),
-        None if flag("--king") => king(),
-        None => panic!("--terminal <handle> or --king"),
+    let content = if let Some(path) = arg("--markdown") {
+        let mut transcript = Transcript::default();
+        transcript
+            .items
+            .push(stronghold::chat::ChatItem::Assistant {
+                text: std::fs::read_to_string(path).expect("markdown fixture"),
+                streaming: false,
+            });
+        Content::King(Box::new(transcript))
+    } else if let Some(path) = arg("--rollout") {
+        let mut view = TranscriptView::new(path.clone().into());
+        view.apply(&HistoryReader::new(path).read_new().unwrap().unwrap());
+        Content::Transcript(Box::new(view))
+    } else {
+        match arg("--terminal") {
+            Some(handle) => agent(&handle, flag("--screen")),
+            None if flag("--king") => king(),
+            None => panic!("--terminal <handle>, --king, --rollout <path> or --markdown <path>"),
+        }
     };
     eframe::run_native(
         "chat history",
@@ -66,6 +82,7 @@ fn main() -> eframe::Result {
 }
 
 enum Content {
+    Transcript(Box<TranscriptView>),
     Agent {
         node: Box<Node>,
         screen: ScreenUpdate,
@@ -79,29 +96,42 @@ enum Content {
 fn agent(handle: &str, show_screen: bool) -> Content {
     let orca = OrcaClient::new();
     let screen = orca.terminal_read_screen(handle).expect("read screen");
-    let mut terminal: Terminal = orca
+    let terminal: Terminal = orca
         .terminal_list()
         .expect("terminal list")
         .terminals
         .into_iter()
         .find(|t| t.handle == handle)
         .expect("no such terminal");
-    terminal.agent_identity = Some(AgentIdentity::Claude);
-    let hooks = stronghold::claude::hook::load_hook_mappings(
-        &stronghold::claude::hook::default_session_map_path(),
-    );
-    let sessions = SessionLocator::default().map_terminals(&[terminal.clone()], Some(&hooks));
-    let view = sessions.get(handle).and_then(|m| m.session()).map(|info| {
+    let path = if terminal.agent_identity == Some(AgentIdentity::Codex) {
+        stronghold::codex::RolloutLocator::new(stronghold::codex::default_sessions_root())
+            .map_terminals(
+                std::slice::from_ref(&terminal),
+                stronghold::control::server::now_ms(),
+            )
+            .remove(handle)
+            .map(|m| m.rollout.path)
+    } else {
+        let hooks = stronghold::claude::hook::load_hook_mappings(
+            &stronghold::claude::hook::default_session_map_path(),
+        );
+        SessionLocator::default()
+            .map_terminals(std::slice::from_ref(&terminal), Some(&hooks))
+            .get(handle)
+            .and_then(|m| m.session())
+            .map(|s| s.transcript_path.clone())
+    };
+    let view = path.map(|path| {
         let started = Instant::now();
-        let mut view = TranscriptView::new(info.transcript_path.clone());
-        let chunk = HistoryReader::new(&info.transcript_path)
+        let mut view = TranscriptView::new(path.clone());
+        let chunk = HistoryReader::new(&path)
             .read_new()
             .expect("read transcript")
             .expect("transcript");
         view.apply(&chunk);
         eprintln!(
             "{}: {} records → {} items in {:?}",
-            info.transcript_path.display(),
+            path.display(),
             chunk.records.len(),
             view.transcript.items.len(),
             started.elapsed()
@@ -117,7 +147,7 @@ fn agent(handle: &str, show_screen: bool) -> Content {
         run_id: None,
         task_id: None,
         dispatch_id: None,
-        agent: Some(AgentIdentity::Claude),
+        agent: terminal.agent_identity.clone(),
         worktree_path: terminal.worktree_path.clone(),
         branch: None,
         last_output_ms: None,
@@ -187,6 +217,10 @@ impl eframe::App for Pane {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ui, |ui| match &mut self.content {
+            Content::Transcript(view) => {
+                ui.heading("Codex · transcript fixture");
+                ui::chat::transcript_conversation(ui, "fixture", Some(view), false, &|_| false);
+            }
             Content::Agent {
                 node,
                 screen,

@@ -339,14 +339,16 @@ impl StrongholdApp {
         Some((node, info))
     }
 
-    /// The session transcript of the selected subagent, or of the selected Claude agent.
+    /// The session transcript of the selected subagent, or of the selected Claude or Codex agent.
     fn conversation_path(&self) -> Option<std::path::PathBuf> {
         if let Some((_, info)) = self.selected_subagent() {
             return Some(info.transcript_path.clone());
         }
         let handle = self.selected_node()?.terminal_handle.as_deref()?;
-        let session = self.claude_data.as_ref()?.session_by_handle.get(handle)?;
-        Some(session.session()?.transcript_path.clone())
+        self.claude_data
+            .as_ref()?
+            .conversation_path(handle)
+            .map(std::path::Path::to_path_buf)
     }
 
     /// Points the worker at the selected conversation's transcript and applies what it read.
