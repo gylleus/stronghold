@@ -10,6 +10,58 @@ use crate::model::{ClanSnapshot, NodeKind, NodeState};
 
 const RECT: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1280.0, 800.0));
 
+#[test]
+fn empty_rest_room_expands_on_arrival_and_shrinks_when_the_last_sleeper_leaves() {
+    let mut s = clan(1, 1);
+    let mut plan = RoomPlan::default();
+    let empty = frame(&s, &mut plan, 0);
+    let initial = plan.room(&TunnelKey::RestingArea).unwrap().clone();
+    assert_eq!(initial.rows, 1);
+    assert!(initial.span < super::rooms::COLUMNS / 2);
+    assert!(
+        plan.rooms
+            .iter()
+            .any(|r| r.key != TunnelKey::RestingArea && r.level == initial.level),
+        "the empty room uses spare space beside work rooms"
+    );
+    assert_eq!(empty.beds.len(), 1);
+    assert!(empty.beds[0].sleeper.is_none());
+    for i in 0..12 {
+        let mut sleeper = node(
+            &format!("sleeper-{i}"),
+            NodeKind::Terminal,
+            None,
+            NodeState::Idle,
+        );
+        sleeper.parked_at_ms = Some(1);
+        s.nodes.push(sleeper);
+    }
+    let occupied = frame(&s, &mut plan, 1_000);
+    let expanded = plan.room(&TunnelKey::RestingArea).unwrap();
+    assert!(expanded.span > initial.span || expanded.rows > initial.rows);
+    assert_eq!(
+        occupied.beds.iter().filter(|b| b.sleeper.is_some()).count(),
+        12
+    );
+    assert_laid_out(&occupied);
+    s.nodes.retain(|n| !n.is_parked());
+    let after = frame(&s, &mut plan, 2_000);
+    assert_eq!(plan.room(&TunnelKey::RestingArea), Some(&initial));
+    assert_eq!(
+        after.beds.len(),
+        1,
+        "shrink immediately, without an empty-room grace"
+    );
+    assert_kept(&empty, &after);
+    let rearranges = plan.rearranges;
+    let later = frame(&s, &mut plan, 2_000 + GRACE_MS);
+    assert_kept(&after, &later);
+    assert_eq!(
+        plan.rearranges, rearranges,
+        "an idle empty room does not keep refitting"
+    );
+}
+
 /// The King and `runs` runs of `workers` working workers each.
 fn clan(runs: usize, workers: usize) -> ClanSnapshot {
     let mut s = ClanSnapshot::default();
@@ -134,7 +186,12 @@ fn a_new_room_lays_the_farm_out_again() {
     let mut plan = RoomPlan::default();
     frame(&s, &mut plan, 0);
     assert_eq!(plan.rearranges, 1, "the first frame lays the plan out");
-    let cells = |plan: &RoomPlan| plan.rooms.len();
+    let cells = |plan: &RoomPlan| {
+        plan.rooms
+            .iter()
+            .filter(|r| r.key != TunnelKey::RestingArea)
+            .count()
+    };
     assert_eq!(cells(&plan), 3, "no spare cells");
     add_run(&mut s, 3, 2);
     let after = frame(&s, &mut plan, 1_000);
@@ -254,8 +311,12 @@ fn filled_in_rooms_give_their_ground_back() {
     assert_eq!(plan.rearranges, 1, "rooms wait out their grace first");
     let after = frame(&s, &mut plan, 1_000 + GRACE_MS);
     assert_eq!(plan.rearranges, 2, "then the grid is laid out again");
-    assert_eq!(after.tunnels.len(), 2);
-    assert_eq!(plan.rooms.len(), 2);
+    assert_eq!(
+        after.tunnels.len(),
+        3,
+        "two work rooms and the empty rest room"
+    );
+    assert_eq!(plan.rooms.len(), 3);
 }
 
 #[test]
