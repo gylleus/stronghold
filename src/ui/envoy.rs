@@ -1165,7 +1165,7 @@ mod tests {
         let claim = format!("says {} asked: \"Send the review\"", crate::user::name());
         assert!(h.visible(&claim));
         assert!(matches!(
-            h.click("Approve"),
+            h.click("Send"),
             Some(DraftAction::Approve { .. })
         ));
         h.drafts[0].status = DraftStatus::Sent;

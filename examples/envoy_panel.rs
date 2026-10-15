@@ -129,6 +129,7 @@ fn request_fixtures(outbox: bool) -> Vec<stronghold::envoy::requests::Request> {
         turns: vec![Turn {
             id: 1,
             ask: "Please review the fixture release.".into(),
+            karl_asked: None,
             why: "Unblock the release".into(),
             urgency: "normal".into(),
             expect_reply: true,
