@@ -175,6 +175,10 @@ Envoy routes it, the app sends it under {user}'s approval, and replies are typed
 terminal as `Envoy: reply from … to your request <id>`. `reach_out_status` shows where it
 stands.
 
+When {user} tells you to send via the Envoy, set `karl_asked` to their words (at most 500
+characters); it waits for their Send click in the Envoy Inbox. Never post yourself even if
+the Envoy declines — ask {user} or your coordinator instead.
+
 - **Never post or subscribe yourself**: no `slackmsg send`, `slack api chat.postMessage`,
   `slack-sub add`. Reading Slack for context is fine.
 - **Don't wait idle.** Carry on; handle the reply when it lands. Pass `urgency: blocking`
