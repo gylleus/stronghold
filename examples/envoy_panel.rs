@@ -207,6 +207,9 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Envoy fixture",
         eframe::NativeOptions {
+            persist_window: false,
+            persistence_path: std::env::var_os("STRONGHOLD_DATA_DIR")
+                .map(|dir| std::path::PathBuf::from(dir).join("envoy-panel.ron")),
             viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 1500.0]),
             ..Default::default()
         },
@@ -260,6 +263,9 @@ fn main() -> eframe::Result {
                     });
                 }
                 panel.set_requests(&[orphan]);
+            }
+            if args.iter().any(|a| a == "--confirm-clear") {
+                panel.confirm_clear(&drafts, &inbox);
             }
             Ok(Box::new(Demo {
                 panel,

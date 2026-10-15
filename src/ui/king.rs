@@ -109,7 +109,9 @@ pub struct KingResponse {
 
 /// The draft count stays visible even when the Envoy session is stopped.
 pub fn envoy_drafts_button(ui: &mut Ui, pending: usize) -> bool {
-    ui.button(format!("Envoy inbox ({pending})")).clicked()
+    ui.button(format!("Envoy inbox ({pending})"))
+        .on_hover_text("Review messages, requests, and drafts from the Envoy")
+        .clicked()
 }
 
 /// Draws the King's details: his header with the clan counts, then the clan summary and the

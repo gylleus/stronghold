@@ -372,6 +372,12 @@ impl DraftQueue {
     pub fn get(&self, id: &str) -> Option<&Draft> {
         self.saved.drafts.iter().find(|d| d.id == id)
     }
+    pub fn delete(&mut self, id: &str) -> Result<(), String> {
+        let old = self.saved.clone();
+        self.saved.drafts.retain(|d| d.id != id);
+        self.commit(old)
+    }
+
     pub fn pending_count(&self) -> usize {
         self.saved
             .drafts

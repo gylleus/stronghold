@@ -24,6 +24,8 @@ pub struct Cursor {
 pub struct Inbox {
     events: Vec<InboundEvent>,
     floor_us: i64,
+    // Thread reply capture can revisit messages below the display-history floor.
+    deleted: BTreeSet<String>,
     /// App-owned resolution overlay; ingestion checkpoints remain worker-owned.
     #[serde(skip)]
     resolved: BTreeSet<String>,
@@ -59,7 +61,8 @@ impl Inbox {
         let Some(ts) = timestamp_us(&event.ts) else {
             return false;
         };
-        if ts <= self.floor_us
+        if self.deleted.contains(&event.id())
+            || ts <= self.floor_us
             || self
                 .events
                 .iter()
@@ -76,6 +79,19 @@ impl Inbox {
             self.floor_us = timestamp_us(&removed.ts).unwrap_or(self.floor_us);
         }
         true
+    }
+
+    pub fn is_deleted(&self, id: &str) -> bool {
+        self.deleted.contains(id)
+    }
+
+    pub fn delete(&mut self, ids: &[String]) {
+        self.deleted.extend(ids.iter().cloned());
+        self.events.retain(|e| !self.deleted.contains(&e.id()));
+        self.forwarded.retain(|id| !self.deleted.contains(id));
+        self.resolved.retain(|id| !self.deleted.contains(id));
+        self.pending_replies
+            .retain(|r| !self.deleted.contains(&r.event.id()));
     }
 
     pub fn unforwarded(&self) -> Vec<InboundEvent> {
@@ -197,6 +213,30 @@ mod tests {
             kind: EventKind::AgentComms,
             permalink: None,
         }
+    }
+
+    #[test]
+    fn deleted_events_keep_only_tombstones_and_never_reingest_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INBOX_FILE);
+        let mut inbox = Inbox::default();
+        let event = event("10.000001");
+        inbox.insert(event.clone());
+        inbox.mark_forwarded(&[event.id()]);
+        inbox
+            .pending_replies
+            .push(super::super::slack::threads::MatchedReply {
+                request_id: "request".into(),
+                event: event.clone(),
+            });
+        inbox.delete(&[event.id()]);
+        inbox.save(&path).unwrap();
+        let mut loaded = Inbox::load(&path).unwrap();
+        assert!(loaded.events().is_empty());
+        assert!(loaded.pending_replies.is_empty());
+        assert!(!loaded.insert(event.clone()));
+        assert!(loaded.forwarded.is_empty());
+        assert!(loaded.is_deleted(&event.id()));
     }
 
     #[test]
