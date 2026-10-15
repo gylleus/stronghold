@@ -906,3 +906,32 @@ fn incomplete_bridge_tail_cannot_advance_last_good_checkpoint() {
     c.poll(NOW).unwrap();
     assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW - 1000);
 }
+
+#[test]
+fn failed_save_retries_the_sleep_recovery_trigger() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.status = BridgeStatus::Ok;
+    fs::create_dir_all(dir.path().join("channels")).unwrap();
+    fs::write(dir.path().join("channels/C123.jsonl"), "").unwrap();
+    fs::write(
+        dir.path().join("heartbeat"),
+        jiff::Timestamp::from_millisecond(NOW).unwrap().to_string(),
+    )
+    .unwrap();
+    c.poll(NOW).unwrap();
+    let wake = NOW + 3_600_000;
+    fs::write(
+        dir.path().join("heartbeat"),
+        jiff::Timestamp::from_millisecond(wake).unwrap().to_string(),
+    )
+    .unwrap();
+    let good_path = c.path.clone();
+    fs::write(dir.path().join("occupied"), "file").unwrap();
+    c.path = dir.path().join("occupied/inbox.json");
+    assert!(c.poll(wake).is_err());
+    c.path = good_path;
+    c.poll(wake + 1).unwrap();
+    assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW);
+    assert_eq!(c.inbox.recovery_needed_through["C123"], wake + 1);
+}

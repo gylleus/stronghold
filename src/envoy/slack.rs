@@ -862,6 +862,7 @@ impl<I: SlackIo> SlackChannel<I> {
         self.inbox.first_enabled_ms.get_or_insert(now_ms);
         let mut batch = PollBatch::default();
         let previous = self.status;
+        let previous_tick = self.last_tick_ms;
         let observation_gap = self
             .last_tick_ms
             .is_some_and(|at| now_ms.saturating_sub(at) > 90_000);
@@ -1058,6 +1059,8 @@ impl<I: SlackIo> SlackChannel<I> {
             && let Err(error) = self.inbox.save(&self.path)
         {
             self.inbox = old;
+            self.status = previous;
+            self.last_tick_ms = previous_tick;
             self.next_jobs.clear();
             return Err(format!("Cannot save Envoy inbox: {error}"));
         }
