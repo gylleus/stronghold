@@ -2,17 +2,19 @@
 //!
 //! A Slack mention is `<@U…>` (or `<@U…|name>`); a bare `@name` notifies nobody but still names
 //! an addressee, which is how coworkers refer to their agents in text. `<!here>`, `<!channel>`
-//! and `<!everyone>` are broadcasts, not addressees. The user is known by their member id only.
+//! and `<!everyone>` are broadcasts, not addressees. Cached groups and thread ownership also
+//! identify messages for the user.
 
 use super::channel::{EventKind, InboundEvent};
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Addressee {
-    /// A DM to the user, or a message that mentions their id.
+    /// A DM, a member/group mention, or a message in the user's thread.
     User,
     /// Someone else is tagged and the user is not; not for the user unless the Envoy has a strong reason.
     Other,
-    /// Nobody is tagged, or someone else is tagged in a thread the user's side owns.
+    /// An unaddressed channel message or a bare name.
     Unclear,
 }
 
@@ -101,21 +103,28 @@ pub fn mentions_user(text: &str, user_id: &str) -> bool {
     mentions(text).iter().any(|m| m == &tag)
 }
 
+pub fn mentions_member(text: &str, user_id: &str, groups: &BTreeSet<String>) -> bool {
+    mentions_user(text, user_id)
+        || mentions(text).iter().any(|tag| {
+            tag.strip_prefix("<!subteam^")
+                .and_then(|s| s.strip_suffix('>'))
+                .is_some_and(|id| groups.contains(id))
+        })
+}
+
 /// A bare `@name…` names the user without notifying them: a hint, never proof.
 fn names_user(mention: &str) -> bool {
     let name = crate::user::name().to_lowercase();
     !name.contains(' ') && mention.to_lowercase().starts_with(&format!("@{name}"))
 }
 
-/// Who `event` is for. `thread` holds the other inbox events in its thread (the user's own posts
-/// never reach the inbox, so a thread they started is known only when its root mentioned them).
-/// `users_thread` says the app knows the user's side owns the thread: a dwarf's `reach_out` thread,
-/// a watched thread, or one the Envoy replied in.
+/// Who `event` is for; `users_thread` supplies ownership absent from inbox posts.
 pub fn classify(
     event: &InboundEvent,
     thread: &[&InboundEvent],
     user_id: &str,
     users_thread: bool,
+    groups: &BTreeSet<String>,
 ) -> Verdict {
     if event.kind == EventKind::Dm {
         return Verdict {
@@ -123,10 +132,20 @@ pub fn classify(
             why: "a DM".into(),
         };
     }
-    if mentions_user(&event.text, user_id) {
+    if mentions_member(&event.text, user_id, groups) {
         return Verdict {
             addressee: Addressee::User,
             why: crate::user::fill("mentions {user}"),
+        };
+    }
+    if users_thread
+        || thread
+            .iter()
+            .any(|e| e.kind == EventKind::Dm || mentions_member(&e.text, user_id, groups))
+    {
+        return Verdict {
+            addressee: Addressee::User,
+            why: crate::user::fill("in {user}'s thread"),
         };
     }
     let (named_user, others): (Vec<String>, Vec<String>) = mentions(&event.text)
@@ -152,20 +171,9 @@ pub fn classify(
             why: format!("{tags} and a bare @{}", crate::user::name().to_lowercase()),
         };
     }
-    let in_users_thread = users_thread
-        || thread
-            .iter()
-            .any(|e| e.kind == EventKind::Dm || mentions_user(&e.text, user_id));
-    if in_users_thread {
-        Verdict {
-            addressee: Addressee::Unclear,
-            why: format!("{tags} in {user}'s thread", user = crate::user::name()),
-        }
-    } else {
-        Verdict {
-            addressee: Addressee::Other,
-            why: format!("{tags}, not {user}", user = crate::user::name()),
-        }
+    Verdict {
+        addressee: Addressee::Other,
+        why: format!("{tags}, not {user}", user = crate::user::name()),
     }
 }
 
@@ -203,7 +211,13 @@ mod tests {
     }
 
     fn judge(text: &str) -> Verdict {
-        classify(&event(EventKind::AgentComms, None, text), &[], KARL, false)
+        classify(
+            &event(EventKind::AgentComms, None, text),
+            &[],
+            KARL,
+            false,
+            &BTreeSet::new(),
+        )
     }
 
     #[test]
@@ -244,7 +258,13 @@ mod tests {
         let v = judge("<@U000KARL001> is api#694 ready?");
         assert_eq!(v.addressee, Addressee::User);
         assert_eq!(v.annotation(), " — addressee: Karl (mentions Karl)");
-        let v = classify(&event(EventKind::Dm, None, "hey"), &[], KARL, false);
+        let v = classify(
+            &event(EventKind::Dm, None, "hey"),
+            &[],
+            KARL,
+            false,
+            &BTreeSet::new(),
+        );
         assert_eq!(v.addressee, Addressee::User);
         assert_eq!(v.why, "a DM");
     }
@@ -261,21 +281,22 @@ mod tests {
     fn reply_in_karls_thread_tagging_another_agent_is_judged_by_context() {
         let text = format!("<@{COWORKER}> your agent should take this one");
         let reply = event(EventKind::ThreadReply, Some("1791300000.000001"), &text);
-        let app_knows = classify(&reply, &[], KARL, true);
-        assert_eq!(app_knows.addressee, Addressee::Unclear);
-        assert_eq!(app_knows.why, "tags <@U000COWORK1> in Karl's thread");
+        let app_knows = classify(&reply, &[], KARL, true, &BTreeSet::new());
+        assert_eq!(app_knows.addressee, Addressee::User);
+        assert_eq!(app_knows.why, "in Karl's thread");
         let root = event(
             EventKind::Mention,
             None,
             "<@U000KARL001> who owns the wheat preload?",
         );
-        let inbox_knows = classify(&reply, &[&root], KARL, false);
-        assert_eq!(inbox_knows.addressee, Addressee::Unclear);
+        let inbox_knows = classify(&reply, &[&root], KARL, false, &BTreeSet::new());
+        assert_eq!(inbox_knows.addressee, Addressee::User);
         let strangers = classify(
             &reply,
             &[&event(EventKind::AgentComms, None, "hi")],
             KARL,
             false,
+            &BTreeSet::new(),
         );
         assert_eq!(strangers.addressee, Addressee::Other);
     }

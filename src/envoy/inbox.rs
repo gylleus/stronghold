@@ -33,6 +33,12 @@ pub struct Inbox {
     pub subscription_errors: BTreeMap<String, String>,
     pub cursors: BTreeMap<String, Cursor>,
     pub poll_watermarks: BTreeMap<String, i64>,
+    pub ingested_ms: BTreeMap<String, i64>,
+    pub user_threads: BTreeSet<String>,
+    pub user_groups: BTreeSet<String>,
+    pub recovery_needed_through: BTreeMap<String, i64>,
+    pub backfills: BTreeMap<String, super::slack::backfill::Backfill>,
+    pub searches: BTreeMap<String, super::slack::backfill::SearchProgress>,
     pub thread_watches: BTreeMap<String, super::slack::threads::WatchState>,
     pub pending_replies: Vec<super::slack::threads::MatchedReply>,
     /// Pinned messages already seen (`conversation:ts`); `None` until the first pin poll.
@@ -67,12 +73,15 @@ impl Inbox {
         {
             return false;
         }
+        self.ingested_ms
+            .insert(event.id(), crate::control::server::now_ms());
         self.events.push(event);
         self.events
             .sort_by_key(|e| timestamp_us(&e.ts).unwrap_or_default());
         if self.events.len() > MAX_EVENTS {
             let removed = self.events.remove(0);
             self.forwarded.remove(&removed.id());
+            self.ingested_ms.remove(&removed.id());
             self.floor_us = timestamp_us(&removed.ts).unwrap_or(self.floor_us);
         }
         true

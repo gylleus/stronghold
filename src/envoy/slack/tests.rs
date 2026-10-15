@@ -10,6 +10,9 @@ struct Fake {
     methods: Vec<String>,
     subscriptions: Vec<(PathBuf, String)>,
     subscribe_error: Option<String>,
+    delay: Duration,
+    calls: Vec<(String, Vec<(String, String)>)>,
+    scripted: BTreeMap<String, VecDeque<Result<Value, String>>>,
 }
 impl SlackSender for Fake {
     fn send(&mut self, _: &OutboundMessage) -> Result<SendReceipt, String> {
@@ -22,7 +25,21 @@ impl SlackIo for Fake {
         Ok((number != 404).then(|| format!("karl/{repo}-{number}")))
     }
     fn api(&mut self, method: &str, params: &[(&str, String)]) -> Result<Value, String> {
+        std::thread::sleep(self.delay);
         self.methods.push(method.into());
+        self.calls.push((
+            method.into(),
+            params
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+        ));
+        if let Some(value) = self.scripted.get_mut(method).and_then(VecDeque::pop_front) {
+            return value;
+        }
+        if method == "usergroups.list" {
+            return Ok(json!({"usergroups": []}));
+        }
         let pins = params.iter().any(|(k, v)| *k == "query" && v == "has:pin");
         Ok(if pins {
             &mut self.pins
@@ -147,21 +164,23 @@ fn pagination_and_fallback_history() {
     let mut page: Value =
         serde_json::from_str(include_str!("../../../tests/fixtures/envoy/search.json")).unwrap();
     page["messages"]["paging"]["pages"] = json!(2);
-    let second = json!({"ok":true,"messages":{"matches":[],"paging":{"pages":2}}});
-    c.io.replies = [page,second,json!({"ok":true,"messages":{"matches":[],"paging":{"pages":1}}}),json!({"ok":true,"messages":[{"ts":"1790000000.000009","user":"U321","text":"History"}],"response_metadata":{"next_cursor":""}})].into();
-    assert_eq!(c.poll(NOW + 10).unwrap().events.len(), 3);
-    assert_eq!(
-        c.io.methods,
-        [
-            "search.messages",
-            "search.messages",
-            "search.messages",
-            "search.messages",
-            "conversations.history"
-        ]
+    let empty = json!({"messages":{"matches":[],"paging":{"pages":1}}});
+    c.io.scripted.insert(
+        "search.messages".into(),
+        [Ok(page), Ok(empty.clone()), Ok(empty.clone()), Ok(empty)].into(),
     );
+    let history = json!({"messages":[{"ts":"1790000000.000009","user":"U321","text":"History"}]});
+    c.io.scripted.insert(
+        "conversations.history".into(),
+        [Ok(history.clone()), Ok(history)].into(),
+    );
+    assert_eq!(c.poll(NOW + 10).unwrap().events.len(), 3);
+    assert!(!c.inbox.poll_watermarks.contains_key("mention:U0KARL0001"));
+    c.poll(NOW + 2010).unwrap();
+    assert_eq!(c.inbox.poll_watermarks["mention:U0KARL0001"], NOW + 10);
     assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW + 10);
 }
+
 #[test]
 fn all_bridge_line_types_and_api_failures() {
     for reason in ["heartbeat_stale", "heartbeat_missing", "expiring"] {
@@ -316,34 +335,49 @@ fn bridge_error_survives_successful_subscribe_until_new_feed_line() {
 }
 
 #[test]
-fn search_and_history_bound_catchup_and_report_skipped_older_messages() {
+fn search_and_history_resume_pages_without_advancing_watermarks() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = channel(dir.path());
     c.io.replies =
-        std::iter::repeat_n(json!({"messages":{"matches":[],"paging":{"pages":100}}}), 5).collect();
-    assert!(
-        c.search(EventKind::Mention, NOW, &mut PollBatch::default())
-            .unwrap_err()
-            .contains("5 pages")
-    );
-    assert_eq!(c.io.methods.len(), 5);
-    assert_eq!(
-        c.inbox.poll_watermarks[&format!("mention:{}", c.settings.user_id)],
-        NOW
-    );
+        std::iter::repeat_n(json!({"messages":{"matches":[],"paging":{"pages":100}}}), 6).collect();
+    for i in 0..6 {
+        assert!(
+            c.search(EventKind::Mention, NOW + i, &mut PollBatch::default())
+                .unwrap()
+        );
+    }
+    assert_eq!(c.io.methods.len(), 6);
+    assert!(!c.inbox.poll_watermarks.contains_key("mention:U0KARL0001"));
+    assert_eq!(c.inbox.searches["mention:U0KARL0001"].page, 7);
     c.io.methods.clear();
     c.io.replies = std::iter::repeat_n(
         json!({"messages":[],"response_metadata":{"next_cursor":"next"}}),
-        5,
+        6,
     )
     .collect();
+    for i in 0..6 {
+        assert!(
+            c.history("C123", NOW + i, &mut PollBatch::default())
+                .unwrap()
+        );
+    }
+    assert_eq!(c.io.methods.len(), 6);
+    assert!(!c.inbox.poll_watermarks.contains_key("history:C123"));
+    c.inbox.save(&c.path).unwrap();
+    let mut restarted = channel(dir.path());
+    restarted.inbox = Inbox::load(&c.path).unwrap();
+    restarted.io.replies = [json!({"messages":[]})].into();
     assert!(
-        c.history("C123", NOW, &mut PollBatch::default())
-            .unwrap_err()
-            .contains("5 pages")
+        !restarted
+            .history("C123", NOW + 100, &mut PollBatch::default())
+            .unwrap()
     );
-    assert_eq!(c.io.methods.len(), 5);
-    assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW);
+    assert_eq!(restarted.inbox.poll_watermarks["history:C123"], NOW);
+    assert!(
+        restarted.io.calls[0]
+            .1
+            .contains(&("cursor".into(), "next".into()))
+    );
 }
 
 #[test]
@@ -433,13 +467,13 @@ fn only_pins_added_after_the_first_poll_become_events() {
         .unwrap()
         .push(json!({"ts":"1600000000.000002","user":"U321","text":"Old message, new pin","channel":{"id":"C777"}}));
     c.io.pins = [both].into();
-    c.next_poll_ms = 0;
+    c.next_jobs.clear();
     let events = c.poll(NOW + 20).unwrap().events;
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].kind, EventKind::Pin);
     assert_eq!(events[0].id(), "C777:1600000000.000002");
     c.io.pins = [pinned("1600000000.000002")].into();
-    c.next_poll_ms = 0;
+    c.next_jobs.clear();
     assert!(
         c.poll(NOW + 30).unwrap().events.is_empty(),
         "a pin is reported once"
@@ -503,4 +537,372 @@ fn karls_id_is_resolved_from_auth_test() {
     );
     assert_eq!(c.settings.user_id, "W0NEWID");
     assert_eq!(c.io.methods.iter().filter(|m| *m == "auth.test").count(), 4);
+}
+
+#[test]
+fn ingest_regression_self_roots_survive_without_inbox_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    let root = event(
+        &json!({"ts":"1790000000.000001", "user":"U0KARL0001", "text":"question"}),
+        "C123",
+        EventKind::AgentComms,
+    )
+    .unwrap();
+    c.ingest(root, &mut PollBatch::default());
+    assert!(c.inbox.events().is_empty());
+    let stored = serde_json::to_value(&c.inbox).unwrap();
+    assert_eq!(stored["user_threads"], json!(["C123:1790000000.000001"]));
+}
+
+#[test]
+fn ingest_regression_recovered_bridge_backfills_old_thread_replies() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.poll(NOW).unwrap(); // Default fake history fails during the outage.
+    fs::write(
+        dir.path().join("heartbeat"),
+        jiff::Timestamp::from_millisecond(NOW + 60_000)
+            .unwrap()
+            .to_string(),
+    )
+    .unwrap();
+    let root = json!({"messages":[{"ts":"1700000000.000001", "user":"UOTHER", "text":"old root", "reply_count":1, "latest_reply":"1790000001.000001"}]});
+    c.io.scripted.insert(
+        "conversations.history".into(),
+        [Ok(root.clone()), Ok(root)].into(),
+    );
+    let reply = json!({"messages":[{"ts":"1790000001.000001", "thread_ts":"1700000000.000001", "user":"UOTHER", "text":"missed reply"}]});
+    c.io.scripted.insert(
+        "conversations.replies".into(),
+        [Ok(reply.clone()), Ok(reply)].into(),
+    );
+    c.poll(NOW + 60_000).unwrap();
+    let batch = c.poll(NOW + 62_000).unwrap();
+    assert!(
+        batch
+            .events
+            .iter()
+            .any(|e| e.text == "missed reply" && e.kind == EventKind::ThreadReply)
+    );
+    assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW + 60_000);
+    assert!(!c.inbox.recovery_needed_through.contains_key("C123"));
+    assert!(
+        c.io.calls
+            .iter()
+            .filter(|(method, _)| method == "conversations.history")
+            .any(|(_, params)| !params.iter().any(|(k, _)| k == "oldest"))
+    );
+}
+
+#[test]
+fn group_membership_is_cached_searched_and_scope_failure_is_best_effort() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.io.scripted.insert(
+        "usergroups.list".into(),
+        [Ok(json!({"usergroups":[
+            {"id":"SENG", "users":["U0KARL0001", "UOTHER"]},
+            {"id":"SOTHER", "users":["UOTHER"]}
+        ]}))]
+        .into(),
+    );
+    c.groups().unwrap();
+    assert_eq!(c.inbox.user_groups, BTreeSet::from(["SENG".into()]));
+    assert_eq!(c.io.calls[0].1, [("include_users".into(), "true".into())]);
+    c.search_tag(
+        EventKind::Mention,
+        Some("SENG"),
+        NOW,
+        &mut PollBatch::default(),
+    )
+    .unwrap();
+    assert!(
+        c.io.calls[1]
+            .1
+            .iter()
+            .any(|(k, v)| k == "query" && v.starts_with("<!subteam^SENG> after:"))
+    );
+    c.io.scripted.insert(
+        "usergroups.list".into(),
+        [Err("Slack: missing_scope".into())].into(),
+    );
+    assert!(c.groups().is_err());
+    let calls = c.io.calls.len();
+    c.groups().unwrap();
+    assert_eq!(
+        c.io.calls.len(),
+        calls,
+        "missing scope is not retried each poll"
+    );
+    assert!(c.groups_error_logged);
+    assert!(
+        c.inbox.user_groups.contains("SENG"),
+        "transient failures preserve cache"
+    );
+}
+
+#[test]
+fn expired_poll_defers_network_and_rate_limits_back_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.poll_bounded(NOW, Duration::ZERO).unwrap();
+    assert!(c.io.calls.is_empty());
+    assert!(c.io.subscriptions.is_empty());
+    assert!(c.deadline.is_none());
+    c.io.scripted.insert(
+        "search.messages".into(),
+        [Err("Slack: ratelimited".into()), Ok(json!({"ok":true}))].into(),
+    );
+    assert!(c.api("search.messages", &[]).is_err());
+    assert!(
+        c.api("search.messages", &[])
+            .unwrap_err()
+            .contains("retry deferred")
+    );
+    assert_eq!(c.io.calls.len(), 1);
+    c.api_backoff
+        .insert("search.messages".into(), Instant::now());
+    assert!(c.api("search.messages", &[]).is_ok());
+    assert_eq!(c.io.calls.len(), 2);
+}
+
+#[test]
+fn cli_timeout_is_clipped_to_the_poll_deadline() {
+    let mut cli = SlackCli;
+    cli.set_deadline(Some(Instant::now() + Duration::from_millis(30)));
+    let start = Instant::now();
+    let result = run("sleep", &["2".into()], None);
+    cli.set_deadline(None);
+    assert!(result.is_err());
+    assert!(start.elapsed() < Duration::from_secs(1));
+    assert_eq!(cli_budget().unwrap(), Duration::from_secs(25));
+}
+
+#[test]
+fn returning_bridge_during_backfill_keeps_the_uncovered_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.inbox.recovery_needed_through.insert("C123".into(), NOW);
+    c.io.scripted.insert("conversations.history".into(), [
+        Ok(json!({"messages":[], "response_metadata":{"next_cursor":"older"}})),
+        Ok(json!({"messages":[]})),
+        Ok(json!({"messages":[{"ts":"1700000000.000001", "user":"UOTHER", "text":"old root", "latest_reply":"1790000001.000001"}]})),
+    ].into());
+    assert!(c.history("C123", NOW, &mut PollBatch::default()).unwrap());
+    c.status = BridgeStatus::Ok;
+    c.inbox
+        .recovery_needed_through
+        .insert("C123".into(), NOW + 60_000);
+    c.inbox.save(&c.path).unwrap();
+    c.inbox = Inbox::load(&c.path).unwrap();
+    assert!(
+        !c.history("C123", NOW + 60_000, &mut PollBatch::default())
+            .unwrap()
+    );
+    assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW);
+    assert!(c.inbox.recovery_needed_through.contains_key("C123"));
+    let mut batch = PollBatch::default();
+    assert!(c.history("C123", NOW + 62_000, &mut batch).unwrap());
+    c.io.scripted.insert(
+        "conversations.replies".into(),
+        [Ok(json!({"messages":[
+            {"ts":"1790000001.000001", "user":"UOTHER", "text":"during recovery"}
+        ]}))]
+        .into(),
+    );
+    assert!(!c.history("C123", NOW + 64_000, &mut batch).unwrap());
+    assert_eq!(batch.events.len(), 1);
+    assert_eq!(batch.events[0].text, "during recovery");
+    assert!(!c.inbox.recovery_needed_through.contains_key("C123"));
+    assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW + 62_000);
+}
+
+#[test]
+fn failed_reply_page_keeps_checkpoint_and_retries_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.io.replies.push_back(json!({"messages":[{"ts":"1700000000.000001", "user":"UOTHER", "latest_reply":"1790000000.000001"}]}));
+    assert!(
+        c.history("C123", NOW + 10, &mut PollBatch::default())
+            .unwrap()
+    );
+    c.io.scripted.insert(
+        "conversations.replies".into(),
+        [Err("offline".into())].into(),
+    );
+    assert!(
+        c.history("C123", NOW + 20, &mut PollBatch::default())
+            .is_err()
+    );
+    assert!(!c.inbox.poll_watermarks.contains_key("history:C123"));
+    c.inbox.save(&c.path).unwrap();
+    let mut restart = channel(dir.path());
+    restart.inbox = Inbox::load(&c.path).unwrap();
+    restart.io.scripted.insert(
+        "conversations.replies".into(),
+        [Ok(
+            json!({"messages":[{"ts":"1790000000.000001", "user":"UOTHER", "text":"retry"}]}),
+        )]
+        .into(),
+    );
+    let mut batch = PollBatch::default();
+    assert!(!restart.history("C123", NOW + 30, &mut batch).unwrap());
+    assert_eq!(batch.events.len(), 1);
+    assert_eq!(restart.inbox.poll_watermarks["history:C123"], NOW + 10);
+}
+
+#[test]
+fn deadline_rotates_to_deferred_jobs_instead_of_restarting_mentions() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.io.delay = Duration::from_millis(20);
+    c.poll_bounded(NOW, Duration::from_millis(5)).unwrap();
+    assert_eq!(c.io.calls.len(), 1);
+    assert!(
+        c.io.calls[0]
+            .1
+            .iter()
+            .any(|(k, v)| k == "query" && v.starts_with("<@"))
+    );
+    c.poll_bounded(NOW + 2000, Duration::from_millis(5))
+        .unwrap();
+    assert_eq!(c.io.calls.len(), 2);
+    assert!(
+        c.io.calls[1]
+            .1
+            .iter()
+            .any(|(k, v)| k == "query" && v.starts_with("to:"))
+    );
+}
+
+#[test]
+fn full_reply_handoff_retains_backfill_page() {
+    use crate::envoy::slack::threads::{MatchedReply, Watch, WatchState};
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    let root = "1700000000.000001";
+    c.inbox.thread_watches.insert(
+        "request".into(),
+        WatchState {
+            watch: Watch {
+                request_id: "request".into(),
+                thread: super::super::requests::Thread {
+                    conversation: "C123".into(),
+                    ts: root.into(),
+                },
+                after_us: 0,
+                borrowed: true,
+            },
+            seen: BTreeSet::new(),
+            api_cursor: String::new(),
+            caught_up: true,
+            subscribed: true,
+            next_poll_ms: 0,
+        },
+    );
+    let event = event(
+        &json!({"ts":"1790000000.000001", "user":"UOTHER", "thread_ts":root}),
+        "C123",
+        EventKind::ThreadReply,
+    )
+    .unwrap();
+    c.inbox.pending_replies = vec![
+        MatchedReply {
+            request_id: "other".into(),
+            event
+        };
+        1000
+    ];
+    c.io.replies
+        .push_back(json!({"messages":[{"ts":root,"latest_reply":"1790000000.000001"}]}));
+    c.history("C123", NOW + 10, &mut PollBatch::default())
+        .unwrap();
+    let reply = json!({"messages":[{"ts":"1790000000.000001", "user":"UOTHER", "text":"held"}]});
+    c.io.scripted.insert(
+        "conversations.replies".into(),
+        [Ok(reply.clone()), Ok(reply)].into(),
+    );
+    assert!(
+        c.history("C123", NOW + 20, &mut PollBatch::default())
+            .unwrap_err()
+            .contains("handoff full")
+    );
+    assert!(!c.inbox.poll_watermarks.contains_key("history:C123"));
+    c.inbox.pending_replies.clear();
+    let mut batch = PollBatch::default();
+    assert!(!c.history("C123", NOW + 30, &mut batch).unwrap());
+    assert_eq!(batch.events.len(), 1);
+    assert_eq!(c.inbox.pending_replies.len(), 1);
+    assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW + 10);
+}
+
+#[test]
+fn fresh_heartbeat_after_sleep_does_not_skip_unobserved_gap() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    fs::create_dir_all(dir.path().join("channels")).unwrap();
+    fs::write(dir.path().join("channels/C123.jsonl"), "").unwrap();
+    c.status = BridgeStatus::Ok;
+    fs::write(
+        dir.path().join("heartbeat"),
+        jiff::Timestamp::from_millisecond(NOW).unwrap().to_string(),
+    )
+    .unwrap();
+    c.poll(NOW).unwrap();
+    assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW);
+    let wake = NOW + 3_600_000;
+    fs::write(
+        dir.path().join("heartbeat"),
+        jiff::Timestamp::from_millisecond(wake).unwrap().to_string(),
+    )
+    .unwrap();
+    c.io.scripted.insert(
+        "conversations.history".into(),
+        [Err("offline".into()), Err("offline".into())].into(),
+    );
+    c.poll(wake).unwrap();
+    assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW);
+    assert_eq!(c.inbox.recovery_needed_through["C123"], wake);
+}
+
+#[test]
+fn healthy_polls_advance_recent_checkpoint_and_drop_removed_job_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    fs::create_dir_all(dir.path().join("channels")).unwrap();
+    fs::write(dir.path().join("channels/C123.jsonl"), "").unwrap();
+    c.status = BridgeStatus::Ok;
+    fs::write(
+        dir.path().join("heartbeat"),
+        jiff::Timestamp::from_millisecond(NOW).unwrap().to_string(),
+    )
+    .unwrap();
+    c.poll_errors
+        .insert("watch:removed".into(), "old failure".into());
+    c.poll_errors
+        .insert("history:COLD".into(), "old channel".into());
+    c.poll(NOW).unwrap();
+    assert_eq!(c.inbox.poll_watermarks["recent:C123"], NOW);
+    assert!(!c.poll_errors.contains_key("watch:removed"));
+    assert!(!c.poll_errors.contains_key("history:COLD"));
+}
+
+#[test]
+fn incomplete_bridge_tail_cannot_advance_last_good_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.status = BridgeStatus::Ok;
+    c.inbox
+        .poll_watermarks
+        .insert("history:C123".into(), NOW - 1000);
+    fs::create_dir_all(dir.path().join("channels")).unwrap();
+    fs::write(dir.path().join("channels/C123.jsonl"), "{\"type\":").unwrap();
+    fs::write(
+        dir.path().join("heartbeat"),
+        jiff::Timestamp::from_millisecond(NOW).unwrap().to_string(),
+    )
+    .unwrap();
+    c.poll(NOW).unwrap();
+    assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW - 1000);
 }
