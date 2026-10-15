@@ -20,6 +20,8 @@
 //! (`-cleared`) frames, then exits. With `--hammer`, the first shot waits for impact.
 //! K closes a synthetic dwarf with the King's tool throw; `--king-throw --shot out.png`
 //! captures its flight and impact.
+//! `--voice-shots --shot out.png` captures idle, dwarf recording, King recording and release.
+//! Add `--focus-run run0` to check off-screen recipients through the hold camera.
 //! `--pixels farm|HEIGHT` and `--palette NAME` select dwarf rendering.
 
 use std::collections::HashSet;
@@ -96,6 +98,7 @@ fn main() -> eframe::Result {
         .iter()
         .position(|a| a == "--dwarves")
         .map(|i| args[i + 1].parse::<usize>().expect("a number of dwarves"));
+    let focus_run = value("--focus-run");
     eframe::run_native(
         "farm",
         eframe::NativeOptions {
@@ -152,6 +155,9 @@ fn main() -> eframe::Result {
                 id("run5-w5"),
             ]));
             clan.set_selected(Some(&id("run2-coord")));
+            if let Some(run) = &focus_run {
+                clan.focus_run(run);
+            }
             let hammer = hammer.map(|data| (WorktreePanel::new(&cc.egui_ctx), data));
             let worktrees = worktrees(&snapshot, heaps);
             Ok(Box::new(Demo {
@@ -170,6 +176,7 @@ fn main() -> eframe::Result {
                     farm
                 },
                 shot,
+                voice_shots: args.iter().any(|a| a == "--voice-shots"),
                 king_throw: args.iter().any(|a| a == "--king-throw"),
                 captures: Vec::new(),
                 receipt_at_ms,
@@ -192,6 +199,7 @@ struct Demo {
     farm: FarmView,
     shot: Option<String>,
     king_throw: bool,
+    voice_shots: bool,
     /// Encode after capturing all frames so PNG compression cannot skip short effects.
     captures: Vec<(std::sync::Arc<egui::ColorImage>, &'static str)>,
     receipt_at_ms: Option<i64>,
@@ -388,6 +396,14 @@ impl Demo {
 
 impl eframe::App for Demo {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if self.voice_shots {
+            let target = match self.stage {
+                2 | 3 => Some(id("run2-coord")),
+                4 | 5 => Some(NodeId::king()),
+                _ => None,
+            };
+            self.farm.set_voice_target(target, ui.input(|i| i.time));
+        }
         let receipt = self
             .receipt_at_ms
             .or_else(|| self.received.map(|at| at.elapsed().as_millis() as i64))
@@ -477,6 +493,36 @@ impl eframe::App for Demo {
             })
         });
         let captured = image.is_some();
+        if self.voice_shots {
+            if self.stage.is_multiple_of(2)
+                && self.flipped_at.elapsed() >= Duration::from_millis(600)
+            {
+                self.stage += 1;
+            } else if let Some(image) = image {
+                let suffix = match self.stage {
+                    1 => "before",
+                    3 => "dwarf",
+                    5 => "king",
+                    _ => "stopped",
+                };
+                self.captures.push((image, suffix));
+                self.stage += 1;
+                self.flipped_at = Instant::now();
+                if self.stage == 8 {
+                    for (image, suffix) in &self.captures {
+                        self.save_shot(image, suffix);
+                    }
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+            if self.stage % 2 == 1 && !captured {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(
+                        self.stage,
+                    )));
+            }
+            return;
+        }
         match self.stage {
             0 if self.started.elapsed() >= Duration::from_secs(1)
                 && (self.hammer.is_none()

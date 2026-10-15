@@ -1223,6 +1223,7 @@ impl eframe::App for StrongholdApp {
         let now_ms = now_ms();
         self.talk_ui(ui.ctx());
         self.dictation_frame(ui.ctx());
+        self.sync_voice_target(ui.ctx());
         self.search_palette(ui.ctx());
         self.keyboard(ui.ctx());
         let top_bar = egui::Panel::top("top_bar")

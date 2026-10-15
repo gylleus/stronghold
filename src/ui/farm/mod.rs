@@ -28,6 +28,7 @@ mod rubble_tests;
 pub mod scenery;
 pub mod sprites;
 mod tool_throw;
+mod voice;
 mod world;
 pub mod zoom;
 #[cfg(test)]
@@ -217,6 +218,7 @@ pub struct FarmView {
     mail: crate::ui::envelope::Flights,
     /// Tool calls beaming from their callers; see [`beams`].
     beams: crate::ui::beam::Beams,
+    voice: voice::Voice,
     /// Dwarves that just changed state; see [`pops`].
     pops: crate::ui::state_pop::Pops,
     /// The part of the farm on screen; see [`zoom`].
@@ -520,6 +522,11 @@ impl FarmView {
         self.mail.push(flight, now_s, still);
     }
 
+    /// The current recording recipient; `None` discharges the last stream.
+    pub fn set_voice_target(&mut self, target: Option<NodeId>, now_s: f64) {
+        self.voice.update(target, now_s);
+    }
+
     /// Shows a tool call's beam, asked for at `now_s` (egui time); `still` for Reduce motion.
     pub fn beam(&mut self, beam: crate::traffic::beam::Beam, now_s: f64, still: bool) {
         self.beams.push(beam, now_s, still);
@@ -725,6 +732,17 @@ impl FarmView {
         );
         beams::paint(&painter, &scene, &placed, self.beams.tick(now_s), now_s);
         self.throws.paint(&painter, &mut figures, &scene, now_s);
+        self.voice.paint(
+            &painter,
+            &scene,
+            &placed,
+            voice::Style {
+                camera: self.camera,
+                art: &self.art,
+                now_s,
+                still,
+            },
+        );
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
         comms::tray(
             &painter,
@@ -757,6 +775,7 @@ impl FarmView {
             || self.throws.animating()
             || !self.mail.is_empty()
             || !self.beams.is_empty()
+            || self.voice.animating(still)
             || !self.pops.is_empty()
             || !self.room_glides.is_empty()
             || self.frame_glide.is_some()

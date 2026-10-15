@@ -12,7 +12,7 @@ use eframe::egui::{Align2, Color32, FontId, Painter, Pos2, Rect, vec2};
 use std::f32::consts::TAU;
 
 /// The stone's idle rune light.
-const RUNE_GLOW: Color32 = Color32::from_rgb(0x8a, 0xd8, 0xdc);
+pub(super) const RUNE_GLOW: Color32 = Color32::from_rgb(0x8a, 0xd8, 0xdc);
 /// One calm lap of the orbiting runes, and one slow breath of the stone's halo, in seconds.
 const ORBIT_S: f64 = 14.0;
 const BREATH_S: f64 = 5.0;
