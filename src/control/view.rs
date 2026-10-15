@@ -313,6 +313,9 @@ pub struct WindowView {
 /// One notification in the inbox.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AlertView {
+    /// Live PR evidence for review alerts; unknown when lookup or resolution fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<serde_json::Value>,
     #[serde(default)]
     pub id: u64,
     /// When it last arrived.
@@ -343,6 +346,7 @@ pub struct AlertView {
 impl AlertView {
     pub fn build(entry: &Entry, snapshot: &ClanSnapshot) -> Self {
         Self {
+            pr: None,
             id: entry.id,
             at_ms: entry.at_ms,
             severity: entry.severity.name().into(),
@@ -421,14 +425,16 @@ pub fn kind_name(kind: NodeKind) -> &'static str {
         NodeKind::Worker => "worker",
         NodeKind::Terminal => "terminal",
         NodeKind::Envoy => "envoy",
+        NodeKind::Lorekeeper => "lorekeeper",
         NodeKind::Subagent => "subagent",
         NodeKind::King => "king",
     }
 }
 
 pub fn parse_kind(s: &str) -> Option<NodeKind> {
-    const ALL: [NodeKind; 7] = [
+    const ALL: [NodeKind; 8] = [
         NodeKind::Envoy,
+        NodeKind::Lorekeeper,
         NodeKind::Coordinator,
         NodeKind::Attendant,
         NodeKind::Worker,

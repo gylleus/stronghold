@@ -7,6 +7,9 @@
 //! `--scrying` shows the working rune priest; `--stopped` darkens the rune stone.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
 //! terminals in the resting area; `--dwarves N` keeps only the first N agents.
+//! `--workspace-counts 1,3,9` previews uneven workspace groups; `--size 600x800` resizes the view.
+//! `--lorekeeper` adds the librarian; `--lorekeeper-activity reading|writing|idle`
+//! selects its activity.
 //! `--taskmasters` shows coordinators in every state, plus a parked coordinator and attendant.
 //! The surface carries a heap per worktree: the
 //! agents' own and a few with nobody in them, or `--heaps N` of them; `--hammer` runs the worktree
@@ -17,7 +20,7 @@
 //! bursts). With `--shot`, it saves a
 //! screenshot once settled and another while a worker walks, a new one emerges, a broadcast
 //! ripples and messages fly (`-walk`), plus rubble burst (`-break`) and cleared
-//! (`-cleared`) frames, then exits. With `--hammer`, the first shot waits for impact.
+//! (`-cleared`) frames, then exits. With `--hammer`, the first shot shows the demolition dwarf.
 //! K closes a synthetic dwarf with the King's tool throw; `--king-throw --shot out.png`
 //! captures its flight and impact.
 //! `--voice-shots --shot out.png` captures idle, dwarf recording, King recording and release.
@@ -94,15 +97,27 @@ fn main() -> eframe::Result {
             _ => panic!("--outline fine, regular or bold"),
         },
     };
+    let librarian_activity = value("--lorekeeper-activity");
     let dwarves = args
         .iter()
         .position(|a| a == "--dwarves")
         .map(|i| args[i + 1].parse::<usize>().expect("a number of dwarves"));
     let focus_run = value("--focus-run");
+    let workspace_counts = value("--workspace-counts");
+    let window = value("--size").map_or(WINDOW, |size| {
+        let (w, h) = size.split_once('x').expect("--size WIDTHxHEIGHT");
+        [
+            w.parse().expect("window width"),
+            h.parse().expect("window height"),
+        ]
+    });
     eframe::run_native(
         "farm",
         eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size(WINDOW),
+            viewport: egui::ViewportBuilder::default()
+                .with_app_id(format!("stronghold-farm-{}x{}", window[0], window[1]))
+                .with_inner_size(window),
+            persist_window: false,
             ..Default::default()
         },
         Box::new(move |cc| {
@@ -112,7 +127,39 @@ fn main() -> eframe::Result {
             } else {
                 egui::Theme::Dark
             });
-            let mut snapshot = clan();
+            let mut snapshot = if let Some(counts) = workspace_counts {
+                workspace_clan(&counts)
+            } else {
+                clan()
+            };
+            if args.iter().any(|a| a == "--lorekeeper") {
+                let mut librarian = node(
+                    "Lorekeeper",
+                    NodeKind::Lorekeeper,
+                    None,
+                    NodeState::Working,
+                    "stronghold",
+                );
+                librarian.agent = Some(AgentIdentity::Claude);
+                if librarian_activity.as_deref() == Some("idle") {
+                    librarian.state = NodeState::Idle;
+                }
+                use stronghold::traffic::ledger::lorekeeper::{Activity, RecentActivity};
+                let activity = match librarian_activity.as_deref() {
+                    None | Some("reading") => Some(Activity::Reading),
+                    Some("writing") => Some(Activity::Writing),
+                    Some("idle") => None,
+                    _ => panic!("--lorekeeper-activity reading|writing|idle"),
+                };
+                snapshot.lorekeeper_activity = activity.map(|activity| RecentActivity {
+                    activity,
+                    at_ms: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as i64,
+                });
+                snapshot.nodes.push(librarian);
+            }
             if args.iter().any(|a| a == "--taskmasters") {
                 taskmasters(&mut snapshot);
             }
@@ -247,6 +294,29 @@ fn worktrees(snapshot: &ClanSnapshot, count: Option<usize>) -> Vec<Worktree> {
     out
 }
 
+/// Synthetic planner verdicts; production uses the real cleanup evaluation.
+fn stale_plan(trees: &[Worktree]) -> stronghold::worktrees::Plan {
+    use stronghold::worktrees::{Plan, PlanEntry, Verdict};
+    Plan {
+        entries: trees
+            .iter()
+            .enumerate()
+            .map(|(i, w)| PlanEntry {
+                id: w.id.clone(),
+                name: w.name().into(),
+                path: w.path.clone(),
+                verdict: Verdict {
+                    remove: i % 3 != 2,
+                    archivable: i % 3 == 2,
+                    ..Verdict::default()
+                },
+                ..PlanEntry::default()
+            })
+            .collect(),
+        ..Plan::default()
+    }
+}
+
 /// Names for worktrees nobody works in any more.
 const STALE: [&str; 6] = [
     "graph-trackpad-pan",
@@ -343,10 +413,9 @@ impl Demo {
             ("run4-coord", "run5-coord", MessageKind::Message),
         ] {
             let message = AgentMessage::new(from, to, kind);
-            let flight = message
-                .resolve(&self.snapshot)
-                .expect("both ends in the clan");
-            self.farm.message(flight, now_s, self.reduced_motion);
+            if let Some(flight) = message.resolve(&self.snapshot) {
+                self.farm.message(flight, now_s, self.reduced_motion);
+            }
         }
     }
 
@@ -422,8 +491,14 @@ impl eframe::App for Demo {
                     panel.tick(None, now_ms);
                     panel.cleanup_job()
                 });
-                self.farm
-                    .set_rubble(rubble::sites(&self.worktrees, &self.snapshot.nodes), hammer);
+                self.farm.set_rubble(
+                    rubble::sites(
+                        &self.worktrees,
+                        &self.snapshot.nodes,
+                        Some(&stale_plan(&self.worktrees)),
+                    ),
+                    hammer,
+                );
                 let response = self.farm.show(ui, &self.snapshot, &mut self.clan);
                 if let Some(id) = &response.clicked {
                     self.clan.click_node(id, false);
@@ -524,11 +599,7 @@ impl eframe::App for Demo {
             return;
         }
         match self.stage {
-            0 if self.started.elapsed() >= Duration::from_secs(1)
-                && (self.hammer.is_none()
-                    || (0.78..0.84)
-                        .contains(&((ui.input(|i| i.time) / 1.2).rem_euclid(1.0) as f32))) =>
-            {
+            0 if self.started.elapsed() >= Duration::from_millis(1200) => {
                 self.stage = 1;
             }
             1 => {
@@ -647,7 +718,10 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState, repo: &
 fn keep_dwarves(s: &mut ClanSnapshot, n: usize) {
     let mut kept = 0;
     s.nodes.retain(|node| {
-        if matches!(node.kind, NodeKind::King | NodeKind::Envoy) {
+        if matches!(
+            node.kind,
+            NodeKind::King | NodeKind::Envoy | NodeKind::Lorekeeper
+        ) {
             return true;
         }
         kept += 1;
@@ -825,4 +899,47 @@ fn demo_ledger() -> Shelf {
             ),
         ],
     }
+}
+
+/// Uneven groups in distinct repos, with a shared worktree within each group.
+fn workspace_clan(counts: &str) -> ClanSnapshot {
+    let mut s = clan();
+    s.nodes
+        .retain(|n| matches!(n.kind, NodeKind::King | NodeKind::Envoy));
+    s.runs.clear();
+    s.edges.clear();
+    for (r, count) in counts.split(',').enumerate() {
+        let count: usize = count.parse().expect("comma-separated dwarf counts");
+        assert!(count > 0, "each workspace needs a dwarf");
+        let run = format!("run{r}");
+        let repo = format!("workspace-{}", r + 1);
+        s.runs.push(RunSummary {
+            id: run.clone(),
+            objective: Some(format!("{repo} · {count} dwarves")),
+            coordinator: None,
+            task_counts: None,
+        });
+        for w in 0..count {
+            let coordinator = count > 1 && w == count - 1;
+            let name = if coordinator {
+                format!("{run}-coord")
+            } else {
+                format!("{run}-w{w}")
+            };
+            let mut dwarf = node(
+                &name,
+                if coordinator {
+                    NodeKind::Coordinator
+                } else {
+                    NodeKind::Worker
+                },
+                Some(&run),
+                NodeState::Working,
+                &repo,
+            );
+            dwarf.worktree_path = Some(format!("/x/orca/workspaces/{repo}/main"));
+            s.nodes.push(dwarf);
+        }
+    }
+    s
 }
