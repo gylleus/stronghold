@@ -162,6 +162,11 @@ fn plan_node(
         NodeKind::Envoy => {
             return Err("the Envoy listens while idle; it does not need nudging".into());
         }
+        NodeKind::Lorekeeper => {
+            return Err(
+                "the Lorekeeper finishes its own maintenance pass; it does not need nudging".into(),
+            );
+        }
         NodeKind::King => return Err("the King is Stronghold itself".into()),
         NodeKind::Subagent => return Err("subagents have no terminal to nudge".into()),
         NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {}

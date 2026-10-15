@@ -17,9 +17,12 @@ pub const INTERVAL: Duration = Duration::from_secs(10);
 /// How many of the newest entries the hold lists.
 pub const NEWEST: usize = 5;
 
-/// `ledger` in the [agents dir](crate::paths::agents_dir).
+/// `$STRONGHOLD_LEDGER_DIR`, else `ledger` in the [agents dir](crate::paths::agents_dir).
 pub fn default_dir() -> Option<PathBuf> {
-    crate::paths::agents_dir().map(|d| d.join("ledger"))
+    std::env::var_os("STRONGHOLD_LEDGER_DIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| crate::paths::agents_dir().map(|d| d.join("ledger")))
 }
 
 /// One entry: a markdown file in the Ledger's folder.

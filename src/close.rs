@@ -141,7 +141,8 @@ pub fn plan_close(
         | NodeKind::Attendant
         | NodeKind::Worker
         | NodeKind::Terminal
-        | NodeKind::Envoy => {}
+        | NodeKind::Envoy
+        | NodeKind::Lorekeeper => {}
     }
     let live_handle = node.terminal_handle.as_deref().filter(|_| node.live);
     let stop = node.kind == NodeKind::Worker && has_active_dispatch(node);
@@ -312,7 +313,7 @@ pub fn bulk_candidates<'a>(
         .iter()
         .filter(|n| !hidden.contains(&n.id) && !n.is_parked())
         .filter(|n| match n.kind {
-            NodeKind::Terminal | NodeKind::Worker => true,
+            NodeKind::Terminal | NodeKind::Worker | NodeKind::Lorekeeper => true,
             NodeKind::Coordinator | NodeKind::Attendant => include_coordinators,
             NodeKind::Subagent | NodeKind::King | NodeKind::Envoy => false,
         })

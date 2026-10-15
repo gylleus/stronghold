@@ -39,6 +39,7 @@ pub struct Settings {
     pub notifications: NotifySettings,
     /// The Envoy session and its channels.
     pub envoy: EnvoySettings,
+    pub lorekeeper: crate::lorekeeper::Settings,
     /// What a new dwarf's spawn does to the dashboard.
     pub spawn: SpawnSettings,
     /// The default model and effort of new dwarves. Saved as `ants` before the dwarf theme.
@@ -48,6 +49,8 @@ pub struct Settings {
     pub art: ArtSettings,
     /// The user's name, as agents and the King call them.
     pub user: crate::user::UserSettings,
+    /// Optional scheduled removal of merged, unprotected worktrees.
+    pub worktrees: crate::worktrees::automatic::Settings,
 }
 
 /// Global whip configuration. Durations are in ms.

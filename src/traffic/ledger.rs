@@ -3,6 +3,8 @@
 //! transcripts and Codex rollouts mapped to terminals ([`LedgerWatch`]: appended lines only,
 //! never history) and the King's chat ([`message`]).
 
+pub mod lorekeeper;
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -86,6 +88,8 @@ pub fn calls_in_line(line: &str) -> Vec<Call> {
 pub struct LedgerWatch {
     /// Byte offset up to which complete lines were read, per transcript.
     offsets: HashMap<PathBuf, u64>,
+    lorekeeper: Option<(String, crate::lorekeeper::Mode)>,
+    activity: Option<lorekeeper::RecentActivity>,
     /// Calls already emitted (tool call id, time), kept while fresh.
     seen: HashSet<(String, i64)>,
 }
@@ -93,6 +97,19 @@ pub struct LedgerWatch {
 impl LedgerWatch {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn watch_lorekeeper(&mut self, target: Option<(String, crate::lorekeeper::Mode)>) {
+        if self.lorekeeper != target {
+            self.lorekeeper = target;
+            self.activity = None;
+        }
+    }
+
+    pub fn lorekeeper_activity(&self, now_ms: i64) -> Option<(String, lorekeeper::RecentActivity)> {
+        let (handle, _) = self.lorekeeper.as_ref()?;
+        let activity = self.activity.filter(|a| a.current(now_ms).is_some())?;
+        Some((handle.clone(), activity))
     }
 
     /// The Ledger calls appended to `transcripts` (agent handle → Claude transcript or Codex
@@ -106,6 +123,13 @@ impl LedgerWatch {
         self.offsets
             .retain(|path, _| transcripts.values().any(|p| p == path));
         self.seen.retain(|(_, at)| now_ms - at < FRESH_MS);
+        if self
+            .lorekeeper
+            .as_ref()
+            .is_some_and(|(h, _)| !transcripts.contains_key(h))
+        {
+            self.activity = None;
+        }
         let mut out = Vec::new();
         for (handle, path) in transcripts {
             let lines = match read_appended(path, self.offsets.get(path).copied()) {
@@ -122,6 +146,14 @@ impl LedgerWatch {
                 let Ok(line) = std::str::from_utf8(line) else {
                     continue;
                 };
+                if let Some((target, mode)) = &self.lorekeeper
+                    && target == handle
+                    && let Some(activity) = lorekeeper::in_line(line, *mode)
+                    && activity.current(now_ms).is_some()
+                    && self.activity.is_none_or(|a| activity.at_ms >= a.at_ms)
+                {
+                    self.activity = Some(activity);
+                }
                 for call in calls_in_line(line) {
                     if let Some(at) = call.at_ms
                         && (now_ms - at >= FRESH_MS || !self.seen.insert((call.id, at)))
@@ -259,6 +291,71 @@ mod tests {
             watch.refresh(&transcripts, at_ms() + FRESH_MS).is_empty(),
             "stale"
         );
+    }
+
+    #[test]
+    fn lorekeeper_watch_is_scoped_fresh_and_uses_the_launch_mode() {
+        use crate::lorekeeper::Mode;
+        use lorekeeper::Activity;
+        let dir = tempfile::tempdir().unwrap();
+        let reader = dir.path().join("reader.jsonl");
+        let other = dir.path().join("other.jsonl");
+        let append = |path: &std::path::Path, line: &str| {
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .unwrap();
+            writeln!(file, "{line}").unwrap();
+        };
+        append(&reader, &claude("old", "mcp__ledger__write_note"));
+        append(&other, &claude("old", "Read"));
+        let transcripts = BTreeMap::from([
+            ("reader".into(), reader.clone()),
+            ("other".into(), other.clone()),
+        ]);
+        let mut watch = LedgerWatch::new();
+        watch.watch_lorekeeper(Some(("reader".into(), Mode::Live)));
+        let now = at_ms() + 1_000;
+        watch.refresh(&transcripts, now);
+        assert!(watch.lorekeeper_activity(now).is_none(), "no history");
+        append(&other, &claude("other-write", "mcp__ledger__write_note"));
+        watch.refresh(&transcripts, now);
+        assert!(watch.lorekeeper_activity(now).is_none(), "other terminal");
+        for (tool, expected) in [
+            ("Read", Activity::Reading),
+            ("mcp__stronghold__lorekeeper_report", Activity::Writing),
+        ] {
+            append(&reader, &claude(tool, tool));
+            assert!(
+                watch.refresh(&transcripts, now).is_empty(),
+                "local tools emit no Ledger traffic"
+            );
+            assert_eq!(watch.lorekeeper_activity(now).unwrap().1.activity, expected);
+        }
+        assert!(
+            watch
+                .lorekeeper_activity(at_ms() + lorekeeper::FRESH_MS)
+                .is_none()
+        );
+        watch.watch_lorekeeper(Some(("reader".into(), Mode::DryRun)));
+        assert!(
+            watch.lorekeeper_activity(now).is_none(),
+            "mode change clears activity"
+        );
+        append(
+            &reader,
+            &claude("report-dry", "mcp__stronghold__lorekeeper_report"),
+        );
+        watch.refresh(&transcripts, now);
+        assert_eq!(
+            watch.lorekeeper_activity(now).unwrap().1.activity,
+            Activity::Reading
+        );
+        watch.refresh(&BTreeMap::new(), now);
+        assert!(watch.lorekeeper_activity(now).is_none(), "closed terminal");
+        watch.watch_lorekeeper(Some(("other".into(), Mode::Live)));
+        assert!(watch.lorekeeper_activity(now).is_none(), "new run");
     }
 
     #[test]

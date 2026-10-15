@@ -8,9 +8,11 @@ pub mod art;
 pub mod envoy;
 pub mod general;
 pub mod king;
+pub mod lorekeeper;
 pub mod notifications;
 pub mod voice;
 pub mod whip;
+pub mod worktrees;
 
 use std::path::PathBuf;
 
@@ -33,21 +35,25 @@ pub enum Section {
     #[default]
     King,
     Envoy,
+    Lorekeeper,
     Whip,
     Notifications,
     Voice,
     Art,
+    Worktrees,
     General,
 }
 
 impl Section {
-    pub const ALL: [Section; 7] = [
+    pub const ALL: [Section; 9] = [
         Section::King,
         Section::Envoy,
+        Section::Lorekeeper,
         Section::Whip,
         Section::Notifications,
         Section::Voice,
         Section::Art,
+        Section::Worktrees,
         Section::General,
     ];
 
@@ -55,10 +61,12 @@ impl Section {
         match self {
             Section::King => "King",
             Section::Envoy => "Envoy",
+            Section::Lorekeeper => "Lorekeeper",
             Section::Whip => "Whip",
             Section::Notifications => "Notifications",
             Section::Voice => "Voice",
             Section::Art => "Art",
+            Section::Worktrees => "Worktrees",
             Section::General => "General",
         }
     }
@@ -75,11 +83,14 @@ pub struct PaneContext<'a> {
     pub voice: VoiceStatus<'a>,
     /// Delivery state and sound names for the Notifications section.
     pub notify: NotifyStatus<'a>,
+    pub cleanup: worktrees::Status<'a>,
 }
 
 /// What the user changed this frame.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct PaneOutput {
+    /// Run the automatic cleanup policy once, regardless of the schedule switch.
+    pub run_cleanup: bool,
     /// Saved Envoy preferences; safety ON also applies to the current session.
     pub envoy: Option<crate::envoy::settings::EnvoySettings>,
     /// Saved whip settings.
@@ -121,6 +132,7 @@ pub struct SettingsPane {
     voice_draft: VoiceSettings,
     notify_draft: NotifySettings,
     envoy_draft: envoy::EnvoyDraft,
+    lorekeeper_draft: lorekeeper::Draft,
     /// The General section's name field.
     user_draft: String,
     /// "Whip all stalled now" was clicked; see [`SettingsPane::take_whip_stalled`].
@@ -149,6 +161,7 @@ impl SettingsPane {
             voice_draft: applied.voice.clone(),
             notify_draft: applied.notifications.clone(),
             envoy_draft: envoy::EnvoyDraft::new(&applied.envoy),
+            lorekeeper_draft: lorekeeper::Draft::new(&applied.lorekeeper),
             user_draft: applied.user.name.clone().unwrap_or_default(),
             applied,
             path,
@@ -165,6 +178,10 @@ impl SettingsPane {
     /// The saved King settings.
     pub fn king(&self) -> &KingSettings {
         &self.applied.king
+    }
+
+    pub fn lorekeeper(&self) -> &crate::lorekeeper::Settings {
+        &self.applied.lorekeeper
     }
 
     pub fn envoy(&self) -> &crate::envoy::settings::EnvoySettings {
@@ -184,6 +201,10 @@ impl SettingsPane {
         &self.applied.dwarves
     }
 
+    pub fn worktree_settings(&self) -> &crate::worktrees::automatic::Settings {
+        &self.applied.worktrees
+    }
+
     pub fn art(&self) -> &crate::ui::farm::art::ArtSettings {
         &self.applied.art
     }
@@ -200,6 +221,7 @@ impl SettingsPane {
         self.voice_draft = self.applied.voice.clone();
         self.notify_draft = self.applied.notifications.clone();
         self.envoy_draft = envoy::EnvoyDraft::new(&self.applied.envoy);
+        self.lorekeeper_draft = lorekeeper::Draft::new(&self.applied.lorekeeper);
         self.section = section;
         self.open = true;
     }
@@ -296,6 +318,7 @@ impl SettingsPane {
         match self.section {
             Section::King => king::section(self, ui, &cx.king, out),
             Section::Envoy => envoy::section(self, ui, out),
+            Section::Lorekeeper => lorekeeper::section(self, ui),
             Section::Whip => {
                 out.whip = whip::form(self, ui);
                 ui.separator();
@@ -325,6 +348,7 @@ impl SettingsPane {
                     self.commit(settings);
                 }
             }
+            Section::Worktrees => worktrees::section(self, ui, &cx.cleanup, out),
             Section::General => {
                 self.user_name_ui(ui);
                 let focus_new = self.applied.spawn.focus_new;
