@@ -1164,10 +1164,7 @@ mod tests {
         h.panel.set_requests(requests.all());
         let claim = format!("says {} asked: \"Send the review\"", crate::user::name());
         assert!(h.visible(&claim));
-        assert!(matches!(
-            h.click("Send"),
-            Some(DraftAction::Approve { .. })
-        ));
+        assert!(matches!(h.click("Send"), Some(DraftAction::Approve { .. })));
         h.drafts[0].status = DraftStatus::Sent;
         h.drafts[0].approved_at = Some(1_000);
         h.drafts[0].approved_by = Some(crate::user::name());
