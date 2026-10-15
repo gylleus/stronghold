@@ -368,6 +368,7 @@ fn one_tunnel_per_run_then_per_repo() {
             TunnelKey::Run("second".into()),
             TunnelKey::Run("first".into()),
             TunnelKey::Repo("alpha".into()),
+            TunnelKey::RestingArea,
         ],
         "runs in run-list order, then repos"
     );
@@ -475,6 +476,7 @@ fn a_finished_run_without_workers_has_no_tunnel() {
         [
             TunnelKey::Run("ongoing".into()),
             TunnelKey::Repo("alpha".into()),
+            TunnelKey::RestingArea,
         ],
         "a finished run's coordinator digs in its repo's tunnel; one with a worker keeps its own"
     );
@@ -566,7 +568,7 @@ fn hidden_nodes_are_not_drawn() {
         scene
             .tunnels
             .iter()
-            .all(|t| matches!(t.key, TunnelKey::Run(_))),
+            .all(|t| matches!(t.key, TunnelKey::Run(_) | TunnelKey::RestingArea)),
         "the hidden terminal's tunnel goes too"
     );
 }
@@ -1445,7 +1447,7 @@ fn parked_dwarves_sleep_in_the_resting_area() {
             .iter()
             .position(|t| t.key == TunnelKey::RestingArea)
     };
-    assert_eq!(room(&scene(&s)), None, "no room while nobody is parked");
+    assert!(room(&scene(&s)).is_some(), "an empty room is kept ready");
     for i in 0..9 {
         let mut n = node(
             &format!("parked{i}"),
@@ -1515,7 +1517,15 @@ fn parked_dwarves_sleep_in_the_resting_area() {
 
 #[test]
 fn only_the_resting_area_has_beds() {
-    assert!(scene(&snapshot()).beds.is_empty());
+    let scene = scene(&snapshot());
+    let room = scene
+        .tunnels
+        .iter()
+        .find(|t| t.key == TunnelKey::RestingArea)
+        .unwrap();
+    assert_eq!(scene.beds.len(), 1, "a spare bed in the empty room");
+    assert!(scene.beds[0].sleeper.is_none());
+    assert!(room.chamber.contains_rect(scene.beds[0].rect));
 }
 
 #[test]
@@ -1704,7 +1714,12 @@ fn envoy_stays_in_its_comms_room_without_a_work_tunnel() {
         assert_eq!(envoy.mark, None);
         assert!(scene.comms.unwrap().chamber.contains(envoy.pos));
         assert!(envoy.pos.x < scene.throne_hall.left());
-        assert!(scene.tunnels.is_empty());
+        assert!(
+            scene
+                .tunnels
+                .iter()
+                .all(|t| t.key == TunnelKey::RestingArea)
+        );
     }
 }
 
@@ -1899,17 +1914,17 @@ pub(super) fn reach(scene: &Scene) -> f32 {
     (bottom - scene.rect.top()) / scene.rect.height()
 }
 
-/// Packing keeps typical clans within the view at least as legible as full-width
-/// group bands. Unused cells remain rock instead of inflating the excavated area.
+/// Packing keeps typical clans and their empty rest room within the view. Unused cells
+/// remain rock instead of inflating the excavated area.
 #[test]
-fn packed_groups_fit_the_view_without_reducing_dwarf_size() {
-    // (view, dwarves, smallest dwarf cell in points in the previous band layout)
+fn packed_groups_and_the_empty_rest_room_fit_the_view() {
+    // (view, dwarves, minimum readable dwarf cell in points)
     let cases = [
         (vec2(1280.0, 800.0), 5, 56.0),
         // Finished workers now occupy chamber slots alongside the other miners.
         (vec2(1280.0, 800.0), 15, 32.0),
         (vec2(1280.0, 800.0), 30, 24.0),
-        (vec2(900.0, 650.0), 5, 48.0),
+        (vec2(900.0, 650.0), 5, 40.0),
         (vec2(900.0, 650.0), 15, 24.0),
         (vec2(900.0, 650.0), 30, 16.0),
     ];

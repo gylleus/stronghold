@@ -4,10 +4,11 @@ Native farm captures, 2026-10-15. The baseline is local main `c8cad26` with only
 the example's `--parked-count` fixture option added. The same two workspaces,
 King, Envoy, Ledger and window dimensions are used before and after.
 
-These captures retain the existing empty-room policy: a fresh hold with no parked
-dwarves has no rest room; a room that empties remains during the room plan's grace
-period. The occupied room has masonry, an entrance per sleeping floor, and a
-reserved furniture alcove.
+The empty room stays visible as a compact chamber with one spare bed, using free
+space beside working rooms when it fits. It expands into a separate sleeping band
+when dwarves arrive and contracts immediately when the last sleeper leaves. The
+occupied room has masonry, an entrance per sleeping floor, and a reserved furniture
+alcove.
 
 | Parked dwarves | Before | After |
 | --- | --- | --- |
@@ -39,6 +40,8 @@ frame. Daylight and animation phase follow capture time.
 Regression coverage includes 1, 3, 12, 48 and 120 sleepers at 1280-, 600- and
 420-point widths, bed containment and separation from furniture, hit testing,
 parked taskmaster labels, sleeping poses, wake transitions and parked counts.
+The empty-room regression also checks expansion, immediate contraction and stable
+placement after the old grace period expires.
 Crowds beyond the viewport's capacity retain separate rows at the minimum scale
 and can be reached with the existing pan/zoom camera. The shared renderer tests
 exercise every prop, outline and bundled palette; the imported-palette test also

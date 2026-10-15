@@ -60,6 +60,9 @@ struct Fit {
     landing: usize,
     storage: usize,
     envoy: bool,
+    /// None refits plans saved before the compact empty rest room was introduced.
+    #[serde(default)]
+    resting: Option<bool>,
 }
 
 /// The rooms wanted this frame.
@@ -205,7 +208,7 @@ struct Place {
 }
 
 /// First-fit decreasing width. Ties use the stable demand order, never node order.
-/// The resting area retains its own final band and beds.
+/// An occupied resting room has its own final band; the empty room uses a small free cell.
 fn fit(
     size: Vec2,
     crowd: Crowd,
@@ -221,7 +224,11 @@ fn fit(
         .enumerate()
         .map(|(i, f)| {
             let slots = (f.iter().sum::<usize>() + spare).max(1);
-            let margin = if Some(i) == resting { 6.0 } else { 3.0 };
+            let margin = if Some(i) == resting && !f.is_empty() {
+                6.0
+            } else {
+                3.0
+            };
             let width = (LADDER_GAP + 0.6 + margin + (slots - 1) as f32 * SLOT) * a;
             let span = ((width / cell_w).ceil() as usize).clamp(3, COLUMNS);
             Place {
@@ -236,7 +243,7 @@ fn fit(
     let mut used: Vec<usize> = Vec::new();
     for i in order {
         let p = &mut places[i];
-        let level = if Some(i) == resting {
+        let level = if Some(i) == resting && !rooms[i].is_empty() {
             None
         } else {
             used.iter().position(|n| n + p.span <= COLUMNS)
@@ -324,6 +331,10 @@ impl RoomPlan {
             return self.rearrange(demand, size);
         };
         let new_room = demand.rooms.iter().any(|(k, _)| self.room(k).is_none());
+        let resting = demand
+            .footprints(&TunnelKey::RestingArea)
+            .is_some_and(|f| !f.is_empty());
+        let rest_changed = self.fit.resting != Some(resting);
         let resized = self.fit.size != [size.x, size.y] || self.fit.envoy != demand.envoy;
         let consistent = grid.heights.len() == grid.levels
             && self.rooms.iter().all(|r| {
@@ -333,7 +344,7 @@ impl RoomPlan {
                     && room_rows_height(r.rows, CELL * grid.px, r.key == TunnelKey::RestingArea)
                         <= grid.heights[r.level] + 0.01
             });
-        if filled_in || new_room || resized || !consistent {
+        if filled_in || new_room || resized || rest_changed || !consistent {
             return self.rearrange(demand, size);
         }
         // More dwarves on the landing or in storage: fine while the band keeps its height.
@@ -429,6 +440,11 @@ impl RoomPlan {
             landing: self.landing,
             storage: self.storage,
             envoy: demand.envoy,
+            resting: Some(
+                demand
+                    .footprints(&TunnelKey::RestingArea)
+                    .is_some_and(|f| !f.is_empty()),
+            ),
         };
         Change::Rearranged
     }

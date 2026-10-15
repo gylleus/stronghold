@@ -47,7 +47,7 @@ pub(super) fn paint(
     }
 
     let scale = (alcove(chamber.width(), scene.cell()) / 64.0).min(px);
-    let origin = chamber.min + vec2(7.0 * scale, 1.0 * px);
+    let origin = chamber.min + vec2(7.0 * scale, px + 35.0 * (px - scale));
     for (prop, x, y) in [
         (Prop::Rug, 8.0, 23.0),
         (Prop::Hearth, 12.0, 0.0),

@@ -818,6 +818,9 @@ fn layout_rooms(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             keys.push(key);
         }
     }
+    if !keys.contains(&TunnelKey::RestingArea) {
+        keys.push(TunnelKey::RestingArea);
+    }
     let run_order = |key: &TunnelKey| match key {
         TunnelKey::Run(id) => (
             0,

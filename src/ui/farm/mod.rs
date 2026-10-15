@@ -1326,11 +1326,15 @@ fn paint_ground(
         let width = tunnel.chamber.width() + 0.4 * a;
         let title = match tunnel.tasks {
             Some((done, total)) => format!("{done}/{total} · {}", tunnel.label),
-            None if tunnel.key == TunnelKey::RestingArea => format!(
-                "{} · {} parked",
-                tunnel.label,
-                scene.beds.iter().filter(|b| b.sleeper.is_some()).count()
-            ),
+            None if tunnel.key == TunnelKey::RestingArea
+                && scene.beds.iter().any(|b| b.sleeper.is_some()) =>
+            {
+                format!(
+                    "{} · {} parked",
+                    tunnel.label,
+                    scene.beds.iter().filter(|b| b.sleeper.is_some()).count()
+                )
+            }
             None => tunnel.label.clone(),
         };
         let text = label(
