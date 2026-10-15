@@ -18,7 +18,7 @@ use crate::ui::dwarf::{self, Action, Look};
 pub struct ArtSettings {
     pub pixels: Pixels,
     pub outline: Outline,
-    /// A bundled palette's file name ([`pixel::BUNDLED`]); empty for the drawing's own colours.
+    /// A bundled slug or self-contained `hex:` selection; empty for the drawing’s own colours.
     pub palette: String,
 }
 
@@ -104,9 +104,10 @@ pub(super) enum DwarfLayer {
 }
 
 /// Draws dwarves for the farm, keeping each pixel dwarf's texture between frames.
+#[derive(Default)]
 pub struct DwarfArt {
-    names: Vec<&'static str>,
-    mappers: Vec<Mapper>,
+    palette: String,
+    mapper: Option<Mapper>,
     textures: HashMap<String, Cached>,
     frame: u64,
 }
@@ -116,17 +117,6 @@ struct Cached {
     drawn: String,
     texture: TextureHandle,
     used: u64,
-}
-
-impl Default for DwarfArt {
-    fn default() -> Self {
-        Self {
-            names: pixel::BUNDLED.iter().map(|(name, _)| *name).collect(),
-            mappers: pixel::bundled().iter().map(Mapper::new).collect(),
-            textures: HashMap::new(),
-            frame: 0,
-        }
-    }
 }
 
 impl std::fmt::Debug for DwarfArt {
@@ -146,8 +136,11 @@ impl DwarfArt {
     }
 
     fn mapper(&mut self, name: &str) -> Option<&mut Mapper> {
-        let i = self.names.iter().position(|n| *n == name)?;
-        self.mappers.get_mut(i)
+        if self.palette != name {
+            self.palette = name.to_owned();
+            self.mapper = Mapper::selection(name);
+        }
+        self.mapper.as_mut()
     }
 
     /// Draws `figure` standing on the bottom of `cell` (a dwarf's cell), `farm_px` points per
@@ -270,6 +263,78 @@ impl DwarfArt {
         if let Some((at, q)) = drawing.question {
             dwarf::question(painter, min + at.to_vec2() * scale, q * scale);
         }
+    }
+}
+
+/// A small live sample using the same dwarf, stone, props and palette mapping as the hold.
+#[derive(Default)]
+pub struct Preview {
+    dwarves: DwarfArt,
+    world: super::world::WorldArt,
+}
+
+impl Preview {
+    pub fn show(&mut self, ui: &mut eframe::egui::Ui, art: &ArtSettings) {
+        use super::world::{Prop, rgb};
+        use eframe::egui::{Align2, FontId, Sense};
+        let (rect, _) =
+            ui.allocate_exact_size(vec2(ui.available_width().min(520.0), 156.0), Sense::hover());
+        let painter = ui.painter_at(rect);
+        let start = ui
+            .ctx()
+            .graphics(|g| g.get(painter.layer_id()).map(|l| l.next_idx()))
+            .unwrap_or(eframe::egui::layers::ShapeIdx(0));
+        self.world.begin_frame(&art.palette, art.outline);
+        self.dwarves.begin_frame();
+        painter.rect_filled(rect, 4.0, rgb(0x22242e));
+        let cave =
+            Rect::from_min_size(rect.min + vec2(8.0, 20.0), vec2(rect.width() - 16.0, 112.0));
+        self.world.paint(&painter, Prop::Cave(0), cave, 2.0, 0, 1.0);
+        let now = ui.input(|i| i.time);
+        for (i, (look, action)) in [
+            (Look::king(), Action::Still),
+            (Look::for_role(dwarf::Role::Miner, 7), Action::Mine),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            self.dwarves.paint(
+                &painter,
+                art,
+                &Figure {
+                    key: if i == 0 {
+                        "preview-king"
+                    } else {
+                        "preview-miner"
+                    },
+                    look,
+                    action,
+                    upside_down: false,
+                    facing_right: true,
+                    alpha: 1.0,
+                },
+                Rect::from_min_size(
+                    rect.min + vec2(50.0 + i as f32 * 90.0, 42.0),
+                    vec2(70.0, 80.0),
+                ),
+                2.0,
+                now,
+            );
+        }
+        let chest = Rect::from_min_size(rect.min + vec2(260.0, 82.0), vec2(48.0, 40.0));
+        self.world.paint(&painter, Prop::Chest, chest, 2.0, 0, 1.0);
+        let plate = Rect::from_min_size(rect.min + vec2(10.0, 132.0), vec2(210.0, 21.0));
+        painter.rect_filled(plate, 0.0, rgb(0x1a1008));
+        painter.text(
+            plate.center(),
+            Align2::CENTER_CENTER,
+            "The hold · stone, ink & gold",
+            FontId::proportional(13.0),
+            rgb(0xf3e9d2),
+        );
+        self.world.map_scene(ui.ctx(), painter.layer_id(), start);
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(100));
     }
 }
 
@@ -456,5 +521,48 @@ mod tests {
             assert!(art.mapper(name).is_some(), "{name}");
         }
         assert!(art.mapper("").is_none());
+    }
+    #[test]
+    fn imported_palette_switch_rebuilds_stationary_dwarf_texture() {
+        let ctx = eframe::egui::Context::default();
+        let mut renderer = DwarfArt::default();
+        let figure = Figure {
+            key: "king",
+            look: Look::king(),
+            action: Action::Still,
+            upside_down: false,
+            facing_right: true,
+            alpha: 1.0,
+        };
+        let mut previous = None;
+        for selection in [
+            "hex:7c3f58-eb6b6f-f9a875-fff6d3",
+            "hex:264653-2a9d8f-e9c46a",
+            "oil-6",
+        ] {
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                renderer.paint(
+                    ui.painter(),
+                    &ArtSettings {
+                        palette: selection.into(),
+                        ..Default::default()
+                    },
+                    &figure,
+                    Rect::from_min_size(pos2(50.0, 50.0), vec2(48.0, 48.0)),
+                    1.0,
+                    0.0,
+                );
+            });
+            let texture = renderer.textures["king"].texture.id();
+            let egui_image = &output.textures_delta.set[&texture][0].image;
+            if let Some(before) = previous {
+                assert!(
+                    egui_image != &before,
+                    "palette change must update the texture pixels"
+                );
+            }
+            previous = Some(egui_image.clone());
+            output.textures_delta.clear();
+        }
     }
 }

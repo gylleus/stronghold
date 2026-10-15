@@ -7,6 +7,7 @@
 //! y down. [`draw`] scales and mirrors him into place.
 
 pub mod cutout;
+pub mod palettes;
 mod parts;
 pub mod pixel;
 mod pose;
