@@ -592,7 +592,13 @@ pub fn draw(
 
 /// Attach a separate prop to the front fist, and draw both arms over its handle.
 /// The prop's origin is the fist; negative Y points toward its head.
-pub fn held_prop(foot: Pos2, height: f32, look: &Look, pose: &Pose) -> (Xf, Vec<Shape>) {
+pub fn held_prop(
+    foot: Pos2,
+    height: f32,
+    look: &Look,
+    pose: &Pose,
+    finish: &Finish,
+) -> (Xf, Vec<Shape>) {
     let k = height * look.role.scale() / 100.0;
     let body = Xf::translate(foot.to_vec2() - vec2(0.0, pose.hop * k))
         .then(Xf::scale(k, k))
@@ -608,14 +614,9 @@ pub fn held_prop(foot: Pos2, height: f32, look: &Look, pose: &Pose) -> (Xf, Vec<
         &mut hands,
         &parts::support_arm(look, grip.apply(pos2(0.0, -10.0))),
         body,
-        &Finish::INK,
+        finish,
     );
-    cutout::draw(
-        &mut hands,
-        &parts::arm(look, pose),
-        body.then(arm),
-        &Finish::INK,
-    );
+    cutout::draw(&mut hands, &parts::arm(look, pose), body.then(arm), finish);
     (body.then(grip), hands)
 }
 
