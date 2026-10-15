@@ -222,7 +222,7 @@ impl AppEnvoy {
     pub(super) fn dismiss_draft(&mut self, id: &str) -> Result<(), String> {
         let draft = self.queue()?.get(id).ok_or("Unknown draft")?;
         if matches!(draft.status, DraftStatus::Pending | DraftStatus::Approved) {
-            return Err("Reject or finish the draft before dismissing it".into());
+            return Err("Decide whether to send the draft before hiding it".into());
         }
         let mut cleanup = self.cleanup.clone();
         cleanup.drafts.insert(id.into());
@@ -253,7 +253,7 @@ impl AppEnvoy {
                 )
             })
         {
-            return Err("Resolve pending decisions before dismissing".into());
+            return Err("Resolve pending decisions before hiding".into());
         }
         let version = (request.turns.len(), request.deliveries.len());
         let mut cleanup = self.cleanup.clone();
