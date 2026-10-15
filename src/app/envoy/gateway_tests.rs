@@ -1758,3 +1758,422 @@ fn request_lines_and_envoy_request_carry_the_bound_threads_note() {
         "a request typed first after a reset carries the handoff too"
     );
 }
+
+#[test]
+fn deleting_request_removes_drafts_watch_and_notifies_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    core.settings.dry_run = false;
+    let (worker, commands, updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    let id = submit(&mut core, "Review");
+    let draft = route(&mut core, &id);
+    core.queue()
+        .unwrap()
+        .begin_approval(&draft.id, None, false, 0)
+        .unwrap();
+    core.queue()
+        .unwrap()
+        .finish_receipt(
+            &draft.id,
+            Ok(SendReceipt {
+                conversation: "C123".into(),
+                ts: "10.000001".into(),
+            }),
+            0,
+        )
+        .unwrap();
+    core.reconcile_requests().unwrap();
+    let watches = commands
+        .try_iter()
+        .find_map(|w| {
+            if let Work::Watches(w) = w {
+                Some(w)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    updates
+        .send(Update::Watches {
+            watches,
+            result: Ok(()),
+        })
+        .unwrap();
+    core.poll_updates();
+    core.reconcile_requests().unwrap();
+    for work in commands.try_iter() {
+        if let Work::Watches(watches) = work {
+            updates
+                .send(Update::Watches {
+                    watches,
+                    result: Ok(()),
+                })
+                .unwrap();
+        }
+    }
+    core.poll_updates();
+    core.gateway_request(
+        &command(
+            "dwarf",
+            "reach_out",
+            json!({"request_id":id,"to":"Avery agent","ask":"Follow up","why":"Review"}),
+        ),
+        Requester::from_origin(origin("dwarf")).unwrap(),
+    )
+    .unwrap();
+    core.delete_request(&id).unwrap();
+    assert!(core.requests().is_empty());
+    assert!(core.drafts().is_empty());
+    let emitted: Vec<_> = commands.try_iter().collect();
+    assert!(
+        emitted
+            .iter()
+            .any(|w| matches!(w, Work::Watches(watches) if watches.is_empty()))
+    );
+    assert!(
+        emitted
+            .iter()
+            .any(|w| matches!(w, Work::Remove(thread) if thread.ts == "10.000001"))
+    );
+    assert!(
+        core.envoy_approve(&draft.id, None, false, |_| false)
+            .is_err()
+    );
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.settings.dry_run = false;
+    let (worker, commands, updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    core.reconcile_requests().unwrap();
+    assert!(commands.try_iter().any(|w| matches!(w, Work::Remove(_))));
+    let (action, record) = core.reply_action(&id, "deleted", "dwarf").unwrap();
+    assert!(
+        matches!(&action, Action::Send { input, .. } if input.text.as_ref().unwrap().contains(&crate::user::fill("deleted by {user}")))
+    );
+    core.gateway_actions.insert(42, record);
+    core.gateway_done(
+        &ActionResult {
+            id: 42,
+            action,
+            outcome: Ok(()),
+            note: None,
+        },
+        |_| {},
+    );
+    updates
+        .send(Update::Removed {
+            thread: crate::envoy::requests::Thread {
+                conversation: "C123".into(),
+                ts: "10.000001".into(),
+            },
+            result: Ok(()),
+        })
+        .unwrap();
+    core.poll_updates();
+    assert!(core.requests_mut().unwrap().deletions().is_empty());
+    let mut inbox = Inbox::default();
+    let mut event = fixture(dir.path()).event;
+    event.ts = "11.000001".into();
+    inbox.insert(event.clone());
+    inbox
+        .pending_replies
+        .push(crate::envoy::slack::threads::MatchedReply {
+            request_id: id.clone(),
+            event: event.clone(),
+        });
+    core.record_replies(&inbox).unwrap();
+    core.merge_polled(inbox, vec![event.clone()]);
+    assert!(core.requests().is_empty());
+    assert!(core.inbox.get(&event.id()).is_some());
+    assert!(
+        commands
+            .try_iter()
+            .any(|w| matches!(w, Work::RecordedReplies(_)))
+    );
+}
+
+#[test]
+fn deleting_scheduled_draft_cancels_timer_and_preserves_request_notification() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "Review");
+    let draft = route(&mut core, &id);
+    core.queue().unwrap().schedule(&draft.id, Some(1)).unwrap();
+    core.delete_draft(&draft.id).unwrap();
+    core.auto_approve(100).unwrap();
+    assert!(core.drafts().is_empty());
+    assert!(
+        core.envoy_approve(&draft.id, None, false, |_| panic!("deleted draft sent"))
+            .is_err()
+    );
+    let request = &core.requests()[0];
+    assert_eq!(
+        request.turns[0].status,
+        crate::envoy::requests::Status::Declined
+    );
+    assert!(request.deliveries[0].text.contains("deleted"));
+    assert!(AppEnvoy::load(dir.path().into()).drafts().is_empty());
+}
+
+#[test]
+fn deleting_sent_draft_keeps_confirmed_request_reply_watch() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "Review");
+    let draft = route(&mut core, &id);
+    core.queue()
+        .unwrap()
+        .begin_approval(&draft.id, None, false, 0)
+        .unwrap();
+    core.queue()
+        .unwrap()
+        .finish_receipt(
+            &draft.id,
+            Ok(SendReceipt {
+                conversation: "C123".into(),
+                ts: "10.000001".into(),
+            }),
+            0,
+        )
+        .unwrap();
+    core.reconcile_requests().unwrap();
+    core.delete_draft(&draft.id).unwrap();
+    let mut loaded = AppEnvoy::load(dir.path().into());
+    loaded.reconcile_requests().unwrap();
+    assert_eq!(loaded.requests()[0].reply_cutoff(), Some(10_000_001));
+    assert!(loaded.drafts().is_empty());
+}
+
+#[test]
+fn event_delete_survives_stale_snapshot_and_is_saved_by_inactive_worker() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = fixture(dir.path());
+    let event = fake.event.clone();
+    let path = dir.path().join(crate::envoy::inbox::INBOX_FILE);
+    let mut inbox = Inbox::default();
+    inbox.insert(event.clone());
+    inbox.save(&path).unwrap();
+    let mut core = AppEnvoy::at(
+        dir.path().into(),
+        &egui::Context::default(),
+        fake.clone(),
+        fake.bridge.clone(),
+    );
+    core.delete_event(&event.id()).unwrap();
+    core.merge_polled(inbox, vec![event.clone()]);
+    assert!(core.inbox.events().is_empty());
+    assert!(core.pending.is_empty());
+    wait(&mut core, |c| c.cleanup.deleted_events.is_empty());
+    let mut loaded = Inbox::load(&path).unwrap();
+    assert!(loaded.events().is_empty());
+    assert!(!loaded.insert(event));
+    assert!(
+        fake.calls.lock().unwrap().is_empty(),
+        "inactive worker must not contact Slack"
+    );
+}
+
+#[test]
+fn clear_items_removes_requests_proposals_drafts_and_events_from_stores() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = fixture(dir.path());
+    let event = fake.event.clone();
+    let mut core = AppEnvoy::at(
+        dir.path().into(),
+        &egui::Context::default(),
+        fake.clone(),
+        fake.bridge.clone(),
+    );
+    core.handle = Some("envoy".into());
+    let request = submit(&mut core, "Review");
+    let draft = route(&mut core, &request);
+    let proposal = core
+        .queue()
+        .unwrap()
+        .create(Draft::proposal(
+            "Task".into(),
+            None,
+            "Review".into(),
+            "https://example.slack.com/message".into(),
+            0,
+        ))
+        .unwrap();
+    core.inbox.insert(event.clone());
+    core.delete_items(crate::ui::envoy::PanelItems {
+        requests: vec![request],
+        drafts: vec![draft.id, proposal.id],
+        events: vec![event.id()],
+    })
+    .unwrap();
+    wait(&mut core, |c| c.cleanup.deleted_events.is_empty());
+    assert!(core.requests().is_empty());
+    assert!(core.drafts().is_empty());
+    assert!(core.inbox.events().is_empty());
+    let loaded = AppEnvoy::load(dir.path().into());
+    assert!(loaded.requests().is_empty());
+    assert!(loaded.drafts().is_empty());
+    assert!(loaded.inbox.events().is_empty());
+    assert!(loaded.cleanup.drafts.is_empty());
+    assert!(loaded.dismissed_requests().is_empty());
+}
+
+#[test]
+fn deleting_approved_draft_before_reconcile_does_not_leave_turn_drafted() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "Review");
+    let draft = route(&mut core, &id);
+    core.queue()
+        .unwrap()
+        .begin_approval(&draft.id, None, false, 0)
+        .unwrap();
+    core.delete_draft(&draft.id).unwrap();
+    assert_eq!(
+        core.requests()[0].turns[0].status,
+        crate::envoy::requests::Status::Failed
+    );
+    assert!(core.requests()[0].turns[0].draft_id.is_none());
+    assert!(core.drafts().is_empty());
+}
+
+#[test]
+fn deleting_handled_draft_keeps_event_hidden_across_snapshot_and_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let event = fixture(dir.path()).event;
+    core.inbox.insert(event.clone());
+    core.inbox
+        .save(&dir.path().join(crate::envoy::inbox::INBOX_FILE))
+        .unwrap();
+    let snapshot = core.inbox.clone();
+    let draft = core
+        .queue()
+        .unwrap()
+        .create(Draft::reply(
+            ReplyTo {
+                conversation: event.conversation.clone(),
+                ts: event.ts.clone(),
+            },
+            None,
+            "Reply".into(),
+            "Review".into(),
+            0,
+        ))
+        .unwrap();
+    core.queue().unwrap().reject(&draft.id, 0).unwrap();
+    core.resolve_handled();
+    assert!(!core.inbox.is_open(&event.id()));
+    core.delete_draft(&draft.id).unwrap();
+    core.merge_polled(snapshot, vec![event.clone()]);
+    assert!(!core.inbox.is_open(&event.id()));
+    assert!(!AppEnvoy::load(dir.path().into()).inbox.is_open(&event.id()));
+}
+
+#[test]
+fn clear_tolerates_selected_request_already_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "Review");
+    let proposal = core
+        .queue()
+        .unwrap()
+        .create(Draft::proposal(
+            "Task".into(),
+            None,
+            "Review".into(),
+            "https://example.slack.com/message".into(),
+            0,
+        ))
+        .unwrap();
+    core.delete_request(&id).unwrap();
+    core.delete_items(crate::ui::envoy::PanelItems {
+        requests: vec![id],
+        drafts: vec![proposal.id],
+        events: vec![],
+    })
+    .unwrap();
+    assert!(core.drafts().is_empty());
+}
+
+#[test]
+fn failed_request_delete_preserves_request_draft_and_notification_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "Review");
+    let draft = route(&mut core, &id);
+    std::fs::create_dir(
+        dir.path()
+            .join(crate::envoy::requests::REQUESTS_FILE)
+            .with_extension("json.tmp"),
+    )
+    .unwrap();
+    assert!(core.delete_request(&id).is_err());
+    assert!(core.requests_mut().unwrap().get(&id).is_ok());
+    assert!(core.requests_mut().unwrap().deletions().is_empty());
+    assert!(core.queue().unwrap().get(&draft.id).is_some());
+    let loaded = AppEnvoy::load(dir.path().into());
+    assert_eq!(loaded.requests().len(), 1);
+    assert_eq!(loaded.drafts().len(), 1);
+}
+
+#[test]
+fn deleting_borrowed_request_leaves_external_subscription_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, commands, _) = Worker::test_pair();
+    core.worker = Some(worker);
+    core.settings.dry_run = false;
+    core.requests_mut()
+        .unwrap()
+        .adopt(
+            crate::envoy::requests::Thread {
+                conversation: "C123".into(),
+                ts: "1.000001".into(),
+            },
+            "External owner".into(),
+            0,
+        )
+        .unwrap();
+    let id = core.requests()[0].id.clone();
+    core.delete_request(&id).unwrap();
+    let emitted: Vec<_> = commands.try_iter().collect();
+    assert!(
+        emitted
+            .iter()
+            .any(|w| matches!(w, Work::Watches(watches) if watches.is_empty()))
+    );
+    assert!(!emitted.iter().any(|w| matches!(w, Work::Remove(_))));
+    assert!(core.requests_mut().unwrap().deletions().is_empty());
+}
+
+#[test]
+fn request_deletion_retries_failed_draft_cleanup_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let id = submit(&mut core, "Review");
+    route(&mut core, &id);
+    let blocked = dir
+        .path()
+        .join(crate::envoy::drafts::DRAFTS_FILE)
+        .with_extension("json.tmp");
+    std::fs::create_dir(&blocked).unwrap();
+    assert!(core.delete_request(&id).is_err());
+    assert!(core.requests().is_empty());
+    assert_eq!(core.requests_mut().unwrap().deletions().len(), 1);
+    std::fs::remove_dir(&blocked).unwrap();
+    let mut loaded = AppEnvoy::load(dir.path().into());
+    loaded.reconcile_requests().unwrap();
+    assert!(loaded.requests().is_empty());
+    assert!(loaded.drafts().is_empty());
+    assert_eq!(
+        loaded.requests_mut().unwrap().deletions()[0].delivery.id,
+        "deleted"
+    );
+}

@@ -59,6 +59,7 @@ pub struct AppEnvoy {
     gateway_actions: HashMap<ActionId, GatewayAction>,
     gateway_retry_ms: i64,
     worker: Option<Worker>,
+    event_deletion_pending: bool,
     bridge: BridgeStatus,
     bridge_seen: bool,
     error_notified: Option<String>,
@@ -167,6 +168,7 @@ impl AppEnvoy {
             gateway_actions: HashMap::new(),
             gateway_retry_ms: 0,
             worker: None,
+            event_deletion_pending: false,
             bridge: BridgeStatus::Missing,
             bridge_seen: false,
             error_notified: None,
@@ -190,6 +192,14 @@ impl AppEnvoy {
             open_request: false,
             error,
         };
+        core.inbox.delete(
+            &core
+                .cleanup
+                .deleted_events
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
         core.resolve_handled();
         core
     }
@@ -411,6 +421,14 @@ impl AppEnvoy {
     }
 
     fn merge_polled(&mut self, mut inbox: Inbox, events: Vec<InboundEvent>) {
+        inbox.delete(
+            &self
+                .cleanup
+                .deleted_events
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
         inbox.resolve(self.cleanup.events.iter().cloned());
         self.acknowledged.retain(|id| inbox.get(id).is_some());
         inbox.mark_forwarded(&self.acknowledged.iter().cloned().collect::<Vec<_>>());
@@ -762,6 +780,12 @@ impl AppEnvoy {
         let updates = self.worker.as_ref().map_or_else(Vec::new, Worker::updates);
         for update in updates {
             match update {
+                Update::DeletedEvents { ids, result } => {
+                    self.event_deletion_pending = false;
+                    if let Err(error) = result.and_then(|()| self.events_deleted(&ids)) {
+                        self.error = Some(error);
+                    }
+                }
                 Update::Polled {
                     inbox,
                     events,
@@ -801,6 +825,12 @@ impl AppEnvoy {
                     self.notices = current;
                 }
                 Update::Sent { id, result } => {
+                    if let Some(worker) = &self.worker {
+                        worker.clear_cancelled(&id);
+                    }
+                    if self.queue().is_ok_and(|q| q.get(&id).is_none()) {
+                        continue;
+                    }
                     if let Err(error) = &result {
                         notifications.push(
                             Incoming::new(
@@ -836,6 +866,13 @@ impl AppEnvoy {
                 }
                 Update::Removed { thread, result } => {
                     match result.and_then(|()| {
+                        self.requests_mut()?.change_deletions(|records| {
+                            for record in records {
+                                if record.thread.as_ref() == Some(&thread) {
+                                    record.thread = None;
+                                }
+                            }
+                        })?;
                         let ids: Vec<_> = self
                             .requests()
                             .iter()
@@ -1039,6 +1076,21 @@ impl AppEnvoy {
         king: impl FnOnce(&str) -> bool,
     ) -> (String, Result<bool, String>) {
         match action {
+            crate::ui::envoy::DraftAction::DeleteRequest(id) => {
+                let result = self.delete_request(&id).map(|()| false);
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::DeleteDraft(id) => {
+                let result = self.delete_draft(&id).map(|()| false);
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::DeleteEvent(id) => {
+                let result = self.delete_event(&id).map(|()| false);
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::DeleteItems(items) => {
+                ("cleanup".into(), self.delete_items(items).map(|()| false))
+            }
             crate::ui::envoy::DraftAction::DismissRequest(id) => {
                 let result = self.dismiss_request(&id).map(|()| false);
                 (id, result)
@@ -1100,7 +1152,9 @@ impl AppEnvoy {
                                 | crate::envoy::requests::Status::Approved
                         )
                     }) {
-                        return Err("Resolve pending turns before settling".into());
+                        return Err(
+                            "Send or delete pending drafts before marking this request done".into(),
+                        );
                     }
                     let dry_run = self.settings.dry_run;
                     let borrowed = request

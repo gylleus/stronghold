@@ -7,7 +7,7 @@ use eframe::egui::{self, PointerButton, Ui};
 use crate::envoy::drafts::{Draft, DraftKind, DraftStatus, attribution};
 use crate::envoy::inbox::Inbox;
 
-pub const DRY_RUN_BANNER: &str = "Dry run: approving records the message, nothing is posted";
+pub const DRY_RUN_BANNER: &str = "Dry run: Send records the message; nothing is posted";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum DraftAction {
@@ -20,6 +20,10 @@ pub enum DraftAction {
     DismissRequest(String),
     DismissDraft(String),
     ClearHandled,
+    DeleteEvent(String),
+    DeleteRequest(String),
+    DeleteDraft(String),
+    DeleteItems(PanelItems),
     Pause(String),
     Adopt,
     Keep(String),
@@ -29,6 +33,19 @@ pub enum DraftAction {
         proposal_id: u64,
         accept: bool,
     },
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PanelItems {
+    pub requests: Vec<String>,
+    pub drafts: Vec<String>,
+    pub events: Vec<String>,
+}
+
+impl PanelItems {
+    fn len(&self) -> usize {
+        self.requests.len() + self.drafts.len() + self.events.len()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -47,9 +64,49 @@ pub struct DraftsPanel {
     dismissed_requests: BTreeSet<String>,
     recorded_task: Option<String>,
     requests: Vec<crate::envoy::requests::Request>,
+    clear_confirmation: Option<(Tab, PanelItems)>,
 }
 
 impl DraftsPanel {
+    fn items(&self, drafts: &[Draft], inbox: &Inbox) -> PanelItems {
+        let inbox_tab = self.tab == Some(Tab::Inbox);
+        PanelItems {
+            requests: self
+                .requests
+                .iter()
+                .filter(|r| request_inbox(r, &self.dismissed_requests) == inbox_tab)
+                .map(|r| r.id.clone())
+                .collect(),
+            drafts: drafts
+                .iter()
+                .filter(|d| {
+                    if inbox_tab {
+                        d.status == DraftStatus::Pending
+                            || (d.status == DraftStatus::Failed
+                                && !self.dismissed_failures.contains(&d.id))
+                            || (d.status == DraftStatus::DryRunSent
+                                && self.recorded_task.as_deref() == Some(&d.id))
+                    } else {
+                        d.status != DraftStatus::Pending
+                    }
+                })
+                .map(|d| d.id.clone())
+                .collect(),
+            events: if inbox_tab {
+                inbox.open_events().map(|e| e.id()).collect()
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    pub fn confirm_clear(&mut self, drafts: &[Draft], inbox: &Inbox) {
+        if self.tab.is_none() {
+            self.open(drafts);
+        }
+        self.clear_confirmation = Some((self.tab.unwrap(), self.items(drafts, inbox)));
+    }
+
     pub fn set_dismissed_requests(&mut self, requests: BTreeSet<String>) {
         self.dismissed_requests = requests;
     }
@@ -142,13 +199,15 @@ impl DraftsPanel {
         if let Some(error) = self.errors.get("adopt") {
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
-        if deliberate_click(&ui.button("Adopt open threads")) {
+        if deliberate_click(&ui.button("Pick up open threads").on_hover_text(
+            "Add existing Slack thread subscriptions that the Envoy is not tracking",
+        )) {
             action = Some(DraftAction::Adopt);
         }
         if dry_run {
             ui.label(DRY_RUN_BANNER);
         } else {
-            ui.label("Approved replies are posted to Slack. Accepted tasks go to the King.");
+            ui.label("Send posts replies to Slack. Give to the King hands over tasks.");
         }
         if let Some(error) = error {
             ui.colored_label(ui.visuals().error_fg_color, error);
@@ -158,14 +217,61 @@ impl DraftsPanel {
             ui.selectable_value(&mut self.tab, Some(Tab::Outbox), "Outbox");
         });
         if self.tab == Some(Tab::Inbox) {
-            if ui.button("Clear handled / stale").on_hover_text(
-                "Dismiss handled drafts and messages older than 30 minutes, including queued events. Pending approvals are kept."
+            if ui.button("Hide finished").on_hover_text(
+                "Hide finished requests, decided drafts, and messages older than 30 minutes; keep pending drafts."
             ).clicked() {
                 action = Some(DraftAction::ClearHandled);
             }
             if let Some(error) = self.errors.get("cleanup") {
                 ui.colored_label(ui.visuals().error_fg_color, error);
             }
+        }
+        let items = self.items(drafts, inbox);
+        if self
+            .clear_confirmation
+            .as_ref()
+            .is_some_and(|(tab, _)| Some(*tab) != self.tab)
+        {
+            self.clear_confirmation = None;
+        }
+        ui.horizontal(|ui| {
+            if let Some((_, confirmed)) = &self.clear_confirmation {
+                ui.label(format!("Delete {} items?", confirmed.len()));
+                if deliberate_click(
+                    &ui.add_enabled(ready, egui::Button::new("Yes, clear"))
+                        .on_hover_text(
+                            "Permanently delete these items and cancel their unsent drafts",
+                        ),
+                ) {
+                    action = Some(DraftAction::DeleteItems(confirmed.clone()));
+                    self.clear_confirmation = None;
+                }
+                if ui
+                    .button("Cancel")
+                    .on_hover_text("Keep these items")
+                    .clicked()
+                {
+                    self.clear_confirmation = None;
+                }
+            } else if deliberate_click(
+                &ui.add_enabled(
+                    items.len() > 0,
+                    egui::Button::new(if self.tab == Some(Tab::Inbox) {
+                        "Clear inbox"
+                    } else {
+                        "Clear history"
+                    }),
+                )
+                .on_hover_text("Delete every item on this tab after confirmation"),
+            ) {
+                self.confirm_clear(drafts, inbox);
+                self.last_action_at = Some(now);
+            }
+        });
+        if self.tab == Some(Tab::Outbox)
+            && let Some(error) = self.errors.get("cleanup")
+        {
+            ui.colored_label(ui.visuals().error_fg_color, error);
         }
         ui.separator();
         egui::ScrollArea::vertical()
@@ -175,13 +281,13 @@ impl DraftsPanel {
                 for request in self
                     .requests
                     .iter()
-                    .filter(|r| request_inbox(r, &self.dismissed_requests) == inbox_tab)
+                    .filter(|r| items.requests.contains(&r.id))
                 {
                     ui.push_id(&request.id, |ui| {
                         egui::Frame::group(ui.style()).show(ui, |ui| {
                             ui.strong(format!(
-                                "{} · {:?} · {}",
-                                request.id, request.status, request.to
+                                "{} · {} · {}",
+                                request.id, request_status_label(request.status), request.to
                             ));
                             ui.label(format!(
                                 "Asked by {}",
@@ -194,9 +300,9 @@ impl DraftsPanel {
                             }
                             if request.close_requested {
                                 ui.weak(if dry_run {
-                                    "Dry run: close recorded; subscription retained"
+                                    "Dry run: marked done; Slack subscription kept"
                                 } else {
-                                    "Closing subscription…"
+                                    "Stopping reply watch…"
                                 });
                             }
                             for turn in &request.turns {
@@ -236,9 +342,9 @@ impl DraftsPanel {
                                     ui.push_id(proposal.id, |ui| {
                                         ui.horizontal(|ui| {
                                             for (label, accept) in
-                                                [("Accept", true), ("Reject", false)]
+                                                [("Yes, route here", true), ("No", false)]
                                             {
-                                                if deliberate_click(&ui.button(label)) {
+                                                if deliberate_click(&ui.button(label).on_hover_text(if accept { "Send future replies to this dwarf" } else { "Keep replies here without routing them to this dwarf" })) {
                                                     action = Some(DraftAction::Binding {
                                                         id: request.id.clone(),
                                                         proposal_id: proposal.id,
@@ -250,24 +356,24 @@ impl DraftsPanel {
                                     });
                                 }
                                 if request.bound_requester().is_none() && !request.orphan_kept {
-                                    ui.strong("Orphan thread");
-                                    if ui.button("Keep").clicked() {
+                                    ui.strong("No dwarf owns this thread");
+                                    if ui.button("Keep watching").on_hover_text("Keep this thread in the Envoy inbox without assigning a dwarf").clicked() {
                                         action = Some(DraftAction::Keep(request.id.clone()));
                                     }
                                 }
-                                if ui.button("Dismiss").clicked() {
+                                if ui.button("Hide").on_hover_text("Hide until something new happens in it").clicked() {
                                     action = Some(DraftAction::DismissRequest(request.id.clone()));
                                 }
                                 if ui
-                                    .button(if request.bound_requester().is_none() {
-                                        "Close"
-                                    } else {
-                                        "Settle"
-                                    })
+                                    .button("Mark done")
+                                    .on_hover_text("Stop watching this thread for replies")
                                     .clicked()
                                 {
                                     action = Some(DraftAction::Settle(request.id.clone()));
                                 }
+                            }
+                            if delete_button(ui, ready, "Delete this request, its drafts, and its reply watch") {
+                                action = Some(DraftAction::DeleteRequest(request.id.clone()));
                             }
                         });
                     });
@@ -276,13 +382,7 @@ impl DraftsPanel {
                 if self.tab == Some(Tab::Inbox) {
                     let mut cards = 0;
                     for draft in drafts {
-                        let failed = draft.status == DraftStatus::Failed
-                            && !self.dismissed_failures.contains(&draft.id);
-                        let recorded = draft.status == DraftStatus::DryRunSent
-                            && self.recorded_task.as_deref() == Some(&draft.id);
-                        if draft.status != DraftStatus::Pending && !failed && !recorded {
-                            continue;
-                        }
+                        if !items.drafts.contains(&draft.id) { continue; }
                         cards += 1;
                         ui.push_id(&draft.id, |ui| {
                             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -297,9 +397,12 @@ impl DraftsPanel {
                                     if let Some(error) = self.errors.get(&draft.id) {
                                         ui.colored_label(ui.visuals().error_fg_color, error);
                                     }
-                                    if ui.button("Dismiss").clicked() {
+                                    if ui.button("Hide").on_hover_text("Hide this item from the inbox").clicked() {
                                         action = Some(DraftAction::DismissDraft(draft.id.clone()));
                                     }
+                                }
+                                if delete_button(ui, ready, "Permanently delete this draft; cancel it if it has not been sent") {
+                                    action = Some(DraftAction::DeleteDraft(draft.id.clone()));
                                 }
                             });
                         });
@@ -308,14 +411,14 @@ impl DraftsPanel {
                     if cards == 0 {
                         ui.weak("No decisions waiting for you.");
                     }
-                    if let Some(next) = recent_messages(ui, inbox, &self.errors) {
+                    if let Some(next) = recent_messages(ui, inbox, &self.errors, ready) {
                         action = Some(next);
                     }
                 } else {
                     let mut history: Vec<_> = drafts
                         .iter()
                         .rev()
-                        .filter(|d| d.status != DraftStatus::Pending)
+                        .filter(|d| items.drafts.contains(&d.id))
                         .collect();
                     history.sort_by_key(|d| std::cmp::Reverse(d.updated_ms));
                     egui::CollapsingHeader::new(format!("Decisions ({})", history.len()))
@@ -328,6 +431,10 @@ impl DraftsPanel {
                             for draft in history {
                                 ui.push_id(&draft.id, |ui| {
                                     decided_card(ui, draft, inbox);
+                                    if let Some(error) = self.errors.get(&draft.id) { ui.colored_label(ui.visuals().error_fg_color, error); }
+                                    if delete_button(ui, ready, "Permanently delete this decision from history") {
+                                        action = Some(DraftAction::DeleteDraft(draft.id.clone()));
+                                    }
                                     ui.separator();
                                 });
                             }
@@ -358,7 +465,7 @@ impl DraftsPanel {
         if let Some(at) = draft.auto_at_ms {
             let remaining = (at - crate::control::server::now_ms()).max(0);
             ui.label(format!(
-                "Automatic approval in {}s",
+                "Sending automatically in {}s",
                 (remaining + 999) / 1000
             ));
             ui.ctx()
@@ -396,7 +503,7 @@ impl DraftsPanel {
         }
         if draft.kind == DraftKind::TaskProposal {
             ui.label(if dry_run {
-                "Dry run: accepting records this task; it is not sent to the King."
+                "Dry run: this records the task without sending it to the King."
             } else {
                 "The King will start the dwarf for this task."
             });
@@ -411,12 +518,18 @@ impl DraftsPanel {
         };
         ui.horizontal(|ui| {
             let approve = if draft.kind == DraftKind::TaskProposal {
-                "Accept task"
+                "Give to the King"
             } else {
-                "Approve"
+                "Send"
             };
             // Keyboard activation must never authorize an outbound message.
-            let response = ui.add_enabled(ready, egui::Button::new(approve));
+            let response = ui
+                .add_enabled(ready, egui::Button::new(approve))
+                .on_hover_text(if draft.kind == DraftKind::TaskProposal {
+                    "Ask the King to start a dwarf for this task"
+                } else {
+                    "Send this message to the displayed Slack destination"
+                });
             if deliberate_click(&response) {
                 if draft.kind == DraftKind::TaskProposal && dry_run {
                     self.recorded_task = Some(draft.id.clone());
@@ -426,14 +539,16 @@ impl DraftsPanel {
                     text: text.clone(),
                 });
             }
-            let response = ui.add_enabled(
-                ready,
-                egui::Button::new(if draft.auto_at_ms.is_some() {
-                    "Cancel"
-                } else {
-                    "Reject"
-                }),
-            );
+            let response = ui
+                .add_enabled(
+                    ready,
+                    egui::Button::new(if draft.kind == DraftKind::TaskProposal {
+                        "Don't"
+                    } else {
+                        "Don't send"
+                    }),
+                )
+                .on_hover_text("Reject this draft and cancel any scheduled send");
             if deliberate_click(&response) {
                 action = Some(DraftAction::Reject(draft.id.clone()));
             }
@@ -496,6 +611,7 @@ fn recent_messages(
     ui: &mut Ui,
     inbox: &Inbox,
     errors: &HashMap<String, String>,
+    ready: bool,
 ) -> Option<DraftAction> {
     let mut action = None;
     egui::CollapsingHeader::new("Recent messages")
@@ -532,14 +648,45 @@ fn recent_messages(
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
                 ui.push_id(event.id(), |ui| {
-                    if ui.button("Dismiss").clicked() {
+                    if ui
+                        .button("Hide")
+                        .on_hover_text("Hide this item from the inbox")
+                        .clicked()
+                    {
                         action = Some(DraftAction::DismissEvent(event.id()));
+                    }
+                    if delete_button(
+                        ui,
+                        ready,
+                        "Permanently delete this message from the Envoy inbox",
+                    ) {
+                        action = Some(DraftAction::DeleteEvent(event.id()));
                     }
                 });
                 ui.separator();
             }
         });
     action
+}
+
+fn delete_button(ui: &mut Ui, ready: bool, hint: &str) -> bool {
+    deliberate_click(
+        &ui.add_enabled(ready, egui::Button::new("Delete"))
+            .on_hover_text(hint),
+    )
+}
+
+fn request_status_label(status: crate::envoy::requests::Status) -> &'static str {
+    use crate::envoy::requests::Status;
+    match status {
+        Status::Queued => "Waiting for the Envoy",
+        Status::Drafted => "Draft ready for you",
+        Status::Approved => "Sending",
+        Status::Sent => "Sent, waiting for a reply",
+        Status::Answered => "Answered",
+        Status::Declined => "Declined by the Envoy",
+        Status::Failed => "Failed to send",
+    }
 }
 
 fn deliberate_click(response: &egui::Response) -> bool {
@@ -594,18 +741,19 @@ fn destination(ui: &mut Ui, draft: &Draft, inbox: &Inbox) {
 
 fn slack_link(ui: &mut Ui, link: Option<&str>) {
     if let Some(link) = link.filter(|s| crate::notify::agent::is_web_url(s)) {
-        ui.hyperlink_to("Open Slack message", link);
+        ui.hyperlink_to("Open Slack message", link)
+            .on_hover_text("Open this thread in Slack");
     }
 }
 
 fn status_label(status: DraftStatus) -> &'static str {
     match status {
-        DraftStatus::Pending => "Pending",
+        DraftStatus::Pending => "Ready for you",
         DraftStatus::Approved => "Sending",
         DraftStatus::Sent => "Sent",
-        DraftStatus::Failed => "Failed",
-        DraftStatus::Rejected => "Rejected",
-        DraftStatus::DryRunSent => "Dry run recorded",
+        DraftStatus::Failed => "Failed to send",
+        DraftStatus::Rejected => "Not sent",
+        DraftStatus::DryRunSent => "Recorded only; not sent",
     }
 }
 
@@ -614,6 +762,123 @@ mod tests {
     use super::*;
     use crate::envoy::drafts::ReplyTo;
     use crate::ui::test_util::{click_label, text_center};
+
+    #[test]
+    fn status_labels_explain_every_request_and_draft_state() {
+        use crate::envoy::requests::Status;
+        for (status, label) in [
+            (Status::Queued, "Waiting for the Envoy"),
+            (Status::Drafted, "Draft ready for you"),
+            (Status::Approved, "Sending"),
+            (Status::Sent, "Sent, waiting for a reply"),
+            (Status::Answered, "Answered"),
+            (Status::Declined, "Declined by the Envoy"),
+            (Status::Failed, "Failed to send"),
+        ] {
+            assert_eq!(request_status_label(status), label);
+        }
+        for (status, label) in [
+            (DraftStatus::Pending, "Ready for you"),
+            (DraftStatus::Approved, "Sending"),
+            (DraftStatus::Sent, "Sent"),
+            (DraftStatus::Failed, "Failed to send"),
+            (DraftStatus::Rejected, "Not sent"),
+            (DraftStatus::DryRunSent, "Recorded only; not sent"),
+        ] {
+            assert_eq!(status_label(status), label);
+        }
+    }
+
+    #[test]
+    fn every_draft_state_can_be_deleted() {
+        for status in [
+            DraftStatus::Pending,
+            DraftStatus::Approved,
+            DraftStatus::Sent,
+            DraftStatus::Failed,
+            DraftStatus::Rejected,
+            DraftStatus::DryRunSent,
+        ] {
+            let mut draft = reply();
+            draft.status = status;
+            let id = draft.id.clone();
+            let mut h = Harness::new(vec![draft]);
+            assert_eq!(h.click("Delete"), Some(DraftAction::DeleteDraft(id)));
+        }
+    }
+
+    #[test]
+    fn every_request_state_can_be_deleted() {
+        use crate::envoy::requests::{Requests, Status, Thread};
+        let dir = tempfile::tempdir().unwrap();
+        let mut requests = Requests::load(dir.path().join("requests.json")).unwrap();
+        requests
+            .adopt(
+                Thread {
+                    conversation: "C123".into(),
+                    ts: "1.000001".into(),
+                },
+                "Fixture".into(),
+                0,
+            )
+            .unwrap();
+        for status in [
+            Status::Queued,
+            Status::Drafted,
+            Status::Approved,
+            Status::Sent,
+            Status::Answered,
+            Status::Declined,
+            Status::Failed,
+        ] {
+            let mut request = requests.all()[0].clone();
+            request.status = status;
+            let id = request.id.clone();
+            let mut h = Harness::new(vec![]);
+            h.panel.set_requests(&[request]);
+            assert_eq!(h.click("Delete"), Some(DraftAction::DeleteRequest(id)));
+        }
+    }
+
+    #[test]
+    fn clear_confirmation_uses_visible_items_and_keeps_later_arrivals() {
+        let mut h = Harness::new(vec![reply()]);
+        let mut hidden = reply();
+        hidden.id = "hidden".into();
+        hidden.status = DraftStatus::Failed;
+        h.drafts.push(hidden);
+        h.panel.set_cleanup(&BTreeSet::from(["hidden".into()]));
+        let event: crate::envoy::channel::InboundEvent = serde_json::from_value(serde_json::json!({"channel_kind":"slack","conversation":"C1","ts":"10.000001","user":"U1","user_name":"Avery","text":"Review?","kind":"agent_comms"})).unwrap();
+        h.inbox.insert(event.clone());
+        assert!(h.click("Clear inbox").is_none());
+        assert!(h.visible("Delete 2 items?"));
+        assert!(h.click("Cancel").is_none());
+        assert!(!h.visible("Yes, clear"));
+        h.click("Clear inbox");
+        let mut later = reply();
+        later.id = "later".into();
+        h.drafts.push(later);
+        h.frame(vec![]);
+        assert_eq!(
+            h.click("Yes, clear"),
+            Some(DraftAction::DeleteItems(PanelItems {
+                requests: vec![],
+                drafts: vec!["envoy-draft-1".into()],
+                events: vec![event.id()]
+            }))
+        );
+        h.click("Outbox");
+        h.click("Clear history");
+        h.frame(vec![]);
+        assert_eq!(
+            h.click("Yes, clear"),
+            Some(DraftAction::DeleteItems(PanelItems {
+                requests: vec![],
+                drafts: vec!["hidden".into()],
+                events: vec![]
+            }))
+        );
+    }
 
     fn reply() -> Draft {
         let mut draft = Draft::reply(
@@ -635,7 +900,7 @@ mod tests {
         let drafts = [reply()];
         let mut panel = DraftsPanel::default();
         panel.set_edit(&drafts[0].id, "Edited final text");
-        let action = click_label("Approve", |ui| {
+        let action = click_label("Send", |ui| {
             panel.show(ui, &drafts, &Inbox::default(), true, None)
         });
         assert_eq!(
@@ -647,7 +912,7 @@ mod tests {
         );
         panel.last_action_at = None;
         assert_eq!(
-            click_label("Reject", |ui| panel.show(
+            click_label("Don't send", |ui| panel.show(
                 ui,
                 &drafts,
                 &Inbox::default(),
@@ -685,7 +950,7 @@ mod tests {
             (output, action)
         };
         frame(0.0, vec![]);
-        let at = text_center(&frame(0.01, vec![]).0, "Approve").unwrap();
+        let at = text_center(&frame(0.01, vec![]).0, "Send").unwrap();
         let button = |pressed| egui::Event::PointerButton {
             pos: at,
             button: PointerButton::Primary,
@@ -716,7 +981,7 @@ mod tests {
         click_label("The King will start the dwarf for this task.", |ui| {
             DraftsPanel::default().show(ui, &drafts, &Inbox::default(), false, None)
         });
-        let action = click_label("Accept task", |ui| {
+        let action = click_label("Give to the King", |ui| {
             DraftsPanel::default().show(ui, &drafts, &Inbox::default(), true, None)
         });
         assert!(matches!(action, Some(DraftAction::Approve { text, .. }) if text == "Do the task"));
@@ -778,7 +1043,10 @@ mod tests {
         click_label("delivery failed", |ui| {
             panel.show(ui, &[draft.clone()], &Inbox::default(), true, None)
         });
-        assert_eq!(status_label(DraftStatus::DryRunSent), "Dry run recorded");
+        assert_eq!(
+            status_label(DraftStatus::DryRunSent),
+            "Recorded only; not sent"
+        );
     }
 
     struct Harness {
@@ -841,15 +1109,15 @@ mod tests {
     #[test]
     fn opening_selects_inbox_for_decisions_and_outbox_otherwise() {
         let mut h = Harness::new(vec![reply()]);
-        assert!(h.visible("Approve"));
+        assert!(h.visible("Send"));
         h.click("Outbox");
-        assert!(!h.visible("Approve"));
+        assert!(!h.visible("Send"));
         h.panel.open(&h.drafts);
-        assert!(h.visible("Approve"));
+        assert!(h.visible("Send"));
         h.drafts[0].status = DraftStatus::Sent;
         h.panel.open(&h.drafts);
         assert!(h.visible("Decisions (1)"));
-        assert!(!h.visible("Approve"));
+        assert!(!h.visible("Send"));
         let mut empty = Harness::new(vec![]);
         assert!(empty.visible("Decisions (0)"));
     }
@@ -896,10 +1164,7 @@ mod tests {
         h.panel.set_requests(requests.all());
         let claim = format!("says {} asked: \"Send the review\"", crate::user::name());
         assert!(h.visible(&claim));
-        assert!(matches!(
-            h.click("Approve"),
-            Some(DraftAction::Approve { .. })
-        ));
+        assert!(matches!(h.click("Send"), Some(DraftAction::Approve { .. })));
         h.drafts[0].status = DraftStatus::Sent;
         h.drafts[0].approved_at = Some(1_000);
         h.drafts[0].approved_by = Some(crate::user::name());
@@ -949,7 +1214,7 @@ mod tests {
         assert!(h.visible("Review abc012def at 12:34"));
         assert!(h.visible("Why: Unblock review"));
         assert_eq!(
-            h.click("Cancel"),
+            h.click("Don't send"),
             Some(DraftAction::Reject("draft-1".into()))
         );
     }
@@ -972,9 +1237,12 @@ mod tests {
         let id = requests.all()[0].id.clone();
         let mut h = Harness::new(vec![]);
         h.panel.set_requests(requests.all());
-        assert!(h.visible("Orphan thread"));
-        assert_eq!(h.click("Keep"), Some(DraftAction::Keep(id.clone())));
-        assert_eq!(h.click("Close"), Some(DraftAction::Settle(id.clone())));
+        assert!(h.visible("No dwarf owns this thread"));
+        assert_eq!(
+            h.click("Keep watching"),
+            Some(DraftAction::Keep(id.clone()))
+        );
+        assert_eq!(h.click("Mark done"), Some(DraftAction::Settle(id.clone())));
         requests
             .change(&id, |r| {
                 r.settled = true;
@@ -1040,7 +1308,7 @@ mod tests {
             });
             assert!(h.frame(events.into()).1.is_none());
         }
-        let at = text_center(&h.frame(vec![]).0, "Accept").unwrap();
+        let at = text_center(&h.frame(vec![]).0, "Yes, route here").unwrap();
         let button = |pressed| egui::Event::PointerButton {
             pos: at,
             button: PointerButton::Primary,
@@ -1060,7 +1328,7 @@ mod tests {
             "a replacement proposal must not inherit the previous pointer press"
         );
         assert_eq!(
-            h.click("Accept"),
+            h.click("Yes, route here"),
             Some(DraftAction::Binding {
                 id: id.clone(),
                 proposal_id: 2,
@@ -1068,7 +1336,7 @@ mod tests {
             })
         );
         assert_eq!(
-            h.click("Reject"),
+            h.click("No"),
             Some(DraftAction::Binding {
                 id,
                 proposal_id: 2,
@@ -1080,19 +1348,16 @@ mod tests {
     #[test]
     fn failed_delivery_stays_in_inbox_until_dismissed_and_remains_in_outbox() {
         let mut h = Harness::new(vec![reply()]);
-        assert!(matches!(
-            h.click("Approve"),
-            Some(DraftAction::Approve { .. })
-        ));
+        assert!(matches!(h.click("Send"), Some(DraftAction::Approve { .. })));
         h.drafts[0].status = DraftStatus::Failed;
         h.drafts[0].error = Some("Network unavailable".into());
         h.panel.result(&h.drafts[0].id, Ok(()));
         assert!(h.visible("Network unavailable"));
-        assert!(!h.visible("Approve"));
+        assert!(!h.visible("Send"));
         h.panel.open(&h.drafts);
         assert!(h.visible("Network unavailable"));
         assert_eq!(
-            h.click("Dismiss"),
+            h.click("Hide"),
             Some(DraftAction::DismissDraft(h.drafts[0].id.clone()))
         );
         h.panel
@@ -1117,16 +1382,16 @@ mod tests {
         );
         task.id = "task-1".into();
         let mut h = Harness::new(vec![task]);
-        assert!(h.visible("Dry run: accepting records this task; it is not sent to the King."));
+        assert!(h.visible("Dry run: this records the task without sending it to the King."));
         assert!(matches!(
-            h.click("Accept task"),
+            h.click("Give to the King"),
             Some(DraftAction::Approve { .. })
         ));
         h.drafts[0].status = DraftStatus::DryRunSent;
         h.panel.result("task-1", Ok(()));
         assert!(h.visible("Task recorded in dry run; not sent to the King."));
         assert_eq!(
-            h.click("Dismiss"),
+            h.click("Hide"),
             Some(DraftAction::DismissDraft("task-1".into()))
         );
         h.panel.set_cleanup(&BTreeSet::from(["task-1".into()]));
@@ -1200,8 +1465,8 @@ mod tests {
         );
         assert!(!h.visible("Private second line"));
         assert!(h.visible("Open Slack message"));
-        assert!(!h.visible("Approve"));
-        assert!(!h.visible("Accept task"));
+        assert!(!h.visible("Send"));
+        assert!(!h.visible("Give to the King"));
     }
 
     #[test]
@@ -1215,16 +1480,10 @@ mod tests {
             .unwrap();
         h.inbox.insert(event.clone());
         h.click("Inbox");
-        assert_eq!(
-            h.click("Clear handled / stale"),
-            Some(DraftAction::ClearHandled)
-        );
+        assert_eq!(h.click("Hide finished"), Some(DraftAction::ClearHandled));
         h.click("Recent messages");
         assert!(h.visible("Queued event"));
-        assert_eq!(
-            h.click("Dismiss"),
-            Some(DraftAction::DismissEvent(event.id()))
-        );
+        assert_eq!(h.click("Hide"), Some(DraftAction::DismissEvent(event.id())));
         h.inbox.resolve([event.id()]);
         assert!(!h.visible("Queued event"));
     }

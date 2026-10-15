@@ -354,6 +354,8 @@ impl AppEnvoy {
     }
 
     pub(super) fn reconcile_requests(&mut self) -> Result<(), String> {
+        self.finish_request_deletions()?;
+        self.flush_event_deletions()?;
         if let (Some(requests), Some(drafts)) = (&mut self.requests, &self.drafts) {
             requests.reconcile(drafts.drafts())?;
         }
@@ -385,6 +387,13 @@ impl AppEnvoy {
                 .iter()
                 .filter(|r| r.settled && r.close_requested && r.adopted_ms.is_none())
                 .filter_map(|r| r.thread.clone())
+                .chain(
+                    self.requests
+                        .as_ref()
+                        .into_iter()
+                        .flat_map(|s| s.deletions())
+                        .filter_map(|d| d.thread.clone()),
+                )
                 .filter(|thread| !self.borrowed_thread(thread))
                 .filter(|thread| {
                     !self
@@ -452,8 +461,13 @@ impl AppEnvoy {
     pub(super) fn record_replies(&mut self, inbox: &Inbox) -> Result<(), String> {
         let mut keys = Vec::new();
         for reply in &inbox.pending_replies {
-            self.requests_mut()?
-                .reply(&reply.request_id, &reply.event)?;
+            if self.requests_mut()?.get(&reply.request_id).is_ok()
+                && !self.cleanup.deleted_events.contains(&reply.event.id())
+                && !inbox.is_deleted(&reply.event.id())
+            {
+                self.requests_mut()?
+                    .reply(&reply.request_id, &reply.event)?;
+            }
             keys.push(reply.key());
         }
         if !keys.is_empty() {
@@ -539,19 +553,29 @@ impl AppEnvoy {
         if self.settings.dry_run || self.dispatch_blocked {
             return None;
         }
-        let record = self.requests.as_ref()?.get(request).ok()?;
-        record.bound_requester()?;
-        let reply = record
-            .deliveries
-            .iter()
-            .find(|d| d.id == delivery && !d.delivered)?;
-        if reply
-            .event
-            .as_ref()
-            .is_some_and(|event| !record.accepts_reply(event))
-        {
-            return None;
-        }
+        let store = self.requests.as_ref()?;
+        let reply = if let Ok(record) = store.get(request) {
+            record.bound_requester()?;
+            let reply = record
+                .deliveries
+                .iter()
+                .find(|d| d.id == delivery && !d.delivered)?;
+            if reply
+                .event
+                .as_ref()
+                .is_some_and(|event| !record.accepts_reply(event))
+            {
+                return None;
+            }
+            reply
+        } else {
+            let deletion = store.deletions().iter().find(|d| d.id == request)?;
+            deletion.requester.as_ref()?;
+            if deletion.delivery.delivered || deletion.delivery.id != delivery {
+                return None;
+            }
+            &deletion.delivery
+        };
         Some((
             Action::Send {
                 handle: target.into(),
@@ -583,6 +607,9 @@ impl AppEnvoy {
                 let mut result = Ok(());
                 for (id, turn, from) in turns {
                     result = result.and_then(|()| {
+                        if self.requests_mut()?.get(&id).is_err() {
+                            return Ok(());
+                        }
                         self.requests_mut()?.change(&id, |r| {
                             r.turns.iter_mut().find(|t| t.id == turn).unwrap().forwarded = true;
                             Ok(())
@@ -602,6 +629,15 @@ impl AppEnvoy {
                 target,
             } => {
                 let result = self.requests_mut().and_then(|s| {
+                    if s.get(&request).is_err() {
+                        return s.change_deletions(|records| {
+                            if let Some(record) = records.iter_mut().find(|r| r.id == request)
+                                && record.delivery.id == delivery
+                            {
+                                record.delivery.delivered = true;
+                            }
+                        });
+                    }
                     s.change(&request, |r| {
                         let d = r
                             .deliveries
@@ -720,6 +756,15 @@ impl StrongholdApp {
                     .filter(|d| !d.delivered)
                     .map(move |d| (r.id.clone(), r.bound_requester().cloned(), d.clone()))
             })
+            .chain(
+                self.envoy_core
+                    .requests
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(|s| s.deletions())
+                    .filter(|d| !d.delivery.delivered)
+                    .map(|d| (d.id.clone(), d.requester.clone(), d.delivery.clone())),
+            )
             .collect();
         for (request, requester, delivery) in pending {
             let in_flight = self.envoy_core.gateway_actions.values().any(|action| {
@@ -738,6 +783,15 @@ impl StrongholdApp {
                     continue;
                 }
                 let result = self.envoy_core.requests_mut().and_then(|s| {
+                    if s.get(&request).is_err() {
+                        return s.change_deletions(|records| {
+                            if let Some(record) = records.iter_mut().find(|r| r.id == request) {
+                                record.delivery.inbox = target.is_none();
+                                record.delivery.dry_run = dry_run;
+                                record.delivery.delivered = dry_run;
+                            }
+                        });
+                    }
                     s.change(&request, |r| {
                         let d = r
                             .deliveries
