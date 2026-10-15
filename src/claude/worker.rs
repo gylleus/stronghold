@@ -48,6 +48,17 @@ pub struct ClaudeData {
 }
 
 impl ClaudeData {
+    /// The conversation file already mapped to this terminal, for either agent provider.
+    pub fn conversation_path(&self, handle: &str) -> Option<&std::path::Path> {
+        if let Some(codex) = self.codex.get(handle) {
+            return Some(&codex.rollout.rollout.path);
+        }
+        self.session_by_handle
+            .get(handle)?
+            .session()
+            .map(|s| s.transcript_path.as_path())
+    }
+
     pub fn subagent(&self, session_id: &str, agent_id: &str) -> Option<&SubagentInfo> {
         self.subagents
             .get(session_id)?
@@ -605,6 +616,44 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn codex_mapping_selects_a_conversation_and_worker_reads_it() {
+        let tree = Tree::new();
+        let mut config = config(&tree);
+        config.codex_sessions_root = tree.root().join("codex");
+        let now = wall_clock_ms();
+        let path = crate::codex::rollouts::tests::write_rollout(
+            &config.codex_sessions_root,
+            "2026/10/15",
+            "codex-chat",
+            CWD,
+            json!("cli"),
+            now,
+        );
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(file, "{}", json!({"type":"response_item", "payload":{"type":"message", "role":"assistant", "content":[{"type":"output_text", "text":"Codex reply"}]}})).unwrap();
+        drop(file);
+        let worker = ClaudeWorker::spawn_with(config, None);
+        worker.send_terminals(vec![crate::codex::rollouts::tests::codex_terminal(
+            "codex", CWD, now,
+        )]);
+        let data = wait_for(|| worker.latest().filter(|d| d.codex.contains_key("codex")));
+        assert_eq!(data.conversation_path("codex"), Some(path.as_path()));
+        assert!(data.conversation_path("unmapped").is_none());
+        worker.watch_transcript(data.conversation_path("codex").map(PathBuf::from));
+        let chunks = wait_for(|| Some(worker.history_chunks()).filter(|c| !c.is_empty()));
+        assert_eq!(texts(&chunks), vec!["Codex reply"]);
+        let claude = ClaudeData {
+            session_by_handle: [("claude".into(), SessionMatch::Unique(info("/claude.jsonl")))]
+                .into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            claude.conversation_path("claude"),
+            Some(std::path::Path::new("/claude.jsonl"))
+        );
     }
 
     #[test]

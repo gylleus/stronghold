@@ -279,7 +279,7 @@ pub struct PanelInput<'a> {
     /// The node's row in `terminal list`, if live.
     pub terminal: Option<&'a Terminal>,
     /// The agent's conversation read from its session transcript, when it has one (Claude
-    /// agents mapped to a session).
+    /// or Codex agents mapped to a session).
     pub conversation: Option<&'a mut TranscriptView>,
     /// Whether a node id names a node in the current snapshot (only those become links).
     pub is_node: &'a dyn Fn(&NodeId) -> bool,
