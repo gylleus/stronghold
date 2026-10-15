@@ -165,12 +165,7 @@ impl WorldArt {
         self.outline = outline;
         if self.palette != palette {
             self.palette = palette.to_owned();
-            self.mapper = pixel::BUNDLED
-                .iter()
-                .find(|(n, _)| *n == palette)
-                .map(|(_, json)| {
-                    Mapper::new(&pixel::Palette::from_lospec(json).expect("bundled palette"))
-                });
+            self.mapper = Mapper::selection(palette);
         }
         // Retain all four animation frames, but release old sizes/palettes after resizing.
         self.textures.retain(|k, c| {
@@ -1388,7 +1383,17 @@ mod tests {
 
     #[test]
     fn small_palettes_keep_ink_walls_and_rock_separate() {
-        for (name, _) in pixel::BUNDLED {
+        let custom = crate::ui::dwarf::palettes::Imported::from_json(
+            "ice-cream-gb",
+            include_str!("../../../docs/assets/tests/custom-palettes/ice-cream-gb.json"),
+        )
+        .unwrap()
+        .selection();
+        for name in pixel::BUNDLED
+            .iter()
+            .map(|(name, _)| *name)
+            .chain([custom.as_str()])
+        {
             let mut world = WorldArt::default();
             world.begin_frame(name, Outline::Fine);
             let mut ink = ColorImage::filled([1, 1], INK);

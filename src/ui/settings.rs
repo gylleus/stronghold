@@ -123,6 +123,7 @@ pub struct SettingsPane {
     envoy_draft: envoy::EnvoyDraft,
     /// The General section's name field.
     user_draft: String,
+    palette_editor: art::PaletteEditor,
     /// "Whip all stalled now" was clicked; see [`SettingsPane::take_whip_stalled`].
     whip_stalled: bool,
 }
@@ -150,6 +151,9 @@ impl SettingsPane {
             notify_draft: applied.notifications.clone(),
             envoy_draft: envoy::EnvoyDraft::new(&applied.envoy),
             user_draft: applied.user.name.clone().unwrap_or_default(),
+            palette_editor: art::PaletteEditor::load(
+                path.as_ref().map(|p| p.with_file_name("palettes.json")),
+            ),
             applied,
             path,
             message,
@@ -319,7 +323,7 @@ impl SettingsPane {
                 }
             }
             Section::Art => {
-                if let Some(next) = art::section(ui, &self.applied.art) {
+                if let Some(next) = self.palette_editor.section(ui, &self.applied.art) {
                     let mut settings = self.applied.clone();
                     settings.art = next;
                     self.commit(settings);

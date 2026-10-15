@@ -21,6 +21,7 @@
 //! K closes a synthetic dwarf with the King's tool throw; `--king-throw --shot out.png`
 //! captures its flight and impact.
 //! `--pixels farm|HEIGHT` and `--palette NAME` select dwarf rendering.
+//! `--import SLUG_OR_URL_OR_HEX` imports a real palette; `--palette-editor` shows the Art controls.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -78,7 +79,7 @@ fn main() -> eframe::Result {
             .position(|a| a == flag)
             .and_then(|i| args.get(i + 1).cloned())
     };
-    let art = ArtSettings {
+    let mut art = ArtSettings {
         pixels: match value("--pixels").as_deref() {
             None => Pixels::Farm,
             Some("farm") => Pixels::Farm,
@@ -92,6 +93,30 @@ fn main() -> eframe::Result {
             _ => panic!("--outline fine, regular or bold"),
         },
     };
+    let palette_cache = tempfile::tempdir().expect("preview palette cache");
+    let palette_path = palette_cache.path().join("palettes.json");
+    if let Some(input) = value("--import") {
+        use stronghold::ui::dwarf::palettes::{self, Input, Library};
+        let input = Input::parse(&input).expect("palette input");
+        let mut library = Library::default();
+        let palette = library.cached(&input).unwrap_or_else(|| match input {
+            Input::Lospec(slug) => palettes::fetch(&slug).expect("Lospec import"),
+            Input::Colors(_) => unreachable!(),
+        });
+        art.palette = palette.selection();
+        println!(
+            "Imported {} ({} colours) from {}",
+            palette.name,
+            palette.colors.len(),
+            palette.source
+        );
+        library.insert(palette);
+        library.save(&palette_path).expect("palette cache");
+    }
+    let palette_editor = args
+        .iter()
+        .any(|a| a == "--palette-editor")
+        .then(|| stronghold::ui::settings::art::PaletteEditor::load(Some(palette_path)));
     let dwarves = args
         .iter()
         .position(|a| a == "--dwarves")
@@ -100,6 +125,7 @@ fn main() -> eframe::Result {
         "farm",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default().with_inner_size(WINDOW),
+            persist_window: false,
             ..Default::default()
         },
         Box::new(move |cc| {
@@ -169,6 +195,9 @@ fn main() -> eframe::Result {
                     }
                     farm
                 },
+                art,
+                palette_editor,
+                _palette_cache: palette_cache,
                 shot,
                 king_throw: args.iter().any(|a| a == "--king-throw"),
                 captures: Vec::new(),
@@ -187,6 +216,9 @@ fn main() -> eframe::Result {
 }
 
 struct Demo {
+    art: ArtSettings,
+    palette_editor: Option<stronghold::ui::settings::art::PaletteEditor>,
+    _palette_cache: tempfile::TempDir,
     snapshot: ClanSnapshot,
     clan: ClanView,
     farm: FarmView,
@@ -387,6 +419,9 @@ impl Demo {
 }
 
 impl eframe::App for Demo {
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let receipt = self
             .receipt_at_ms
@@ -413,6 +448,17 @@ impl eframe::App for Demo {
                     self.clan.click_node(id, false);
                 }
             });
+        if let Some(editor) = &mut self.palette_editor {
+            egui::Window::new("Settings · Art")
+                .fixed_pos(egui::pos2(16.0, 16.0))
+                .default_width(550.0)
+                .show(ui.ctx(), |ui| {
+                    if let Some(art) = editor.section(ui, &self.art) {
+                        self.art = art;
+                        self.farm.set_art(&self.art);
+                    }
+                });
+        }
         if self.shot.is_none() {
             if self.flipped_at.elapsed() >= FLIP_EVERY {
                 self.flip();
