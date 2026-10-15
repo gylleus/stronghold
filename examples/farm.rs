@@ -6,7 +6,8 @@
 //! `--outline fine|regular|bold` chooses ink width.
 //! `--scrying` shows the working rune priest; `--stopped` darkens the rune stone.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
-//! terminals in the resting area; `--dwarves N` keeps only the first N agents.
+//! terminals in the resting area; `--parked-count N` sets an exact sleeping crowd.
+//! `--dwarves N` keeps only the first N agents.
 //! `--workspace-counts 1,3,9` previews uneven workspace groups; `--size 600x800` resizes the view.
 //! `--lorekeeper` adds the librarian; `--lorekeeper-activity reading|writing|idle`
 //! selects its activity.
@@ -78,12 +79,20 @@ fn main() -> eframe::Result {
         .position(|a| a == "--heaps")
         .map(|i| args[i + 1].parse::<usize>().expect("a number of heaps"));
     let hammer = args.iter().any(|a| a == "--hammer").then(sweep_marker);
-    let parked = args.iter().any(|a| a == "--parked");
     let value = |flag: &str| {
         args.iter()
             .position(|a| a == flag)
             .and_then(|i| args.get(i + 1).cloned())
     };
+    let parked = value("--parked-count")
+        .map(|n| n.parse::<usize>().expect("a number of parked dwarves"))
+        .unwrap_or_else(|| {
+            if args.iter().any(|a| a == "--parked") {
+                3
+            } else {
+                0
+            }
+        });
     let mut art = ArtSettings {
         pixels: match value("--pixels").as_deref() {
             None => Pixels::Farm,
@@ -191,10 +200,11 @@ fn main() -> eframe::Result {
             if let Some(n) = dwarves {
                 keep_dwarves(&mut snapshot, n);
             }
-            if parked {
-                for name in ["sleepy", "dozy", "napper"] {
+            if parked > 0 {
+                for i in 0..parked {
+                    let name = format!("sleeper-{}", i + 1);
                     let mut n = node(
-                        name,
+                        &name,
                         NodeKind::Terminal,
                         None,
                         NodeState::Idle,

@@ -60,6 +60,13 @@ pub enum Prop {
     Treasure(u8),
     Bunk,
     Blanket,
+    Hearth,
+    Barrel,
+    Mug,
+    Rug,
+    Lantern,
+    RestDoor,
+    RestFloor,
     RuneStone,
     CrackedStone,
     ReceivingStone,
@@ -101,6 +108,13 @@ impl Prop {
             Self::Treasure(_) => [18, 14],
             Self::Bunk => [24, 12],
             Self::Blanket => [12, 8],
+            Self::Hearth => [28, 32],
+            Self::Barrel => [16, 20],
+            Self::Mug => [9, 8],
+            Self::Rug => [36, 11],
+            Self::Lantern => [10, 16],
+            Self::RestDoor => [10, 19],
+            Self::RestFloor => [32, 2],
             Self::RuneStone | Self::CrackedStone | Self::ReceivingStone => [30, 43],
             Self::Basin | Self::ScryingBasin => [28, 24],
             Self::Tablets => [17, 25],
@@ -116,6 +130,7 @@ impl Prop {
         match self {
             Self::Portal => (now_s * 4.0).floor().rem_euclid(PORTAL_PHASES as f64) as u8,
             Self::MineCart
+            | Self::Hearth
             | Self::Torch
             | Self::Brazier
             | Self::Entrance
@@ -435,7 +450,7 @@ fn timber(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32) {
         c.detail(x, yy, w, 1.0, IRON);
     }
 }
-fn flame(c: &mut Canvas, x: f32, y: f32, frame: u8, s: f32) {
+pub(super) fn flame(c: &mut Canvas, x: f32, y: f32, frame: u8, s: f32) {
     let lean = [0.0, 1.0, -1.0, 1.5][frame as usize % 4];
     let p = |q: &[(f32, f32)]| {
         q.iter()
@@ -503,6 +518,13 @@ fn draw(c: &mut Canvas, prop: Prop, frame: u8) {
         Prop::CleanupHammer => unreachable!("hammer uses its generated sprite"),
         Prop::Rubble(health, seed) => super::rubble::draw(c, health, seed),
         Prop::Bookcase | Prop::ArchiveCabinet | Prop::Lectern => super::ledger::draw(c, prop),
+        Prop::Hearth
+        | Prop::Barrel
+        | Prop::Mug
+        | Prop::Rug
+        | Prop::Lantern
+        | Prop::RestDoor
+        | Prop::RestFloor => super::resting::draw(c, prop, frame),
         Prop::Nature(d) => super::nature::draw(c, d),
         Prop::Peaks => {
             // Matching edge heights make the distant range repeat without a seam.
@@ -1265,6 +1287,13 @@ mod tests {
             Prop::Chest,
             Prop::Bunk,
             Prop::Blanket,
+            Prop::Hearth,
+            Prop::Barrel,
+            Prop::Mug,
+            Prop::Rug,
+            Prop::Lantern,
+            Prop::RestDoor,
+            Prop::RestFloor,
             Prop::RuneStone,
             Prop::CrackedStone,
             Prop::ReceivingStone,
@@ -1364,6 +1393,7 @@ mod tests {
             let active = matches!(
                 prop,
                 Prop::MineCart
+                    | Prop::Hearth
                     | Prop::Portal
                     | Prop::Entrance
                     | Prop::Torch
@@ -1378,6 +1408,71 @@ mod tests {
                 active,
                 "{prop:?}"
             );
+        }
+    }
+
+    #[test]
+    fn rest_furniture_uses_custom_palette_and_reuses_four_fire_frames() {
+        let custom = crate::ui::dwarf::palettes::Imported::from_json(
+            "endesga-16",
+            include_str!("../../../docs/assets/tests/custom-palettes/endesga-16.json"),
+        )
+        .unwrap()
+        .selection();
+        let palette = crate::ui::dwarf::palettes::resolve(&custom).unwrap();
+        let ctx = egui::Context::default();
+        let mut world = WorldArt::default();
+        for tick in 0..20 {
+            world.begin_frame(&custom, Outline::Bold);
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                for prop in [
+                    Prop::Hearth,
+                    Prop::Barrel,
+                    Prop::Mug,
+                    Prop::Rug,
+                    Prop::Lantern,
+                    Prop::RestDoor,
+                    Prop::RestFloor,
+                ] {
+                    let [w, h] = prop.size().map(|n| n as f32);
+                    world.paint(
+                        ui.painter(),
+                        prop,
+                        Rect::from_min_size(pos2(10.0, 10.0), vec2(w, h)),
+                        1.0,
+                        prop.frame(tick as f64 / 6.0),
+                        1.0,
+                    );
+                }
+            });
+            for cached in world.textures.values() {
+                if let Some(deltas) = output.textures_delta.set.get(&cached.texture.id()) {
+                    for delta in deltas {
+                        let egui::ImageData::Color(image) = &delta.image;
+                        assert_eq!(delta.options, TextureOptions::NEAREST);
+                        assert!(
+                            image
+                                .pixels
+                                .iter()
+                                .filter(|p| p.a() > 0)
+                                .all(|p| palette.colors.contains(p))
+                        );
+                    }
+                }
+            }
+            assert!(
+                world.textures.len() <= 10,
+                "only four hearth frames and six static props"
+            );
+            if tick >= 4 {
+                for cached in world.textures.values() {
+                    assert!(
+                        !output.textures_delta.set.contains_key(&cached.texture.id()),
+                        "idle animation must reuse its uploaded textures"
+                    );
+                }
+            }
+            output.textures_delta.clear();
         }
     }
 

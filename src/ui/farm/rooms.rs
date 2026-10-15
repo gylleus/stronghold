@@ -8,7 +8,8 @@ use eframe::egui::Vec2;
 use serde::{Deserialize, Serialize};
 
 use super::layout::{
-    CELL, Crowd, LADDER_GAP, SLOT, TunnelKey, band, chamber_per_row, pack, rows_height,
+    CELL, Crowd, LADDER_GAP, SLOT, TunnelKey, band, chamber_per_row, pack, room_rows_height,
+    rows_height,
 };
 
 /// Dwarf slots a room is dug for beyond its dwarves, when the view has the room.
@@ -153,9 +154,18 @@ impl Ground {
         chamber_per_row(self.chamber_w(span) - self.a, self.a)
     }
 
+    pub fn room_per_row(&self, span: usize, resting: bool) -> usize {
+        if resting {
+            let width = self.chamber_w(span);
+            chamber_per_row(width - super::resting::alcove(width, self.a), self.a)
+        } else {
+            self.per_row(span)
+        }
+    }
+
     /// The most rows a level's band has the height for.
-    pub fn max_rows(&self, level: usize) -> usize {
-        max_rows(self.heights[level], self.a)
+    pub fn max_rows(&self, level: usize, resting: bool) -> usize {
+        max_rows(self.heights[level], self.a, resting)
     }
 
     pub fn band_top(&self, level: usize) -> f32 {
@@ -163,9 +173,9 @@ impl Ground {
     }
 }
 
-fn max_rows(band_h: f32, a: f32) -> usize {
+fn max_rows(band_h: f32, a: f32, resting: bool) -> usize {
     let mut rows = 0;
-    while rows_height(rows + 1, a) <= band_h {
+    while room_rows_height(rows + 1, a, resting) <= band_h + 0.01 {
         rows += 1;
     }
     rows
@@ -208,9 +218,11 @@ fn fit(
     let cell_w = (size.x - LADDER_GAP * a).max(a) / COLUMNS as f32;
     let mut places: Vec<Place> = rooms
         .iter()
-        .map(|f| {
+        .enumerate()
+        .map(|(i, f)| {
             let slots = (f.iter().sum::<usize>() + spare).max(1);
-            let width = (LADDER_GAP + 0.6 + 3.0 + (slots - 1) as f32 * SLOT) * a;
+            let margin = if Some(i) == resting { 6.0 } else { 3.0 };
+            let width = (LADDER_GAP + 0.6 + margin + (slots - 1) as f32 * SLOT) * a;
             let span = ((width / cell_w).ceil() as usize).clamp(3, COLUMNS);
             Place {
                 level: 0,
@@ -224,9 +236,6 @@ fn fit(
     let mut used: Vec<usize> = Vec::new();
     for i in order {
         let p = &mut places[i];
-        if Some(i) == resting {
-            p.span = COLUMNS;
-        }
         let level = if Some(i) == resting {
             None
         } else {
@@ -247,8 +256,9 @@ fn fit(
         heights: vec![rows_height(1, a); levels],
     };
     let ground = Ground::new(size, &grid, crowd);
-    for (f, p) in rooms.iter().zip(&places) {
-        let height = rows_height(rows_for(f, spare, ground.per_row(p.span)), a);
+    for (i, (f, p)) in rooms.iter().zip(&places).enumerate() {
+        let per_row = ground.room_per_row(p.span, Some(i) == resting);
+        let height = room_rows_height(rows_for(f, spare, per_row), a, Some(i) == resting);
         grid.heights[p.level] = grid.heights[p.level].max(height);
     }
     (grid, places)
@@ -316,10 +326,13 @@ impl RoomPlan {
         let new_room = demand.rooms.iter().any(|(k, _)| self.room(k).is_none());
         let resized = self.fit.size != [size.x, size.y] || self.fit.envoy != demand.envoy;
         let consistent = grid.heights.len() == grid.levels
-            && self
-                .rooms
-                .iter()
-                .all(|r| r.level < grid.levels && r.span > 0 && r.col + r.span <= COLUMNS);
+            && self.rooms.iter().all(|r| {
+                r.level < grid.levels
+                    && r.span > 0
+                    && r.col + r.span <= COLUMNS
+                    && room_rows_height(r.rows, CELL * grid.px, r.key == TunnelKey::RestingArea)
+                        <= grid.heights[r.level] + 0.01
+            });
         if filled_in || new_room || resized || !consistent {
             return self.rearrange(demand, size);
         }
@@ -343,9 +356,9 @@ impl RoomPlan {
         }
         let ground = Ground::new(size, &grid, self.crowd(demand.envoy));
         for room in &mut self.rooms {
-            let max_rows = ground.max_rows(room.level);
+            let max_rows = ground.max_rows(room.level, room.key == TunnelKey::RestingArea);
             let footprints = demand.footprints(&room.key).unwrap_or_default();
-            let per_row = ground.per_row(room.span);
+            let per_row = ground.room_per_row(room.span, room.key == TunnelKey::RestingArea);
             let need = rows_for(footprints, 0, per_row);
             if need <= room.rows {
                 continue;
@@ -398,13 +411,14 @@ impl RoomPlan {
             .enumerate()
             .map(|(i, (key, footprints, empty_since_ms))| {
                 let Place { level, col, span } = places[i];
-                let max_rows = ground.max_rows(level);
+                let max_rows = ground.max_rows(level, key == TunnelKey::RestingArea);
+                let per_row = ground.room_per_row(span, key == TunnelKey::RestingArea);
                 Room {
                     key,
                     level,
                     col,
                     span,
-                    rows: target_rows(footprints, ground.per_row(span), max_rows),
+                    rows: target_rows(footprints, per_row, max_rows),
                     empty_since_ms,
                 }
             })

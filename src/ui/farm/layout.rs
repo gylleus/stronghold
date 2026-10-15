@@ -291,7 +291,7 @@ impl Scene {
                     pos2(t.chamber.right(), (top + 1.4 * a).min(t.chamber.bottom())),
                 );
                 rows.push(row);
-                top += ROW * a;
+                top += room_row_pitch(a, t.key == TunnelKey::RestingArea);
             }
         }
         rows
@@ -522,6 +522,23 @@ pub(super) fn chamber_per_row(width: f32, a: f32) -> usize {
 
 pub(super) fn rows_height(rows: usize, a: f32) -> f32 {
     (rows.max(1) as f32 - 1.0) * ROW * a + (1.4 + TAG) * a
+}
+
+/// Sleeping rows leave room for two-line name tags even at the minimum pixel scale.
+pub(super) fn room_row_pitch(a: f32, resting: bool) -> f32 {
+    ROW * a + rest_label_extra(a, resting)
+}
+
+fn rest_label_extra(a: f32, resting: bool) -> f32 {
+    if resting {
+        (32.0 - TAG * a).max(0.0)
+    } else {
+        0.0
+    }
+}
+
+pub(super) fn room_rows_height(rows: usize, a: f32, resting: bool) -> f32 {
+    rows_height(rows, a) + rows.max(1) as f32 * rest_label_extra(a, resting)
 }
 
 /// Chamber slots a dwarf takes with `trail` subagents behind it, each `sub` cells wide: its
@@ -973,15 +990,21 @@ fn layout_rooms(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             let key = &room.key;
             let nodes = dwarves_of.get(key).copied().unwrap_or(&none);
             let chamber_w = ground.chamber_w(room.span);
-            let per_row = ground.per_row(room.span);
+            let resting = *key == TunnelKey::RestingArea;
+            let per_row = ground.room_per_row(room.span, resting);
             let footprints: Vec<usize> = nodes
                 .iter()
                 .map(|n| footprint(trail_of(&n.id), sub / a))
                 .collect();
             let (places, rows) = pack(&footprints, per_row);
             // A full row spreads across the chamber.
+            let margin = if resting {
+                super::resting::alcove(chamber_w, a) + 2.0 * a
+            } else {
+                3.0 * a
+            };
             slot_ws.push(if per_row > 1 {
-                ((chamber_w - 3.0 * a) / (per_row - 1) as f32).max(SLOT * a)
+                ((chamber_w - margin) / (per_row - 1) as f32).max(SLOT * a)
             } else {
                 SLOT * a
             });
@@ -989,7 +1012,7 @@ fn layout_rooms(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             per_rows.push(per_row);
             packed.push((places, rows));
             let left = rect.left() + ground.chamber_left(room.col);
-            let height = rows_height(room.rows.max(rows), a);
+            let height = room_rows_height(room.rows.max(rows), a, resting);
             let tasks = match key {
                 TunnelKey::Run(id) => snapshot
                     .runs
@@ -1100,10 +1123,11 @@ fn layout_rooms(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     let mut beds = Vec::new();
     for (t, nodes) in room_nodes.iter().enumerate() {
         let chamber = tunnels[t].chamber;
+        let pitch = room_row_pitch(a, tunnels[t].key == TunnelKey::RestingArea);
         let slot = |row: usize, col: usize| {
             pos2(
                 chamber.right() - a - col as f32 * slot_ws[t],
-                chamber.top() + (0.9 + row as f32 * ROW) * a,
+                chamber.top() + 0.9 * a + row as f32 * pitch,
             )
         };
         if tunnels[t].key == TunnelKey::RestingArea {
@@ -1241,6 +1265,7 @@ fn dwarf(
         },
         facing_right: pose == Pose::Dig || node.kind == NodeKind::Envoy,
         tag: match node.kind {
+            _ if node.is_parked() => Some(node.label.clone()),
             NodeKind::Envoy => Some("Envoy".into()),
             NodeKind::Worker | NodeKind::Terminal | NodeKind::Lorekeeper => {
                 Some(node.label.clone())

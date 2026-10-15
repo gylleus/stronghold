@@ -1518,6 +1518,116 @@ fn only_the_resting_area_has_beds() {
     assert!(scene(&snapshot()).beds.is_empty());
 }
 
+#[test]
+fn rest_room_wraps_beds_clear_of_furniture_and_preserves_selection_and_waking() {
+    for size in [vec2(1280.0, 800.0), vec2(600.0, 800.0), vec2(420.0, 600.0)] {
+        for count in [1, 3, 12, 48, 120] {
+            let mut s = snapshot();
+            for i in 0..count {
+                let kind = [
+                    NodeKind::Terminal,
+                    NodeKind::Coordinator,
+                    NodeKind::Attendant,
+                ][i % 3];
+                let state = [
+                    NodeState::Working,
+                    NodeState::NeedsInput,
+                    NodeState::Stalled,
+                ][i % 3];
+                let mut n = node(&format!("sleeper-{i}"), kind, None, state);
+                n.parked_at_ms = Some(1);
+                s.nodes.push(n);
+            }
+            let mut plan = super::rooms::RoomPlan::default();
+            let rect = Rect::from_min_size(Pos2::ZERO, size);
+            let make_scene = |snapshot: &ClanSnapshot, plan: &mut super::rooms::RoomPlan| {
+                layout_in(
+                    &FarmInput {
+                        snapshot,
+                        hidden: &BTreeSet::new(),
+                        pr_ready: &HashSet::new(),
+                        building: &HashSet::new(),
+                        now_ms: 0,
+                    },
+                    rect,
+                    plan,
+                )
+            };
+            let before = make_scene(&s, &mut plan);
+            let room = before
+                .tunnels
+                .iter()
+                .find(|t| t.key == TunnelKey::RestingArea)
+                .unwrap();
+            let furniture_right =
+                room.chamber.left() + super::resting::alcove(room.chamber.width(), before.cell());
+            let placed: Vec<_> = before
+                .dwarves
+                .iter()
+                .map(|d| super::Placed {
+                    pos: d.pos,
+                    heading: None,
+                })
+                .collect();
+            assert_eq!(s.parked_nodes().count(), count);
+            assert_eq!(
+                before.beds.iter().filter(|b| b.sleeper.is_some()).count(),
+                count
+            );
+            for (i, bed) in before.beds.iter().enumerate() {
+                assert!(
+                    room.chamber.contains_rect(bed.rect),
+                    "{size:?}, {count}: {bed:?}"
+                );
+                assert!(
+                    bed.rect.left() >= furniture_right,
+                    "furniture touches a bed"
+                );
+                assert!(
+                    before.beds[i + 1..]
+                        .iter()
+                        .all(|b| !b.rect.intersects(bed.rect))
+                );
+                if let Some(id) = &bed.sleeper {
+                    let dwarf = before.dwarf(id).unwrap();
+                    assert_eq!(dwarf.tag.as_deref(), Some(id.as_str()));
+                    assert_eq!(super::hit(&before, &placed, dwarf.pos), Some(id.clone()));
+                    assert!(matches!(
+                        super::dwarf_action(dwarf, false, false, false),
+                        super::Action::Sleep
+                    ));
+                }
+            }
+            // Overflow stays in the room even beyond the viewport; the camera can pan to it.
+            for other in before
+                .tunnels
+                .iter()
+                .filter(|t| t.key != TunnelKey::RestingArea)
+            {
+                assert!(!room.chamber.intersects(other.chamber));
+            }
+            let sleeper = s
+                .nodes
+                .iter_mut()
+                .find(|n| n.id == id("sleeper-0"))
+                .unwrap();
+            sleeper.parked_at_ms = None;
+            let after = make_scene(&s, &mut plan);
+            assert_eq!(s.parked_nodes().count(), count - 1);
+            assert!(!matches!(
+                after.dwarf(&id("sleeper-0")).unwrap().spot,
+                Spot::Chamber(TunnelKey::RestingArea, _)
+            ));
+            assert!(
+                after
+                    .beds
+                    .iter()
+                    .all(|b| b.sleeper.as_ref() != Some(&id("sleeper-0")))
+            );
+        }
+    }
+}
+
 /// Many runs in a tall view keep separate horizontal bands and a clear shared ladder.
 #[test]
 fn many_tunnels_keep_separate_bands_in_a_tall_view() {

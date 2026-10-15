@@ -19,6 +19,7 @@ pub mod motion;
 pub mod nature;
 pub mod nav;
 mod pops;
+mod resting;
 pub mod rooms;
 #[cfg(test)]
 mod rooms_tests;
@@ -612,6 +613,7 @@ impl FarmView {
         }
         let pops = self.pops.frames(now_s);
         let effects = Effects {
+            still,
             ripples: &self.ripples,
             births: &self.births,
             king_busy: self.king_busy,
@@ -658,6 +660,7 @@ impl FarmView {
             &self.rubble,
             &heaps,
             self.ledger.count,
+            still,
         );
 
         self.envoy_receipt.repaint(ui.ctx());
@@ -1204,6 +1207,7 @@ fn paint_ground(
     rubble_view: &rubble::RubbleView,
     heaps: &rubble::Rubble,
     ledger_count: usize,
+    still: bool,
 ) {
     let px = scene.px;
     let a = scene.cell();
@@ -1291,7 +1295,9 @@ fn paint_ground(
     sprites.throne_hall(painter, scene.throne_hall, px);
     sprites.masonry(painter, scene.storage);
     for tunnel in &scene.tunnels {
-        if tunnel.key != TunnelKey::RestingArea {
+        if tunnel.key == TunnelKey::RestingArea {
+            resting::paint(painter, sprites, scene, tunnel, still);
+        } else {
             let prop = world::Prop::ToolRack;
             let size = prop.size().map(|n| n as f32 * px * 0.85);
             let dressing = Rect::from_min_size(
@@ -1320,6 +1326,11 @@ fn paint_ground(
         let width = tunnel.chamber.width() + 0.4 * a;
         let title = match tunnel.tasks {
             Some((done, total)) => format!("{done}/{total} · {}", tunnel.label),
+            None if tunnel.key == TunnelKey::RestingArea => format!(
+                "{} · {} parked",
+                tunnel.label,
+                scene.beds.iter().filter(|b| b.sleeper.is_some()).count()
+            ),
             None => tunnel.label.clone(),
         };
         let text = label(
@@ -1537,21 +1548,28 @@ fn paint_dwarves(
             let size = (16.0 * px).max(layout::CELL * (tpx - 1.0).max(1.0));
             let mut anchor = cell.center() + vec2(0.25 * dwarf.size, -tpx);
             if mark == layout::Mark::Sleep {
-                // The bubble floats, and z's drift up from it and fade.
-                anchor.y -= SLEEP_BOB[step % SLEEP_BOB.len()] * tpx;
+                // Bedside snores stay under the ceiling, clear of the room's sign.
+                let sleep_step = if effects.still { 0 } else { step };
+                if bed.is_none() {
+                    anchor.y -= SLEEP_BOB[sleep_step % SLEEP_BOB.len()] * tpx;
+                }
                 let offset = (dwarf.pos.x * 0.37 + dwarf.pos.y * 0.11).rem_euclid(1.0) as f64;
                 for i in 0..2 {
-                    let t = ((step as f64 / 10.0) + offset + i as f64 * 0.5).fract() as f32;
-                    let pos = anchor
-                        + vec2(
-                            0.35 * size + (t * 6.0).sin() * 2.0 * tpx,
-                            -size - t * 1.2 * size,
-                        );
+                    let t = ((sleep_step as f64 / 10.0) + offset + i as f64 * 0.5).fract() as f32;
+                    let rise = if bed.is_some() {
+                        0.35 + 0.35 * t
+                    } else {
+                        1.0 + 1.2 * t
+                    };
+                    let pos =
+                        anchor + vec2(0.35 * size + (t * 6.0).sin() * 2.0 * tpx, -rise * size);
                     let snapped = egui::pos2((pos.x / px).round() * px, (pos.y / px).round() * px);
                     sprites.snore(painter, snapped, tpx, (1.0 - t) * dwarf.alpha, palette);
                 }
             }
-            sprites.bubble(painter, anchor, size, mark, dwarf.alpha);
+            if bed.is_none() {
+                sprites.bubble(painter, anchor, size, mark, dwarf.alpha);
+            }
         }
         if let Some(name) = &dwarf.tag {
             let selected = selection.contains(&dwarf.id);
@@ -1633,6 +1651,9 @@ fn dwarf_action(dwarf: &layout::Dwarf, walking: bool, carrying: bool, king_busy:
         _ if walking && carrying => Action::Carry,
         _ if walking => Action::Walk,
         _ if carrying => Action::Hold,
+        Pose::Sleep if matches!(dwarf.spot, Spot::Chamber(TunnelKey::RestingArea, _)) => {
+            Action::Sleep
+        }
         _ if dwarf.state == NodeState::Stalled => Action::Wait,
         Pose::Read => Action::Read,
         Pose::Write => Action::Write,
@@ -1695,6 +1716,7 @@ const SLEEP_BOB: [f32; 4] = [0.0, 1.0, 2.0, 1.0];
 
 /// The effects running this frame, from [`FarmView`].
 struct Effects<'a> {
+    still: bool,
     ripples: &'a [Ripple],
     births: &'a [f64],
     king_busy: bool,
