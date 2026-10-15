@@ -65,6 +65,8 @@ flag, content hash).
 Review queue: an agent whose PR is ready for {user}'s review calls mark_pr_ready {pr_url} (right \
 after merge_ready); it only records in Stronghold, attributed to the agent's Orca terminal. \
 review_queue lists what is waiting, with CI, Ankra and ready-marker state.
+For daily standup notes, call standup (also a prompt): it gathers read-only evidence and \
+writing rules for a short Yesterday / Today / Blockers report in {user}’s voice.
 
 Reaching the King: tell_king {message, kind: info|question|blocked, url?} queues an agent \
 message in his chat, including offline. king_inbox lists recent messages. Use for the King's \
@@ -101,6 +103,7 @@ pub fn tool_definitions() -> Vec<Value> {
     all.extend(lifecycle::definitions());
     all.extend(envoy::definitions());
     all.extend(worktrees::definitions());
+    all.push(super::standup::definition());
     all
 }
 
@@ -278,7 +281,17 @@ impl<C: Control> McpServer<C> {
             "ping" => Ok(json!({})),
             "tools/list" => Ok(json!({ "tools": tool_definitions() })),
             "tools/call" => self.call_tool(params),
-            "prompts/list" => Ok(playbook::prompts_list()),
+            "prompts/list" => {
+                let mut list = playbook::prompts_list();
+                list["prompts"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(super::standup::prompt_definition());
+                Ok(list)
+            }
+            "prompts/get" if params["name"] == "standup" => {
+                super::standup::prompt(&mut self.control, &self.review, params)
+            }
             "prompts/get" => {
                 let pb = self.playbook();
                 playbook::prompts_get(pb, &mut self.control, params, self.fetch_log.as_deref())
@@ -354,6 +367,7 @@ impl<C: Control> McpServer<C> {
             })
             .or_else(|| crate::lorekeeper::mcp::call(&self.review.origin, name, &args))
             .or_else(|| worktrees::call(name, &args))
+            .or_else(|| super::standup::call(&mut self.control, &self.review, name, &args))
             .or_else(|| tools::call(&mut self.control, &self.review.origin, name, &args))
             .ok_or_else(|| (INVALID_PARAMS, format!("unknown tool: {name}")))?;
         let mut output = output;
