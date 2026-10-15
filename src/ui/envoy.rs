@@ -287,7 +287,9 @@ impl DraftsPanel {
                         egui::Frame::group(ui.style()).show(ui, |ui| {
                             ui.strong(format!(
                                 "{} · {} · {}",
-                                request.id, request_status_label(request.status), request.to
+                                request.id,
+                                request_status_label(request.status),
+                                request.to
                             ));
                             ui.label(format!(
                                 "Asked by {}",
@@ -339,41 +341,13 @@ impl DraftsPanel {
                                     ui.weak(format!("Terminal: {}", proposal.requester.handle()));
                                     slack_link(ui, Some(&proposal.preview.slack_link));
                                     ui.label(format!("Envoy reason: {}", proposal.reason));
-                                    ui.push_id(proposal.id, |ui| {
-                                        ui.horizontal(|ui| {
-                                            for (label, accept) in
-                                                [("Yes, route here", true), ("No", false)]
-                                            {
-                                                if deliberate_click(&ui.button(label).on_hover_text(if accept { "Send future replies to this dwarf" } else { "Keep replies here without routing them to this dwarf" })) {
-                                                    action = Some(DraftAction::Binding {
-                                                        id: request.id.clone(),
-                                                        proposal_id: proposal.id,
-                                                        accept,
-                                                    });
-                                                }
-                                            }
-                                        });
-                                    });
                                 }
                                 if request.bound_requester().is_none() && !request.orphan_kept {
                                     ui.strong("No dwarf owns this thread");
-                                    if ui.button("Keep watching").on_hover_text("Keep this thread in the Envoy inbox without assigning a dwarf").clicked() {
-                                        action = Some(DraftAction::Keep(request.id.clone()));
-                                    }
-                                }
-                                if ui.button("Hide").on_hover_text("Hide until something new happens in it").clicked() {
-                                    action = Some(DraftAction::DismissRequest(request.id.clone()));
-                                }
-                                if ui
-                                    .button("Mark done")
-                                    .on_hover_text("Stop watching this thread for replies")
-                                    .clicked()
-                                {
-                                    action = Some(DraftAction::Settle(request.id.clone()));
                                 }
                             }
-                            if delete_button(ui, ready, "Delete this request, its drafts, and its reply watch") {
-                                action = Some(DraftAction::DeleteRequest(request.id.clone()));
+                            if let Some(next) = request_actions(ui, request, inbox_tab, ready) {
+                                action = Some(next);
                             }
                         });
                     });
@@ -382,7 +356,9 @@ impl DraftsPanel {
                 if self.tab == Some(Tab::Inbox) {
                     let mut cards = 0;
                     for draft in drafts {
-                        if !items.drafts.contains(&draft.id) { continue; }
+                        if !items.drafts.contains(&draft.id) {
+                            continue;
+                        }
                         cards += 1;
                         ui.push_id(&draft.id, |ui| {
                             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -397,12 +373,22 @@ impl DraftsPanel {
                                     if let Some(error) = self.errors.get(&draft.id) {
                                         ui.colored_label(ui.visuals().error_fg_color, error);
                                     }
-                                    if ui.button("Hide").on_hover_text("Hide this item from the inbox").clicked() {
-                                        action = Some(DraftAction::DismissDraft(draft.id.clone()));
-                                    }
-                                }
-                                if delete_button(ui, ready, "Permanently delete this draft; cancel it if it has not been sent") {
-                                    action = Some(DraftAction::DeleteDraft(draft.id.clone()));
+                                    ui.horizontal_wrapped(|ui| {
+                                        if ui
+                                            .button("Hide")
+                                            .on_hover_text("Hide this item from the inbox")
+                                            .clicked()
+                                        {
+                                            action =
+                                                Some(DraftAction::DismissDraft(draft.id.clone()));
+                                        }
+                                        ui.add_space(12.0);
+                                        if delete_button(ui, ready, "Permanently delete this draft")
+                                        {
+                                            action =
+                                                Some(DraftAction::DeleteDraft(draft.id.clone()));
+                                        }
+                                    });
                                 }
                             });
                         });
@@ -431,8 +417,14 @@ impl DraftsPanel {
                             for draft in history {
                                 ui.push_id(&draft.id, |ui| {
                                     decided_card(ui, draft, inbox);
-                                    if let Some(error) = self.errors.get(&draft.id) { ui.colored_label(ui.visuals().error_fg_color, error); }
-                                    if delete_button(ui, ready, "Permanently delete this decision from history") {
+                                    if let Some(error) = self.errors.get(&draft.id) {
+                                        ui.colored_label(ui.visuals().error_fg_color, error);
+                                    }
+                                    if delete_button(
+                                        ui,
+                                        ready,
+                                        "Permanently delete this decision from history",
+                                    ) {
                                         action = Some(DraftAction::DeleteDraft(draft.id.clone()));
                                     }
                                     ui.separator();
@@ -516,7 +508,7 @@ impl DraftsPanel {
         } else {
             None
         };
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let approve = if draft.kind == DraftKind::TaskProposal {
                 "Give to the King"
             } else {
@@ -548,13 +540,92 @@ impl DraftsPanel {
                         "Don't send"
                     }),
                 )
-                .on_hover_text("Reject this draft and cancel any scheduled send");
+                .on_hover_text(if draft.kind == DraftKind::TaskProposal {
+                    "Keep this task from being sent to the King"
+                } else {
+                    "Do not send this message; cancel any scheduled send"
+                });
             if deliberate_click(&response) {
                 action = Some(DraftAction::Reject(draft.id.clone()));
+            }
+            ui.add_space(12.0);
+            if delete_button(
+                ui,
+                ready,
+                if draft.kind == DraftKind::TaskProposal {
+                    "Permanently delete this task proposal"
+                } else {
+                    "Permanently delete this draft and cancel any scheduled send"
+                },
+            ) {
+                action = Some(DraftAction::DeleteDraft(draft.id.clone()));
             }
         });
         action
     }
+}
+
+fn request_actions(
+    ui: &mut Ui,
+    request: &crate::envoy::requests::Request,
+    inbox_tab: bool,
+    ready: bool,
+) -> Option<DraftAction> {
+    let mut action = None;
+    ui.horizontal_wrapped(|ui| {
+        if inbox_tab {
+            if let Some(proposal) = &request.binding_proposal {
+                ui.push_id(proposal.id, |ui| {
+                    for (label, accept) in [("Yes, route here", true), ("No", false)] {
+                        let hint = if accept {
+                            "Send future replies to this dwarf"
+                        } else {
+                            "Keep replies here without routing them to this dwarf"
+                        };
+                        if deliberate_click(&ui.button(label).on_hover_text(hint)) {
+                            action = Some(DraftAction::Binding {
+                                id: request.id.clone(),
+                                proposal_id: proposal.id,
+                                accept,
+                            });
+                        }
+                    }
+                });
+            }
+            if request.bound_requester().is_none()
+                && !request.orphan_kept
+                && ui
+                    .button("Keep watching")
+                    .on_hover_text("Keep this thread in the Envoy inbox without assigning a dwarf")
+                    .clicked()
+            {
+                action = Some(DraftAction::Keep(request.id.clone()));
+            }
+            if ui
+                .button("Hide")
+                .on_hover_text("Hide until something new happens in it")
+                .clicked()
+            {
+                action = Some(DraftAction::DismissRequest(request.id.clone()));
+            }
+            if ui
+                .button("Mark done")
+                .on_hover_text("Stop watching this thread for replies")
+                .clicked()
+            {
+                action = Some(DraftAction::Settle(request.id.clone()));
+            }
+            ui.add_space(12.0);
+        }
+        if delete_button(
+            ui,
+            ready,
+            "Delete this request, its drafts, and its reply watch",
+        ) {
+            action = Some(DraftAction::DeleteRequest(request.id.clone()));
+        }
+    });
+    action
 }
 
 fn decided_card(ui: &mut Ui, draft: &Draft, inbox: &Inbox) {
@@ -648,20 +719,23 @@ fn recent_messages(
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
                 ui.push_id(event.id(), |ui| {
-                    if ui
-                        .button("Hide")
-                        .on_hover_text("Hide this item from the inbox")
-                        .clicked()
-                    {
-                        action = Some(DraftAction::DismissEvent(event.id()));
-                    }
-                    if delete_button(
-                        ui,
-                        ready,
-                        "Permanently delete this message from the Envoy inbox",
-                    ) {
-                        action = Some(DraftAction::DeleteEvent(event.id()));
-                    }
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .button("Hide")
+                            .on_hover_text("Hide this item from the inbox")
+                            .clicked()
+                        {
+                            action = Some(DraftAction::DismissEvent(event.id()));
+                        }
+                        ui.add_space(12.0);
+                        if delete_button(
+                            ui,
+                            ready,
+                            "Permanently delete this message from the Envoy inbox",
+                        ) {
+                            action = Some(DraftAction::DeleteEvent(event.id()));
+                        }
+                    })
                 });
                 ui.separator();
             }
