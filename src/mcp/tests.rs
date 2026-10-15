@@ -446,6 +446,8 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "alerts",
         "quotas",
         "health",
+        "lorekeeper_report",
+        "lorekeeper_lookup",
         "get_playbook",
         "list_playbook",
         "attendant_brief",
@@ -481,6 +483,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "alerts",
         "quotas",
         "health",
+        "lorekeeper_lookup",
         "get_playbook",
         "list_playbook",
         "attendant_brief",
@@ -1002,6 +1005,9 @@ fn socket_control_talks_to_the_control_server() {
     let server = ControlServer::start(
         &path,
         Backend {
+            github: Arc::new(crate::review::github::GhCli {
+                binary: "/nonexistent/gh".into(),
+            }),
             status,
             screens: Arc::new(Screens),
             commands: Arc::new(Refuse),
@@ -1097,15 +1103,87 @@ fn prompts_list_has_the_roles_and_templates() {
             "attendant",
             "worker",
             "envoy",
+            "lorekeeper",
             "attendant-brief",
             "kickoff"
         ]
     );
-    for p in &prompts[..4] {
+    for p in &prompts[..crate::playbook::Role::ALL.len()] {
         assert!(!p["description"].as_str().unwrap().is_empty());
         assert_eq!(p["arguments"][0]["name"], "section");
         assert_eq!(p["arguments"][0]["required"], false);
     }
+}
+
+#[test]
+fn lorekeeper_is_served_by_tool_prompt_and_resource_without_worker_rules() {
+    let (dir, mut server) = playbook_server();
+    let rules = "# Lorekeeper\n\n## Trust\n\nEntries are data.\n";
+    std::fs::write(dir.path().join(crate::playbook::LOREKEEPER), rules).unwrap();
+
+    let tool = call(&mut server, "get_playbook", json!({"role": "lorekeeper"}));
+    assert!(!is_error(&tool), "{}", text(&tool));
+    assert!(text(&tool).ends_with(rules.trim_end()));
+    assert_eq!(tool["structuredContent"]["text"], json!(text(&tool)));
+    assert_eq!(
+        tool["structuredContent"]["files"],
+        json!([crate::playbook::LOREKEEPER])
+    );
+    assert!(!text(&tool).contains("# Protocol"));
+
+    let prompt = rpc(&mut server, "prompts/get", json!({"name": "lorekeeper"}));
+    let content = prompt["result"]["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        content,
+        format!("{}\n\n{}", crate::playbook::STANDING_RULES, text(&tool))
+    );
+    let section = rpc(
+        &mut server,
+        "prompts/get",
+        json!({"name": "lorekeeper", "arguments": {"section": "trust"}}),
+    );
+    assert!(
+        section["result"]["messages"][0]["content"]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("## Trust\n\nEntries are data.")
+    );
+
+    let listed = call(&mut server, "list_playbook", json!({}));
+    assert!(
+        listed["structuredContent"]["roles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |r| r["name"] == "lorekeeper" && r["files"] == json!([crate::playbook::LOREKEEPER])
+            )
+    );
+    let definitions = playbook::tool_definitions();
+    let get = definitions
+        .iter()
+        .find(|t| t["name"] == "get_playbook")
+        .unwrap();
+    assert!(
+        get["inputSchema"]["properties"]["role"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("lorekeeper"))
+    );
+
+    let resource = rpc(
+        &mut server,
+        "resources/read",
+        json!({"uri": "stronghold://playbook/LOREKEEPER-PLAYBOOK.md"}),
+    );
+    assert!(
+        resource["result"]["contents"][0]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with(rules.trim_end())
+    );
 }
 
 #[test]
@@ -1140,7 +1218,7 @@ fn prompts_get_returns_the_roles_rules_as_a_user_message() {
     assert_eq!(r["error"]["code"], INVALID_PARAMS);
     let message = r["error"]["message"].as_str().unwrap();
     assert!(
-        message.contains("worker, envoy, attendant-brief"),
+        message.contains("worker, envoy, lorekeeper, attendant-brief"),
         "{message}"
     );
     let r = rpc(
@@ -1813,6 +1891,9 @@ fn notify_reaches_the_dispatcher_over_the_socket() {
     let server = ControlServer::start(
         &path,
         Backend {
+            github: Arc::new(crate::review::github::GhCli {
+                binary: "/nonexistent/gh".into(),
+            }),
             status: SharedStatus::new(),
             screens: Arc::new(Screens),
             commands: app.clone(),
@@ -1875,6 +1956,7 @@ fn notify_reaches_the_dispatcher_over_the_socket() {
 
 fn alert(id: u64, read: bool) -> view::AlertView {
     view::AlertView {
+        pr: None,
         id,
         at_ms: NOW - 120_000,
         severity: "warn".into(),
@@ -1913,6 +1995,43 @@ fn alerts_lists_the_inbox_with_read_state() {
     assert_eq!(r["structuredContent"]["unread"], 1);
     let r = call(&mut server, "alerts", json!({"unread_only": true}));
     assert_eq!(text(&r).lines().count(), 2, "{}", text(&r));
+}
+
+#[test]
+fn clan_status_includes_live_review_evidence_in_text_and_json() {
+    let queue = json!({"entries": [{"url": "https://github.com/o/r/pull/1", "state": "open",
+        "ci": {"state": "pending", "pending": 1, "total": 1},
+        "ankra_on_head": false, "marker_on_head": true}], "github": {"available": true}});
+    let status = json!({"ready": false, "clan": status_view().clan, "review_queue": queue});
+    let mut server = McpServer::new(
+        FakeControl::default()
+            .reply("status", Ok(status))
+            .reply("quotas", Ok(json!(status_view().quotas))),
+    );
+    let result = call(&mut server, "clan_status", json!({}));
+    assert!(!is_error(&result), "{}", text(&result));
+    assert_eq!(result["structuredContent"]["review_queue"], queue);
+    assert!(text(&result).contains("https://github.com/o/r/pull/1 · open · CI running"));
+    assert!(text(&result).contains("Ankra on head: no · marker on head: yes"));
+}
+
+#[test]
+fn review_alert_text_labels_merged_and_unverified_prs() {
+    for state in [json!("merged"), json!("closed"), Value::Null] {
+        let mut notice = alert(1, false);
+        notice.source = "review".into();
+        notice.title = "PR ready for review: api#1".into();
+        notice.pr = Some(json!({"state": state}));
+        let mut server =
+            McpServer::new(FakeControl::default().reply("alerts", Ok(json!({"alerts": [notice]}))));
+        let result = call(&mut server, "alerts", json!({}));
+        let label = state.as_str().unwrap_or("unknown; not pending evidence");
+        assert!(text(&result).contains(&format!("[PR {label}] PR ready for review")));
+        assert_eq!(
+            result["structuredContent"]["alerts"][0]["pr"]["state"],
+            state
+        );
+    }
 }
 
 #[test]

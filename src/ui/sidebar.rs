@@ -18,8 +18,9 @@ const ALL_STATES: [NodeState; 6] = [
     NodeState::Done,
     NodeState::Failed,
 ];
-const ALL_KINDS: [NodeKind; 6] = [
+const ALL_KINDS: [NodeKind; 7] = [
     NodeKind::Envoy,
+    NodeKind::Lorekeeper,
     NodeKind::Coordinator,
     NodeKind::Attendant,
     NodeKind::Worker,
@@ -272,7 +273,7 @@ pub fn repo_groups(snapshot: &ClanSnapshot) -> Vec<RepoGroup> {
         let repo = index.node(&node.id).unwrap_or(NO_REPO);
         let group = entry(&mut out, repo);
         *group.states.entry(node.state).or_insert(0) += 1;
-        if node.kind == NodeKind::Terminal {
+        if matches!(node.kind, NodeKind::Terminal | NodeKind::Lorekeeper) {
             group.loose.push(LooseRow {
                 id: node.id.clone(),
                 label: node.label.clone(),

@@ -12,6 +12,7 @@ pub mod envoy;
 mod envoy_session;
 mod health;
 mod lifecycle;
+mod lorekeeper;
 mod notifications;
 mod palette;
 mod panes;
@@ -158,6 +159,7 @@ pub struct StrongholdApp {
     pub envoy_core: envoy::AppEnvoy,
     envoy_panel: ui::envoy::DraftsPanel,
     ledger_panel: ui::ledger::LedgerPane,
+    lorekeeper: lorekeeper::AppLorekeeper,
     /// Health checks for silent misconfigurations, and the badge showing them.
     health: health::AppHealth,
 }
@@ -263,6 +265,7 @@ impl StrongholdApp {
             envoy_core: envoy::AppEnvoy::start(ctx),
             envoy_panel: ui::envoy::DraftsPanel::default(),
             ledger_panel: ui::ledger::LedgerPane::default(),
+            lorekeeper: lorekeeper::AppLorekeeper::new(&crate::claude::hook::data_dir()),
             health: health::AppHealth::start(ctx),
         };
         app.talk_startup();
@@ -1001,8 +1004,10 @@ impl StrongholdApp {
         if self.worktrees.tick(worktrees, now_ms) {
             self.poller.send(PollerCommand::RefreshNow);
         }
+        self.worktrees
+            .tick_auto(*self.whip_window.worktree_settings(), now_ms);
         if !std::mem::take(&mut self.cleanup_in_farm) {
-            self.worktrees.hammer(ctx);
+            self.worktrees.hammer(ctx, self.whip_window.art());
         }
     }
 
@@ -1082,6 +1087,15 @@ impl eframe::App for StrongholdApp {
                 data.workers.len(),
                 data.errors.len()
             );
+            self.lorekeeper.session.poll();
+            self.lorekeeper.session.reload();
+            self.claude.watch_lorekeeper(
+                self.lorekeeper
+                    .session
+                    .observed_handle(&data.terminals)
+                    .zip(self.lorekeeper.session.saved.as_ref())
+                    .map(|(handle, saved)| (handle.to_owned(), saved.mode)),
+            );
             self.claude.send_terminals(data.terminals.clone());
             self.claude.watch_forwards(data.declared_coordinators());
             let mut data = data;
@@ -1100,6 +1114,7 @@ impl eframe::App for StrongholdApp {
                 }
             }
             self.envoy_session.reconcile(&data);
+            self.lorekeeper.session.reconcile(&data);
             for message in self.traffic.inbox.update(&data.inbox, now_ms()) {
                 self.traffic.push(message);
             }
@@ -1155,6 +1170,14 @@ impl eframe::App for StrongholdApp {
                 now,
             );
             snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_status());
+            let librarian = self.lorekeeper.session.observed_handle(&data.terminals);
+            snapshot.mark_lorekeeper(librarian);
+            snapshot.lorekeeper_activity = self
+                .claude_data
+                .as_ref()
+                .and_then(|c| c.lorekeeper_activity.as_ref())
+                .filter(|(handle, _)| Some(handle.as_str()) == librarian)
+                .map(|(_, activity)| *activity);
             self.asks.prune(data, self.claude_data.as_ref());
             snapshot.mark_waiting(&self.asks.waiting(data, self.claude_data.as_ref()));
             self.finished.prune(now, crate::model::RELEASED_FADE_MS);
@@ -1200,6 +1223,7 @@ impl eframe::App for StrongholdApp {
         self.poll_control(ctx);
         self.poll_review();
         self.poll_envoy();
+        self.poll_lorekeeper(ctx);
         self.poll_health();
         self.overlays_changed |= envoy_before != self.envoy_status();
         self.poll_whip_now();
@@ -1225,6 +1249,7 @@ impl eframe::App for StrongholdApp {
         let now_ms = now_ms();
         self.talk_ui(ui.ctx());
         self.dictation_frame(ui.ctx());
+        self.sync_voice_target(ui.ctx());
         self.search_palette(ui.ctx());
         self.keyboard(ui.ctx());
         let top_bar = egui::Panel::top("top_bar")
