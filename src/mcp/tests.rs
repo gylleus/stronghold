@@ -471,6 +471,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "envoy_propose_task",
         "envoy_note",
         "clean_worktrees",
+        "standup",
     ];
     assert_eq!(names, expected);
     let reads = [
@@ -487,6 +488,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "kickoff",
         "review_queue",
         "king_inbox",
+        "standup",
         "reach_out_status",
         "envoy_request",
         "envoy_inbox",
@@ -1098,7 +1100,8 @@ fn prompts_list_has_the_roles_and_templates() {
             "worker",
             "envoy",
             "attendant-brief",
-            "kickoff"
+            "kickoff",
+            "standup"
         ]
     );
     for p in &prompts[..4] {

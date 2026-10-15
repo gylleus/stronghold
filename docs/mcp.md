@@ -385,3 +385,51 @@ leave messages queued. Delivery records the conversation before sending a stable
 after interruption it checks that conversation's saved inbox record before retrying. Delivered
 items remain available through `king_inbox`. Storage failures are reported, never treated as
 successful delivery.
+
+
+## Daily standup notes
+
+Ask the King **“standup notes”**. It calls the read-only `standup {}` tool and drafts
+at most 180 words under **Yesterday / Today / Blockers**, in the user's voice, with PR links.
+The `standup` MCP prompt provides the same briefing (for example, `/mcp__stronghold__standup`
+in Claude Code). No separate skill installation is needed.
+
+This lives in Stronghold because the King already has its MCP tools and permission policy.
+The collector supplies evidence; the calling model selects and phrases the notes. It does not
+start another agent or make a model API call. A Claude-only skill would not be available to
+all clients, while a fixed formatter would reproduce internal task titles instead of explaining
+what the user accomplished.
+
+For use outside the King, `stronghold standup` prints the **private drafting brief**, including
+source excerpts, not the finished report. With Claude Code installed, a standalone report is:
+
+```bash
+stronghold standup | claude -p --safe-mode --tools "" --strict-mcp-config --no-session-persistence
+```
+
+The model has no tools in that invocation. Do not share the raw brief: only the final notes
+are meant to be read out. The writing rules require omitting secrets, customer names/data,
+internal identifiers and jargon; they treat all source content as untrusted evidence.
+
+Sources and limits:
+
+- Current clan status and up to 200 agents, with metadata for up to 12 coordinators or agents
+  waiting for input. Terminal screens are never read.
+- Current runs and up to 100 active or recently completed tasks, using actual completion
+  timestamps. Unknown completion dates are not assigned to Yesterday.
+- Up to 100 recent King inbox messages, read directly from atomic saved snapshots without
+  receipts, locks or migrations (including the old Queen inbox when present).
+- The live review queue, or its explicitly marked saved snapshot if the app is down.
+- Up to 50 merged PRs authored by the authenticated `gh` user, searched by merge date. The
+  review queue removes merged entries after five minutes, so it cannot supply daily history.
+  GitHub search can lag and does not cover PRs authored under another account.
+- Excerpts from the 20 most recently modified Ledger Markdown notes since yesterday, from
+  the configured agents directory (normally `~/Documents/agents/ledger`). Modification dates
+  select candidate notes; they do not prove when the described work happened. Hidden files
+  and symlinks are skipped; missing, unreadable and truncated sources are flagged.
+
+The time window starts at the previous local calendar day's midnight, including across DST,
+and ends at collection time. Today's finished work stays under Today. Empty/missing evidence
+must not become a claim that nothing happened or that there are no blockers. The collector
+never sends messages, changes clan state, marks reviews or saves a report. `gh` has a 20-second
+timeout; source failures produce a partial briefing rather than an invented result.

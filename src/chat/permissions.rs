@@ -27,6 +27,7 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "quotas",
     "review_queue",
     "king_inbox",
+    "standup",
     "get_playbook",
     "list_playbook",
     "attendant_brief",
