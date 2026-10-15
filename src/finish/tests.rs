@@ -112,6 +112,7 @@ fn outside_git_there_is_nothing_to_check() {
 
 fn finished(at_ms: i64) -> FinishedSession {
     FinishedSession {
+        kind: None,
         node_id: "term:t1".into(),
         handle: Some("t1".into()),
         label: "dwarf".into(),

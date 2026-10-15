@@ -45,10 +45,7 @@ impl TabViewer for Panes<'_> {
             }
             Pane::Notifications => self.app.notifications_pane(ui, now_ms),
             Pane::Envoy => self.app.envoy_pane(ui),
-            Pane::Ledger => self
-                .app
-                .ledger_panel
-                .show(ui, self.app.ledger.poll(), now_ms),
+            Pane::Ledger => self.app.lorekeeper_pane(ui, now_ms),
         }
     }
 
@@ -232,7 +229,11 @@ impl StrongholdApp {
                 self.farm.set_king_focused(self.shows_chat());
                 self.farm.set_envoy_health(self.envoy_status().health());
                 self.farm.set_envoy_pending(self.envoy_core.pending_count());
-                let sites = ui::farm::rubble::sites(&data.worktrees, &snapshot.nodes);
+                let sites = ui::farm::rubble::sites(
+                    &data.worktrees,
+                    &snapshot.nodes,
+                    self.worktrees.stale_plan(),
+                );
                 self.farm.set_rubble(sites, self.worktrees.cleanup_job());
                 self.farm.set_ledger(self.ledger.poll().clone());
                 let response = self.farm.show(ui, snapshot, &mut self.clan);

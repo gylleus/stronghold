@@ -10,8 +10,8 @@ pub fn definitions() -> Vec<Value> {
     let specs = [
         (
             "reach_out",
-            "Ask the Envoy to reach someone; replies arrive automatically. Use ask_user for {user}.",
-            json!({"to":string,"ask":string,"why":string,"thread":string,"request_id":string,"urgency":{"type":"string","enum":["normal","soon","blocking"]},"expect_reply":{"type":"boolean"}}),
+            "Ask the Envoy to reach someone; replies arrive automatically. When {user} told you to send, quote their words in karl_asked (at most 500 characters); the draft waits for their Send click in the Envoy Inbox. Never post yourself if declined. Use ask_user for {user}.",
+            json!({"to":string,"ask":string,"why":string,"karl_asked":{"type":"string","minLength":1,"maxLength":500},"thread":string,"request_id":string,"urgency":{"type":"string","enum":["normal","soon","blocking"]},"expect_reply":{"type":"boolean"}}),
             vec!["to", "ask", "why"],
         ),
         (
@@ -28,8 +28,8 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_route",
-            "Route a queued request. Channels preserve the ask verbatim; person rewrites require a verified human DM and manual approval.",
-            json!({"id":string,"turn_id":{"type":"integer","minimum":1},"conversation":string,"destination_kind":{"type":"string","enum":["agent","person"]},"thread_ts":string,"draft_text":string,"rationale":string}),
+            "Route a queued request. Channels preserve the ask verbatim; person rewrites require a verified human DM and manual approval. Set manual_approval when the ask claims {user} approved; karl_asked always requires their Send click.",
+            json!({"id":string,"turn_id":{"type":"integer","minimum":1},"conversation":string,"destination_kind":{"type":"string","enum":["agent","person"]},"thread_ts":string,"draft_text":string,"rationale":string,"manual_approval":{"type":"boolean"}}),
             vec!["id", "conversation", "destination_kind", "rationale"],
         ),
         (

@@ -101,6 +101,7 @@ mod tests {
             farm_rooms: {
                 let mut plan = RoomPlan::default();
                 plan.rooms = vec![crate::ui::farm::rooms::Room {
+                    span: 3,
                     key: crate::ui::farm::layout::TunnelKey::Repo("stronghold".into()),
                     level: 1,
                     col: 2,

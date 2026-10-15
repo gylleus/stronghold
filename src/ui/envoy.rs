@@ -200,6 +200,13 @@ impl DraftsPanel {
                                 });
                             }
                             for turn in &request.turns {
+                                instruction(ui, turn.karl_asked.as_deref());
+                                if let Some(draft) = drafts
+                                    .iter()
+                                    .find(|d| Some(&d.id) == turn.draft_id.as_ref())
+                                {
+                                    approval(ui, draft);
+                                }
                                 ui.label(format!("Why: {}", turn.why));
                                 ui.label(&turn.ask);
                                 if let Some(error) = &turn.error {
@@ -345,6 +352,7 @@ impl DraftsPanel {
         ui.label(format!("Why: {}", draft.rationale));
         if let Some(link) = &draft.request {
             ui.strong(format!("Asked by {}", link.requester));
+            instruction(ui, link.karl_asked.as_deref());
             ui.label(format!("Why: {}", link.why));
         }
         if let Some(at) = draft.auto_at_ms {
@@ -436,6 +444,11 @@ impl DraftsPanel {
 
 fn decided_card(ui: &mut Ui, draft: &Draft, inbox: &Inbox) {
     ui.strong(format!("{} · {}", status_label(draft.status), draft.id));
+    if let Some(link) = &draft.request {
+        ui.strong(format!("Asked by {}", link.requester));
+        instruction(ui, link.karl_asked.as_deref());
+    }
+    approval(ui, draft);
     destination(ui, draft, inbox);
     ui.label(&draft.text);
     if draft.kind == DraftKind::TaskProposal && draft.status == DraftStatus::DryRunSent {
@@ -443,6 +456,25 @@ fn decided_card(ui: &mut Ui, draft: &Draft, inbox: &Inbox) {
     }
     if let Some(error) = &draft.error {
         ui.colored_label(ui.visuals().error_fg_color, error);
+    }
+}
+
+fn instruction(ui: &mut Ui, quote: Option<&str>) {
+    if let Some(quote) = quote {
+        ui.label(format!("says {} asked: {quote:?}", crate::user::name()));
+    }
+}
+
+fn approval(ui: &mut Ui, draft: &Draft) {
+    if let Some((at, by)) = draft.approved_at.zip(draft.approved_by.as_deref()) {
+        let time = jiff::Timestamp::from_millisecond(at)
+            .map(|t| {
+                t.to_zoned(jiff::tz::TimeZone::system())
+                    .strftime("%Y-%m-%d %H:%M:%S %:z")
+                    .to_string()
+            })
+            .unwrap_or_else(|_| at.to_string());
+        ui.weak(format!("Approved by {by} in Stronghold at {time}"));
     }
 }
 
@@ -823,6 +855,71 @@ mod tests {
     }
 
     #[test]
+    fn instruction_and_approval_trail_render_on_request_and_outbox_cards() {
+        use crate::envoy::{
+            drafts::RequestLink,
+            requests::{ReachOut, Requester, Requests},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut requests = Requests::load(dir.path().join("requests.json")).unwrap();
+        let who = Requester::from_origin(crate::review::mark::Origin {
+            terminal_handle: Some("Build dwarf".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        let args: ReachOut = serde_json::from_value(serde_json::json!({
+            "to":"Avery", "ask":"Review abc012def", "why":"Review",
+            "karl_asked":"Send the review"
+        }))
+        .unwrap();
+        let request = requests.submit(who, args, "UKARL", 0).unwrap();
+        let link = RequestLink {
+            id: request.request_id,
+            turn_id: 1,
+            original_ask: "Review abc012def".into(),
+            requester: "Build dwarf".into(),
+            why: "Review".into(),
+            agent: true,
+            karl_asked: Some("Send the review".into()),
+        };
+        let mut draft = Draft::outgoing(
+            "C123".into(),
+            None,
+            link.verbatim(),
+            "Review".into(),
+            link,
+            0,
+        );
+        draft.id = "draft-1".into();
+        requests.reconcile(&[draft.clone()]).unwrap();
+        let mut h = Harness::new(vec![draft]);
+        h.panel.set_requests(requests.all());
+        let claim = format!("says {} asked: \"Send the review\"", crate::user::name());
+        assert!(h.visible(&claim));
+        assert!(matches!(
+            h.click("Approve"),
+            Some(DraftAction::Approve { .. })
+        ));
+        h.drafts[0].status = DraftStatus::Sent;
+        h.drafts[0].approved_at = Some(1_000);
+        h.drafts[0].approved_by = Some(crate::user::name());
+        requests.reconcile(&h.drafts).unwrap();
+        h.panel.set_requests(requests.all());
+        let time = jiff::Timestamp::from_millisecond(1_000)
+            .unwrap()
+            .to_zoned(jiff::tz::TimeZone::system())
+            .strftime("%Y-%m-%d %H:%M:%S %:z");
+        let trail = format!(
+            "Approved by {} in Stronghold at {time}",
+            crate::user::name()
+        );
+        assert!(h.visible(&trail));
+        h.click("Outbox");
+        assert!(h.visible(&trail));
+        assert!(h.visible(&claim));
+    }
+
+    #[test]
     fn gateway_card_keeps_original_ask_and_auto_cancel_visible() {
         use crate::envoy::drafts::RequestLink;
         let link = RequestLink {
@@ -832,6 +929,7 @@ mod tests {
             requester: "Build dwarf".into(),
             why: "Unblock review".into(),
             agent: true,
+            karl_asked: None,
         };
         let mut draft = Draft::outgoing(
             "C123".into(),

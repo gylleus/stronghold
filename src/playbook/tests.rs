@@ -303,6 +303,55 @@ fn envoy_system_prompt_is_the_served_envoy_role_under_its_version() {
 }
 
 #[test]
+fn lorekeeper_gets_only_its_versioned_rules_and_filled_system_prompt() {
+    let pb = Playbook::at(BAKED_DIR);
+    assert_eq!(Role::parse(" Lorekeeper "), Some(Role::Lorekeeper));
+    let served = pb.get(&Target::parse("lorekeeper"), None).unwrap();
+    assert_eq!(served.files, [LOREKEEPER]);
+    assert_eq!(served.body, pb.read(LOREKEEPER).unwrap().trim_end());
+    let text = lorekeeper_system_prompt(&pb).unwrap();
+    assert!(text.starts_with("# Lorekeeper standing rules\n\n"));
+    assert!(text.contains(&served.version.header()));
+    assert!(text.ends_with(&crate::user::fill(&served.body)));
+    assert!(!text.contains("{user}"));
+    let missing = tempfile::tempdir().unwrap();
+    assert!(lorekeeper_system_prompt(&Playbook::at(missing.path())).is_err());
+}
+
+#[test]
+fn lorekeeper_launch_states_mode_budget_date_and_finish_contract() {
+    let before = jiff::Zoned::now().date();
+    for (dry_run, mode) in [(true, "DRY RUN"), (false, "LIVE")] {
+        for budget in [0, 1, 40] {
+            let prompt = lorekeeper_launch_prompt(dry_run, budget);
+            assert!(prompt.contains(mode), "{prompt}");
+            assert!(
+                prompt.contains(&format!("at most {budget} entries")),
+                "{prompt}"
+            );
+            let date = prompt
+                .split("Today: ")
+                .nth(1)
+                .unwrap()
+                .split('.')
+                .next()
+                .unwrap();
+            let date: jiff::civil::Date = date.parse().unwrap();
+            assert!(date >= before && date <= jiff::Zoned::now().date());
+            assert!(
+                prompt.contains("system prompt; follow its loop"),
+                "{prompt}"
+            );
+            assert!(
+                prompt.contains("exactly one lorekeeper_report, then finish_session"),
+                "{prompt}"
+            );
+            assert!(prompt.contains("approval trivial"), "{prompt}");
+        }
+    }
+}
+
+#[test]
 fn files_by_loose_name() {
     let (_d, pb) = temp_playbook();
     for name in [
@@ -444,7 +493,7 @@ fn cli_rejects_bad_options() {
     assert!(cli_text(&args(&["--section"])).is_err());
     let usage = cli_text(&args(&["--help"])).unwrap();
     assert!(
-        usage.starts_with("usage:") && usage.contains("|envoy|"),
+        usage.starts_with("usage:") && usage.contains("|envoy|lorekeeper|"),
         "{usage}"
     );
     assert!(run_cli(&args(&["mcp"])).is_none());

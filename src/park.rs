@@ -49,12 +49,14 @@ pub fn refusal(node: &Node) -> Option<&'static str> {
         NodeKind::King => Some("the King isn't a session; it stands for the whole clan"),
         NodeKind::Subagent => Some("subagents run inside their parent session; park the parent"),
         NodeKind::Envoy => Some("the Envoy is a standing session with its own room"),
-        NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {
-            match &node.terminal_handle {
-                Some(_) if node.live => None,
-                _ => Some("its terminal is gone; there is no session to keep"),
-            }
-        }
+        NodeKind::Coordinator
+        | NodeKind::Attendant
+        | NodeKind::Worker
+        | NodeKind::Terminal
+        | NodeKind::Lorekeeper => match &node.terminal_handle {
+            Some(_) if node.live => None,
+            _ => Some("its terminal is gone; there is no session to keep"),
+        },
     }
 }
 

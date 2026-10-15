@@ -18,7 +18,7 @@ use crate::ui::dwarf::{self, Action, Look};
 pub struct ArtSettings {
     pub pixels: Pixels,
     pub outline: Outline,
-    /// A bundled palette's file name ([`pixel::BUNDLED`]); empty for the drawing's own colours.
+    /// A bundled slug or self-contained `hex:` selection; empty for the drawing’s own colours.
     pub palette: String,
 }
 
@@ -53,8 +53,11 @@ impl Pixels {
 }
 
 /// Guild cloth, painted helmets and a shaped crest keep agent identity visible at farm
-/// size. Failed dwarves retain their guild; the red failure bubble shows their state.
+/// size. The librarian keeps its ink robes; failed dwarves retain their guild.
 pub fn dress(look: &mut Look, coat: Coat) {
+    if look.role == dwarf::Role::Librarian {
+        return;
+    }
     look.crest = match coat {
         Coat::Plain => dwarf::Crest::None,
         Coat::Claude => dwarf::Crest::Sun,
@@ -81,10 +84,30 @@ pub struct Figure<'a> {
     pub alpha: f32,
 }
 
+/// A supplied pose can be split around a separately painted prop, using the same
+/// rasterizer, pixel scale and texture cache as the other dwarves.
+pub(super) struct PosedFigure<'a> {
+    pub key: &'a str,
+    pub look: &'a Look,
+    pub pose: &'a dwarf::Pose,
+    pub foot: Pos2,
+    pub height: f32,
+    pub facing_right: bool,
+    pub alpha: f32,
+    pub layer: DwarfLayer,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) enum DwarfLayer {
+    Body,
+    Hands,
+}
+
 /// Draws dwarves for the farm, keeping each pixel dwarf's texture between frames.
+#[derive(Default)]
 pub struct DwarfArt {
-    names: Vec<&'static str>,
-    mappers: Vec<Mapper>,
+    palette: String,
+    mapper: Option<Mapper>,
     textures: HashMap<String, Cached>,
     frame: u64,
 }
@@ -94,17 +117,6 @@ struct Cached {
     drawn: String,
     texture: TextureHandle,
     used: u64,
-}
-
-impl Default for DwarfArt {
-    fn default() -> Self {
-        Self {
-            names: pixel::BUNDLED.iter().map(|(name, _)| *name).collect(),
-            mappers: pixel::bundled().iter().map(Mapper::new).collect(),
-            textures: HashMap::new(),
-            frame: 0,
-        }
-    }
 }
 
 impl std::fmt::Debug for DwarfArt {
@@ -124,8 +136,11 @@ impl DwarfArt {
     }
 
     fn mapper(&mut self, name: &str) -> Option<&mut Mapper> {
-        let i = self.names.iter().position(|n| *n == name)?;
-        self.mappers.get_mut(i)
+        if self.palette != name {
+            self.palette = name.to_owned();
+            self.mapper = Mapper::selection(name);
+        }
+        self.mapper.as_mut()
     }
 
     /// Draws `figure` standing on the bottom of `cell` (a dwarf's cell), `farm_px` points per
@@ -139,8 +154,6 @@ impl DwarfArt {
         farm_px: f32,
         now_s: f64,
     ) {
-        let height = cell.height() * 0.95;
-        let foot = cell.center_bottom();
         let phase = (dwarf::seed_of(figure.key) % 1000) as f64 * 0.013;
         let pose = |t: f64| {
             let mut pose = dwarf::pose(figure.action, t + phase);
@@ -150,27 +163,57 @@ impl DwarfArt {
             }
             pose
         };
-        let palette = art.palette.clone();
+        let t = (now_s * PIXEL_FPS).floor() / PIXEL_FPS;
+        self.paint_posed(
+            painter,
+            art,
+            &PosedFigure {
+                key: figure.key,
+                look: &figure.look,
+                pose: &pose(t),
+                foot: cell.center_bottom(),
+                height: cell.height() * 0.95,
+                facing_right: figure.facing_right,
+                alpha: figure.alpha,
+                layer: DwarfLayer::Body,
+            },
+            farm_px,
+        );
+    }
+
+    pub(super) fn paint_posed(
+        &mut self,
+        painter: &Painter,
+        art: &ArtSettings,
+        figure: &PosedFigure,
+        farm_px: f32,
+    ) {
+        let palette = &art.palette;
         let h = match art.pixels {
             Pixels::Height(h) => h.clamp(8, 256) as f32,
-            _ => (height / farm_px).round().max(8.0),
+            Pixels::Farm => (figure.height / farm_px).round().max(8.0),
         };
-        let t = (now_s * PIXEL_FPS).floor() / PIXEL_FPS;
-        let pose = pose(t);
         let size = [(h * 1.5).ceil() as usize, (h * 1.45).ceil() as usize];
         let canvas_foot = pos2(size[0] as f32 * 0.5, size[1] as f32 - h * 0.08);
         let finish = art.outline.finish(100.0 / (h * figure.look.role.scale()));
-        let drawing = dwarf::draw(
-            canvas_foot,
-            h,
-            &figure.look,
-            &pose,
-            figure.facing_right,
-            &finish,
-        );
+        let pose = figure.pose;
+        let drawing = match figure.layer {
+            DwarfLayer::Body => dwarf::draw(
+                canvas_foot,
+                h,
+                figure.look,
+                pose,
+                figure.facing_right,
+                &finish,
+            ),
+            DwarfLayer::Hands => dwarf::Drawing {
+                shapes: dwarf::held_prop(canvas_foot, h, figure.look, pose, &finish).1,
+                question: None,
+            },
+        };
         let drawn = format!(
-            "{h} {palette} {:?} {pose:?} {} {:?}",
-            figure.look, figure.facing_right, art.outline
+            "{h} {palette} {:?} {pose:?} {} {:?} {:?}",
+            figure.look, figure.facing_right, art.outline, figure.layer
         );
         let frame = self.frame;
         let stale = self
@@ -180,7 +223,7 @@ impl DwarfArt {
         if stale {
             let region = Rect::from_min_size(Pos2::ZERO, vec2(size[0] as f32, size[1] as f32));
             let mut image = pixel::rasterize(&drawing.shapes, region, size, 1);
-            if let Some(mapper) = self.mapper(&palette) {
+            if let Some(mapper) = self.mapper(palette) {
                 mapper.apply(&mut image);
             }
             match self.textures.get_mut(figure.key) {
@@ -209,8 +252,8 @@ impl DwarfArt {
             return;
         };
         cached.used = frame;
-        let scale = height / h;
-        let min = foot - canvas_foot.to_vec2() * scale;
+        let scale = figure.height / h;
+        let min = figure.foot - canvas_foot.to_vec2() * scale;
         painter.image(
             cached.texture.id(),
             Rect::from_min_size(min, vec2(size[0] as f32, size[1] as f32) * scale),
@@ -220,6 +263,78 @@ impl DwarfArt {
         if let Some((at, q)) = drawing.question {
             dwarf::question(painter, min + at.to_vec2() * scale, q * scale);
         }
+    }
+}
+
+/// A small live sample using the same dwarf, stone, props and palette mapping as the hold.
+#[derive(Default)]
+pub struct Preview {
+    dwarves: DwarfArt,
+    world: super::world::WorldArt,
+}
+
+impl Preview {
+    pub fn show(&mut self, ui: &mut eframe::egui::Ui, art: &ArtSettings) {
+        use super::world::{Prop, rgb};
+        use eframe::egui::{Align2, FontId, Sense};
+        let (rect, _) =
+            ui.allocate_exact_size(vec2(ui.available_width().min(520.0), 156.0), Sense::hover());
+        let painter = ui.painter_at(rect);
+        let start = ui
+            .ctx()
+            .graphics(|g| g.get(painter.layer_id()).map(|l| l.next_idx()))
+            .unwrap_or(eframe::egui::layers::ShapeIdx(0));
+        self.world.begin_frame(&art.palette, art.outline);
+        self.dwarves.begin_frame();
+        painter.rect_filled(rect, 4.0, rgb(0x22242e));
+        let cave =
+            Rect::from_min_size(rect.min + vec2(8.0, 20.0), vec2(rect.width() - 16.0, 112.0));
+        self.world.paint(&painter, Prop::Cave(0), cave, 2.0, 0, 1.0);
+        let now = ui.input(|i| i.time);
+        for (i, (look, action)) in [
+            (Look::king(), Action::Still),
+            (Look::for_role(dwarf::Role::Miner, 7), Action::Mine),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            self.dwarves.paint(
+                &painter,
+                art,
+                &Figure {
+                    key: if i == 0 {
+                        "preview-king"
+                    } else {
+                        "preview-miner"
+                    },
+                    look,
+                    action,
+                    upside_down: false,
+                    facing_right: true,
+                    alpha: 1.0,
+                },
+                Rect::from_min_size(
+                    rect.min + vec2(50.0 + i as f32 * 90.0, 42.0),
+                    vec2(70.0, 80.0),
+                ),
+                2.0,
+                now,
+            );
+        }
+        let chest = Rect::from_min_size(rect.min + vec2(260.0, 82.0), vec2(48.0, 40.0));
+        self.world.paint(&painter, Prop::Chest, chest, 2.0, 0, 1.0);
+        let plate = Rect::from_min_size(rect.min + vec2(10.0, 132.0), vec2(210.0, 21.0));
+        painter.rect_filled(plate, 0.0, rgb(0x1a1008));
+        painter.text(
+            plate.center(),
+            Align2::CENTER_CENTER,
+            "The hold · stone, ink & gold",
+            FontId::proportional(13.0),
+            rgb(0xf3e9d2),
+        );
+        self.world.map_scene(ui.ctx(), painter.layer_id(), start);
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(100));
     }
 }
 
@@ -406,5 +521,48 @@ mod tests {
             assert!(art.mapper(name).is_some(), "{name}");
         }
         assert!(art.mapper("").is_none());
+    }
+    #[test]
+    fn imported_palette_switch_rebuilds_stationary_dwarf_texture() {
+        let ctx = eframe::egui::Context::default();
+        let mut renderer = DwarfArt::default();
+        let figure = Figure {
+            key: "king",
+            look: Look::king(),
+            action: Action::Still,
+            upside_down: false,
+            facing_right: true,
+            alpha: 1.0,
+        };
+        let mut previous = None;
+        for selection in [
+            "hex:7c3f58-eb6b6f-f9a875-fff6d3",
+            "hex:264653-2a9d8f-e9c46a",
+            "oil-6",
+        ] {
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                renderer.paint(
+                    ui.painter(),
+                    &ArtSettings {
+                        palette: selection.into(),
+                        ..Default::default()
+                    },
+                    &figure,
+                    Rect::from_min_size(pos2(50.0, 50.0), vec2(48.0, 48.0)),
+                    1.0,
+                    0.0,
+                );
+            });
+            let texture = renderer.textures["king"].texture.id();
+            let egui_image = &output.textures_delta.set[&texture][0].image;
+            if let Some(before) = previous {
+                assert!(
+                    egui_image != &before,
+                    "palette change must update the texture pixels"
+                );
+            }
+            previous = Some(egui_image.clone());
+            output.textures_delta.clear();
+        }
     }
 }

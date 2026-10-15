@@ -21,6 +21,11 @@ impl StrongholdApp {
         let env_model = crate::legacy::env(MODEL_ENV).filter(|m| !m.trim().is_empty());
         let (native, last_failure, system_sounds) = self.notify_status();
         let cx = PaneContext {
+            cleanup: crate::ui::settings::worktrees::Status {
+                last: self.worktrees.auto_last(),
+                running: self.worktrees.auto_running(),
+                busy: self.worktrees.auto_busy(),
+            },
             whip_status: &self.whip_status,
             now_ms,
             king: KingStatus {
@@ -37,6 +42,9 @@ impl StrongholdApp {
             },
         };
         let out = self.whip_window.show(ctx, &cx);
+        if out.run_cleanup {
+            self.worktrees.request_auto();
+        }
         if let Some(settings) = &out.envoy {
             self.apply_envoy_settings(settings);
         }

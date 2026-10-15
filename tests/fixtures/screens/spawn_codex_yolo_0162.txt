@@ -1,0 +1,22 @@
+  >_ OpenAI Codex (v0.162.1)
+     /tmp/stronghold-codex-approvals
+  permissions: YOLO mode
+  To get started, describe a task or try one of these commands:
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+› This is a controlled local approval test. Use only the shell tool: create approval-probe.txt in this scratch
+  directory containing PROBE_OK, then read it back. Do not use MCP tools, inspect other files, or make any other
+  changes. Report the output and the approval policy and sandbox mode supplied to you.
+• I’ll create the probe file and read it back using only the shell.
+• Ran printf 'PROBE_OK\n' > approval-probe.txt && cat approval-probe.txt
+  └ PROBE_OK
+• Output: PROBE_OK
+  Approval policy: never
+  Sandbox mode: danger-full-access
+  Worked for 8s • 18:24
+› Ask Codex to do anything
+  GPT-6-Astra high · /tmp/stronghold-codex-approvals · Cre…
+  ← for agents · ? for shortcuts                                                              ⚠ 6 warnings · f2 to view

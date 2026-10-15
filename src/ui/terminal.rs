@@ -279,7 +279,7 @@ pub struct PanelInput<'a> {
     /// The node's row in `terminal list`, if live.
     pub terminal: Option<&'a Terminal>,
     /// The agent's conversation read from its session transcript, when it has one (Claude
-    /// agents mapped to a session).
+    /// or Codex agents mapped to a session).
     pub conversation: Option<&'a mut TranscriptView>,
     /// Whether a node id names a node in the current snapshot (only those become links).
     pub is_node: &'a dyn Fn(&NodeId) -> bool,
@@ -530,7 +530,11 @@ fn agent_actions(
     if ui
         .add_enabled(whippable, egui::Button::new("Whip"))
         .on_hover_text("Send this agent a Stronghold nudge now — w")
-        .on_disabled_hover_text("No live terminal to nudge.")
+        .on_disabled_hover_text(match node.kind {
+            NodeKind::Lorekeeper => "The Lorekeeper finishes its own maintenance pass.",
+            NodeKind::Envoy => "The Envoy listens while idle.",
+            _ => "No live terminal to nudge.",
+        })
         .clicked()
     {
         response.whip = true;
@@ -874,6 +878,7 @@ fn kind_label(kind: NodeKind) -> &'static str {
         NodeKind::Worker => "worker",
         NodeKind::Terminal => "terminal",
         NodeKind::Envoy => "envoy",
+        NodeKind::Lorekeeper => "lorekeeper",
         NodeKind::Subagent => "subagent",
         NodeKind::King => "king",
     }

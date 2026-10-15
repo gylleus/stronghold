@@ -19,7 +19,7 @@ fn site(name: &str) -> Site {
     Site {
         id: format!("repo::/w/{name}"),
         name: name.into(),
-        health: Health::Empty,
+        health: Health::Removable,
     }
 }
 
@@ -31,50 +31,62 @@ fn farm() -> Scene {
     scene(&snapshot())
 }
 
-/// Linked, unarchived worktrees grow one heap each, oldest first, and look like what is in
-/// them: an agent at work, only resting ones, or none.
 #[test]
-fn a_heap_per_linked_worktree_looking_like_its_agents() {
-    let mut main = worktree("main", 0);
-    main.is_main_worktree = true;
-    let mut archived = worktree("archived", 1);
-    archived.is_archived = true;
-    let worktrees = vec![
-        worktree("empty", 50),
-        worktree("busy", 10),
-        main,
-        archived,
-        worktree("resting", 20),
-        worktree("parked", 30),
-        worktree("gone", 40),
-    ];
-    let mut nodes = Vec::new();
-    for (name, path, state) in [
-        ("a", "/w/busy", NodeState::Working),
-        ("b", "/w/busy/", NodeState::Idle),
-        ("c", "/w/resting", NodeState::Done),
-        ("d", "/w/parked", NodeState::Working),
-        ("e", "/w/gone", NodeState::Working),
-    ] {
-        let mut n = node(name, NodeKind::Terminal, None, state);
-        n.worktree_path = Some(path.into());
-        nodes.push(n);
-    }
-    nodes[3].parked_at_ms = Some(1);
-    nodes[4].live = false;
-    let got: Vec<(String, Health)> = rubble::sites(&worktrees, &nodes)
-        .into_iter()
-        .map(|g| (g.name, g.health))
-        .collect();
-    let want = [
-        ("busy", Health::Active),
-        ("resting", Health::Resting),
-        ("parked", Health::Resting),
-        ("gone", Health::Empty),
-        ("empty", Health::Empty),
+fn only_planner_stale_entries_are_drawn_and_archive_work_is_distinct() {
+    use crate::worktrees::{Plan, PlanEntry, Verdict};
+    let mut trees: Vec<_> = [
+        "remove",
+        "archive",
+        "kept",
+        "busy",
+        "parked",
+        "pinned",
+        "auto_archive",
     ]
-    .map(|(n, h)| (n.to_string(), h));
-    assert_eq!(got, want);
+    .iter()
+    .enumerate()
+    .map(|(i, n)| worktree(n, i as i64))
+    .collect();
+    trees[5].is_pinned = true;
+    let plan = Plan {
+        entries: trees
+            .iter()
+            .map(|w| PlanEntry {
+                id: w.id.clone(),
+                path: w.path.clone(),
+                name: w.name().into(),
+                verdict: Verdict {
+                    remove: w.name() != "kept" && w.name() != "archive",
+                    archivable: w.name() == "archive",
+                    archive_required: w.name() == "auto_archive",
+                    ..Verdict::default()
+                },
+                ..PlanEntry::default()
+            })
+            .collect(),
+        ..Plan::default()
+    };
+    let mut busy = node("worker", NodeKind::Terminal, None, NodeState::Done);
+    busy.worktree_path = Some("/w/busy/".into());
+    let mut parked = busy.clone();
+    parked.worktree_path = Some("/w/parked".into());
+    parked.live = false;
+    parked.parked_at_ms = Some(1);
+    let nodes = [busy, parked];
+    let got: Vec<_> = rubble::sites(&trees, &nodes, Some(&plan))
+        .into_iter()
+        .map(|s| (s.name, s.health))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("remove".into(), Health::Removable),
+            ("archive".into(), Health::Archive),
+            ("auto_archive".into(), Health::Archive)
+        ]
+    );
+    assert!(rubble::sites(&trees, &nodes, None).is_empty());
+    assert!(rubble::sites(&trees, &nodes, Some(&Plan::default())).is_empty());
 }
 
 /// Every heap stands on the surface across the farm, sized by its id, the same
@@ -220,13 +232,13 @@ fn closed_worktrees_scatter() {
 #[test]
 fn each_hammer_contact_emits_dust_chips_and_sparks() {
     use rubble::{ParticleKind, impact_particles};
-    for phase in [0.0, 0.48, 0.679, 1.0] {
+    for phase in [0.0, 0.32, 0.439, 0.79, 1.0] {
         assert_eq!(impact_particles(phase, 17).count(), 0, "outside contact");
     }
-    for cycle in [0.0, 1.2, 2.4] {
-        let phase = super::hammer::phase(cycle + 0.9, false);
+    for cycle in [0.0, 0.65, 1.3] {
+        let phase = super::hammer::phase(cycle + 0.36, false);
         let particles: Vec<_> = impact_particles(phase, 17).collect();
-        assert_eq!(particles.len(), 28, "bounded on every stroke");
+        assert_eq!(particles.len(), 12, "bounded on every stroke");
         for kind in [ParticleKind::Dust, ParticleKind::Chip, ParticleKind::Spark] {
             assert!(particles.iter().any(|p| p.kind == kind));
         }
@@ -234,11 +246,11 @@ fn each_hammer_contact_emits_dust_chips_and_sparks() {
         assert!(particles.iter().any(|p| p.offset.x > 1.0));
         assert!(particles.iter().any(|p| p.offset.y < -1.0));
     }
-    let early: Vec<_> = impact_particles(0.72, 17).collect();
-    let late: Vec<_> = impact_particles(0.96, 17).collect();
+    let early: Vec<_> = impact_particles(0.5, 17).collect();
+    let late: Vec<_> = impact_particles(0.74, 17).collect();
     assert!(early.iter().zip(&late).all(|(a, b)| b.alpha < a.alpha));
-    assert_eq!(early, impact_particles(0.72, 17).collect::<Vec<_>>());
-    assert_ne!(early, impact_particles(0.72, 18).collect::<Vec<_>>());
+    assert_eq!(early, impact_particles(0.5, 17).collect::<Vec<_>>());
+    assert_ne!(early, impact_particles(0.5, 18).collect::<Vec<_>>());
 }
 
 #[test]
@@ -335,4 +347,39 @@ fn bulk_cleanup_caps_bursts_and_drops_them_after_the_fade() {
     view.layout(&scene, 1.0 + rubble::BREAK_S, false, false);
     assert_eq!(view.burst_count(), 0);
     assert!(!view.animating(), "no repaint needed after the fade");
+}
+
+#[test]
+fn impact_shake_kicks_only_at_contact_and_decays_to_rest() {
+    use super::hammer::{CONTACT, IMPACT_SPAN};
+    assert_eq!(rubble::impact_shake(CONTACT - 0.001), vec2(0.0, 0.0));
+    let kick = rubble::impact_shake(CONTACT).length();
+    assert!(kick > 2.5);
+    for fraction in [0.25, 0.5, 0.75, 0.95] {
+        assert!(
+            rubble::impact_shake(CONTACT + IMPACT_SPAN * fraction).length()
+                <= kick * (1.0 - fraction).powi(3) + 0.001
+        );
+    }
+    assert_eq!(rubble::impact_shake(CONTACT + IMPACT_SPAN), vec2(0.0, 0.0));
+}
+
+#[test]
+fn a_heap_becoming_protected_disappears_without_a_demolition_burst() {
+    let scene = farm();
+    let mut view = RubbleView::default();
+    view.set_stale(sites(2), None);
+    view.layout(&scene, 0.0, false, false);
+    view.set_stale(sites(1), None);
+    view.layout(&scene, 0.1, false, false);
+    assert_eq!(view.burst_count(), 0);
+    view.set_stale(
+        vec![],
+        Some(CleanupJob {
+            cleared: vec![site("wt-0").id],
+            ..CleanupJob::default()
+        }),
+    );
+    view.layout(&scene, 0.2, false, false);
+    assert_eq!(view.burst_count(), 1, "reported removals still break apart");
 }

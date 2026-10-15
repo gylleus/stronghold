@@ -1,4 +1,4 @@
-//! A Claude session transcript on disk (`~/.claude/projects/<dir>/<session>.jsonl`) as chat
+//! A Claude transcript or Codex rollout on disk as chat
 //! items: the whole file first, then whatever is appended, so a pane shows the full
 //! conversation rather than a screen or a tail of it.
 
@@ -60,6 +60,12 @@ fn parse_record_in(record: &Value, subagent: bool) -> Vec<HistoryRecord> {
 }
 
 fn record_items(record: &Value, subagent: bool) -> Vec<HistoryRecord> {
+    if matches!(
+        record["type"].as_str(),
+        Some("response_item" | "turn_context" | "compacted" | "event_msg")
+    ) {
+        return crate::codex::history::records(record);
+    }
     let flag = |key| record.get(key).and_then(Value::as_bool) == Some(true);
     if flag("isMeta") || (flag("isSidechain") && !subagent) || flag("isCompactSummary") {
         return Vec::new();
@@ -203,7 +209,7 @@ fn tag<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 }
 
 /// `block` with long tool results and input strings cut to [`MAX_KEPT_CHARS`].
-fn shrink_block(block: ContentBlock) -> ContentBlock {
+pub(crate) fn shrink_block(block: ContentBlock) -> ContentBlock {
     match block {
         ContentBlock::ToolResult {
             tool_use_id,
@@ -384,6 +390,33 @@ mod tests {
             t.apply_history(&record);
         }
         t
+    }
+
+    #[test]
+    fn codex_fixture_keeps_messages_and_pairs_both_tool_formats_once() {
+        let t = transcript_of(include_str!("../../tests/fixtures/chat/codex.jsonl"));
+        assert_eq!(t.items.len(), 5);
+        assert!(
+            matches!(&t.items[0], ChatItem::User(text) if text == "Review the rendering changes.")
+        );
+        assert_eq!(t.assistant_text().len(), 2);
+        assert_eq!(t.model.as_deref(), Some("gpt-6.1"));
+        let calls: Vec<_> = t.tool_calls().collect();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].input.as_ref().unwrap()["cmd"], "cargo test");
+        assert!(
+            calls[0]
+                .result
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("All tests passed.")
+        );
+        assert_eq!(
+            calls[1].result.as_ref().unwrap().text,
+            "Success. Updated src/chat.rs"
+        );
+        assert!(t.timestamp(0).is_some());
     }
 
     #[test]
