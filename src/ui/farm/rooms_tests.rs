@@ -134,7 +134,7 @@ fn a_new_room_lays_the_farm_out_again() {
     let mut plan = RoomPlan::default();
     frame(&s, &mut plan, 0);
     assert_eq!(plan.rearranges, 1, "the first frame lays the plan out");
-    let cells = |plan: &RoomPlan| plan.grid().unwrap().depths.iter().sum::<usize>();
+    let cells = |plan: &RoomPlan| plan.rooms.len();
     assert_eq!(cells(&plan), 3, "no spare cells");
     add_run(&mut s, 3, 2);
     let after = frame(&s, &mut plan, 1_000);
@@ -255,7 +255,7 @@ fn filled_in_rooms_give_their_ground_back() {
     let after = frame(&s, &mut plan, 1_000 + GRACE_MS);
     assert_eq!(plan.rearranges, 2, "then the grid is laid out again");
     assert_eq!(after.tunnels.len(), 2);
-    assert_eq!(plan.grid().unwrap().depths.iter().sum::<usize>(), 2);
+    assert_eq!(plan.rooms.len(), 2);
 }
 
 #[test]
@@ -300,10 +300,10 @@ fn a_resize_fits_the_farm_to_the_view() {
     assert_eq!(keys, after);
     assert_eq!(plan.rearranges, 2);
     assert_laid_out(&scene);
-    let widths = &plan.grid().unwrap().widths;
     assert!(
-        (widths.iter().sum::<f32>() - 1000.0).abs() < 0.01,
-        "{widths:?}"
+        plan.rooms
+            .iter()
+            .all(|r| r.col + r.span <= super::rooms::COLUMNS)
     );
 }
 
@@ -318,10 +318,11 @@ fn a_rearrange_glides_unless_motion_is_reduced() {
         let mut before = frame(&s, &mut plan, 0);
         farm.glide_rooms(&mut before, 0.0);
         farm.advance(&before, 0.0);
-        // Rooms until the plan is laid out again.
+        // Add groups until this room actually moves; neighbours can now fit beside it.
         let mut r = 1;
         let mut after = before.clone();
-        while plan.rearranges == 1 {
+        while tunnel(&after, 0).chamber == tunnel(&before, 0).chamber {
+            assert!(r < 20, "a crowded plan eventually moves the first room");
             add_run(&mut s, r, 1);
             r += 1;
             after = frame(&s, &mut plan, r as i64);
@@ -398,12 +399,15 @@ fn an_dwarf_leaving_its_room_moves_no_room() {
 }
 
 #[test]
-fn saved_column_plans_are_refitted_as_workspace_bands() {
+fn saved_column_and_band_plans_are_refitted_as_packed_tunnels() {
     let s = clan(3, 2);
     let mut plan = RoomPlan::default();
     let expected = frame(&s, &mut plan, 0);
     let mut saved = serde_json::to_value(&plan).unwrap();
-    saved.as_object_mut().unwrap().remove("workspace_bands");
+    saved.as_object_mut().unwrap().remove("packed_tunnels");
+    saved["workspace_bands"] = serde_json::json!({
+        "px": 3.0, "levels": 3, "widths": [1280.0], "depths": [3], "heights": [100.0, 100.0, 100.0]
+    });
     saved["fitted"] = serde_json::json!({
         "px": 3.0, "levels": 1, "widths": [400.0, 400.0, 480.0], "depths": [1, 1, 1]
     });
@@ -415,8 +419,30 @@ fn saved_column_plans_are_refitted_as_workspace_bands() {
     {
         room["level"] = 0.into();
         room["col"] = col.into();
+        room.as_object_mut().unwrap().remove("span");
     }
     let mut restored: RoomPlan = serde_json::from_value(saved).unwrap();
     assert_eq!(frame(&s, &mut restored, 0), expected);
     assert_eq!(restored.rearranges, 1);
+}
+
+#[test]
+fn small_groups_pack_side_by_side_and_keep_their_cells() {
+    let mut s = clan(9, 1);
+    let mut plan = RoomPlan::default();
+    let before = frame(&s, &mut plan, 0);
+    let rows: std::collections::BTreeSet<_> = plan.rooms.iter().map(|r| r.level).collect();
+    assert!(rows.len() < 9, "small groups must share rows");
+    assert!(before.tunnels.iter().any(|a| {
+        before
+            .tunnels
+            .iter()
+            .any(|b| a.key != b.key && a.chamber.top() == b.chamber.top())
+    }));
+    add_worker(&mut s, 0, 1);
+    let after = frame(&s, &mut plan, 1);
+    assert_kept(&before, &after);
+    s.nodes.reverse();
+    assert_eq!(frame(&s, &mut plan, 2).tunnels, after.tunnels);
+    assert_laid_out(&after);
 }

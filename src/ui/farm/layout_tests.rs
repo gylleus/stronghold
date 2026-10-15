@@ -377,8 +377,12 @@ fn one_tunnel_per_run_then_per_repo() {
         scene.tunnels[0].tasks, None,
         "no task counts, no progress bar"
     );
-    let ys: Vec<f32> = scene.tunnels.iter().map(|t| t.chamber.top()).collect();
-    assert!(ys.windows(2).all(|w| w[0] < w[1]), "top to bottom: {ys:?}");
+    assert!(
+        scene
+            .tunnels
+            .windows(2)
+            .all(|pair| !pair[0].chamber.intersects(pair[1].chamber))
+    );
 }
 
 #[test]
@@ -510,7 +514,7 @@ fn task_progress_keeps_galleries_on_their_level() {
     assert_eq!(late.progress, Some(1.0));
     assert_eq!(early.tasks, Some((0, 4)));
     assert_eq!(late.tasks, Some((4, 4)));
-    assert!(late.chamber.top() > early.chamber.bottom());
+    assert!(!late.chamber.intersects(early.chamber));
     assert!(late.chamber.bottom() <= rect.bottom());
     let before = scene;
     s.runs[0].task_counts.as_mut().unwrap().completed = 2;
@@ -699,8 +703,13 @@ fn walking_routes_use_the_shared_ladder_and_entrance() {
         let mid = leg[0].lerp(leg[1], 0.5);
         if mid.y > scene.gallery.bottom() && mid.y < t.chamber.top() {
             assert!(
-                scene.work_ladder().contains(mid),
-                "vertical travel stays on the shared ladder"
+                scene.work_ladder().contains(mid)
+                    || scene
+                        .tunnels
+                        .iter()
+                        .any(|t| scene.tunnel_ladder(t).contains(mid))
+                    || scene.access_galleries().iter().any(|r| r.contains(mid)),
+                "travel follows the local ladder and access passage"
             );
         }
     }
@@ -1770,23 +1779,6 @@ pub(super) fn typical_clan(n: usize) -> ClanSnapshot {
     s
 }
 
-/// Share of the occupied work levels used by rooms and their labels. Unexcavated rock
-/// below the last gallery is no longer counted as tunnel depth.
-pub(super) fn fill(scene: &Scene) -> f32 {
-    let a = scene.cell();
-    let rooms: f32 = scene
-        .tunnels
-        .iter()
-        .map(|t| (t.chamber.width() + 0.6 * a) * (t.chamber.bottom() - t.label_top.y))
-        .sum();
-    let bottom = scene
-        .tunnels
-        .iter()
-        .map(|t| t.chamber.bottom())
-        .fold(scene.gallery.bottom(), f32::max);
-    rooms / (scene.rect.width() * (bottom - scene.gallery.bottom()))
-}
-
 /// Share of the rect's height the farm reaches down to.
 pub(super) fn reach(scene: &Scene) -> f32 {
     let bottom = scene
@@ -1797,21 +1789,21 @@ pub(super) fn reach(scene: &Scene) -> f32 {
     (bottom - scene.rect.top()) / scene.rect.height()
 }
 
-/// Workspace bands fit typical clan sizes without overlapping. Keeping groups on
-/// separate rows trades some dwarf size and ground fill for clear ownership.
+/// Packing keeps typical clans within the view at least as legible as full-width
+/// group bands. Unused cells remain rock instead of inflating the excavated area.
 #[test]
-fn the_farm_fills_the_view() {
-    // (view, dwarves, smallest dwarf cell in points, least fill)
+fn packed_groups_fit_the_view_without_reducing_dwarf_size() {
+    // (view, dwarves, smallest dwarf cell in points in the previous band layout)
     let cases = [
-        (vec2(1280.0, 800.0), 5, 56.0, 0.75),
+        (vec2(1280.0, 800.0), 5, 56.0),
         // Finished workers now occupy chamber slots alongside the other miners.
-        (vec2(1280.0, 800.0), 15, 32.0, 0.65),
-        (vec2(1280.0, 800.0), 30, 24.0, 0.65),
-        (vec2(900.0, 650.0), 5, 48.0, 0.75),
-        (vec2(900.0, 650.0), 15, 24.0, 0.65),
-        (vec2(900.0, 650.0), 30, 16.0, 0.65),
+        (vec2(1280.0, 800.0), 15, 32.0),
+        (vec2(1280.0, 800.0), 30, 24.0),
+        (vec2(900.0, 650.0), 5, 48.0),
+        (vec2(900.0, 650.0), 15, 24.0),
+        (vec2(900.0, 650.0), 30, 16.0),
     ];
-    for (size, n, cell, least) in cases {
+    for (size, n, cell) in cases {
         let s = typical_clan(n);
         let rect = Rect::from_min_size(Pos2::ZERO, size);
         let input = FarmInput {
@@ -1822,11 +1814,6 @@ fn the_farm_fills_the_view() {
             now_ms: 0,
         };
         let scene = layout(&input, rect);
-        let fill = fill(&scene);
-        assert!(
-            (least..=0.95).contains(&fill),
-            "{n} dwarves in {size:?}: fill {fill}"
-        );
         assert!(
             reach(&scene) <= 1.0,
             "{n} dwarves in {size:?} fit vertically"
@@ -1986,10 +1973,10 @@ fn king_close_holds_target_in_view_and_bonks_once_instead_of_falling() {
     assert!(farm.falls.is_empty());
 }
 
-/// Every work row is horizontal, supported by rock, and connected by the same ladder.
+/// Every work row is horizontal, separated by rock, and connected by local ladders.
 /// Exercise wide and narrow panes with several runs, attendants and subagents.
 #[test]
-fn work_galleries_and_routes_share_one_ladder_at_every_crowd_size() {
+fn work_galleries_and_routes_use_connected_ladders_at_every_crowd_size() {
     for (size, n) in [
         (vec2(1280.0, 800.0), 30),
         (vec2(900.0, 650.0), 30),
@@ -2025,13 +2012,30 @@ fn work_galleries_and_routes_share_one_ladder_at_every_crowd_size() {
         let scene = layout(&input, Rect::from_min_size(Pos2::new(23.0, 47.0), size));
         let ladder = scene.work_ladder();
         let galleries = scene.work_galleries();
+        let ladders: Vec<_> = std::iter::once(ladder)
+            .chain(scene.tunnels.iter().map(|t| scene.tunnel_ladder(t)))
+            .collect();
+        let passages: Vec<_> = galleries
+            .iter()
+            .copied()
+            .chain(scene.access_galleries())
+            .chain([scene.gallery])
+            .collect();
+        for t in &scene.tunnels {
+            let local = scene.tunnel_ladder(t);
+            assert!(scene.rect.contains_rect(local));
+            assert!(passages.iter().any(|p| p.contains(local.center_top())));
+            for other in &scene.tunnels {
+                assert!(!local.intersects(other.chamber), "ladder has its own shaft");
+            }
+        }
         assert!(scene.rect.contains_rect(ladder));
         for row in &galleries {
             assert!(scene.rect.contains_rect(*row), "{row:?}");
             assert!(row.width() > row.height() * 3.0, "long horizontal gallery");
             assert!(
-                row.intersects(ladder),
-                "every level reaches the shared ladder"
+                ladders.iter().any(|ladder| row.intersects(*ladder)),
+                "every work row reaches a ladder"
             );
         }
         for (i, row) in galleries.iter().enumerate() {
@@ -2070,13 +2074,19 @@ fn work_galleries_and_routes_share_one_ladder_at_every_crowd_size() {
                 let path = route(dwarf.pos, other.pos, &dwarf.spot, &other.spot, &scene);
                 for leg in path.windows(2) {
                     if leg[0].y != leg[1].y {
-                        assert_eq!(leg[0].x, ladder.center().x);
-                        assert_eq!(leg[1].x, ladder.center().x);
+                        assert_eq!(leg[0].x, leg[1].x);
+                        assert!(
+                            ladders
+                                .iter()
+                                .any(|ladder| ladder.contains(leg[0].lerp(leg[1], 0.5))),
+                            "climbing uses a ladder"
+                        );
                     }
                     for step in 0..=8 {
                         let at = leg[0].lerp(leg[1], step as f32 / 8.0);
                         assert!(
-                            ladder.contains(at) || galleries.iter().any(|g| g.contains(at)),
+                            ladders.iter().any(|l| l.contains(at))
+                                || passages.iter().any(|g| g.contains(at)),
                             "journey leaves excavated ground: {at:?}"
                         );
                     }
@@ -2387,4 +2397,70 @@ fn lorekeeper_follows_the_visible_ledger_during_a_room_glide() {
         Vec2::splat(mid.dwarves[i].size)
     )));
     assert_eq!(placed[i].heading, None);
+}
+
+#[test]
+fn side_by_side_groups_walk_around_walls_even_when_interrupted() {
+    let mut s = ClanSnapshot::default();
+    for i in 0..9 {
+        s.nodes.push(node(
+            &format!("group-{i}"),
+            NodeKind::Terminal,
+            None,
+            NodeState::Working,
+        ));
+    }
+    let scene = scene(&s);
+    let (from, to) = scene
+        .dwarves
+        .iter()
+        .find_map(|a| {
+            scene
+                .dwarves
+                .iter()
+                .find(|b| a.id != b.id && a.pos.y == b.pos.y)
+                .map(|b| (a, b))
+        })
+        .expect("several groups share a row");
+    let path = route(from.pos, to.pos, &from.spot, &to.spot, &scene);
+    assert!(
+        path.iter().any(|p| p.y < from.pos.y),
+        "must climb above the partition"
+    );
+    let ladders: Vec<_> = std::iter::once(scene.work_ladder())
+        .chain(scene.tunnels.iter().map(|t| scene.tunnel_ladder(t)))
+        .collect();
+    let passages: Vec<_> = scene
+        .work_galleries()
+        .into_iter()
+        .chain(scene.access_galleries())
+        .chain([scene.gallery])
+        .collect();
+    let walkable = |p| ladders.iter().chain(&passages).any(|r| r.contains(p));
+    let target = scene
+        .dwarves
+        .iter()
+        .find(|a| a.pos.y != from.pos.y)
+        .unwrap();
+    for leg in path.windows(2) {
+        let at = leg[0].lerp(leg[1], 0.5);
+        // The logical spot can still name the original room while walking elsewhere.
+        let changed = route(at, target.pos, &from.spot, &target.spot, &scene);
+        assert_eq!(changed[0], at);
+        assert_eq!(*changed.last().unwrap(), target.pos);
+        for segment in changed.windows(2) {
+            for step in 0..=16 {
+                let p = segment[0].lerp(segment[1], step as f32 / 16.0);
+                assert!(walkable(p), "interrupted route crosses rock at {p:?}");
+            }
+        }
+    }
+    assert!(!scene.work_walls().is_empty());
+    for wall in scene.work_walls() {
+        assert!(wall.width() >= scene.cell() * 0.5);
+        assert!(scene.work_galleries().iter().all(|r| {
+            let overlap = r.intersect(wall);
+            overlap.width() < 0.01 || overlap.height() < 0.01
+        }));
+    }
 }

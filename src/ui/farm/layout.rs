@@ -4,7 +4,7 @@
 //! The farm is a side view: sky above the surface, the "the user" landing on the surface at the
 //! left, the throne hall under the surface in the middle, the storage chamber at the
 //! right, and horizontal working galleries cut into the rock below. Runs and repos keep
-//! separate horizontal bands, with a shared ladder at the left joining every work row.
+//! separate horizontal segments, with local ladders and access passages joining the main shaft.
 //! Parked agents sleep in the resting area's beds; coordinators stand at their room's mouth.
 
 use std::borrow::Cow;
@@ -264,7 +264,7 @@ impl Scene {
         CELL * self.px
     }
 
-    /// The one ladder serving every underground work row, outside the room columns.
+    /// The main ladder joins the access passages, outside all packed segments.
     pub fn work_ladder(&self) -> Rect {
         let a = self.cell();
         let bottom = self
@@ -282,8 +282,8 @@ impl Scene {
     pub fn work_galleries(&self) -> Vec<Rect> {
         let a = self.cell();
         let mut rows: Vec<Rect> = Vec::new();
-        let left = self.work_ladder().left();
         for t in &self.tunnels {
+            let left = self.tunnel_ladder(t).left();
             let mut top = t.chamber.top();
             while top + a < t.chamber.bottom() {
                 let row = Rect::from_min_max(
@@ -295,6 +295,76 @@ impl Scene {
             }
         }
         rows
+    }
+
+    /// A group's ladder connects all its work rows to the access passage above its label.
+    pub fn tunnel_ladder(&self, tunnel: &Tunnel) -> Rect {
+        let a = self.cell();
+        Rect::from_min_max(
+            pos2(
+                tunnel.chamber.left() - LADDER_GAP * a,
+                self.access_y(tunnel),
+            ),
+            pos2(
+                tunnel.chamber.left() - 0.6 * a,
+                tunnel.chamber.bottom() - TAG * a,
+            ),
+        )
+    }
+
+    pub fn access_y(&self, tunnel: &Tunnel) -> f32 {
+        tunnel.chamber.top() - (LABEL_GAP + 0.6) * self.cell()
+    }
+
+    /// Service passages reach the local ladders without cutting through another group's
+    /// work row or its label. The first level uses the existing main gallery.
+    pub fn access_galleries(&self) -> Vec<Rect> {
+        let mut rows: Vec<Rect> = Vec::new();
+        for tunnel in &self.tunnels {
+            let y = self.access_y(tunnel);
+            if (y - self.gallery.center().y).abs() < self.px {
+                continue;
+            }
+            let row = Rect::from_min_max(
+                pos2(self.work_ladder().left(), y - 0.6 * self.cell()),
+                pos2(self.tunnel_ladder(tunnel).right(), y + 0.6 * self.cell()),
+            );
+            if let Some(existing) = rows.iter_mut().find(|r| (r.center().y - y).abs() < self.px) {
+                *existing = existing.union(row);
+            } else {
+                rows.push(row);
+            }
+        }
+        rows
+    }
+
+    /// Stone partitions between packed neighbours, below their shared access passage.
+    pub fn work_walls(&self) -> Vec<Rect> {
+        let mut walls = Vec::new();
+        for tunnel in &self.tunnels {
+            if let Some(next) = self
+                .tunnels
+                .iter()
+                .filter(|t| {
+                    (t.chamber.top() - tunnel.chamber.top()).abs() < self.px
+                        && t.chamber.left() > tunnel.chamber.right()
+                })
+                .min_by(|a, b| a.chamber.left().total_cmp(&b.chamber.left()))
+            {
+                let wall = Rect::from_min_max(
+                    tunnel.chamber.right_top(),
+                    pos2(
+                        self.tunnel_ladder(next).left(),
+                        tunnel.chamber.bottom().max(next.chamber.bottom()),
+                    ),
+                );
+                // Rooms can briefly overlap while gliding into their packed cells.
+                if wall.is_positive() {
+                    walls.push(wall);
+                }
+            }
+        }
+        walls
     }
 
     /// The mine portal stands beside the waiting queue, clear of the rune stone.
@@ -888,7 +958,7 @@ fn layout_rooms(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         )),
     };
 
-    // Each workspace owns its horizontal band; wrapped rows stay beneath its label.
+    // Each group owns a packed segment; wrapped rows stay beneath its label.
     let dwarves_of: HashMap<&TunnelKey, &Vec<&Node>> = keys.iter().zip(&chamber_nodes).collect();
     let none = Vec::new();
     let band_top = |level: usize| rect.top() + ground.band_top(level);
@@ -902,8 +972,8 @@ fn layout_rooms(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         .map(|room| {
             let key = &room.key;
             let nodes = dwarves_of.get(key).copied().unwrap_or(&none);
-            let chamber_w = ground.chamber_w(room.level, room.col);
-            let per_row = ground.per_row(room.level, room.col);
+            let chamber_w = ground.chamber_w(room.span);
+            let per_row = ground.per_row(room.span);
             let footprints: Vec<usize> = nodes
                 .iter()
                 .map(|n| footprint(trail_of(&n.id), sub / a))

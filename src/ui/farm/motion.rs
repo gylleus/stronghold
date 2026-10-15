@@ -8,28 +8,64 @@ pub const SPEED: f32 = 240.0;
 pub const MIN_WALK_S: f64 = 0.5;
 pub const MAX_WALK_S: f64 = 2.5;
 
-/// Walk along work rows and use the shared ladder to change depth. Resolve access from
-/// the current position too: a state change can interrupt a climb or a gallery crossing.
+/// Walk through each group's ladder and its level's access passage. Resolve the
+/// current physical segment first so an interrupted walk cannot cut through a wall.
 pub fn route(from: Pos2, to: Pos2, from_spot: &Spot, to_spot: &Spot, scene: &Scene) -> Vec<Pos2> {
     let underground = |p: Pos2| p.y > scene.gallery.bottom();
-    let ladder_x = scene.work_ladder().center().x;
-    if underground(from) && underground(to) {
-        let mut path = if (from.y - to.y).abs() < f32::EPSILON {
+    let main_x = scene.work_ladder().center().x;
+    let tunnel_at = |at: Pos2| {
+        scene.tunnels.iter().find(|t| {
+            let ladder = scene.tunnel_ladder(t);
+            ladder.contains(at)
+                || Rect::from_min_max(pos2(ladder.left(), t.chamber.top()), t.chamber.max)
+                    .contains(at)
+        })
+    };
+    if underground(from)
+        && underground(to)
+        && let (Some(a), Some(b)) = (tunnel_at(from), tunnel_at(to))
+        && a.key == b.key
+    {
+        let x = scene.tunnel_ladder(a).center().x;
+        let mut path = if from.y == to.y {
             vec![from, to]
         } else {
-            vec![from, pos2(ladder_x, from.y), pos2(ladder_x, to.y), to]
+            vec![from, pos2(x, from.y), pos2(x, to.y), to]
         };
         path.dedup();
         return path;
     }
-    if from_spot.area() == to_spot.area() && from.y == to.y {
+    if !underground(from)
+        && !underground(to)
+        && from_spot.area() == to_spot.area()
+        && from.y == to.y
+    {
         return vec![from, to];
     }
     let access = |at: Pos2, spot: &Spot| {
         let gy = scene.gallery.center().y;
-        let x = if underground(at) {
-            ladder_x
-        } else if scene.gallery.contains(at) {
+        if underground(at) {
+            if scene.work_ladder().contains(at)
+                || scene.access_galleries().iter().any(|r| r.contains(at))
+            {
+                return vec![at, pos2(main_x, at.y), pos2(main_x, gy)];
+            }
+            if let Some(t) = tunnel_at(at).or_else(|| {
+                scene.tunnels.iter().find(|t|
+                matches!(spot, Spot::Mouth(key, _) | Spot::Chamber(key, _) if *key == t.key))
+            }) {
+                let x = scene.tunnel_ladder(t).center().x;
+                let y = scene.access_y(t);
+                return vec![
+                    at,
+                    pos2(x, at.y),
+                    pos2(x, y),
+                    pos2(main_x, y),
+                    pos2(main_x, gy),
+                ];
+            }
+        }
+        let x = if scene.gallery.contains(at) {
             at.x
         } else {
             match spot {
@@ -44,7 +80,19 @@ pub fn route(from: Pos2, to: Pos2, from_spot: &Spot, to_spot: &Spot, scene: &Sce
         vec![at, pos2(x, at.y), pos2(x, gy)]
     };
     let mut path = access(from, from_spot);
-    path.extend(access(to, to_spot).into_iter().rev());
+    let mut end = access(to, to_spot);
+    path.dedup();
+    end.dedup();
+    // Join at the nearest shared junction instead of walking up and back down.
+    while path.len() > 1
+        && end.len() > 1
+        && path.last() == end.last()
+        && path[path.len() - 2] == end[end.len() - 2]
+    {
+        path.pop();
+        end.pop();
+    }
+    path.extend(end.into_iter().rev());
     path.dedup();
     path
 }

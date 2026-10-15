@@ -1228,9 +1228,21 @@ fn paint_ground(
     }
     let ladder = scene.work_ladder();
     sprites.passage(painter, ladder, px);
-    for gallery in scene.work_galleries() {
+    for gallery in scene
+        .access_galleries()
+        .into_iter()
+        .chain(scene.work_galleries())
+    {
         sprites.passage(painter, gallery, px);
         sprites.gallery(painter, gallery, px);
+    }
+    for wall in scene.work_walls() {
+        sprites.masonry(painter, wall);
+    }
+    for tunnel in &scene.tunnels {
+        let local = scene.tunnel_ladder(tunnel);
+        sprites.passage(painter, local, px);
+        sprites.ladder(painter, local, px);
     }
     sprites.ladder(painter, ladder, px);
     sprites.passage(painter, scene.gallery, px);
