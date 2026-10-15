@@ -559,6 +559,10 @@ fn ingest_regression_self_roots_survive_without_inbox_messages() {
 fn ingest_regression_recovered_bridge_backfills_old_thread_replies() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = channel(dir.path());
+    c.inbox.first_enabled_ms = Some(NOW - 30 * 86_400_000);
+    c.inbox
+        .poll_watermarks
+        .insert("history:C123".into(), NOW - 600_000);
     c.poll(NOW).unwrap(); // Default fake history fails during the outage.
     fs::write(
         dir.path().join("heartbeat"),
@@ -567,12 +571,12 @@ fn ingest_regression_recovered_bridge_backfills_old_thread_replies() {
             .to_string(),
     )
     .unwrap();
-    let root = json!({"messages":[{"ts":"1700000000.000001", "user":"UOTHER", "text":"old root", "reply_count":1, "latest_reply":"1790000001.000001"}]});
+    let root = json!({"messages":[{"ts":"1789827200.000001", "user":"UOTHER", "text":"old root", "reply_count":1, "latest_reply":"1790000001.000001"}]});
     c.io.scripted.insert(
         "conversations.history".into(),
         [Ok(root.clone()), Ok(root)].into(),
     );
-    let reply = json!({"messages":[{"ts":"1790000001.000001", "thread_ts":"1700000000.000001", "user":"UOTHER", "text":"missed reply"}]});
+    let reply = json!({"messages":[{"ts":"1790000001.000001", "thread_ts":"1789827200.000001", "user":"UOTHER", "text":"missed reply"}]});
     c.io.scripted.insert(
         "conversations.replies".into(),
         [Ok(reply.clone()), Ok(reply)].into(),
@@ -591,7 +595,7 @@ fn ingest_regression_recovered_bridge_backfills_old_thread_replies() {
         c.io.calls
             .iter()
             .filter(|(method, _)| method == "conversations.history")
-            .any(|(_, params)| !params.iter().any(|(k, _)| k == "oldest"))
+            .all(|(_, params)| params.iter().any(|(k, _)| k == "oldest"))
     );
 }
 
@@ -683,11 +687,15 @@ fn cli_timeout_is_clipped_to_the_poll_deadline() {
 fn returning_bridge_during_backfill_keeps_the_uncovered_window() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = channel(dir.path());
+    c.inbox.first_enabled_ms = Some(NOW - 30 * 86_400_000);
+    c.inbox
+        .poll_watermarks
+        .insert("history:C123".into(), NOW - 600_000);
     c.inbox.recovery_needed_through.insert("C123".into(), NOW);
     c.io.scripted.insert("conversations.history".into(), [
         Ok(json!({"messages":[], "response_metadata":{"next_cursor":"older"}})),
         Ok(json!({"messages":[]})),
-        Ok(json!({"messages":[{"ts":"1700000000.000001", "user":"UOTHER", "text":"old root", "latest_reply":"1790000001.000001"}]})),
+        Ok(json!({"messages":[{"ts":"1789827200.000001", "user":"UOTHER", "text":"old root", "latest_reply":"1790000001.000001"}]})),
     ].into());
     assert!(c.history("C123", NOW, &mut PollBatch::default()).unwrap());
     c.status = BridgeStatus::Ok;
@@ -722,7 +730,11 @@ fn returning_bridge_during_backfill_keeps_the_uncovered_window() {
 fn failed_reply_page_keeps_checkpoint_and_retries_after_restart() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = channel(dir.path());
-    c.io.replies.push_back(json!({"messages":[{"ts":"1700000000.000001", "user":"UOTHER", "latest_reply":"1790000000.000001"}]}));
+    c.inbox.first_enabled_ms = Some(NOW - 30 * 86_400_000);
+    c.inbox
+        .poll_watermarks
+        .insert("history:C123".into(), NOW - 600_000);
+    c.io.replies.push_back(json!({"messages":[{"ts":"1789827200.000001", "user":"UOTHER", "latest_reply":"1790000000.000001"}]}));
     assert!(
         c.history("C123", NOW + 10, &mut PollBatch::default())
             .unwrap()
@@ -735,7 +747,7 @@ fn failed_reply_page_keeps_checkpoint_and_retries_after_restart() {
         c.history("C123", NOW + 20, &mut PollBatch::default())
             .is_err()
     );
-    assert!(!c.inbox.poll_watermarks.contains_key("history:C123"));
+    assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW - 600_000);
     c.inbox.save(&c.path).unwrap();
     let mut restart = channel(dir.path());
     restart.inbox = Inbox::load(&c.path).unwrap();
@@ -781,7 +793,11 @@ fn full_reply_handoff_retains_backfill_page() {
     use crate::envoy::slack::threads::{MatchedReply, Watch, WatchState};
     let dir = tempfile::tempdir().unwrap();
     let mut c = channel(dir.path());
-    let root = "1700000000.000001";
+    c.inbox.first_enabled_ms = Some(NOW - 30 * 86_400_000);
+    c.inbox
+        .poll_watermarks
+        .insert("history:C123".into(), NOW - 600_000);
+    let root = "1789827200.000001";
     c.inbox.thread_watches.insert(
         "request".into(),
         WatchState {
@@ -828,7 +844,7 @@ fn full_reply_handoff_retains_backfill_page() {
             .unwrap_err()
             .contains("handoff full")
     );
-    assert!(!c.inbox.poll_watermarks.contains_key("history:C123"));
+    assert_eq!(c.inbox.poll_watermarks["history:C123"], NOW - 600_000);
     c.inbox.pending_replies.clear();
     let mut batch = PollBatch::default();
     assert!(!c.history("C123", NOW + 30, &mut batch).unwrap());
@@ -973,4 +989,196 @@ fn deleted_event_cannot_be_recaptured_as_request_reply() {
     assert!(restarted.ingest(event, &mut batch));
     assert!(batch.events.is_empty());
     assert!(restarted.inbox.pending_replies.is_empty());
+}
+
+#[test]
+fn rework_deep_history_has_a_seven_day_root_horizon() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.inbox.first_enabled_ms = Some(NOW - 30 * 86_400_000);
+    c.inbox.poll_watermarks.insert("history:C123".into(), NOW);
+    c.io.replies.push_back(json!({"messages":[]}));
+    c.history("C123", NOW, &mut PollBatch::default()).unwrap();
+    let oldest = c.io.calls[0]
+        .1
+        .iter()
+        .find(|(key, _)| key == "oldest")
+        .expect("bounded history")
+        .1
+        .parse::<f64>()
+        .unwrap();
+    assert_eq!(oldest, (NOW - 600_000 - 7 * 86_400_000) as f64 / 1000.0);
+}
+
+#[test]
+fn rework_two_minute_poll_gap_does_not_start_recovery_with_fresh_bridge() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.status = BridgeStatus::Ok;
+    c.last_tick_ms = Some(NOW - 120_000);
+    fs::create_dir_all(dir.path().join("channels")).unwrap();
+    fs::write(dir.path().join("channels/C123.jsonl"), "").unwrap();
+    fs::write(
+        dir.path().join("heartbeat"),
+        jiff::Timestamp::from_millisecond(NOW).unwrap().to_string(),
+    )
+    .unwrap();
+    c.poll(NOW).unwrap();
+    assert!(c.inbox.recovery_needed_through.is_empty());
+    assert!(
+        !c.io
+            .methods
+            .iter()
+            .any(|method| method == "conversations.history")
+    );
+}
+
+#[test]
+fn rework_group_searches_rotate_one_page_per_interval() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.settings.channels.clear();
+    c.inbox.user_groups = (0..50).map(|i| format!("S{i:02}")).collect();
+    c.next_jobs.insert("groups".into(), NOW + 3_600_000);
+    c.io.scripted.insert(
+        "search.messages".into(),
+        [
+            Ok(json!({"messages":{"matches":[],"paging":{"pages":1}}})),
+            Ok(json!({"messages":{"matches":[],"paging":{"pages":1}}})),
+            Ok(json!({"messages":{"matches":[],"paging":{"pages":1}}})),
+            Ok(json!({"messages":{"matches":[],"paging":{"pages":2}}})),
+        ]
+        .into(),
+    );
+    c.poll(NOW).unwrap();
+    let queries: Vec<_> =
+        c.io.calls
+            .iter()
+            .filter(|(method, _)| method == "search.messages")
+            .filter_map(|(_, params)| {
+                params
+                    .iter()
+                    .find(|(key, _)| key == "query")
+                    .map(|(_, value)| value)
+            })
+            .collect();
+    assert_eq!(
+        queries.len(),
+        4,
+        "member, DM, pins, and one group regardless of group count"
+    );
+    assert!(queries[0].starts_with("<@U0KARL0001>"));
+    assert!(queries[1].starts_with("to:U0KARL0001"));
+    assert!(queries[3].starts_with("<!subteam^S00>"));
+    assert_eq!(c.inbox.searches["group:S00"].page, 2);
+    let count = c.io.calls.len();
+    c.poll(NOW + 2_000).unwrap();
+    assert_eq!(
+        c.io.calls.len(),
+        count,
+        "unfinished group page still waits its interval"
+    );
+    // Membership changes must not discard another group's saved page.
+    c.inbox.user_groups = BTreeSet::from(["S00".into(), "S01".into()]);
+    c.poll(NOW + 120_000).unwrap();
+    assert!(
+        c.io.calls
+            .last()
+            .unwrap()
+            .1
+            .iter()
+            .any(|(k, v)| k == "query" && v.starts_with("<!subteam^S01>"))
+    );
+    c.inbox.save(&c.path).unwrap();
+    let mut restarted = channel(dir.path());
+    restarted.inbox = Inbox::load(&c.path).unwrap();
+    restarted.settings.channels.clear();
+    restarted.next_jobs.insert("groups".into(), NOW + 3_600_000);
+    restarted.poll(NOW + 240_000).unwrap();
+    let params = &restarted.io.calls.last().unwrap().1;
+    assert!(
+        params
+            .iter()
+            .any(|(k, v)| k == "query" && v.starts_with("<!subteam^S00>"))
+    );
+    assert!(params.iter().any(|(k, v)| k == "page" && v == "2"));
+}
+
+#[test]
+fn rework_group_search_skips_a_nearly_spent_poll_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.settings.channels.clear();
+    c.inbox.user_groups.insert("SENG".into());
+    c.next_jobs.insert("groups".into(), NOW + 3_600_000);
+    c.poll_bounded(NOW, Duration::from_secs(10)).unwrap();
+    assert_eq!(
+        c.io.calls.len(),
+        3,
+        "member, DM, and pins run before optional groups"
+    );
+    assert!(c.last_group.is_none());
+    c.poll(NOW + 2_000).unwrap();
+    assert_eq!(c.io.calls.len(), 4);
+    assert!(
+        c.io.calls
+            .last()
+            .unwrap()
+            .1
+            .iter()
+            .any(|(k, v)| k == "query" && v.starts_with("<!subteam^SENG>"))
+    );
+}
+
+#[test]
+fn rework_tombstoned_reply_is_not_resurrected_by_backfill() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    let root = "1789999999.000001";
+    let id = "C123:1790000000.000001";
+    c.inbox.delete(&[id.into()]);
+    c.io.replies.push_back(
+        json!({"messages":[{"ts":root,"latest_reply":"1790000000.000001","user":"UOTHER"}]}),
+    );
+    let mut batch = PollBatch::default();
+    assert!(c.history("C123", NOW + 10, &mut batch).unwrap());
+    c.io.scripted.insert(
+        "conversations.replies".into(),
+        [Ok(
+            json!({"messages":[{"ts":"1790000000.000001","user":"UOTHER","text":"deleted"}]}),
+        )]
+        .into(),
+    );
+    assert!(!c.history("C123", NOW + 20, &mut batch).unwrap());
+    assert!(c.inbox.get(id).is_none());
+    assert!(!batch.events.iter().any(|e| e.id() == id));
+    assert!(c.inbox.pending_replies.is_empty());
+}
+
+#[test]
+fn rework_deferred_group_does_not_run_before_due_member_searches() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.settings.channels.clear();
+    c.inbox.user_groups.insert("SENG".into());
+    c.next_jobs.insert("groups".into(), NOW + 3_600_000);
+    c.next_job = 3;
+    c.poll(NOW).unwrap();
+    assert_eq!(c.io.calls.len(), 3);
+    assert!(c.last_group.is_none());
+    c.poll(NOW + 2_000).unwrap();
+    assert_eq!(c.io.calls.len(), 4);
+    assert_eq!(c.last_group.as_deref(), Some("SENG"));
+}
+
+#[test]
+fn rework_membership_refresh_can_remove_last_group_before_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = channel(dir.path());
+    c.settings.channels.clear();
+    c.inbox.user_groups.insert("SENG".into());
+    c.next_job = 4; // Refresh membership before executing the already-built group job.
+    c.poll(NOW).unwrap();
+    assert!(c.inbox.user_groups.is_empty());
+    assert!(c.last_group.is_none());
 }

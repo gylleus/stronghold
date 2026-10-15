@@ -99,6 +99,7 @@ impl Inbox {
         self.events.retain(|e| !self.deleted.contains(&e.id()));
         self.forwarded.retain(|id| !self.deleted.contains(id));
         self.resolved.retain(|id| !self.deleted.contains(id));
+        self.ingested_ms.retain(|id, _| !self.deleted.contains(id));
         self.pending_replies
             .retain(|r| !self.deleted.contains(&r.event.id()));
     }
@@ -222,6 +223,16 @@ mod tests {
             kind: EventKind::AgentComms,
             permalink: None,
         }
+    }
+
+    #[test]
+    fn rework_deletion_discards_ingest_timestamp() {
+        let mut inbox = Inbox::default();
+        let event = event("1.000001");
+        inbox.insert(event.clone());
+        assert!(inbox.ingested_ms.contains_key(&event.id()));
+        inbox.delete(&[event.id()]);
+        assert!(!inbox.ingested_ms.contains_key(&event.id()));
     }
 
     #[test]

@@ -389,6 +389,7 @@ pub struct SlackChannel<I: SlackIo> {
     subscribed: Vec<String>,
     next_jobs: BTreeMap<String, i64>,
     next_job: usize,
+    last_group: Option<String>,
     deadline: Option<Instant>,
     last_tick_ms: Option<i64>,
     api_backoff: BTreeMap<String, Instant>,
@@ -427,6 +428,7 @@ impl<I: SlackIo> SlackChannel<I> {
             subscribed: Vec::new(),
             next_jobs: BTreeMap::new(),
             next_job: 0,
+            last_group: None,
             deadline: None,
             last_tick_ms: None,
             api_backoff: BTreeMap::new(),
@@ -851,7 +853,8 @@ impl<I: SlackIo> SlackChannel<I> {
 
 #[derive(Clone)]
 enum PollJob {
-    Search(EventKind, Option<String>),
+    Search(EventKind),
+    GroupSearch,
     Pins,
     Groups,
     Subscribe(String),
@@ -878,7 +881,7 @@ impl<I: SlackIo> SlackChannel<I> {
         let previous_tick = self.last_tick_ms;
         let observation_gap = self
             .last_tick_ms
-            .is_some_and(|at| now_ms.saturating_sub(at) > 90_000);
+            .is_some_and(|at| now_ms.saturating_sub(at) > 5 * 60_000);
         self.last_tick_ms = Some(now_ms);
         self.status = heartbeat(&self.bridge, now_ms);
         let channels = self.settings.channels.clone();
@@ -937,15 +940,12 @@ impl<I: SlackIo> SlackChannel<I> {
             }
         }
         let mut jobs = vec![
-            ("mention".into(), PollJob::Search(EventKind::Mention, None)),
-            ("dm".into(), PollJob::Search(EventKind::Dm, None)),
+            ("mention".into(), PollJob::Search(EventKind::Mention)),
+            ("dm".into(), PollJob::Search(EventKind::Dm)),
             ("pin".into(), PollJob::Pins),
         ];
-        for group in &self.inbox.user_groups {
-            jobs.push((
-                format!("group:{group}"),
-                PollJob::Search(EventKind::Mention, Some(group.clone())),
-            ));
+        if !self.inbox.user_groups.is_empty() {
+            jobs.push(("group_search".into(), PollJob::GroupSearch));
         }
         for id in self.inbox.thread_watches.keys() {
             jobs.push((format!("watch:{id}"), PollJob::Watch(id.clone())));
@@ -982,8 +982,31 @@ impl<I: SlackIo> SlackChannel<I> {
             }
             let mut delay = interval;
             let result = match job {
-                PollJob::Search(kind, group) => {
-                    self.search_tag(*kind, group.as_deref(), now_ms, &mut batch)
+                PollJob::Search(kind) => self.search_tag(*kind, None, now_ms, &mut batch),
+                PollJob::GroupSearch => {
+                    // Leave enough time for a full CLI call; member and DM searches go first.
+                    if self.deadline.is_some_and(|at| {
+                        at.saturating_duration_since(Instant::now()) < Duration::from_secs(25)
+                    }) || ["mention", "dm"]
+                        .iter()
+                        .any(|key| self.next_jobs.get(*key).is_none_or(|at| now_ms >= *at))
+                    {
+                        continue;
+                    }
+                    let Some(group) = self
+                        .inbox
+                        .user_groups
+                        .iter()
+                        .find(|group| self.last_group.as_ref().is_none_or(|last| *group > last))
+                        .or_else(|| self.inbox.user_groups.first())
+                        .cloned()
+                    else {
+                        continue;
+                    };
+                    self.last_group = Some(group.clone());
+                    // One page total per interval; each group retains its own unfinished page.
+                    self.search_tag(EventKind::Mention, Some(&group), now_ms, &mut batch)
+                        .map(|_| false)
                 }
                 PollJob::Pins => self.pins(&mut batch).map(|()| false),
                 PollJob::Groups => {

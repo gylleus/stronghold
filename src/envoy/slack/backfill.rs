@@ -113,10 +113,14 @@ impl<I: SlackIo> SlackChannel<I> {
                 ("limit", "100".into()),
                 ("cursor", work.cursor.clone()),
             ];
-            // Old roots can have new replies, so discovery must page past the outage window.
-            if !deep {
-                params.push(("oldest", format!("{:.3}", work.since_ms as f64 / 1000.0)));
-            }
+            // A week finds roots from the previous workweek and weekend without
+            // rescanning the channel forever. Older watched threads poll separately.
+            let oldest = if deep {
+                work.since_ms.saturating_sub(7 * 86_400_000).max(start)
+            } else {
+                work.since_ms
+            };
+            params.push(("oldest", format!("{:.3}", oldest as f64 / 1000.0)));
             let value = self.api("conversations.history", &params)?;
             let cursor = next_cursor(&value)?;
             for message in value["messages"]

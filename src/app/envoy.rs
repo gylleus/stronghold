@@ -157,10 +157,15 @@ impl AppEnvoy {
             cleanup_path,
             settings: EnvoySettings::default(),
             backlog: inbox
-                .ingested_ms
+                .events()
                 .iter()
-                .filter(|(_, at)| **at < now_ms() - BACKLOG_AFTER_MS)
-                .map(|(id, _)| id.clone())
+                .filter(|event| {
+                    inbox
+                        .ingested_ms
+                        .get(&event.id())
+                        .is_none_or(|at| *at < now_ms() - BACKLOG_AFTER_MS)
+                })
+                .map(InboundEvent::id)
                 .collect(),
             inbox,
             drafts: drafts.ok(),
@@ -1034,22 +1039,30 @@ impl AppEnvoy {
             return None;
         }
         let handle = self.handle.clone()?;
+        let mut threads: HashMap<(&str, &str), Vec<&InboundEvent>> = HashMap::new();
+        for event in self.inbox.events() {
+            let key = (
+                event.conversation.as_str(),
+                event.thread_ts.as_deref().unwrap_or(&event.ts),
+            );
+            threads.entry(key).or_default().push(event);
+        }
+        // Classify each complete thread once, including the event itself.
+        let protected: HashSet<_> = threads
+            .iter()
+            .filter_map(|(key, thread)| {
+                (self.addressee(thread[0], thread, dwarves).addressee == addressee::Addressee::User)
+                    .then_some(*key)
+            })
+            .collect();
         let pending = std::mem::take(&mut self.pending);
         let (old, fresh): (Vec<_>, Vec<_>) = pending.into_iter().partition(|e| {
-            if !self.backlog.contains(&e.id()) || e.kind == EventKind::Pin {
-                return false;
-            }
-            let root = e.thread_ts.as_deref().unwrap_or(&e.ts);
-            let thread: Vec<_> = self
-                .inbox
-                .events()
-                .iter()
-                .filter(|t| {
-                    t.conversation == e.conversation
-                        && t.thread_ts.as_deref().unwrap_or(&t.ts) == root
-                })
-                .collect();
-            self.addressee(e, &thread, dwarves).addressee != addressee::Addressee::User
+            self.backlog.contains(&e.id())
+                && e.kind != EventKind::Pin
+                && !protected.contains(&(
+                    e.conversation.as_str(),
+                    e.thread_ts.as_deref().unwrap_or(&e.ts),
+                ))
         });
         self.pending = fresh.into();
         let mut batch: Vec<_> = self.pending.drain(..self.pending.len().min(20)).collect();
@@ -1057,15 +1070,12 @@ impl AppEnvoy {
             .iter()
             .map(|e| {
                 let root = e.thread_ts.as_deref().unwrap_or(&e.ts);
-                let thread: Vec<&InboundEvent> = self
-                    .inbox
-                    .events()
-                    .iter()
-                    .filter(|t| {
-                        t.conversation == e.conversation
-                            && t.ts != e.ts
-                            && t.thread_ts.as_deref().unwrap_or(&t.ts) == root
-                    })
+                let thread: Vec<&InboundEvent> = threads
+                    .get(&(e.conversation.as_str(), root))
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|t| t.ts != e.ts)
                     .collect();
                 let thread = &thread[thread.len().saturating_sub(20)..];
                 e.summary()
@@ -1083,9 +1093,8 @@ impl AppEnvoy {
             lines.insert(
                 0,
                 format!(
-                    "Envoy backlog: {} event(s) ingested more than {} min before restart were not typed; envoy_inbox has them if you need them",
-                    old.len(),
-                    BACKLOG_AFTER_MS / 60_000
+                    "Envoy backlog: {} old or undated event(s) from before restart were not typed; envoy_inbox has them if you need them",
+                    old.len()
                 ),
             );
             batch.extend(old);

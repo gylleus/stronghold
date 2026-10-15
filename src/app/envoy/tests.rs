@@ -713,9 +713,7 @@ fn batches_name_candidate_dwarves_and_fold_the_backlog() {
         .map(str::to_owned)
         .collect();
     assert_eq!(lines.len(), 4);
-    assert!(
-        lines[0].starts_with("Envoy backlog: 1 event(s) ingested more than 30 min before restart")
-    );
+    assert!(lines[0].starts_with("Envoy backlog: 1 old or undated event(s) from before restart"));
     assert!(lines[1].ends_with("dwarves: Recs rollout (term:term_dwarf, api#694)"));
     assert!(
         lines[2].contains("push the merge commit")
@@ -1927,7 +1925,7 @@ fn restart_folds_only_old_ingested_chatter_and_keeps_it_readable() {
         panic!("send");
     };
     let text = input.text.unwrap();
-    assert!(text.contains("Envoy backlog: 1 event(s)"));
+    assert!(text.contains("Envoy backlog: 1 old or undated event(s)"));
     for event in &events {
         assert_eq!(
             text.contains(&format!("— id {}", event.id())),
@@ -1961,4 +1959,40 @@ fn poll_error_heartbeat_refreshes_liveness_without_hiding_error() {
     core.poll_updates();
     assert!(!core.poll_stale(now_ms()));
     assert_eq!(core.error.as_deref(), Some("cannot save inbox"));
+}
+
+#[test]
+fn rework_legacy_backlog_folds_chatter_but_preserves_protected_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut inbox = Inbox::default();
+    let mut chatter = receipt_event("1.000001");
+    chatter.text = "legacy chatter".into();
+    let mut dm = receipt_event("2.000001");
+    dm.kind = EventKind::Dm;
+    inbox.insert(chatter.clone());
+    inbox.insert(dm.clone());
+    let mut mention = receipt_event("3.000001");
+    mention.text = "<@UKARL> please check".into();
+    let mut group = receipt_event("4.000001");
+    group.text = "<!subteam^SENG> please check".into();
+    inbox.user_groups.insert("SENG".into());
+    inbox.insert(mention.clone());
+    inbox.insert(group.clone());
+    inbox.ingested_ms.clear();
+    inbox
+        .save(&dir.path().join(crate::envoy::inbox::INBOX_FILE))
+        .unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    core.settings.user_id = "UKARL".into();
+    core.pending = core.inbox.unforwarded().into();
+    let (Action::Send { input, .. }, _) = core.next_forward(now_ms(), &[]).unwrap() else {
+        panic!("send");
+    };
+    let text = input.text.unwrap();
+    assert!(text.contains("Envoy backlog: 1 old or undated event(s)"));
+    assert!(!text.contains(&format!("— id {}", chatter.id())));
+    assert!(text.contains(&format!("— id {}", dm.id())));
+    assert!(text.contains(&format!("— id {}", mention.id())));
+    assert!(text.contains(&format!("— id {}", group.id())));
 }

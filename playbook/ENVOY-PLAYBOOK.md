@@ -255,8 +255,8 @@ Events arrive typed into your terminal, one line each, in batches:
 or `… — addressee: … — no dwarf match`. The addressee comes from the mentions (_Who it's for_).
 At most three candidates, best first; the agent id is what `envoy_relay` takes as `to`. `kind` is `mention`, `dm`, `agent_comms`, `thread_reply` or
 `pin`. A thread with a note ends its line with ` — note: <text>`. Chatter ingested more than
-30 minutes before a restart folds into one `Envoy backlog: N event(s) …` line and stays open
-in `envoy_inbox`. Slack message age alone never causes folding, nor does time spent queued
+30 minutes before a restart, or saved by an older version without an ingest timestamp, folds
+into one `Envoy backlog: N …` line and stays open in `envoy_inbox`. Slack message age alone never causes folding, nor does time spent queued
 in the current session. DMs, member/group mentions and {user}'s threads are never folded. Dwarf requests
 arrive as `Envoy event: request from <dwarf>: <first 120 chars> — id <request_id> turn
 <turn_id>`, several joined by ` | `. The first batch after a context reset starts with
