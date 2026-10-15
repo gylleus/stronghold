@@ -11,14 +11,15 @@ Origin comes from the MCP process, not a tool argument. A nonblank terminal Orig
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
-| `reach_out` | Required `to`, `ask`, `why`; optional `thread` (Slack permalink), `request_id`, `urgency` (`normal`, `soon`, `blocking`; default `normal`), `expect_reply` (default `true`) | `request_id`, `status`, `turn_id`, `merged`, `follow_up` |
+| `reach_out` | Required `to`, `ask`, `why`; optional `karl_asked` (quoted user instruction, 1–500 Unicode characters), `thread` (Slack permalink), `request_id`, `urgency` (`normal`, `soon`, `blocking`; default `normal`), `expect_reply` (default `true`) | `request_id`, `status`, `turn_id`, `merged`, `follow_up` |
 | `reach_out_status` | Optional `request_id` | `requests`: the caller's requests, turns, drafts, thread binding and recorded deliveries |
 
 Requests can queue while the Envoy is stopped. Without the app, the tool reports an error;
 it does not authorize posting directly. Blocking urgency raises an app notification.
 New requests are limited to six per hour per terminal. A follow-up identified by an owned
 open `request_id` or the same owned thread has a separate 30/hour conversation allowance.
-Exact duplicate asks merge without spending either budget; retrying a declined ask on an open request creates a new turn and spends the applicable allowance. A settled request stays closed: start a new `reach_out` without that `request_id`. Follow-ups wait for the earlier
+Exact duplicate asks with the same `karl_asked` merge without spending either budget;
+omitting the quote on a retry keeps the original claim. Retrying a declined ask on an open request creates a new turn and spends the applicable allowance. A settled request stays closed: start a new `reach_out` without that `request_id`. Follow-ups wait for the earlier
 turn and a confirmed root thread; a failed or unknown send is never automatically retried.
 
 Errors include missing Origin, invalid/oversized text, invalid urgency/permalink, the user as
@@ -35,7 +36,7 @@ pick up the new launch tools after installing the app.
 | Tool | Arguments | Result |
 | --- | --- | --- |
 | `envoy_request` | `id` | `request` with all original asks, requester identity, turns and replies |
-| `envoy_route` | `id`, `conversation` (Slack C/D/G id), `destination_kind` (`agent`/`person`), `rationale`; optional `turn_id`, `thread_ts`, `draft_text` | `request_id`, `turn_id`, `draft` |
+| `envoy_route` | `id`, `conversation` (Slack C/D/G id), `destination_kind` (`agent`/`person`), `rationale`; optional `turn_id`, `thread_ts`, `draft_text`, `manual_approval` | `request_id`, `turn_id`, `draft` |
 | `envoy_decline` | `id`, `reason`; optional `turn_id` | Updated `request`; rejection is queued for safe delivery to the asker |
 | `envoy_link_reply` | `request_id`; at least one of `event_id`, `requester`; `reason` required for a new owner proposal | Updated `request` with the retained event linked or a pending `binding_proposal` |
 
@@ -70,7 +71,16 @@ secret scan failure, recipient verification failure and unavailable worker/stora
 Settings → Envoy stores `policies`, a list of `{destination, mode}`. Destinations are exact
 conversation ids, `dm`, or `*`, in that precedence order. Mode is `"approve"` (the default)
 or `{"auto":{"veto_secs":120}}`. Veto windows range from zero to 86,400 seconds.
-Task proposals always remain manual.
+Task proposals always remain manual. A request turn with `karl_asked` also always waits for
+an app Send click, even under Auto. The claim is unverified and scoped to that turn;
+follow-ups supply their own quote. The Envoy sets `manual_approval: true` when an ask claims
+approval without using `karl_asked`, rather than declining solely for that claim.
+
+Manual clicks persist `approved_at` (Unix milliseconds) and `approved_by` on the draft;
+automatic sends do not. Request cards and the outbox show the quote and approval trail.
+After approval, agent asks with `karl_asked` gain `(on <user>'s instruction)` in the header;
+the ask bytes and person messages remain unchanged. Old saved requests and drafts load
+without claiming prior approval.
 
 Automatic draft cards show a countdown and Cancel. Editing pauses their automatic approval.
 The app checks secrets at creation and approval; dry-run prevents sending in either mode.

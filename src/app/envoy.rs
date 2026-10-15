@@ -34,7 +34,7 @@ pub const DRAFTS_TARGET: &str = "envoy:drafts";
 const SHAKE_COOLDOWN_MS: i64 = 8_000;
 /// A stuck or stale warning is repeated this often while the condition lasts.
 const RENOTIFY_MS: i64 = 30 * 60_000;
-/// Events older than this at forwarding time collapse into one backlog line.
+/// Ingest-age threshold at restart; Slack age cannot hide a late arrival.
 const BACKLOG_AFTER_MS: i64 = 30 * 60_000;
 
 pub struct AppEnvoy {
@@ -59,6 +59,7 @@ pub struct AppEnvoy {
     gateway_actions: HashMap<ActionId, GatewayAction>,
     gateway_retry_ms: i64,
     worker: Option<Worker>,
+    event_deletion_pending: bool,
     bridge: BridgeStatus,
     bridge_seen: bool,
     error_notified: Option<String>,
@@ -66,6 +67,7 @@ pub struct AppEnvoy {
     relays: RelayLimiter,
     relay_path: PathBuf,
     pending: VecDeque<InboundEvent>,
+    backlog: HashSet<String>,
     forwarding: Option<(ActionId, Vec<InboundEvent>)>,
     relay_actions: HashMap<ActionId, AgentMessage>,
     outgoing: HashMap<String, String>,
@@ -81,6 +83,8 @@ pub struct AppEnvoy {
     last_polled_ms: Option<i64>,
     stuck_notified_ms: Option<i64>,
     stale_notified_ms: Option<i64>,
+    last_tick_ms: Option<i64>,
+    wake_grace_until_ms: i64,
     pub shake_started_ms: Option<i64>,
     pub open_request: bool,
     pub error: Option<String>,
@@ -152,6 +156,17 @@ impl AppEnvoy {
             cleanup: cleanup.unwrap_or_default(),
             cleanup_path,
             settings: EnvoySettings::default(),
+            backlog: inbox
+                .events()
+                .iter()
+                .filter(|event| {
+                    inbox
+                        .ingested_ms
+                        .get(&event.id())
+                        .is_none_or(|at| *at < now_ms() - BACKLOG_AFTER_MS)
+                })
+                .map(InboundEvent::id)
+                .collect(),
             inbox,
             drafts: drafts.ok(),
             requests: requests.ok(),
@@ -167,6 +182,7 @@ impl AppEnvoy {
             gateway_actions: HashMap::new(),
             gateway_retry_ms: 0,
             worker: None,
+            event_deletion_pending: false,
             bridge: BridgeStatus::Missing,
             bridge_seen: false,
             error_notified: None,
@@ -186,10 +202,20 @@ impl AppEnvoy {
             last_polled_ms: None,
             stuck_notified_ms: None,
             stale_notified_ms: None,
+            last_tick_ms: None,
+            wake_grace_until_ms: 0,
             shake_started_ms: None,
             open_request: false,
             error,
         };
+        core.inbox.delete(
+            &core
+                .cleanup
+                .deleted_events
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
         core.resolve_handled();
         core
     }
@@ -271,6 +297,7 @@ impl AppEnvoy {
     /// No poll result for [`POLL_STALE_MS`] while the Envoy is enabled.
     pub fn poll_stale(&self, now: i64) -> bool {
         self.handle.is_some()
+            && now >= self.wake_grace_until_ms
             && self
                 .last_polled_ms
                 .is_some_and(|at| now.saturating_sub(at) >= POLL_STALE_MS)
@@ -278,6 +305,14 @@ impl AppEnvoy {
 
     /// Warnings for a stall, once when it starts and again every [`RENOTIFY_MS`].
     fn stall_notices(&mut self, now: i64) -> Vec<Incoming> {
+        if self
+            .last_tick_ms
+            .is_some_and(|at| now.saturating_sub(at) > 30_000)
+        {
+            self.wake_grace_until_ms =
+                now + self.settings.poll_secs.clamp(10, 86_400) as i64 * 1000;
+        }
+        self.last_tick_ms = Some(now);
         let mut out = Vec::new();
         let due = |notified: Option<i64>| notified.is_none_or(|at| now - at >= RENOTIFY_MS);
         let stuck = self.stuck_events(now);
@@ -411,6 +446,14 @@ impl AppEnvoy {
     }
 
     fn merge_polled(&mut self, mut inbox: Inbox, events: Vec<InboundEvent>) {
+        inbox.delete(
+            &self
+                .cleanup
+                .deleted_events
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
         inbox.resolve(self.cleanup.events.iter().cloned());
         self.acknowledged.retain(|id| inbox.get(id).is_some());
         inbox.mark_forwarded(&self.acknowledged.iter().cloned().collect::<Vec<_>>());
@@ -762,6 +805,12 @@ impl AppEnvoy {
         let updates = self.worker.as_ref().map_or_else(Vec::new, Worker::updates);
         for update in updates {
             match update {
+                Update::DeletedEvents { ids, result } => {
+                    self.event_deletion_pending = false;
+                    if let Err(error) = result.and_then(|()| self.events_deleted(&ids)) {
+                        self.error = Some(error);
+                    }
+                }
                 Update::Polled {
                     inbox,
                     events,
@@ -772,11 +821,11 @@ impl AppEnvoy {
                     if self.handle.is_some() {
                         self.last_polled_ms = Some(polled_at_ms);
                     }
-                    if let Err(e) = self.record_replies(&inbox) {
-                        self.error = Some(e);
-                        continue;
-                    }
+                    let reply_error = self.record_replies(&inbox).err();
                     self.merge_polled(inbox, events);
+                    if let Some(error) = reply_error {
+                        self.error = Some(error);
+                    }
                     if self.observe_bridge(bridge) {
                         notifications.push(Incoming::new(
                             Source::Envoy,
@@ -801,6 +850,12 @@ impl AppEnvoy {
                     self.notices = current;
                 }
                 Update::Sent { id, result } => {
+                    if let Some(worker) = &self.worker {
+                        worker.clear_cancelled(&id);
+                    }
+                    if self.queue().is_ok_and(|q| q.get(&id).is_none()) {
+                        continue;
+                    }
                     if let Err(error) = &result {
                         notifications.push(
                             Incoming::new(
@@ -836,6 +891,13 @@ impl AppEnvoy {
                 }
                 Update::Removed { thread, result } => {
                     match result.and_then(|()| {
+                        self.requests_mut()?.change_deletions(|records| {
+                            for record in records {
+                                if record.thread.as_ref() == Some(&thread) {
+                                    record.thread = None;
+                                }
+                            }
+                        })?;
                         let ids: Vec<_> = self
                             .requests()
                             .iter()
@@ -907,6 +969,15 @@ impl AppEnvoy {
                 Update::UserId(id) => {
                     self.user_id = Some(id);
                 }
+                Update::PollError {
+                    error,
+                    polled_at_ms,
+                } => {
+                    if self.handle.is_some() {
+                        self.last_polled_ms = Some(polled_at_ms);
+                    }
+                    self.error = Some(error);
+                }
                 Update::Error(error) => {
                     self.error = Some(error);
                 }
@@ -941,7 +1012,12 @@ impl AppEnvoy {
     ) -> Verdict {
         let root = event.thread_ts.as_deref().unwrap_or(&event.ts);
         let key = format!("{}:{root}", event.conversation);
-        let users_thread = dwarves.iter().any(|a| a.threads.contains(&key))
+        let users_thread = self.inbox.user_threads.contains(&key)
+            || self
+                .requests()
+                .iter()
+                .any(|r| r.thread.as_ref().is_some_and(|t| t.key() == key))
+            || dwarves.iter().any(|a| a.threads.contains(&key))
             || self.inbox.thread_watches.values().any(|w| {
                 w.watch.thread.conversation == event.conversation && w.watch.thread.ts == root
             })
@@ -949,7 +1025,13 @@ impl AppEnvoy {
                 .drafts()
                 .iter()
                 .any(|d| d.posted_in(&event.conversation, root));
-        addressee::classify(event, thread, self.user_id(), users_thread)
+        addressee::classify(
+            event,
+            thread,
+            self.user_id(),
+            users_thread,
+            &self.inbox.user_groups,
+        )
     }
 
     fn next_forward(&mut self, now: i64, dwarves: &[Dwarf]) -> Option<(Action, Vec<InboundEvent>)> {
@@ -957,27 +1039,43 @@ impl AppEnvoy {
             return None;
         }
         let handle = self.handle.clone()?;
-        // A pin's ts is the pinned message's, so its age says nothing.
-        let stale = |e: &InboundEvent| {
-            e.kind != EventKind::Pin
-                && timestamp_us(&e.ts).is_none_or(|ts| ts / 1000 < now - BACKLOG_AFTER_MS)
-        };
-        let (old, fresh): (Vec<_>, Vec<_>) = self.pending.drain(..).partition(|e| stale(e));
+        let mut threads: HashMap<(&str, &str), Vec<&InboundEvent>> = HashMap::new();
+        for event in self.inbox.events() {
+            let key = (
+                event.conversation.as_str(),
+                event.thread_ts.as_deref().unwrap_or(&event.ts),
+            );
+            threads.entry(key).or_default().push(event);
+        }
+        // Classify each complete thread once, including the event itself.
+        let protected: HashSet<_> = threads
+            .iter()
+            .filter_map(|(key, thread)| {
+                (self.addressee(thread[0], thread, dwarves).addressee == addressee::Addressee::User)
+                    .then_some(*key)
+            })
+            .collect();
+        let pending = std::mem::take(&mut self.pending);
+        let (old, fresh): (Vec<_>, Vec<_>) = pending.into_iter().partition(|e| {
+            self.backlog.contains(&e.id())
+                && e.kind != EventKind::Pin
+                && !protected.contains(&(
+                    e.conversation.as_str(),
+                    e.thread_ts.as_deref().unwrap_or(&e.ts),
+                ))
+        });
         self.pending = fresh.into();
         let mut batch: Vec<_> = self.pending.drain(..self.pending.len().min(20)).collect();
         let mut lines: Vec<String> = batch
             .iter()
             .map(|e| {
                 let root = e.thread_ts.as_deref().unwrap_or(&e.ts);
-                let thread: Vec<&InboundEvent> = self
-                    .inbox
-                    .events()
-                    .iter()
-                    .filter(|t| {
-                        t.conversation == e.conversation
-                            && t.ts != e.ts
-                            && t.thread_ts.as_deref().unwrap_or(&t.ts) == root
-                    })
+                let thread: Vec<&InboundEvent> = threads
+                    .get(&(e.conversation.as_str(), root))
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|t| t.ts != e.ts)
                     .collect();
                 let thread = &thread[thread.len().saturating_sub(20)..];
                 e.summary()
@@ -995,9 +1093,8 @@ impl AppEnvoy {
             lines.insert(
                 0,
                 format!(
-                    "Envoy backlog: {} event(s) older than {} min were not typed; envoy_inbox has them if you need them",
-                    old.len(),
-                    BACKLOG_AFTER_MS / 60_000
+                    "Envoy backlog: {} old or undated event(s) from before restart were not typed; envoy_inbox has them if you need them",
+                    old.len()
                 ),
             );
             batch.extend(old);
@@ -1039,6 +1136,21 @@ impl AppEnvoy {
         king: impl FnOnce(&str) -> bool,
     ) -> (String, Result<bool, String>) {
         match action {
+            crate::ui::envoy::DraftAction::DeleteRequest(id) => {
+                let result = self.delete_request(&id).map(|()| false);
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::DeleteDraft(id) => {
+                let result = self.delete_draft(&id).map(|()| false);
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::DeleteEvent(id) => {
+                let result = self.delete_event(&id).map(|()| false);
+                (id, result)
+            }
+            crate::ui::envoy::DraftAction::DeleteItems(items) => {
+                ("cleanup".into(), self.delete_items(items).map(|()| false))
+            }
             crate::ui::envoy::DraftAction::DismissRequest(id) => {
                 let result = self.dismiss_request(&id).map(|()| false);
                 (id, result)
@@ -1100,7 +1212,9 @@ impl AppEnvoy {
                                 | crate::envoy::requests::Status::Approved
                         )
                     }) {
-                        return Err("Resolve pending turns before settling".into());
+                        return Err(
+                            "Send or delete pending drafts before marking this request done".into(),
+                        );
                     }
                     let dry_run = self.settings.dry_run;
                     let borrowed = request

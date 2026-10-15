@@ -25,9 +25,7 @@ impl Palette {
             .iter()
             .map(|c| {
                 let hex = c.as_str().ok_or("colour is not a string")?;
-                let n = u32::from_str_radix(hex.trim_start_matches('#'), 16)
-                    .map_err(|e| e.to_string())?;
-                Ok(Color32::from_rgb((n >> 16) as u8, (n >> 8) as u8, n as u8))
+                super::palettes::hex_color(hex)
             })
             .collect::<Result<Vec<_>, String>>()?;
         if colors.is_empty() {
@@ -110,6 +108,7 @@ pub struct Mapper {
     lab: Vec<[f32; 3]>,
     colors: Vec<Color32>,
     cache: HashMap<[u8; 3], Color32>,
+    relative: bool,
 }
 
 impl Mapper {
@@ -118,7 +117,71 @@ impl Mapper {
             lab: palette.colors.iter().map(|c| lab(*c)).collect(),
             colors: palette.colors.clone(),
             cache: HashMap::new(),
+            relative: false,
         }
+    }
+
+    pub fn selection(selection: &str) -> Option<Self> {
+        let palette = super::palettes::resolve(selection)?;
+        Some(if selection.starts_with("hex:") {
+            Self::imported(&palette)
+        } else {
+            Self::new(&palette)
+        })
+    }
+
+    /// Imported sets can occupy a narrow lightness range. Map their range onto the
+    /// drawing's range, keeping hue for accents and reserving the ends for ink/text.
+    /// Add support shades only when the input cannot supply readable contrast.
+    pub fn imported(palette: &Palette) -> Self {
+        let mut colors = palette.colors.clone();
+        colors.sort_by(|a, b| {
+            lab(*a)[0]
+                .total_cmp(&lab(*b)[0])
+                .then_with(|| a.to_array().cmp(&b.to_array()))
+        });
+        colors.dedup();
+        let mut dark = colors.first().copied().unwrap_or(Color32::BLACK);
+        let mut light = colors.last().copied().unwrap_or(Color32::WHITE);
+        if contrast(dark, light) < 7.0 {
+            while luminance(light) < 0.35 {
+                light = light.lerp_to_gamma(Color32::WHITE, 0.1);
+            }
+            while contrast(dark, light) < 7.0 {
+                dark = dark.lerp_to_gamma(Color32::BLACK, 0.1);
+            }
+            colors.extend([dark, light]);
+            colors.sort_by(|a, b| lab(*a)[0].total_cmp(&lab(*b)[0]));
+            colors.dedup();
+        }
+        // A nearly monochrome input also needs a middle tone for stone, between ink
+        // and labels. Fill only large gaps; ordinary 4/16/64-colour palettes stay intact.
+        while let Some(pair) = colors
+            .windows(2)
+            .find(|pair| lab(pair[1])[0] - lab(pair[0])[0] > 40.0)
+        {
+            let middle = pair[0].lerp_to_gamma(pair[1], 0.5);
+            colors.push(middle);
+            colors.sort_by(|a, b| lab(*a)[0].total_cmp(&lab(*b)[0]));
+        }
+        let mut mapper = Self::new(&Palette {
+            name: palette.name.clone(),
+            colors,
+        });
+        mapper.relative = true;
+        mapper
+    }
+
+    pub fn support_shades(&self, palette: &Palette) -> usize {
+        self.colors
+            .iter()
+            .filter(|c| !palette.colors.contains(c))
+            .count()
+    }
+
+    pub fn ink_and_text(&self) -> Option<(Color32, Color32)> {
+        self.relative
+            .then(|| (*self.colors.first().unwrap(), *self.colors.last().unwrap()))
     }
 
     pub fn map(&mut self, c: Color32) -> Color32 {
@@ -127,13 +190,31 @@ impl Mapper {
             return *hit;
         }
         let l = lab(c);
+        if self.relative && (l[0] < 23.0 || l[0] > 88.0) {
+            let color = if l[0] < 23.0 {
+                self.colors[0]
+            } else {
+                *self.colors.last().unwrap()
+            };
+            self.cache.insert(key, color);
+            return color;
+        }
         let best = self
             .lab
             .iter()
             .enumerate()
             .map(|(i, p)| {
                 // Lightness counts double: shading reads better than exact hue.
-                let d = 2.0 * (l[0] - p[0]).powi(2) + (l[1] - p[1]).powi(2) + (l[2] - p[2]).powi(2);
+                let lightness = if self.relative {
+                    100.0 * (p[0] - self.lab[0][0])
+                        / (self.lab.last().unwrap()[0] - self.lab[0][0]).max(1.0)
+                } else {
+                    p[0]
+                };
+                let weight = if self.relative { 6.0 } else { 2.0 };
+                let d = weight * (l[0] - lightness).powi(2)
+                    + (l[1] - p[1]).powi(2)
+                    + (l[2] - p[2]).powi(2);
                 (i, d)
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -221,6 +302,18 @@ impl Mapper {
             }
             _ => {}
         }
+        // Signs and counters do not all have their own plate. Give every imported
+        // label the same contrast guarantee, even when its original colour was gold.
+        if let (Some((ink, foreground)), Shape::Text(text)) = (self.ink_and_text(), &mut *shape) {
+            text.override_text_color = Some(foreground);
+            let plate = Shape::rect_filled(
+                text.visual_bounding_rect().expand(1.0),
+                0.0,
+                ink.gamma_multiply(text.opacity_factor),
+            );
+            let text = std::mem::replace(shape, Shape::Noop);
+            *shape = Shape::Vec(vec![plate, text]);
+        }
     }
 
     /// Every opaque pixel of `image` mapped; transparent ones stay transparent.
@@ -231,6 +324,23 @@ impl Mapper {
             }
         }
     }
+}
+
+pub fn luminance(c: Color32) -> f32 {
+    let linear = |v: u8| {
+        let v = v as f32 / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(c.r()) + 0.7152 * linear(c.g()) + 0.0722 * linear(c.b())
+}
+
+pub fn contrast(a: Color32, b: Color32) -> f32 {
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
 /// sRGB → CIELAB (D65).

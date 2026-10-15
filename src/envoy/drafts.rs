@@ -54,11 +54,17 @@ pub struct RequestLink {
     pub requester: String,
     pub why: String,
     pub agent: bool,
+    #[serde(default)]
+    pub karl_asked: Option<String>,
 }
 impl RequestLink {
     pub fn verbatim(&self) -> String {
+        self.with_header("")
+    }
+
+    fn with_header(&self, instruction: &str) -> String {
         format!(
-            "Request from {}:\n\n{}",
+            "Request from {}{instruction}:\n\n{}",
             self.requester
                 .chars()
                 .map(|c| if c.is_control() { ' ' } else { c })
@@ -96,6 +102,10 @@ pub struct Draft {
     pub automatic: bool,
     #[serde(default)]
     pub manual_approval: bool,
+    #[serde(default)]
+    pub approved_at: Option<i64>,
+    #[serde(default)]
+    pub approved_by: Option<String>,
 }
 
 impl Draft {
@@ -142,6 +152,8 @@ impl Draft {
             auto_at_ms: None,
             automatic: false,
             manual_approval: false,
+            approved_at: None,
+            approved_by: None,
         }
     }
 
@@ -172,6 +184,8 @@ impl Draft {
             auto_at_ms: None,
             automatic: false,
             manual_approval: false,
+            approved_at: None,
+            approved_by: None,
         }
     }
 
@@ -201,10 +215,11 @@ impl Draft {
     pub fn allows_auto(&self) -> bool {
         !self.manual_approval
             && self.kind != DraftKind::TaskProposal
-            && self
-                .request
-                .as_ref()
-                .is_none_or(|r| self.text == r.original_ask || self.text == r.verbatim())
+            && self.request.as_ref().is_none_or(|r| {
+                r.karl_asked.is_none()
+                    && r.agent
+                    && (self.text == r.original_ask || self.text == r.verbatim())
+            })
     }
 
     pub fn outbound(&self) -> Result<OutboundMessage, String> {
@@ -220,6 +235,14 @@ impl Draft {
             .request
             .as_ref()
             .is_some_and(|r| self.text == r.verbatim() || self.text == r.original_ask);
+        if let Some(link) = &self.request
+            && link.agent
+            && link.karl_asked.is_some()
+            && self.approved_at.is_some()
+            && let Some(approved_by) = &self.approved_by
+        {
+            text = link.with_header(&format!(" (on {approved_by}'s instruction)"));
+        }
         // Source ask bytes are opaque; only normalize a composed draft's footer.
         if !original_payload {
             loop {
@@ -372,6 +395,12 @@ impl DraftQueue {
     pub fn get(&self, id: &str) -> Option<&Draft> {
         self.saved.drafts.iter().find(|d| d.id == id)
     }
+    pub fn delete(&mut self, id: &str) -> Result<(), String> {
+        let old = self.saved.clone();
+        self.saved.drafts.retain(|d| d.id != id);
+        self.commit(old)
+    }
+
     pub fn pending_count(&self) -> usize {
         self.saved
             .drafts
@@ -440,6 +469,10 @@ impl DraftQueue {
             DraftStatus::Approved
         };
         approved.updated_ms = now;
+        if !approved.automatic {
+            approved.approved_at = Some(now);
+            approved.approved_by = Some(crate::user::name());
+        }
         *d = approved.clone();
         self.commit(old)?;
         Ok(approved)
@@ -576,6 +609,89 @@ impl DraftQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn instruction_header_and_approval_trail_require_a_durable_manual_click() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(DRAFTS_FILE);
+        let mut queue = DraftQueue::load(&path).unwrap();
+        let ask = format!(
+            "sha abc012def\n```rust\nlet n = 42;\n```\n\n{}\n  ",
+            attribution()
+        );
+        let link = RequestLink {
+            id: "request".into(),
+            turn_id: 1,
+            original_ask: ask.clone(),
+            requester: "Build dwarf".into(),
+            why: "Review".into(),
+            agent: true,
+            karl_asked: Some("Send the exact details".into()),
+        };
+        let draft = Draft::outgoing(
+            "C123".into(),
+            None,
+            link.verbatim(),
+            "Review".into(),
+            link,
+            1,
+        );
+        let draft = queue.create(draft).unwrap();
+        assert!(!draft.allows_auto());
+        assert!(queue.schedule(&draft.id, Some(2)).is_err());
+        assert_eq!(
+            draft.outbound().unwrap().text,
+            format!("Request from Build dwarf:\n\n{ask}\n\n{}", attribution())
+        );
+        let mut forged = draft.clone();
+        forged.automatic = true;
+        assert_eq!(
+            forged.outbound().unwrap_err(),
+            "This draft requires manual approval"
+        );
+        queue.edit(&draft.id, &draft.text, 2).unwrap();
+        let approved = queue.begin_approval(&draft.id, None, false, 1234).unwrap();
+        assert_eq!(approved.approved_at, Some(1234));
+        assert_eq!(approved.approved_by, Some(crate::user::name()));
+        let outbound = approved.outbound().unwrap();
+        assert_eq!(
+            outbound.text,
+            format!(
+                "Request from Build dwarf (on {}'s instruction):\n\n{ask}\n\n{}",
+                crate::user::name(),
+                attribution()
+            )
+        );
+        let loaded = DraftQueue::load(&path).unwrap();
+        let persisted = loaded.get(&draft.id).unwrap();
+        assert_eq!(persisted.approved_at, Some(1234));
+        assert_eq!(persisted.approved_by, approved.approved_by);
+
+        let mut person = draft.clone();
+        person.request.as_mut().unwrap().agent = false;
+        person.text = "A personal message".into();
+        person.approved_at = Some(1234);
+        person.approved_by = approved.approved_by.clone();
+        assert_eq!(
+            person.outbound().unwrap().text,
+            format!("A personal message\n\n{}", attribution())
+        );
+        person.request.as_mut().unwrap().karl_asked = None;
+        person.text = person.request.as_ref().unwrap().original_ask.clone();
+        assert!(!person.allows_auto());
+
+        let mut legacy = serde_json::to_value(draft).unwrap();
+        legacy.as_object_mut().unwrap().remove("approved_at");
+        legacy.as_object_mut().unwrap().remove("approved_by");
+        legacy["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("karl_asked");
+        let legacy: Draft = serde_json::from_value(legacy).unwrap();
+        assert_eq!(legacy.approved_at, None);
+        assert_eq!(legacy.approved_by, None);
+        assert_eq!(legacy.request.unwrap().karl_asked, None);
+    }
+
     fn reply() -> Draft {
         Draft::reply(
             ReplyTo {
@@ -656,6 +772,7 @@ mod tests {
                     requester: "dwarf".into(),
                     why: "test".into(),
                     agent: true,
+                    karl_asked: None,
                 };
                 let original = link.verbatim();
                 let mut draft = Draft::outgoing(

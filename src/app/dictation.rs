@@ -140,6 +140,21 @@ impl AppDictation {
 }
 
 impl StrongholdApp {
+    /// Recording alone lights the stream: transcription, errors and cancellation discharge it.
+    pub(super) fn sync_voice_target(&mut self, ctx: &egui::Context) {
+        let recipient = if self.dictation.machine.is_recording() && !self.talk.owns_dictation() {
+            self.dictation_destination(ctx).node()
+        } else {
+            None
+        };
+        let target = recording_target(
+            self.dictation.machine.phase(),
+            self.talk.owns_dictation(),
+            recipient.as_ref(),
+        );
+        self.farm.set_voice_target(target, ctx.input(|i| i.time));
+    }
+
     /// Runs dictation for this frame: takes ⌘E/Esc before other shortcuts see them, delivers a
     /// finished transcript and draws the pill. Call first in `ui`.
     pub(super) fn dictation_frame(&mut self, ctx: &egui::Context) {
@@ -259,33 +274,227 @@ impl StrongholdApp {
     /// Puts `text` into the field focused when dictation started: the chat's or a terminal's
     /// input at its cursor, any other focused field as typed text, else the King's chat.
     fn deliver_dictation(&mut self, ctx: &egui::Context, text: &str) {
+        let destination = self.dictation_destination(ctx);
+        self.dictation.target = None;
+        match destination {
+            Destination::King { open } => {
+                if open {
+                    self.open_chat();
+                }
+                ui_dictation::insert_at_cursor(
+                    ctx,
+                    crate::ui::chat::input_id(),
+                    self.chat.draft_mut(),
+                    text,
+                );
+            }
+            Destination::Terminal { handle, .. } => {
+                ui_dictation::insert_at_cursor(
+                    ctx,
+                    crate::ui::terminal::input_id(&handle),
+                    self.input.draft_mut(&handle),
+                    text,
+                );
+            }
+            Destination::Field => ui_dictation::type_into_focused(ctx, text),
+        }
+    }
+
+    /// Share the existing transcript routing with the hold, so changing focus or selection
+    /// cannot make the stream promise a different recipient from the one that gets the text.
+    fn dictation_destination(&self, ctx: &egui::Context) -> Destination {
         let focused = ctx.memory(|m| m.focused());
-        let target = self.dictation.target.take().or(focused);
-        let chat_id = crate::ui::chat::input_id();
-        let terminal = self
-            .selected
-            .as_ref()
-            .and_then(|id| self.snapshot.as_ref()?.node(id))
-            .and_then(crate::ui::terminal::watch_handle)
-            .map(str::to_owned);
-        match target {
-            Some(id) if id == chat_id => {
-                ui_dictation::insert_at_cursor(ctx, id, self.chat.draft_mut(), text);
+        let terminal = self.selected.as_ref().and_then(|id| {
+            let node = self.snapshot.as_ref()?.node(id)?;
+            Some((id, crate::ui::terminal::watch_handle(node)?))
+        });
+        destination(
+            self.dictation.target.or(focused),
+            focused,
+            ctx.text_edit_focused(),
+            terminal,
+        )
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum Destination {
+    King {
+        open: bool,
+    },
+    Terminal {
+        node: crate::model::NodeId,
+        handle: String,
+    },
+    Field,
+}
+
+impl Destination {
+    fn node(&self) -> Option<crate::model::NodeId> {
+        match self {
+            Self::King { .. } => Some(crate::model::NodeId::king()),
+            Self::Terminal { node, .. } => Some(node.clone()),
+            Self::Field => None,
+        }
+    }
+}
+
+fn destination(
+    target: Option<egui::Id>,
+    focused: Option<egui::Id>,
+    text_edit_focused: bool,
+    terminal: Option<(&crate::model::NodeId, &str)>,
+) -> Destination {
+    match target {
+        Some(id) if id == crate::ui::chat::input_id() => Destination::King { open: false },
+        Some(id) if terminal.is_some_and(|(_, h)| crate::ui::terminal::input_id(h) == id) => {
+            let (node, handle) = terminal.expect("matched terminal input");
+            Destination::Terminal {
+                node: node.clone(),
+                handle: handle.to_owned(),
             }
-            Some(id)
-                if terminal
-                    .as_deref()
-                    .is_some_and(|h| crate::ui::terminal::input_id(h) == id) =>
-            {
-                let handle = terminal.as_deref().unwrap_or_default();
-                ui_dictation::insert_at_cursor(ctx, id, self.input.draft_mut(handle), text);
-            }
-            Some(id) if focused == Some(id) && ctx.text_edit_focused() => {
-                ui_dictation::type_into_focused(ctx, text);
-            }
-            _ => {
-                self.open_chat();
-                ui_dictation::insert_at_cursor(ctx, chat_id, self.chat.draft_mut(), text);
+        }
+        Some(id) if focused == Some(id) && text_edit_focused => Destination::Field,
+        _ => Destination::King { open: true },
+    }
+}
+
+fn recording_target(
+    phase: Phase,
+    king_owns: bool,
+    recipient: Option<&crate::model::NodeId>,
+) -> Option<crate::model::NodeId> {
+    if !matches!(phase, Phase::Recording { .. }) {
+        return None;
+    }
+    if king_owns {
+        Some(crate::model::NodeId::king())
+    } else {
+        recipient.cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::NodeId;
+
+    #[test]
+    fn clicked_input_drives_dictation_and_lightning_without_consuming_shortcuts() {
+        use crate::app::input_focus::Request;
+        let dwarf = NodeId("term:worker".into());
+        for (node, input) in [
+            (dwarf.clone(), crate::ui::terminal::input_id("worker")),
+            (NodeId::king(), crate::ui::chat::input_id()),
+        ] {
+            let ctx = egui::Context::default();
+            let mut draft = String::new();
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                ui.add(egui::TextEdit::singleline(&mut draft).id(input));
+                Request::from_click(&node, egui::Modifiers::NONE, Some(input))
+                    .unwrap()
+                    .apply(ui.ctx(), Some(&node), Some(input));
+            });
+            output.textures_delta.clear();
+            let focused = ctx.memory(|m| m.focused());
+            let route = destination(
+                focused,
+                focused,
+                ctx.text_edit_focused(),
+                Some((&dwarf, "worker")),
+            );
+            assert_eq!(route.node(), Some(node.clone()));
+            assert_eq!(
+                recording_target(
+                    Phase::Recording { latched: false },
+                    false,
+                    route.node().as_ref()
+                ),
+                Some(node)
+            );
+            let mut events = vec![egui::Event::Key {
+                key: egui::Key::E,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }];
+            assert_eq!(
+                ui_dictation::take_keys(&mut events, egui::Modifiers::COMMAND, KeyState::default()),
+                vec![DictationKey::Press { repeat: false }]
+            );
+            assert!(events.is_empty());
+            assert_eq!(
+                crate::ui::keys::command_for_event(
+                    &egui::Event::Text("j".into()),
+                    ctx.text_edit_focused()
+                ),
+                None
+            );
+            assert_eq!(
+                crate::ui::keys::command_for_event(
+                    &egui::Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    ctx.text_edit_focused()
+                ),
+                Some(crate::ui::keys::KeyCommand::Escape)
+            );
+        }
+    }
+
+    #[test]
+    fn stream_and_transcript_share_focused_terminal_chat_and_fallback_routes() {
+        let dwarf = NodeId("term:worker".into());
+        let terminal = Some((&dwarf, "worker"));
+        let input = crate::ui::terminal::input_id("worker");
+        assert_eq!(
+            destination(Some(input), None, false, terminal).node(),
+            Some(dwarf)
+        );
+        let chat = crate::ui::chat::input_id();
+        assert_eq!(
+            destination(Some(chat), Some(chat), true, None),
+            Destination::King { open: false }
+        );
+        assert_eq!(
+            destination(None, None, false, None),
+            Destination::King { open: true }
+        );
+        let other = egui::Id::new("settings field");
+        assert_eq!(
+            destination(Some(other), Some(other), true, None).node(),
+            None
+        );
+        // A closed/reselected terminal follows the existing fallback, not its old dwarf.
+        assert_eq!(
+            destination(Some(input), None, false, None),
+            Destination::King { open: true }
+        );
+    }
+
+    #[test]
+    fn only_recording_lights_the_captured_recipient_and_king_talk_overrides_it() {
+        let dwarf = NodeId("term:worker".into());
+        for latched in [false, true] {
+            let phase = Phase::Recording { latched };
+            assert_eq!(
+                recording_target(phase, false, Some(&dwarf)),
+                Some(dwarf.clone())
+            );
+            assert_eq!(
+                recording_target(phase, true, Some(&dwarf)),
+                Some(NodeId::king())
+            );
+            assert_eq!(recording_target(phase, false, None), None);
+        }
+        for phase in [Phase::Idle, Phase::Transcribing] {
+            for king_owns in [false, true] {
+                assert_eq!(recording_target(phase, king_owns, Some(&dwarf)), None);
             }
         }
     }

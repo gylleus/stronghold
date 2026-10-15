@@ -226,7 +226,11 @@ impl StrongholdApp {
                 self.farm.set_king_focused(self.shows_chat());
                 self.farm.set_envoy_health(self.envoy_status().health());
                 self.farm.set_envoy_pending(self.envoy_core.pending_count());
-                let sites = ui::farm::rubble::sites(&data.worktrees, &snapshot.nodes);
+                let sites = ui::farm::rubble::sites(
+                    &data.worktrees,
+                    &snapshot.nodes,
+                    self.worktrees.stale_plan(),
+                );
                 self.farm.set_rubble(sites, self.worktrees.cleanup_job());
                 self.farm.set_ledger(self.ledger.poll().clone());
                 let response = self.farm.show(ui, snapshot, &mut self.clan);
@@ -243,9 +247,12 @@ impl StrongholdApp {
                     self.envoy_core.open_request = true;
                 }
                 if let Some(id) = &response.clicked {
-                    let additive = ui.input(|i| ui::clan_view::is_additive(i.modifiers));
+                    let modifiers = ui.input(|i| i.modifiers);
+                    let additive = ui::clan_view::is_additive(modifiers);
                     self.clan.click_node(id, additive);
                     self.selected = self.clan.selected();
+                    self.request_clicked_input(id, modifiers);
+                    ui.ctx().request_repaint();
                 } else if response.clicked_empty
                     && !ui.input(|i| ui::clan_view::is_additive(i.modifiers))
                 {

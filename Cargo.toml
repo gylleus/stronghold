@@ -36,6 +36,8 @@ ron = "0.12"
 image = { version = "0.25", default-features = false, features = ["png"] }
 ureq = { version = "3", default-features = false, features = ["json"] }
 
+pulldown-cmark = { version = "0.13", default-features = false }
+
 # Native notifications when running from Stronghold.app (see src/notify/native.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

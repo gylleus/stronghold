@@ -6,7 +6,11 @@
 //! `--outline fine|regular|bold` chooses ink width.
 //! `--scrying` shows the working rune priest; `--stopped` darkens the rune stone.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
-//! terminals in the resting area; `--dwarves N` keeps only the first N agents.
+//! terminals in the resting area; `--parked-count N` sets an exact sleeping crowd.
+//! `--dwarves N` keeps only the first N agents.
+//! `--workspace-counts 1,3,9` previews uneven workspace groups; `--size 600x800` resizes the view.
+//! `--lorekeeper` adds the librarian; `--lorekeeper-activity reading|writing|idle`
+//! selects its activity.
 //! `--taskmasters` shows coordinators in every state, plus a parked coordinator and attendant.
 //! The surface carries a heap per worktree: the
 //! agents' own and a few with nobody in them, or `--heaps N` of them; `--hammer` runs the worktree
@@ -17,10 +21,13 @@
 //! bursts). With `--shot`, it saves a
 //! screenshot once settled and another while a worker walks, a new one emerges, a broadcast
 //! ripples and messages fly (`-walk`), plus rubble burst (`-break`) and cleared
-//! (`-cleared`) frames, then exits. With `--hammer`, the first shot waits for impact.
+//! (`-cleared`) frames, then exits. With `--hammer`, the first shot shows the demolition dwarf.
 //! K closes a synthetic dwarf with the King's tool throw; `--king-throw --shot out.png`
 //! captures its flight and impact.
+//! `--voice-shots --shot out.png` captures idle, dwarf recording, King recording and release.
+//! Add `--focus-run run0` to check off-screen recipients through the hold camera.
 //! `--pixels farm|HEIGHT` and `--palette NAME` select dwarf rendering.
+//! `--import SLUG_OR_URL_OR_HEX` imports a real palette; `--palette-editor` shows the Art controls.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -72,13 +79,21 @@ fn main() -> eframe::Result {
         .position(|a| a == "--heaps")
         .map(|i| args[i + 1].parse::<usize>().expect("a number of heaps"));
     let hammer = args.iter().any(|a| a == "--hammer").then(sweep_marker);
-    let parked = args.iter().any(|a| a == "--parked");
     let value = |flag: &str| {
         args.iter()
             .position(|a| a == flag)
             .and_then(|i| args.get(i + 1).cloned())
     };
-    let art = ArtSettings {
+    let parked = value("--parked-count")
+        .map(|n| n.parse::<usize>().expect("a number of parked dwarves"))
+        .unwrap_or_else(|| {
+            if args.iter().any(|a| a == "--parked") {
+                3
+            } else {
+                0
+            }
+        });
+    let mut art = ArtSettings {
         pixels: match value("--pixels").as_deref() {
             None => Pixels::Farm,
             Some("farm") => Pixels::Farm,
@@ -92,14 +107,51 @@ fn main() -> eframe::Result {
             _ => panic!("--outline fine, regular or bold"),
         },
     };
+    let palette_cache = tempfile::tempdir().expect("preview palette cache");
+    let palette_path = palette_cache.path().join("palettes.json");
+    if let Some(input) = value("--import") {
+        use stronghold::ui::dwarf::palettes::{self, Input, Library};
+        let input = Input::parse(&input).expect("palette input");
+        let mut library = Library::default();
+        let palette = library.cached(&input).unwrap_or_else(|| match input {
+            Input::Lospec(slug) => palettes::fetch(&slug).expect("Lospec import"),
+            Input::Colors(_) => unreachable!(),
+        });
+        art.palette = palette.selection();
+        println!(
+            "Imported {} ({} colours) from {}",
+            palette.name,
+            palette.colors.len(),
+            palette.source
+        );
+        library.insert(palette);
+        library.save(&palette_path).expect("palette cache");
+    }
+    let palette_editor = args
+        .iter()
+        .any(|a| a == "--palette-editor")
+        .then(|| stronghold::ui::settings::art::PaletteEditor::load(Some(palette_path)));
+    let librarian_activity = value("--lorekeeper-activity");
     let dwarves = args
         .iter()
         .position(|a| a == "--dwarves")
         .map(|i| args[i + 1].parse::<usize>().expect("a number of dwarves"));
+    let focus_run = value("--focus-run");
+    let workspace_counts = value("--workspace-counts");
+    let window = value("--size").map_or(WINDOW, |size| {
+        let (w, h) = size.split_once('x').expect("--size WIDTHxHEIGHT");
+        [
+            w.parse().expect("window width"),
+            h.parse().expect("window height"),
+        ]
+    });
     eframe::run_native(
         "farm",
         eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size(WINDOW),
+            viewport: egui::ViewportBuilder::default()
+                .with_app_id(format!("stronghold-farm-{}x{}", window[0], window[1]))
+                .with_inner_size(window),
+            persist_window: false,
             ..Default::default()
         },
         Box::new(move |cc| {
@@ -109,17 +161,50 @@ fn main() -> eframe::Result {
             } else {
                 egui::Theme::Dark
             });
-            let mut snapshot = clan();
+            let mut snapshot = if let Some(counts) = workspace_counts {
+                workspace_clan(&counts)
+            } else {
+                clan()
+            };
+            if args.iter().any(|a| a == "--lorekeeper") {
+                let mut librarian = node(
+                    "Lorekeeper",
+                    NodeKind::Lorekeeper,
+                    None,
+                    NodeState::Working,
+                    "stronghold",
+                );
+                librarian.agent = Some(AgentIdentity::Claude);
+                if librarian_activity.as_deref() == Some("idle") {
+                    librarian.state = NodeState::Idle;
+                }
+                use stronghold::traffic::ledger::lorekeeper::{Activity, RecentActivity};
+                let activity = match librarian_activity.as_deref() {
+                    None | Some("reading") => Some(Activity::Reading),
+                    Some("writing") => Some(Activity::Writing),
+                    Some("idle") => None,
+                    _ => panic!("--lorekeeper-activity reading|writing|idle"),
+                };
+                snapshot.lorekeeper_activity = activity.map(|activity| RecentActivity {
+                    activity,
+                    at_ms: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as i64,
+                });
+                snapshot.nodes.push(librarian);
+            }
             if args.iter().any(|a| a == "--taskmasters") {
                 taskmasters(&mut snapshot);
             }
             if let Some(n) = dwarves {
                 keep_dwarves(&mut snapshot, n);
             }
-            if parked {
-                for name in ["sleepy", "dozy", "napper"] {
+            if parked > 0 {
+                for i in 0..parked {
+                    let name = format!("sleeper-{}", i + 1);
                     let mut n = node(
-                        name,
+                        &name,
                         NodeKind::Terminal,
                         None,
                         NodeState::Idle,
@@ -152,6 +237,9 @@ fn main() -> eframe::Result {
                 id("run5-w5"),
             ]));
             clan.set_selected(Some(&id("run2-coord")));
+            if let Some(run) = &focus_run {
+                clan.focus_run(run);
+            }
             let hammer = hammer.map(|data| (WorktreePanel::new(&cc.egui_ctx), data));
             let worktrees = worktrees(&snapshot, heaps);
             Ok(Box::new(Demo {
@@ -169,7 +257,11 @@ fn main() -> eframe::Result {
                     }
                     farm
                 },
+                art,
+                palette_editor,
+                _palette_cache: palette_cache,
                 shot,
+                voice_shots: args.iter().any(|a| a == "--voice-shots"),
                 king_throw: args.iter().any(|a| a == "--king-throw"),
                 captures: Vec::new(),
                 receipt_at_ms,
@@ -187,11 +279,15 @@ fn main() -> eframe::Result {
 }
 
 struct Demo {
+    art: ArtSettings,
+    palette_editor: Option<stronghold::ui::settings::art::PaletteEditor>,
+    _palette_cache: tempfile::TempDir,
     snapshot: ClanSnapshot,
     clan: ClanView,
     farm: FarmView,
     shot: Option<String>,
     king_throw: bool,
+    voice_shots: bool,
     /// Encode after capturing all frames so PNG compression cannot skip short effects.
     captures: Vec<(std::sync::Arc<egui::ColorImage>, &'static str)>,
     receipt_at_ms: Option<i64>,
@@ -237,6 +333,29 @@ fn worktrees(snapshot: &ClanSnapshot, count: Option<usize>) -> Vec<Worktree> {
         out[i].display_name = Some("graph-trackpad-pan".into());
     }
     out
+}
+
+/// Synthetic planner verdicts; production uses the real cleanup evaluation.
+fn stale_plan(trees: &[Worktree]) -> stronghold::worktrees::Plan {
+    use stronghold::worktrees::{Plan, PlanEntry, Verdict};
+    Plan {
+        entries: trees
+            .iter()
+            .enumerate()
+            .map(|(i, w)| PlanEntry {
+                id: w.id.clone(),
+                name: w.name().into(),
+                path: w.path.clone(),
+                verdict: Verdict {
+                    remove: i % 3 != 2,
+                    archivable: i % 3 == 2,
+                    ..Verdict::default()
+                },
+                ..PlanEntry::default()
+            })
+            .collect(),
+        ..Plan::default()
+    }
 }
 
 /// Names for worktrees nobody works in any more.
@@ -335,10 +454,9 @@ impl Demo {
             ("run4-coord", "run5-coord", MessageKind::Message),
         ] {
             let message = AgentMessage::new(from, to, kind);
-            let flight = message
-                .resolve(&self.snapshot)
-                .expect("both ends in the clan");
-            self.farm.message(flight, now_s, self.reduced_motion);
+            if let Some(flight) = message.resolve(&self.snapshot) {
+                self.farm.message(flight, now_s, self.reduced_motion);
+            }
         }
     }
 
@@ -387,7 +505,18 @@ impl Demo {
 }
 
 impl eframe::App for Demo {
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if self.voice_shots {
+            let target = match self.stage {
+                2 | 3 => Some(id("run2-coord")),
+                4 | 5 => Some(NodeId::king()),
+                _ => None,
+            };
+            self.farm.set_voice_target(target, ui.input(|i| i.time));
+        }
         let receipt = self
             .receipt_at_ms
             .or_else(|| self.received.map(|at| at.elapsed().as_millis() as i64))
@@ -406,13 +535,30 @@ impl eframe::App for Demo {
                     panel.tick(None, now_ms);
                     panel.cleanup_job()
                 });
-                self.farm
-                    .set_rubble(rubble::sites(&self.worktrees, &self.snapshot.nodes), hammer);
+                self.farm.set_rubble(
+                    rubble::sites(
+                        &self.worktrees,
+                        &self.snapshot.nodes,
+                        Some(&stale_plan(&self.worktrees)),
+                    ),
+                    hammer,
+                );
                 let response = self.farm.show(ui, &self.snapshot, &mut self.clan);
                 if let Some(id) = &response.clicked {
                     self.clan.click_node(id, false);
                 }
             });
+        if let Some(editor) = &mut self.palette_editor {
+            egui::Window::new("Settings · Art")
+                .fixed_pos(egui::pos2(16.0, 16.0))
+                .default_width(550.0)
+                .show(ui.ctx(), |ui| {
+                    if let Some(art) = editor.section(ui, &self.art) {
+                        self.art = art;
+                        self.farm.set_art(&self.art);
+                    }
+                });
+        }
         if self.shot.is_none() {
             if self.flipped_at.elapsed() >= FLIP_EVERY {
                 self.flip();
@@ -477,12 +623,38 @@ impl eframe::App for Demo {
             })
         });
         let captured = image.is_some();
-        match self.stage {
-            0 if self.started.elapsed() >= Duration::from_secs(1)
-                && (self.hammer.is_none()
-                    || (0.78..0.84)
-                        .contains(&((ui.input(|i| i.time) / 1.2).rem_euclid(1.0) as f32))) =>
+        if self.voice_shots {
+            if self.stage.is_multiple_of(2)
+                && self.flipped_at.elapsed() >= Duration::from_millis(600)
             {
+                self.stage += 1;
+            } else if let Some(image) = image {
+                let suffix = match self.stage {
+                    1 => "before",
+                    3 => "dwarf",
+                    5 => "king",
+                    _ => "stopped",
+                };
+                self.captures.push((image, suffix));
+                self.stage += 1;
+                self.flipped_at = Instant::now();
+                if self.stage == 8 {
+                    for (image, suffix) in &self.captures {
+                        self.save_shot(image, suffix);
+                    }
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+            if self.stage % 2 == 1 && !captured {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(
+                        self.stage,
+                    )));
+            }
+            return;
+        }
+        match self.stage {
+            0 if self.started.elapsed() >= Duration::from_millis(1200) => {
                 self.stage = 1;
             }
             1 => {
@@ -601,7 +773,10 @@ fn node(name: &str, kind: NodeKind, run: Option<&str>, state: NodeState, repo: &
 fn keep_dwarves(s: &mut ClanSnapshot, n: usize) {
     let mut kept = 0;
     s.nodes.retain(|node| {
-        if matches!(node.kind, NodeKind::King | NodeKind::Envoy) {
+        if matches!(
+            node.kind,
+            NodeKind::King | NodeKind::Envoy | NodeKind::Lorekeeper
+        ) {
             return true;
         }
         kept += 1;
@@ -779,4 +954,47 @@ fn demo_ledger() -> Shelf {
             ),
         ],
     }
+}
+
+/// Uneven groups in distinct repos, with a shared worktree within each group.
+fn workspace_clan(counts: &str) -> ClanSnapshot {
+    let mut s = clan();
+    s.nodes
+        .retain(|n| matches!(n.kind, NodeKind::King | NodeKind::Envoy));
+    s.runs.clear();
+    s.edges.clear();
+    for (r, count) in counts.split(',').enumerate() {
+        let count: usize = count.parse().expect("comma-separated dwarf counts");
+        assert!(count > 0, "each workspace needs a dwarf");
+        let run = format!("run{r}");
+        let repo = format!("workspace-{}", r + 1);
+        s.runs.push(RunSummary {
+            id: run.clone(),
+            objective: Some(format!("{repo} · {count} dwarves")),
+            coordinator: None,
+            task_counts: None,
+        });
+        for w in 0..count {
+            let coordinator = count > 1 && w == count - 1;
+            let name = if coordinator {
+                format!("{run}-coord")
+            } else {
+                format!("{run}-w{w}")
+            };
+            let mut dwarf = node(
+                &name,
+                if coordinator {
+                    NodeKind::Coordinator
+                } else {
+                    NodeKind::Worker
+                },
+                Some(&run),
+                NodeState::Working,
+                &repo,
+            );
+            dwarf.worktree_path = Some(format!("/x/orca/workspaces/{repo}/main"));
+            s.nodes.push(dwarf);
+        }
+    }
+    s
 }

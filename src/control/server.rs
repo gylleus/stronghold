@@ -109,6 +109,7 @@ pub struct Backend {
     pub status: SharedStatus,
     pub screens: Arc<dyn ScreenReader>,
     pub commands: Arc<dyn CommandHandler>,
+    pub github: Arc<dyn crate::review::github::GhSource + Sync>,
 }
 
 /// Answers one request line.
@@ -122,6 +123,9 @@ pub fn handle_line(backend: &Backend, line: &str) -> Response {
 }
 
 fn dispatch(backend: &Backend, method: &str, params: &Value) -> Result<Value, ControlError> {
+    if matches!(method, "status" | "alerts" | "review_queue") {
+        return crate::control::review::read(backend, method);
+    }
     if let Some(command) = ControlCommand::parse(method, params) {
         return backend.commands.execute(command?);
     }
@@ -134,13 +138,11 @@ fn dispatch(backend: &Backend, method: &str, params: &Value) -> Result<Value, Co
             "ready": view.polled_at_ms.is_some(),
             "methods": {"read": READ_METHODS, "action": ACTION_METHODS},
         })),
-        "status" => Ok(status(&view)),
         "agents" => agents(&view, params, now),
         "agent" => agent(backend, &view, params, now),
         "whip" => whip(&view, params),
         "quotas" => to_value(&view.quotas),
         "health" => to_value(&view.health),
-        "alerts" => Ok(json!({ "alerts": view.alerts })),
         "clan_data" => clan_data(&view),
         other => Err(ControlError::new(
             ErrorCode::UnknownMethod,
@@ -163,7 +165,7 @@ fn require_data(view: &StatusView) -> Result<(), ControlError> {
     Ok(())
 }
 
-fn status(view: &StatusView) -> Value {
+pub(super) fn status(view: &StatusView) -> Value {
     json!({
         "ready": view.polled_at_ms.is_some(),
         "published_at_ms": view.published_at_ms,
@@ -196,7 +198,7 @@ fn notifications_summary(view: &StatusView) -> Value {
 }
 
 /// Unread notifications `status` includes.
-const UNREAD_IN_STATUS: usize = 5;
+pub(super) const UNREAD_IN_STATUS: usize = 5;
 
 /// The last poll's raw runs, workers, tasks, terminals and inbox (no previews or bodies).
 fn clan_data(view: &StatusView) -> Result<Value, ControlError> {

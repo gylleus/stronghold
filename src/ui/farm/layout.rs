@@ -3,13 +3,9 @@
 //!
 //! The farm is a side view: sky above the surface, the "the user" landing on the surface at the
 //! left, the throne hall under the surface in the middle, the storage chamber at the
-//! right, a gallery running under them and one tunnel per run (or per repo for loose
-//! terminals) dropping from the gallery. A coordinator stands at its tunnel's mouth, its
-//! workers in the chamber at the tunnel's end. The room plan fits a grid of chambers under the
-//! gallery to the view, as big as their dwarves allow, and keeps each chamber in its cell while
-//! its dwarves come and go; when the dwarves can be drawn bigger that way, the grid has more levels:
-//! chambers stacked in a column, the lower ones' shafts passing beside the upper chambers. Parked agents sleep in beds in the resting area's
-//! chamber, there only while someone is parked (and for the grace an emptied room gets).
+//! right, and horizontal working galleries cut into the rock below. Runs and repos keep
+//! separate horizontal segments, with local ladders and access passages joining the main shaft.
+//! Parked agents sleep in the resting area's beds; coordinators stand at their room's mouth.
 
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -31,19 +27,15 @@ pub const PORTAL_W: f32 = 32.0;
 pub const PORTAL_H: f32 = 40.0;
 /// Characters of a tunnel label before it is cut.
 const LABEL_CHARS: usize = 28;
-/// Tunnel depth, as a share of the room below the gallery, for a run without task counts.
-const UNKNOWN_PROGRESS_DEPTH: f32 = 0.6;
-/// Shallowest tunnel, as a share of the room below the gallery (a run with nothing done).
-const MIN_DEPTH: f32 = 0.35;
 /// Distance between rows of dwarves, in cells: room for a row's bubbles above and name tags
 /// below.
 const ROW: f32 = 2.5;
 /// Width of a dwarf's slot in a row, in cells: room for its name tag.
-pub(super) const SLOT: f32 = 2.4;
+pub(super) const SLOT: f32 = 2.1;
 /// Room under a dwarf for its name tag, in cells.
 const TAG: f32 = 0.85;
-/// Width beside an upper chamber for the shaft down to the chamber under it, in cells.
-pub(super) const SHAFT_GAP: f32 = 1.8;
+/// Width reserved at the left of all work levels for their shared ladder.
+pub(super) const LADDER_GAP: f32 = 1.8;
 /// A bed in texels: its size, and the mattress top's height above the floor.
 pub const BED_W: f32 = 20.0;
 pub const BED_H: f32 = 9.0;
@@ -65,6 +57,8 @@ pub enum TunnelKey {
 /// place while the view resizes does not.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Spot {
+    /// The librarian beside the Ledger lectern.
+    Ledger,
     King,
     Comms,
     /// On the surface waiting for the user, the nth in line.
@@ -82,6 +76,7 @@ pub enum Spot {
 /// The area a spot is in; dwarves walk along the gallery between areas and straight within one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Area {
+    Ledger,
     King,
     Comms,
     Landing,
@@ -93,6 +88,7 @@ pub enum Area {
 impl Spot {
     pub fn area(&self) -> Area {
         match self {
+            Spot::Ledger => Area::Ledger,
             Spot::King => Area::King,
             Spot::Comms => Area::Comms,
             Spot::Landing(_) => Area::Landing,
@@ -106,13 +102,17 @@ impl Spot {
 /// What a dwarf is doing, which picks its animation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pose {
+    /// Recent librarian lookup or read.
+    Read,
+    /// Recent librarian edit or live report.
+    Write,
     /// Standing at its post (a coordinator at work).
     Stand,
     /// Digging at the chamber's face (working: reading, searching, thinking).
     Dig,
     /// Building at the chamber's face (editing or building).
     Build,
-    /// Lying still (idle or stalled).
+    /// Lying still (idle, stalled or done without review work).
     Sleep,
     /// Waving on the landing for the user.
     Wait,
@@ -128,7 +128,7 @@ pub enum Pose {
 pub enum Mark {
     /// Waiting on the user.
     Alert,
-    /// Idle.
+    /// Idle or done without review work.
     Sleep,
     /// Stalled: a pebble bonks the helmet.
     Stalled,
@@ -166,8 +166,6 @@ pub struct Dwarf {
 pub struct Tunnel {
     pub key: TunnelKey,
     pub label: String,
-    /// The shaft from the gallery down to the chamber.
-    pub shaft: Rect,
     /// The chamber at the tunnel's end.
     pub chamber: Rect,
     /// Completed share of the run's tasks, when known.
@@ -264,6 +262,109 @@ impl Scene {
     /// Side of a normal dwarf's cell in points.
     pub fn cell(&self) -> f32 {
         CELL * self.px
+    }
+
+    /// The main ladder joins the access passages, outside all packed segments.
+    pub fn work_ladder(&self) -> Rect {
+        let a = self.cell();
+        let bottom = self
+            .tunnels
+            .iter()
+            .map(|t| t.chamber.bottom() - TAG * a)
+            .fold(self.gallery.center().y, f32::max);
+        Rect::from_min_max(
+            pos2(self.rect.left() + 0.3 * a, self.gallery.center().y),
+            pos2(self.rect.left() + 1.5 * a, bottom),
+        )
+    }
+
+    /// Excavated horizontal rows, each belonging to one workspace band.
+    pub fn work_galleries(&self) -> Vec<Rect> {
+        let a = self.cell();
+        let mut rows: Vec<Rect> = Vec::new();
+        for t in &self.tunnels {
+            let left = self.tunnel_ladder(t).left();
+            let mut top = t.chamber.top();
+            while top + a < t.chamber.bottom() {
+                let row = Rect::from_min_max(
+                    pos2(left, top),
+                    pos2(t.chamber.right(), (top + 1.4 * a).min(t.chamber.bottom())),
+                );
+                rows.push(row);
+                top += room_row_pitch(a, t.key == TunnelKey::RestingArea);
+            }
+        }
+        rows
+    }
+
+    /// A group's ladder connects all its work rows to the access passage above its label.
+    pub fn tunnel_ladder(&self, tunnel: &Tunnel) -> Rect {
+        let a = self.cell();
+        Rect::from_min_max(
+            pos2(
+                tunnel.chamber.left() - LADDER_GAP * a,
+                self.access_y(tunnel),
+            ),
+            pos2(
+                tunnel.chamber.left() - 0.6 * a,
+                tunnel.chamber.bottom() - TAG * a,
+            ),
+        )
+    }
+
+    pub fn access_y(&self, tunnel: &Tunnel) -> f32 {
+        tunnel.chamber.top() - (LABEL_GAP + 0.6) * self.cell()
+    }
+
+    /// Service passages reach the local ladders without cutting through another group's
+    /// work row or its label. The first level uses the existing main gallery.
+    pub fn access_galleries(&self) -> Vec<Rect> {
+        let mut rows: Vec<Rect> = Vec::new();
+        for tunnel in &self.tunnels {
+            let y = self.access_y(tunnel);
+            if (y - self.gallery.center().y).abs() < self.px {
+                continue;
+            }
+            let row = Rect::from_min_max(
+                pos2(self.work_ladder().left(), y - 0.6 * self.cell()),
+                pos2(self.tunnel_ladder(tunnel).right(), y + 0.6 * self.cell()),
+            );
+            if let Some(existing) = rows.iter_mut().find(|r| (r.center().y - y).abs() < self.px) {
+                *existing = existing.union(row);
+            } else {
+                rows.push(row);
+            }
+        }
+        rows
+    }
+
+    /// Stone partitions between packed neighbours, below their shared access passage.
+    pub fn work_walls(&self) -> Vec<Rect> {
+        let mut walls = Vec::new();
+        for tunnel in &self.tunnels {
+            if let Some(next) = self
+                .tunnels
+                .iter()
+                .filter(|t| {
+                    (t.chamber.top() - tunnel.chamber.top()).abs() < self.px
+                        && t.chamber.left() > tunnel.chamber.right()
+                })
+                .min_by(|a, b| a.chamber.left().total_cmp(&b.chamber.left()))
+            {
+                let wall = Rect::from_min_max(
+                    tunnel.chamber.right_top(),
+                    pos2(
+                        self.tunnel_ladder(next).left(),
+                        tunnel.chamber.bottom().max(next.chamber.bottom()),
+                    ),
+                );
+                // Rooms can briefly overlap while gliding into their packed cells.
+                if wall.is_positive() {
+                    walls.push(wall);
+                }
+            }
+        }
+        walls
     }
 
     /// The mine portal stands beside the waiting queue, clear of the rune stone.
@@ -423,6 +524,23 @@ pub(super) fn rows_height(rows: usize, a: f32) -> f32 {
     (rows.max(1) as f32 - 1.0) * ROW * a + (1.4 + TAG) * a
 }
 
+/// Sleeping rows leave room for two-line name tags even at the minimum pixel scale.
+pub(super) fn room_row_pitch(a: f32, resting: bool) -> f32 {
+    ROW * a + rest_label_extra(a, resting)
+}
+
+fn rest_label_extra(a: f32, resting: bool) -> f32 {
+    if resting {
+        (32.0 - TAG * a).max(0.0)
+    } else {
+        0.0
+    }
+}
+
+pub(super) fn room_rows_height(rows: usize, a: f32, resting: bool) -> f32 {
+    rows_height(rows, a) + rows.max(1) as f32 * rest_label_extra(a, resting)
+}
+
 /// Chamber slots a dwarf takes with `trail` subagents behind it, each `sub` cells wide: its
 /// own, and enough empty ones behind it to hold the trail.
 fn footprint(trail: usize, sub: f32) -> usize {
@@ -460,22 +578,29 @@ pub enum Home {
     Trail,
 }
 
-/// The state → place rule: waiting on the user goes to the landing, done (or idle with a PR ready
-/// for review) goes to storage, all else stays at its post (a coordinator at the mouth, a
-/// worker in the chamber), failed ones turning red there. Subagents trail their parent
-/// whatever their state.
+/// The state → place rule: waiting on the user goes to the landing, done or idle with a PR
+/// ready for review goes to storage (never workers), all else stays at its post (a coordinator
+/// at the mouth, a worker in the chamber). Finished dwarves without review work sleep there;
+/// failed ones turn red. Subagents trail their parent whatever their state.
 pub fn home(kind: NodeKind, state: NodeState, pr_ready: bool) -> Home {
     match kind {
         NodeKind::King => return Home::King,
         NodeKind::Envoy => return Home::Comms,
         NodeKind::Subagent => return Home::Trail,
-        NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Worker | NodeKind::Terminal => {}
+        NodeKind::Coordinator
+        | NodeKind::Attendant
+        | NodeKind::Worker
+        | NodeKind::Terminal
+        | NodeKind::Lorekeeper => {}
     }
     match state {
         NodeState::NeedsInput => Home::Landing,
-        NodeState::Done => Home::Storage,
-        NodeState::Idle if pr_ready => Home::Storage,
-        NodeState::Working | NodeState::Idle | NodeState::Stalled | NodeState::Failed => {
+        NodeState::Done | NodeState::Idle if pr_ready && kind != NodeKind::Worker => Home::Storage,
+        NodeState::Working
+        | NodeState::Idle
+        | NodeState::Stalled
+        | NodeState::Done
+        | NodeState::Failed => {
             if matches!(kind, NodeKind::Coordinator | NodeKind::Attendant) {
                 Home::Mouth
             } else {
@@ -489,15 +614,17 @@ pub fn pose(kind: NodeKind, state: NodeState, home: Home) -> Pose {
     if kind == NodeKind::Envoy {
         return Pose::Stand;
     }
+    if kind == NodeKind::Lorekeeper && state == NodeState::Working {
+        return Pose::Stand;
+    }
     if kind == NodeKind::King {
         return Pose::King;
     }
     match state {
         NodeState::NeedsInput => Pose::Wait,
-        NodeState::Done => Pose::Carry,
-        NodeState::Idle if home == Home::Storage => Pose::Carry,
+        NodeState::Done | NodeState::Idle if home == Home::Storage => Pose::Carry,
         NodeState::Failed => Pose::Failed,
-        NodeState::Idle | NodeState::Stalled => Pose::Sleep,
+        NodeState::Idle | NodeState::Stalled | NodeState::Done => Pose::Sleep,
         NodeState::Working if home == Home::Chamber => Pose::Dig,
         NodeState::Working => Pose::Stand,
     }
@@ -506,11 +633,11 @@ pub fn pose(kind: NodeKind, state: NodeState, home: Home) -> Pose {
 pub fn mark(state: NodeState, pr_ready: bool) -> Option<Mark> {
     match state {
         NodeState::NeedsInput => Some(Mark::Alert),
-        NodeState::Idle if pr_ready => Some(Mark::PrReady),
-        NodeState::Idle => Some(Mark::Sleep),
+        NodeState::Idle | NodeState::Done if pr_ready => Some(Mark::PrReady),
+        NodeState::Idle | NodeState::Done => Some(Mark::Sleep),
         NodeState::Stalled => Some(Mark::Stalled),
         NodeState::Failed => Some(Mark::Failed),
-        NodeState::Done | NodeState::Working => pr_ready.then_some(Mark::PrReady),
+        NodeState::Working => pr_ready.then_some(Mark::PrReady),
     }
 }
 
@@ -580,6 +707,58 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
 /// Lays the farm out in `rect`, keeping the rooms where `plan` has them and bringing it up
 /// to the clan (see [`super::rooms`]).
 pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
+    let librarians: Vec<&Node> = input
+        .snapshot
+        .nodes
+        .iter()
+        .filter(|n| {
+            n.kind == NodeKind::Lorekeeper && !input.hidden.contains(&n.id) && !is_history(n)
+        })
+        .collect();
+    if librarians.is_empty() {
+        return layout_rooms(input, rect, plan);
+    }
+    // The librarian must not consume a tunnel slot or change any other room's demand.
+    let mut hidden = input.hidden.clone();
+    hidden.extend(librarians.iter().map(|n| n.id.clone()));
+    let mut library_plan = plan.clone();
+    let mut scene = layout_rooms(
+        &FarmInput {
+            hidden: &hidden,
+            ..*input
+        },
+        rect,
+        &mut library_plan,
+    );
+    let Some((pos, size)) = super::ledger::librarian(&scene) else {
+        return layout_rooms(input, rect, plan);
+    };
+    *plan = library_plan;
+    for node in librarians {
+        let mut placed = dwarf(
+            node,
+            Spot::Ledger,
+            pos,
+            size,
+            Home::Chamber,
+            false,
+            input.now_ms,
+        );
+        placed.pose = super::ledger::librarian_pose(
+            node.state,
+            input.snapshot.lorekeeper_activity,
+            input.now_ms,
+        );
+        placed.facing_right = false;
+        if placed.mark == Some(Mark::Sleep) {
+            placed.mark = None;
+        }
+        scene.dwarves.push(placed);
+    }
+    scene
+}
+
+fn layout_rooms(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     let snapshot = input.snapshot;
     let present: Vec<&Node> = snapshot
         .nodes
@@ -639,6 +818,9 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             keys.push(key);
         }
     }
+    if !keys.contains(&TunnelKey::RestingArea) {
+        keys.push(TunnelKey::RestingArea);
+    }
     let run_order = |key: &TunnelKey| match key {
         TunnelKey::Run(id) => (
             0,
@@ -672,14 +854,25 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     let trail_of = |id: &NodeId| trails.get(id).copied().unwrap_or(0);
     // Each room's dwarves in rank order, with their footprints sized for subagents as big as
     // their parents: the plan digs for those, so the dwarves fit at any scale.
+    let mut mouth_nodes: HashMap<TunnelKey, &Node> = HashMap::new();
     let mut chamber_nodes: Vec<Vec<&Node>> = vec![Vec::new(); keys.len()];
     for node in &visible {
-        if homes[&node.id] == Home::Chamber {
-            chamber_nodes[tunnel_of[&tunnel_key(node, &repos)]].push(node);
+        if matches!(homes[&node.id], Home::Chamber | Home::Mouth) {
+            let key = tunnel_key(node, &repos);
+            // One unlabelled taskmaster fits beside the row's workers. Additional
+            // attendants and taskmasters with apprentices need full packed slots.
+            if homes[&node.id] == Home::Mouth
+                && trail_of(&node.id) == 0
+                && !mouth_nodes.contains_key(&key)
+            {
+                mouth_nodes.insert(key, node);
+            } else {
+                chamber_nodes[tunnel_of[&key]].push(node);
+            }
         }
     }
     for nodes in &mut chamber_nodes {
-        nodes.sort_by_key(|n| chamber_rank(n.state));
+        nodes.sort_by_key(|n| (homes[&n.id] == Home::Mouth, chamber_rank(n.state)));
     }
     let count = |home: Home| homes.values().filter(|h| **h == home).count();
     let envoy = count(Home::Comms) > 0;
@@ -785,14 +978,10 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         )),
     };
 
-    // The plan's rooms, emptied ones too while they wait out their grace. A room's chamber
-    // fills its cell; a lower room's shaft comes down at the right of its column, beside the
-    // chambers over it.
+    // Each group owns a packed segment; wrapped rows stay beneath its label.
     let dwarves_of: HashMap<&TunnelKey, &Vec<&Node>> = keys.iter().zip(&chamber_nodes).collect();
     let none = Vec::new();
-    let band_top = |level: usize| {
-        rect.top() + ground.below_top + level as f32 * (ground.band_h + LABEL_GAP * a)
-    };
+    let band_top = |level: usize| rect.top() + ground.band_top(level);
     let mut room_nodes: Vec<&Vec<&Node>> = Vec::new();
     let mut packed: Vec<(Vec<(usize, usize)>, usize)> = Vec::new();
     let mut slot_ws: Vec<f32> = Vec::new();
@@ -803,16 +992,22 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
         .map(|room| {
             let key = &room.key;
             let nodes = dwarves_of.get(key).copied().unwrap_or(&none);
-            let chamber_w = ground.chamber_w(room.level, room.col);
-            let per_row = ground.per_row(room.level, room.col);
+            let chamber_w = ground.chamber_w(room.span);
+            let resting = *key == TunnelKey::RestingArea;
+            let per_row = ground.room_per_row(room.span, resting);
             let footprints: Vec<usize> = nodes
                 .iter()
                 .map(|n| footprint(trail_of(&n.id), sub / a))
                 .collect();
             let (places, rows) = pack(&footprints, per_row);
             // A full row spreads across the chamber.
+            let margin = if resting {
+                super::resting::alcove(chamber_w, a) + 2.0 * a
+            } else {
+                3.0 * a
+            };
             slot_ws.push(if per_row > 1 {
-                ((chamber_w - 2.0 * a) / (per_row - 1) as f32).max(SLOT * a)
+                ((chamber_w - margin) / (per_row - 1) as f32).max(SLOT * a)
             } else {
                 SLOT * a
             });
@@ -820,8 +1015,7 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             per_rows.push(per_row);
             packed.push((places, rows));
             let left = rect.left() + ground.chamber_left(room.col);
-            let shaft_x = rect.left() + ground.shaft_x(room.level, room.col);
-            let height = rows_height(room.rows.max(rows), a);
+            let height = room_rows_height(room.rows.max(rows), a, resting);
             let tasks = match key {
                 TunnelKey::Run(id) => snapshot
                     .runs
@@ -833,24 +1027,9 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
                 TunnelKey::Repo(_) | TunnelKey::RestingArea => None,
             };
             let progress = tasks.map(|(done, total)| done as f32 / total as f32);
-            let depth = progress.map_or(UNKNOWN_PROGRESS_DEPTH, |p| {
-                MIN_DEPTH + (1.0 - MIN_DEPTH) * p
-            });
-            let room_h = (ground.band_h - height).max(0.0);
-            let top = band_top(room.level) + room_h * depth;
+            let top = band_top(room.level);
             let chamber = Rect::from_min_size(pos2(left, top), vec2(chamber_w, height));
-            let shaft = Rect::from_min_max(
-                pos2(shaft_x - 0.6 * a, gallery.center().y),
-                pos2(shaft_x + 0.6 * a, chamber.top() + 0.5 * a),
-            );
-            let label_top = if room.level == 0 {
-                pos2(shaft_x, gallery.bottom() + 3.0 * px)
-            } else {
-                pos2(
-                    chamber.center().x,
-                    band_top(room.level) - LABEL_GAP * a + 3.0 * px,
-                )
-            };
+            let label_top = pos2(chamber.center().x, top - LABEL_GAP * a + px);
             let label = match key {
                 TunnelKey::Run(id) => snapshot
                     .runs
@@ -864,7 +1043,6 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             Tunnel {
                 key: key.clone(),
                 label: cut(label),
-                shaft,
                 chamber,
                 progress,
                 tasks,
@@ -872,15 +1050,9 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
             }
         })
         .collect();
-    let room_of: HashMap<&TunnelKey, usize> = tunnels
-        .iter()
-        .enumerate()
-        .map(|(i, t)| (&t.key, i))
-        .collect();
     // Slots, in snapshot order within each place.
     let mut landing_n = 0;
     let mut storage_n = 0;
-    let mut mouth_n = vec![0usize; tunnels.len()];
     let mut dwarves: Vec<Dwarf> = Vec::new();
     let mut pr_ready = 0;
     let mut trailing: Vec<&Node> = Vec::new();
@@ -893,6 +1065,18 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
                 continue;
             }
             Home::Chamber => continue,
+            Home::Mouth => {
+                let key = tunnel_key(node, &repos);
+                if mouth_nodes.get(&key).is_none_or(|n| n.id != node.id) {
+                    continue;
+                }
+                let chamber = tunnels
+                    .iter()
+                    .find(|t| t.key == key)
+                    .expect("room for taskmaster")
+                    .chamber;
+                (Spot::Mouth(key, 0), chamber.min + vec2(0.5, 0.9) * a)
+            }
             Home::Comms => (
                 Spot::Comms,
                 comms.expect("Envoy has a room").dwarf_position(),
@@ -919,16 +1103,6 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
                 );
                 (Spot::Storage(k), pos)
             }
-            Home::Mouth => {
-                let key = tunnel_key(node, &repos);
-                let t = room_of[&key];
-                let k = mouth_n[t];
-                mouth_n[t] += 1;
-                let shaft = tunnels[t].shaft;
-                let side = if k.is_multiple_of(2) { 1.0 } else { -1.0 };
-                let x = shaft.center().x + side * (k.div_ceil(2) as f32) * a;
-                (Spot::Mouth(key, k), pos2(x, gallery.bottom() - 0.5 * a))
-            }
         };
         let size = if home == Home::Comms {
             CELL * band.comms_px
@@ -952,10 +1126,11 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     let mut beds = Vec::new();
     for (t, nodes) in room_nodes.iter().enumerate() {
         let chamber = tunnels[t].chamber;
+        let pitch = room_row_pitch(a, tunnels[t].key == TunnelKey::RestingArea);
         let slot = |row: usize, col: usize| {
             pos2(
                 chamber.right() - a - col as f32 * slot_ws[t],
-                chamber.bottom() - (0.5 + TAG) * a - row as f32 * ROW * a,
+                chamber.top() + 0.9 * a + row as f32 * pitch,
             )
         };
         if tunnels[t].key == TunnelKey::RestingArea {
@@ -979,18 +1154,26 @@ pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
                 });
             }
         }
+        let mut mouth_n = usize::from(mouth_nodes.contains_key(&tunnels[t].key));
         for (k, (node, &(row, col))) in nodes.iter().zip(&packed[t].0).enumerate() {
+            // Taskmasters face left; their apprentices trail to the right within the
+            // reserved footprint, unlike miners digging towards the right-hand face.
+            let col = if homes[&node.id] == Home::Mouth {
+                col + footprint(trail_of(&node.id), sub / a).min(per_rows[t]) - 1
+            } else {
+                col
+            };
             let pos = slot(row, col);
             let is_pr = input.pr_ready.contains(&node.id);
-            dwarves.push(dwarf(
-                node,
-                Spot::Chamber(tunnels[t].key.clone(), k),
-                pos,
-                a,
-                Home::Chamber,
-                is_pr,
-                input.now_ms,
-            ));
+            let home = homes[&node.id];
+            let spot = if home == Home::Mouth {
+                let spot = Spot::Mouth(tunnels[t].key.clone(), mouth_n);
+                mouth_n += 1;
+                spot
+            } else {
+                Spot::Chamber(tunnels[t].key.clone(), k)
+            };
+            dwarves.push(dwarf(node, spot, pos, a, home, is_pr, input.now_ms));
         }
     }
     let parked: HashSet<&NodeId> = visible
@@ -1081,12 +1264,15 @@ fn dwarf(
         mark: if matches!(node.kind, NodeKind::King | NodeKind::Envoy) {
             None
         } else {
-            mark(node.state, pr)
+            mark(node.state, pr && node.kind != NodeKind::Worker)
         },
         facing_right: pose == Pose::Dig || node.kind == NodeKind::Envoy,
         tag: match node.kind {
+            _ if node.is_parked() => Some(node.label.clone()),
             NodeKind::Envoy => Some("Envoy".into()),
-            NodeKind::Worker | NodeKind::Terminal => Some(node.label.clone()),
+            NodeKind::Worker | NodeKind::Terminal | NodeKind::Lorekeeper => {
+                Some(node.label.clone())
+            }
             NodeKind::Coordinator | NodeKind::Attendant | NodeKind::Subagent | NodeKind::King => {
                 None
             }

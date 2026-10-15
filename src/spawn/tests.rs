@@ -713,6 +713,26 @@ fn classifies_the_codex_update_screen() {
 }
 
 #[test]
+fn codex_initializing_header_does_not_latch_an_approval_warning() {
+    // Captured from Codex 0.162.1 with the bypass flag: the splash draws the title and
+    // composer before session configuration adds the permissions row and agent footer.
+    let initializing = screen!("spawn_codex_initializing.txt");
+    let started = screen!("spawn_codex_yolo_0162.txt");
+    assert!(!codex_approvals_on(&initializing));
+    assert!(!codex_approvals_on(&started));
+
+    let mut verifier = Verifier::new(Agent::Codex, &Expect::AnyInput);
+    assert_eq!(verifier.next(&initializing), VerifyStep::Wait);
+    assert_eq!(verifier.next(&started), VerifyStep::Done);
+    assert!(!verifier.approvals_on);
+
+    // A bare launch can finish on the splash's empty composer, before another poll.
+    let mut verifier = Verifier::new(Agent::Codex, &Expect::Ready);
+    assert_eq!(verifier.next(&initializing), VerifyStep::Done);
+    assert!(!verifier.approvals_on);
+}
+
+#[test]
 fn flags_a_codex_session_that_asks_for_approval() {
     assert!(codex_approvals_on(&screen!("spawn_codex_approvals_on.txt")));
     assert!(!codex_approvals_on(&screen!("spawn_codex_yolo.txt")));

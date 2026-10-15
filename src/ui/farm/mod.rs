@@ -19,6 +19,7 @@ pub mod motion;
 pub mod nature;
 pub mod nav;
 mod pops;
+mod resting;
 pub mod rooms;
 #[cfg(test)]
 mod rooms_tests;
@@ -28,6 +29,7 @@ mod rubble_tests;
 pub mod scenery;
 pub mod sprites;
 mod tool_throw;
+mod voice;
 mod world;
 pub mod zoom;
 #[cfg(test)]
@@ -217,6 +219,7 @@ pub struct FarmView {
     mail: crate::ui::envelope::Flights,
     /// Tool calls beaming from their callers; see [`beams`].
     beams: crate::ui::beam::Beams,
+    voice: voice::Voice,
     /// Dwarves that just changed state; see [`pops`].
     pops: crate::ui::state_pop::Pops,
     /// The part of the farm on screen; see [`zoom`].
@@ -244,11 +247,10 @@ pub struct FarmView {
     dwarf_art: DwarfArt,
 }
 
-/// A room's chamber, shaft and label relative to the farm's rect (see [`motion::to_unit`]).
+/// A room's chamber and label relative to the farm's rect (see [`motion::to_unit`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct RoomShape {
     chamber: Rect,
-    shaft: Rect,
     label_top: Pos2,
 }
 
@@ -259,7 +261,6 @@ impl RoomShape {
         };
         Self {
             chamber: unit(tunnel.chamber),
-            shaft: unit(tunnel.shaft),
             label_top: motion::to_unit(tunnel.label_top, rect),
         }
     }
@@ -269,12 +270,11 @@ impl RoomShape {
             |a: Rect, b: Rect| Rect::from_min_max(a.min.lerp(b.min, t), a.max.lerp(b.max, t));
         Self {
             chamber: rect(self.chamber, to.chamber),
-            shaft: rect(self.shaft, to.shaft),
             label_top: self.label_top.lerp(to.label_top, t),
         }
     }
 
-    fn screen(self, rect: Rect) -> (Rect, Rect, Pos2) {
+    fn screen(self, rect: Rect) -> (Rect, Pos2) {
         let screen = |r: Rect| {
             Rect::from_min_max(
                 motion::from_unit(r.min, rect),
@@ -283,7 +283,6 @@ impl RoomShape {
         };
         (
             screen(self.chamber),
-            screen(self.shaft),
             motion::from_unit(self.label_top, rect),
         )
     }
@@ -375,6 +374,14 @@ impl FrameShape {
         scene.storage = self.storage;
         scene.comms = self.comms;
         scene.ledger = self.ledger;
+        if let Some((pos, size)) = ledger::librarian(scene) {
+            for dwarf in &mut scene.dwarves {
+                if dwarf.spot == Spot::Ledger {
+                    dwarf.pos = pos;
+                    dwarf.size = size;
+                }
+            }
+        }
     }
 }
 
@@ -427,7 +434,7 @@ impl FarmView {
 
     /// The open worktrees' heaps and the cleanup breaking them down, if one runs.
     pub fn set_rubble(&mut self, sites: Vec<rubble::Site>, hammer: Option<rubble::CleanupJob>) {
-        self.rubble.set(sites, hammer);
+        self.rubble.set_stale(sites, hammer);
     }
 
     pub fn set_envoy_receipt(&mut self, receipt: crate::ui::envoy_receipt::ReceiptCue) {
@@ -520,6 +527,11 @@ impl FarmView {
         self.mail.push(flight, now_s, still);
     }
 
+    /// The current recording recipient; `None` discharges the last stream.
+    pub fn set_voice_target(&mut self, target: Option<NodeId>, now_s: f64) {
+        self.voice.update(target, now_s);
+    }
+
     /// Shows a tool call's beam, asked for at `now_s` (egui time); `still` for Reduce motion.
     pub fn beam(&mut self, beam: crate::traffic::beam::Beam, now_s: f64, still: bool) {
         self.beams.push(beam, now_s, still);
@@ -601,6 +613,7 @@ impl FarmView {
         }
         let pops = self.pops.frames(now_s);
         let effects = Effects {
+            still,
             ripples: &self.ripples,
             births: &self.births,
             king_busy: self.king_busy,
@@ -647,6 +660,7 @@ impl FarmView {
             &self.rubble,
             &heaps,
             self.ledger.count,
+            still,
         );
 
         self.envoy_receipt.repaint(ui.ctx());
@@ -721,10 +735,21 @@ impl FarmView {
             &heaps,
             heap_hovered.as_ref().map(|t| t.site.id.as_str()),
             palette,
-            now_s,
+            &self.art,
         );
         beams::paint(&painter, &scene, &placed, self.beams.tick(now_s), now_s);
         self.throws.paint(&painter, &mut figures, &scene, now_s);
+        self.voice.paint(
+            &painter,
+            &scene,
+            &placed,
+            voice::Style {
+                camera: self.camera,
+                art: &self.art,
+                now_s,
+                still,
+            },
+        );
         paint_calls(&painter, sprites, &scene, &effects, now_s, false);
         comms::tray(
             &painter,
@@ -757,6 +782,7 @@ impl FarmView {
             || self.throws.animating()
             || !self.mail.is_empty()
             || !self.beams.is_empty()
+            || self.voice.animating(still)
             || !self.pops.is_empty()
             || !self.room_glides.is_empty()
             || self.frame_glide.is_some()
@@ -977,14 +1003,14 @@ impl FarmView {
                 self.room_glides.remove(&tunnel.key);
                 continue;
             }
-            let (chamber, shaft, label_top) = glide.at(target, now_s).screen(rect);
-            let shift = chamber.right_bottom() - tunnel.chamber.right_bottom();
+            let (chamber, label_top) = glide.at(target, now_s).screen(rect);
+            let shift = chamber.right_top() - tunnel.chamber.right_top();
             for bed in &mut scene.beds {
                 if tunnel.chamber.contains(bed.rect.center()) {
                     bed.rect = bed.rect.translate(shift);
                 }
             }
-            (tunnel.chamber, tunnel.shaft, tunnel.label_top) = (chamber, shaft, label_top);
+            (tunnel.chamber, tunnel.label_top) = (chamber, label_top);
         }
         self.room_glides.retain(|key, _| shapes.contains_key(key));
         self.room_shapes = shapes;
@@ -1069,7 +1095,11 @@ impl FarmView {
                     walk: None,
                     body: None,
                 });
-            if born {
+            if dwarf.spot == Spot::Ledger {
+                track.spot = dwarf.spot.clone();
+                track.at = motion::to_unit(dwarf.pos, scene.rect);
+                track.walk = None;
+            } else if born {
                 let from = scene.throne_hall.center() + vec2(0.0, 0.3 * scene.cell());
                 let path = route(from, dwarf.pos, &Spot::King, &dwarf.spot, scene);
                 track.walk = Some(Walk::new(&path, scene.rect, now_s));
@@ -1083,7 +1113,7 @@ impl FarmView {
                 let path = route(from, dwarf.pos, &track.spot, &dwarf.spot, scene);
                 track.walk = Some(Walk::new(&path, scene.rect, now_s));
                 track.spot = dwarf.spot.clone();
-            } else if steady && track.walk.is_none() {
+            } else if steady && track.walk.is_none() && dwarf.spot != Spot::Ledger {
                 let from = motion::from_unit(track.at, scene.rect);
                 if (from - dwarf.pos).length() > 0.5
                     && !*still.get_or_insert_with(|| {
@@ -1177,6 +1207,7 @@ fn paint_ground(
     rubble_view: &rubble::RubbleView,
     heaps: &rubble::Rubble,
     ledger_count: usize,
+    still: bool,
 ) {
     let px = scene.px;
     let a = scene.cell();
@@ -1216,12 +1247,27 @@ fn paint_ground(
         up(scene.storage.center().x, scene.storage.bottom() - px),
     ] {
         sprites.passage(painter, shaft, px);
-        sprites.shoring(painter, shaft, px);
+        sprites.ladder(painter, shaft, px);
+    }
+    let ladder = scene.work_ladder();
+    sprites.passage(painter, ladder, px);
+    for gallery in scene
+        .access_galleries()
+        .into_iter()
+        .chain(scene.work_galleries())
+    {
+        sprites.passage(painter, gallery, px);
+        sprites.gallery(painter, gallery, px);
+    }
+    for wall in scene.work_walls() {
+        sprites.masonry(painter, wall);
     }
     for tunnel in &scene.tunnels {
-        sprites.passage(painter, tunnel.shaft, px);
-        sprites.shoring(painter, tunnel.shaft, px);
+        let local = scene.tunnel_ladder(tunnel);
+        sprites.passage(painter, local, px);
+        sprites.ladder(painter, local, px);
     }
+    sprites.ladder(painter, ladder, px);
     sprites.passage(painter, scene.gallery, px);
     sprites.gallery(painter, scene.gallery, px);
     sprites.standing(
@@ -1249,21 +1295,9 @@ fn paint_ground(
     sprites.throne_hall(painter, scene.throne_hall, px);
     sprites.masonry(painter, scene.storage);
     for tunnel in &scene.tunnels {
-        let seed = dwarf::seed_of(&tunnel.label) as u8;
-        sprites.cave(painter, tunnel.chamber, seed);
-        let mut rows = Vec::new();
-        for dwarf in &scene.dwarves {
-            if matches!(&dwarf.spot, Spot::Chamber(key,_) if key == &tunnel.key) {
-                let y = dwarf.pos.y + dwarf.size / 2.0;
-                if !rows.iter().any(|row: &f32| (row - y).abs() < px) {
-                    rows.push(y);
-                }
-            }
-        }
-        for y in rows {
-            sprites.siding(painter, tunnel.chamber, y, px);
-        }
-        if tunnel.key != TunnelKey::RestingArea {
+        if tunnel.key == TunnelKey::RestingArea {
+            resting::paint(painter, sprites, scene, tunnel, still);
+        } else {
             let prop = world::Prop::ToolRack;
             let size = prop.size().map(|n| n as f32 * px * 0.85);
             let dressing = Rect::from_min_size(
@@ -1285,44 +1319,44 @@ fn paint_ground(
         sprites.bed(painter, bed.rect, px);
     }
 
-    // Each tunnel's name and progress under the gallery, above its shaft.
+    // A single header line leaves the status bubbles clear of the name and task count.
     let font = FontId::monospace(9.0 + 2.0 * px);
     for tunnel in &scene.tunnels {
         let top = tunnel.label_top;
         let width = tunnel.chamber.width() + 0.4 * a;
+        let title = match tunnel.tasks {
+            Some((done, total)) => format!("{done}/{total} · {}", tunnel.label),
+            None if tunnel.key == TunnelKey::RestingArea
+                && scene.beds.iter().any(|b| b.sleeper.is_some()) =>
+            {
+                format!(
+                    "{} · {} parked",
+                    tunnel.label,
+                    scene.beds.iter().filter(|b| b.sleeper.is_some()).count()
+                )
+            }
+            None => tunnel.label.clone(),
+        };
         let text = label(
             painter,
             top,
             Align2::CENTER_TOP,
-            &tunnel.label,
+            &title,
             font.clone(),
             width,
             px,
             palette,
         );
-        // The run's task progress: a bar filling as tasks complete, and the count.
-        if let (Some(progress), Some((done, total))) = (tunnel.progress, tunnel.tasks) {
-            let count = format!("{done}/{total} tasks done");
-            let small = FontId::monospace(8.0 + 1.5 * px);
+        if let Some(progress) = tunnel.progress {
             let bar_w = width.min(text.width().max(3.0 * a));
             let bar = Rect::from_center_size(
-                egui::pos2(top.x, text.bottom() + 4.0 * px),
+                egui::pos2(top.x, text.bottom() + 2.0 * px),
                 vec2(bar_w, 2.0 * px),
             );
             painter.rect_filled(bar.expand(px), 0.0, palette.label_shadow);
             painter.rect_filled(bar, 0.0, world::WOOD_DARK);
             let filled = Rect::from_min_size(bar.min, vec2(bar.width() * progress, bar.height()));
             painter.rect_filled(filled, 0.0, world::GOLD);
-            label(
-                painter,
-                egui::pos2(top.x, bar.bottom() + 2.0 * px),
-                Align2::CENTER_TOP,
-                &count,
-                small,
-                width,
-                px,
-                palette,
-            );
         }
     }
     sprites.portal(
@@ -1443,23 +1477,7 @@ fn paint_dwarves(
         if bed.is_some() {
             cell = cell.translate(vec2(0.0, -layout::SLEEPER_LIFT * tpx));
         }
-        let carrying =
-            dwarf.pose == Pose::Carry || (walking && dwarf.state == crate::model::NodeState::Done);
-        let riding = walking
-            && !matches!(
-                dwarf.kind,
-                crate::model::NodeKind::King | crate::model::NodeKind::Envoy
-            );
-        let hoisted = riding && at.heading.is_some_and(|h| h.y.abs() > h.x.abs());
-        if hoisted {
-            sprites.cart_hoist(
-                painter,
-                cell,
-                motion::hoist_ceiling(scene, at.pos),
-                tpx,
-                dwarf.alpha,
-            );
-        }
+        let carrying = dwarf.pose == Pose::Carry;
         // Messages reaching the Envoy: he casts, his crystal lighting the room.
         let casting =
             dwarf.kind == crate::model::NodeKind::Envoy && effects.envoy_receipt.casting();
@@ -1491,6 +1509,8 @@ fn paint_dwarves(
             look: dwarf_look(dwarf),
             action: if casting {
                 Action::Cast
+            } else if walking && at.heading.is_some_and(|h| h.y.abs() > h.x.abs()) {
+                Action::Climb
             } else {
                 dwarf_action(dwarf, walking, carrying, effects.king_busy)
             },
@@ -1514,15 +1534,7 @@ fn paint_dwarves(
             }
             continue;
         }
-        let rider_cell = if riding {
-            cell.translate(vec2(0.0, -3.0 * tpx))
-        } else {
-            cell
-        };
-        figures.body(painter, &figure, rider_cell, px, now_s);
-        if riding {
-            sprites.cart(painter, cell, tpx, carrying, hoisted, now_s, dwarf.alpha);
-        }
+        figures.body(painter, &figure, cell, px, now_s);
         if let Some(bed) = bed {
             sprites.blanket(painter, bed.rect, cell, tpx, dwarf.alpha);
         }
@@ -1540,21 +1552,28 @@ fn paint_dwarves(
             let size = (16.0 * px).max(layout::CELL * (tpx - 1.0).max(1.0));
             let mut anchor = cell.center() + vec2(0.25 * dwarf.size, -tpx);
             if mark == layout::Mark::Sleep {
-                // The bubble floats, and z's drift up from it and fade.
-                anchor.y -= SLEEP_BOB[step % SLEEP_BOB.len()] * tpx;
+                // Bedside snores stay under the ceiling, clear of the room's sign.
+                let sleep_step = if effects.still { 0 } else { step };
+                if bed.is_none() {
+                    anchor.y -= SLEEP_BOB[sleep_step % SLEEP_BOB.len()] * tpx;
+                }
                 let offset = (dwarf.pos.x * 0.37 + dwarf.pos.y * 0.11).rem_euclid(1.0) as f64;
                 for i in 0..2 {
-                    let t = ((step as f64 / 10.0) + offset + i as f64 * 0.5).fract() as f32;
-                    let pos = anchor
-                        + vec2(
-                            0.35 * size + (t * 6.0).sin() * 2.0 * tpx,
-                            -size - t * 1.2 * size,
-                        );
+                    let t = ((sleep_step as f64 / 10.0) + offset + i as f64 * 0.5).fract() as f32;
+                    let rise = if bed.is_some() {
+                        0.35 + 0.35 * t
+                    } else {
+                        1.0 + 1.2 * t
+                    };
+                    let pos =
+                        anchor + vec2(0.35 * size + (t * 6.0).sin() * 2.0 * tpx, -rise * size);
                     let snapped = egui::pos2((pos.x / px).round() * px, (pos.y / px).round() * px);
                     sprites.snore(painter, snapped, tpx, (1.0 - t) * dwarf.alpha, palette);
                 }
             }
-            sprites.bubble(painter, anchor, size, mark, dwarf.alpha);
+            if bed.is_none() {
+                sprites.bubble(painter, anchor, size, mark, dwarf.alpha);
+            }
         }
         if let Some(name) = &dwarf.tag {
             let selected = selection.contains(&dwarf.id);
@@ -1600,12 +1619,15 @@ fn dwarf_look(dwarf: &layout::Dwarf) -> Look {
         NodeKind::Coordinator | NodeKind::Attendant => Role::Foreman,
         NodeKind::Subagent => Role::Apprentice,
         NodeKind::Envoy => Role::RunePriest,
+        NodeKind::Lorekeeper => Role::Librarian,
         NodeKind::Worker | NodeKind::Terminal => Role::Miner,
     };
     let mut look = Look::for_role(role, dwarf::seed_of(dwarf.id.as_str()));
     let coat = Coat::new(dwarf.agent.as_ref());
     art::dress(&mut look, coat);
-    if dwarf.state == crate::model::NodeState::Stalled && role != Role::RunePriest {
+    if dwarf.state == crate::model::NodeState::Stalled
+        && !matches!(role, Role::RunePriest | Role::Librarian)
+    {
         look.hat = dwarf::Hat::Helmet;
     }
     look
@@ -1622,10 +1644,24 @@ fn dwarf_action(dwarf: &layout::Dwarf, walking: bool, carrying: bool, king_busy:
             Action::Still
         };
     }
+    if dwarf.spot == Spot::Ledger {
+        return match dwarf.pose {
+            Pose::Read => Action::Read,
+            Pose::Write => Action::Write,
+            _ => Action::Still,
+        };
+    }
     match dwarf.pose {
-        _ if walking => Action::Ride,
+        _ if walking && carrying => Action::Carry,
+        _ if walking => Action::Walk,
         _ if carrying => Action::Hold,
+        Pose::Sleep if matches!(dwarf.spot, Spot::Chamber(TunnelKey::RestingArea, _)) => {
+            Action::Sleep
+        }
         _ if dwarf.state == NodeState::Stalled => Action::Wait,
+        Pose::Read => Action::Read,
+        Pose::Write => Action::Write,
+        Pose::Stand if dwarf.kind == crate::model::NodeKind::Lorekeeper => Action::Still,
         Pose::Dig => Action::Mine,
         Pose::Build => Action::Build,
         Pose::Wait => Action::Wait,
@@ -1654,6 +1690,7 @@ fn paint_falls(
                 Role::Foreman
             }
             crate::model::NodeKind::Envoy => Role::RunePriest,
+            crate::model::NodeKind::Lorekeeper => Role::Librarian,
             _ => Role::Miner,
         };
         let mut dwarf = Look::for_role(role, fall.body.seed);
@@ -1683,6 +1720,7 @@ const SLEEP_BOB: [f32; 4] = [0.0, 1.0, 2.0, 1.0];
 
 /// The effects running this frame, from [`FarmView`].
 struct Effects<'a> {
+    still: bool,
     ripples: &'a [Ripple],
     births: &'a [f64],
     king_busy: bool,

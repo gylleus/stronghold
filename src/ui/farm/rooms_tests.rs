@@ -10,6 +10,58 @@ use crate::model::{ClanSnapshot, NodeKind, NodeState};
 
 const RECT: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1280.0, 800.0));
 
+#[test]
+fn empty_rest_room_expands_on_arrival_and_shrinks_when_the_last_sleeper_leaves() {
+    let mut s = clan(1, 1);
+    let mut plan = RoomPlan::default();
+    let empty = frame(&s, &mut plan, 0);
+    let initial = plan.room(&TunnelKey::RestingArea).unwrap().clone();
+    assert_eq!(initial.rows, 1);
+    assert!(initial.span < super::rooms::COLUMNS / 2);
+    assert!(
+        plan.rooms
+            .iter()
+            .any(|r| r.key != TunnelKey::RestingArea && r.level == initial.level),
+        "the empty room uses spare space beside work rooms"
+    );
+    assert_eq!(empty.beds.len(), 1);
+    assert!(empty.beds[0].sleeper.is_none());
+    for i in 0..12 {
+        let mut sleeper = node(
+            &format!("sleeper-{i}"),
+            NodeKind::Terminal,
+            None,
+            NodeState::Idle,
+        );
+        sleeper.parked_at_ms = Some(1);
+        s.nodes.push(sleeper);
+    }
+    let occupied = frame(&s, &mut plan, 1_000);
+    let expanded = plan.room(&TunnelKey::RestingArea).unwrap();
+    assert!(expanded.span > initial.span || expanded.rows > initial.rows);
+    assert_eq!(
+        occupied.beds.iter().filter(|b| b.sleeper.is_some()).count(),
+        12
+    );
+    assert_laid_out(&occupied);
+    s.nodes.retain(|n| !n.is_parked());
+    let after = frame(&s, &mut plan, 2_000);
+    assert_eq!(plan.room(&TunnelKey::RestingArea), Some(&initial));
+    assert_eq!(
+        after.beds.len(),
+        1,
+        "shrink immediately, without an empty-room grace"
+    );
+    assert_kept(&empty, &after);
+    let rearranges = plan.rearranges;
+    let later = frame(&s, &mut plan, 2_000 + GRACE_MS);
+    assert_kept(&after, &later);
+    assert_eq!(
+        plan.rearranges, rearranges,
+        "an idle empty room does not keep refitting"
+    );
+}
+
 /// The King and `runs` runs of `workers` working workers each.
 fn clan(runs: usize, workers: usize) -> ClanSnapshot {
     let mut s = ClanSnapshot::default();
@@ -77,16 +129,25 @@ fn assert_kept(before: &Scene, after: &Scene) {
             .find(|u| u.key == t.key)
             .unwrap_or_else(|| panic!("{:?} kept", t.key));
         assert_eq!(t.chamber, u.chamber, "{:?} chamber moved", t.key);
-        assert_eq!(t.shaft, u.shaft, "{:?} shaft moved", t.key);
         assert_eq!(t.label_top, u.label_top, "{:?} label moved", t.key);
     }
     assert_eq!(before.px, after.px, "the scale is kept");
 }
 
-/// Every chamber in `scene` is in its view, clear of the others and their shafts, and holds
+/// Every chamber in `scene` is in its view, clear of the others and the shared ladder, and holds
 /// its dwarves.
 fn assert_laid_out(scene: &Scene) {
     let tunnels = &scene.tunnels;
+    for gallery in scene.work_galleries() {
+        assert_eq!(
+            tunnels
+                .iter()
+                .filter(|t| t.chamber.intersects(gallery))
+                .count(),
+            1,
+            "a gallery must stay within one workspace during growth and rearrangement"
+        );
+    }
     for (i, t) in tunnels.iter().enumerate() {
         assert!(
             scene.rect.contains_rect(t.chamber),
@@ -96,13 +157,13 @@ fn assert_laid_out(scene: &Scene) {
         for u in tunnels.iter().skip(i + 1) {
             assert!(!t.chamber.intersects(u.chamber), "{:?}, {:?}", t.key, u.key);
             assert!(
-                !t.shaft.intersects(u.chamber),
+                !scene.work_ladder().intersects(u.chamber),
                 "{:?} crosses {:?}",
                 t.key,
                 u.key
             );
             assert!(
-                !u.shaft.intersects(t.chamber),
+                !scene.work_ladder().intersects(t.chamber),
                 "{:?} crosses {:?}",
                 u.key,
                 t.key
@@ -125,7 +186,12 @@ fn a_new_room_lays_the_farm_out_again() {
     let mut plan = RoomPlan::default();
     frame(&s, &mut plan, 0);
     assert_eq!(plan.rearranges, 1, "the first frame lays the plan out");
-    let cells = |plan: &RoomPlan| plan.grid().unwrap().depths.iter().sum::<usize>();
+    let cells = |plan: &RoomPlan| {
+        plan.rooms
+            .iter()
+            .filter(|r| r.key != TunnelKey::RestingArea)
+            .count()
+    };
     assert_eq!(cells(&plan), 3, "no spare cells");
     add_run(&mut s, 3, 2);
     let after = frame(&s, &mut plan, 1_000);
@@ -160,8 +226,8 @@ fn growth_within_the_margin_moves_nothing() {
         {
             let u = after.tunnels.iter().find(|u| u.key == t.key).unwrap();
             assert_eq!(
-                (t.chamber, t.shaft),
-                (u.chamber, u.shaft),
+                (t.chamber, t.label_top),
+                (u.chamber, u.label_top),
                 "{:?} moved",
                 t.key
             );
@@ -245,8 +311,12 @@ fn filled_in_rooms_give_their_ground_back() {
     assert_eq!(plan.rearranges, 1, "rooms wait out their grace first");
     let after = frame(&s, &mut plan, 1_000 + GRACE_MS);
     assert_eq!(plan.rearranges, 2, "then the grid is laid out again");
-    assert_eq!(after.tunnels.len(), 2);
-    assert_eq!(plan.grid().unwrap().depths.iter().sum::<usize>(), 2);
+    assert_eq!(
+        after.tunnels.len(),
+        3,
+        "two work rooms and the empty rest room"
+    );
+    assert_eq!(plan.rooms.len(), 3);
 }
 
 #[test]
@@ -291,10 +361,10 @@ fn a_resize_fits_the_farm_to_the_view() {
     assert_eq!(keys, after);
     assert_eq!(plan.rearranges, 2);
     assert_laid_out(&scene);
-    let widths = &plan.grid().unwrap().widths;
     assert!(
-        (widths.iter().sum::<f32>() - 1000.0).abs() < 0.01,
-        "{widths:?}"
+        plan.rooms
+            .iter()
+            .all(|r| r.col + r.span <= super::rooms::COLUMNS)
     );
 }
 
@@ -309,10 +379,11 @@ fn a_rearrange_glides_unless_motion_is_reduced() {
         let mut before = frame(&s, &mut plan, 0);
         farm.glide_rooms(&mut before, 0.0);
         farm.advance(&before, 0.0);
-        // Rooms until the plan is laid out again.
+        // Add groups until this room actually moves; neighbours can now fit beside it.
         let mut r = 1;
         let mut after = before.clone();
-        while plan.rearranges == 1 {
+        while tunnel(&after, 0).chamber == tunnel(&before, 0).chamber {
+            assert!(r < 20, "a crowded plan eventually moves the first room");
             add_run(&mut s, r, 1);
             r += 1;
             after = frame(&s, &mut plan, r as i64);
@@ -386,4 +457,53 @@ fn an_dwarf_leaving_its_room_moves_no_room() {
     let after = frame(&s, &mut plan, 1_000);
     assert_kept(&before, &after);
     assert_eq!(plan.rearranges, 1);
+}
+
+#[test]
+fn saved_column_and_band_plans_are_refitted_as_packed_tunnels() {
+    let s = clan(3, 2);
+    let mut plan = RoomPlan::default();
+    let expected = frame(&s, &mut plan, 0);
+    let mut saved = serde_json::to_value(&plan).unwrap();
+    saved.as_object_mut().unwrap().remove("packed_tunnels");
+    saved["workspace_bands"] = serde_json::json!({
+        "px": 3.0, "levels": 3, "widths": [1280.0], "depths": [3], "heights": [100.0, 100.0, 100.0]
+    });
+    saved["fitted"] = serde_json::json!({
+        "px": 3.0, "levels": 1, "widths": [400.0, 400.0, 480.0], "depths": [1, 1, 1]
+    });
+    for (col, room) in saved["rooms"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .enumerate()
+    {
+        room["level"] = 0.into();
+        room["col"] = col.into();
+        room.as_object_mut().unwrap().remove("span");
+    }
+    let mut restored: RoomPlan = serde_json::from_value(saved).unwrap();
+    assert_eq!(frame(&s, &mut restored, 0), expected);
+    assert_eq!(restored.rearranges, 1);
+}
+
+#[test]
+fn small_groups_pack_side_by_side_and_keep_their_cells() {
+    let mut s = clan(9, 1);
+    let mut plan = RoomPlan::default();
+    let before = frame(&s, &mut plan, 0);
+    let rows: std::collections::BTreeSet<_> = plan.rooms.iter().map(|r| r.level).collect();
+    assert!(rows.len() < 9, "small groups must share rows");
+    assert!(before.tunnels.iter().any(|a| {
+        before
+            .tunnels
+            .iter()
+            .any(|b| a.key != b.key && a.chamber.top() == b.chamber.top())
+    }));
+    add_worker(&mut s, 0, 1);
+    let after = frame(&s, &mut plan, 1);
+    assert_kept(&before, &after);
+    s.nodes.reverse();
+    assert_eq!(frame(&s, &mut plan, 2).tunnels, after.tunnels);
+    assert_laid_out(&after);
 }

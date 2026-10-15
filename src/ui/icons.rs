@@ -73,7 +73,7 @@ pub fn kind_icon(kind: NodeKind) -> char {
         NodeKind::Coordinator => TREE_STRUCTURE,
         NodeKind::Attendant => HEADSET,
         NodeKind::Worker => HARD_HAT,
-        NodeKind::Terminal => TERMINAL_WINDOW,
+        NodeKind::Terminal | NodeKind::Lorekeeper => TERMINAL_WINDOW,
         NodeKind::Subagent => ROBOT,
     }
 }

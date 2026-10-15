@@ -92,6 +92,33 @@ pub(super) fn lectern(scene: &Scene) -> Option<Pos2> {
     ))
 }
 
+/// Beside the lectern, scaled with the room when its furniture is compact.
+pub(super) fn librarian(scene: &Scene) -> Option<(Pos2, f32)> {
+    let room = scene.ledger?;
+    let px = room_px(room, scene.px);
+    Some((
+        pos2(room.center().x + 4.0 * px, room.bottom() - 15.0 * px),
+        24.0 * px,
+    ))
+}
+
+pub(super) fn librarian_pose(
+    state: crate::model::NodeState,
+    recent: Option<crate::traffic::ledger::lorekeeper::RecentActivity>,
+    now_ms: i64,
+) -> super::layout::Pose {
+    use super::layout::Pose;
+    use crate::traffic::ledger::lorekeeper::Activity;
+    if state != crate::model::NodeState::Working {
+        return Pose::Stand;
+    }
+    match recent.and_then(|a| a.current(now_ms)) {
+        Some(Activity::Reading) => Pose::Read,
+        Some(Activity::Writing) => Pose::Write,
+        None => Pose::Stand,
+    }
+}
+
 pub(super) fn paint(painter: &Painter, sprites: &Sprites, scene: &Scene, count: usize) {
     let Some(room) = scene.ledger else {
         return;
@@ -102,7 +129,7 @@ pub(super) fn paint(painter: &Painter, sprites: &Sprites, scene: &Scene, count: 
         pos2(room.center().x + 8.0 * px, scene.gallery.center().y),
     );
     sprites.passage(painter, shaft, px);
-    sprites.shoring(painter, shaft, px);
+    sprites.ladder(painter, shaft, px);
     sprites.masonry(painter, room);
     painter.text(
         room.min + vec2(5.0, 3.0) * px,
@@ -303,6 +330,11 @@ mod tests {
                     );
                     assert!(room.bottom() < scene.gallery.top(), "{at}");
                     assert!(room.contains(lectern(&scene).unwrap()), "{at}");
+                    let (pos, size) = librarian(&scene).unwrap();
+                    assert!(
+                        room.contains_rect(Rect::from_center_size(pos, Vec2::splat(size))),
+                        "{at}: librarian"
+                    );
                     if stacked {
                         assert_eq!((room.left(), room.right()), (hall.left(), hall.right()));
                     }
@@ -317,7 +349,7 @@ mod tests {
                         }
                         others.extend(scene.comms.map(|c| c.chamber));
                         others.extend(scene.comms.map(|c| c.shaft));
-                        others.extend(scene.tunnels.iter().flat_map(|t| [t.chamber, t.shaft]));
+                        others.extend(scene.tunnels.iter().map(|t| t.chamber));
                         others.push(Rect::from_min_max(
                             pos2(scene.entrance_x() - 0.6 * scene.cell(), scene.surface_y),
                             pos2(scene.entrance_x() + 0.6 * scene.cell(), scene.gallery.top()),

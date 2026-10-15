@@ -24,6 +24,8 @@ pub struct Cursor {
 pub struct Inbox {
     events: Vec<InboundEvent>,
     floor_us: i64,
+    // Thread reply capture can revisit messages below the display-history floor.
+    deleted: BTreeSet<String>,
     /// App-owned resolution overlay; ingestion checkpoints remain worker-owned.
     #[serde(skip)]
     resolved: BTreeSet<String>,
@@ -33,6 +35,12 @@ pub struct Inbox {
     pub subscription_errors: BTreeMap<String, String>,
     pub cursors: BTreeMap<String, Cursor>,
     pub poll_watermarks: BTreeMap<String, i64>,
+    pub ingested_ms: BTreeMap<String, i64>,
+    pub user_threads: BTreeSet<String>,
+    pub user_groups: BTreeSet<String>,
+    pub recovery_needed_through: BTreeMap<String, i64>,
+    pub backfills: BTreeMap<String, super::slack::backfill::Backfill>,
+    pub searches: BTreeMap<String, super::slack::backfill::SearchProgress>,
     pub thread_watches: BTreeMap<String, super::slack::threads::WatchState>,
     pub pending_replies: Vec<super::slack::threads::MatchedReply>,
     /// Pinned messages already seen (`conversation:ts`); `None` until the first pin poll.
@@ -59,7 +67,8 @@ impl Inbox {
         let Some(ts) = timestamp_us(&event.ts) else {
             return false;
         };
-        if ts <= self.floor_us
+        if self.deleted.contains(&event.id())
+            || ts <= self.floor_us
             || self
                 .events
                 .iter()
@@ -67,15 +76,32 @@ impl Inbox {
         {
             return false;
         }
+        self.ingested_ms
+            .insert(event.id(), crate::control::server::now_ms());
         self.events.push(event);
         self.events
             .sort_by_key(|e| timestamp_us(&e.ts).unwrap_or_default());
         if self.events.len() > MAX_EVENTS {
             let removed = self.events.remove(0);
             self.forwarded.remove(&removed.id());
+            self.ingested_ms.remove(&removed.id());
             self.floor_us = timestamp_us(&removed.ts).unwrap_or(self.floor_us);
         }
         true
+    }
+
+    pub fn is_deleted(&self, id: &str) -> bool {
+        self.deleted.contains(id)
+    }
+
+    pub fn delete(&mut self, ids: &[String]) {
+        self.deleted.extend(ids.iter().cloned());
+        self.events.retain(|e| !self.deleted.contains(&e.id()));
+        self.forwarded.retain(|id| !self.deleted.contains(id));
+        self.resolved.retain(|id| !self.deleted.contains(id));
+        self.ingested_ms.retain(|id, _| !self.deleted.contains(id));
+        self.pending_replies
+            .retain(|r| !self.deleted.contains(&r.event.id()));
     }
 
     pub fn unforwarded(&self) -> Vec<InboundEvent> {
@@ -197,6 +223,40 @@ mod tests {
             kind: EventKind::AgentComms,
             permalink: None,
         }
+    }
+
+    #[test]
+    fn rework_deletion_discards_ingest_timestamp() {
+        let mut inbox = Inbox::default();
+        let event = event("1.000001");
+        inbox.insert(event.clone());
+        assert!(inbox.ingested_ms.contains_key(&event.id()));
+        inbox.delete(&[event.id()]);
+        assert!(!inbox.ingested_ms.contains_key(&event.id()));
+    }
+
+    #[test]
+    fn deleted_events_keep_only_tombstones_and_never_reingest_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INBOX_FILE);
+        let mut inbox = Inbox::default();
+        let event = event("10.000001");
+        inbox.insert(event.clone());
+        inbox.mark_forwarded(&[event.id()]);
+        inbox
+            .pending_replies
+            .push(super::super::slack::threads::MatchedReply {
+                request_id: "request".into(),
+                event: event.clone(),
+            });
+        inbox.delete(&[event.id()]);
+        inbox.save(&path).unwrap();
+        let mut loaded = Inbox::load(&path).unwrap();
+        assert!(loaded.events().is_empty());
+        assert!(loaded.pending_replies.is_empty());
+        assert!(!loaded.insert(event.clone()));
+        assert!(loaded.forwarded.is_empty());
+        assert!(loaded.is_deleted(&event.id()));
     }
 
     #[test]
