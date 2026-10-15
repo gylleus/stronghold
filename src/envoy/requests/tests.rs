@@ -11,12 +11,82 @@ fn ask(text: &str) -> ReachOut {
     ReachOut {
         to: "Avery".into(),
         ask: text.into(),
+        karl_asked: None,
         why: "Review".into(),
         thread: None,
         request_id: None,
         urgency: "normal".into(),
         expect_reply: true,
     }
+}
+
+#[test]
+fn instruction_claims_are_bounded_persisted_and_scoped_to_each_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(REQUESTS_FILE);
+    let mut store = Requests::load(&path).unwrap();
+    for quote in [" ".to_owned(), "å".repeat(501)] {
+        let mut args = ask("invalid");
+        args.karl_asked = Some(quote);
+        assert!(store.submit(who("dwarf"), args, "UKARL", 0).is_err());
+    }
+    let quote = "å".repeat(500);
+    let mut args = ask("first");
+    args.karl_asked = Some(quote.clone());
+    let accepted = store.submit(who("dwarf"), args, "UKARL", 0).unwrap();
+    let mut args = ask("first");
+    args.karl_asked = Some(quote.clone());
+    assert!(store.submit(who("dwarf"), args, "UKARL", 1).unwrap().merged);
+    let retry = store
+        .submit(who("dwarf"), ask("first"), "UKARL", 1)
+        .unwrap();
+    assert!(retry.merged);
+    assert_eq!(retry.request_id, accepted.request_id);
+    let mut followup = ask("follow-up");
+    followup.request_id = Some(accepted.request_id.clone());
+    store.submit(who("dwarf"), followup, "UKARL", 2).unwrap();
+    let loaded = Requests::load(&path).unwrap();
+    let request = loaded.get(&accepted.request_id).unwrap();
+    assert_eq!(request.turns[0].karl_asked.as_deref(), Some(quote.as_str()));
+    assert_eq!(request.turns[1].karl_asked, None);
+
+    let mut legacy: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for turn in legacy["requests"][0]["turns"].as_array_mut().unwrap() {
+        turn.as_object_mut().unwrap().remove("karl_asked");
+    }
+    std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    let legacy = Requests::load(&path).unwrap();
+    assert!(
+        legacy.all()[0]
+            .turns
+            .iter()
+            .all(|turn| turn.karl_asked.is_none())
+    );
+    let legacy_args: ReachOut = serde_json::from_value(serde_json::json!({
+        "to":"Avery", "ask":"Old request", "why":"Review"
+    }))
+    .unwrap();
+    assert!(legacy_args.karl_asked.is_none());
+}
+
+#[test]
+fn unclaimed_duplicate_cannot_swallow_a_claimed_instruction() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Requests::load(dir.path().join(REQUESTS_FILE)).unwrap();
+    let first = store
+        .submit(who("dwarf"), ask("same ask"), "UKARL", 0)
+        .unwrap();
+    let mut args = ask("same ask");
+    args.karl_asked = Some("Please send it".into());
+    let claimed = store.submit(who("dwarf"), args, "UKARL", 1).unwrap();
+    assert!(!claimed.merged);
+    assert_ne!(claimed.request_id, first.request_id);
+    assert!(
+        store.get(&claimed.request_id).unwrap().turns[0]
+            .karl_asked
+            .is_some()
+    );
 }
 
 #[test]
