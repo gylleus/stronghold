@@ -545,6 +545,9 @@ pub fn draw(
 
     let mut out = Vec::new();
     let o = &mut out;
+    if pose.writing && look.role == Role::Librarian {
+        cutout::draw(o, &parts::writing_book(), back_arm, finish);
+    }
     if !pose.two_handed {
         cutout::draw(o, &parts::back_arm(look), back_arm, finish);
     }

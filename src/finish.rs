@@ -115,6 +115,9 @@ impl Approval {
 /// One agent session that ended itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FinishedSession {
+    /// Keeps special-room residents in their room while the finished node fades.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<NodeKind>,
     pub node_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handle: Option<String>,

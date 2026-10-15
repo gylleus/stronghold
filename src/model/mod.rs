@@ -216,6 +216,8 @@ pub struct RunSummary {
 /// A point-in-time view of the whole clan.
 #[derive(Debug, Clone, Default)]
 pub struct ClanSnapshot {
+    /// Tool activity of the current Ledger maintenance session.
+    pub lorekeeper_activity: Option<crate::traffic::ledger::lorekeeper::RecentActivity>,
     pub built_at_ms: i64,
     /// Runs with at least one live terminal, in `run-list` order.
     pub runs: Vec<RunSummary>,
@@ -370,6 +372,7 @@ impl ClanSnapshot {
         edges.extend(subagent_edges);
 
         let mut snapshot = Self {
+            lorekeeper_activity: None,
             built_at_ms: now_ms,
             runs,
             nodes,
@@ -505,7 +508,11 @@ impl ClanSnapshot {
             }
             self.nodes.push(Node {
                 id: id.clone(),
-                kind: NodeKind::Terminal,
+                kind: if f.kind == Some(NodeKind::Lorekeeper) {
+                    NodeKind::Lorekeeper
+                } else {
+                    NodeKind::Terminal
+                },
                 label: f.label.clone(),
                 terminal_handle: f.handle.clone(),
                 live: false,

@@ -411,6 +411,20 @@ impl Session {
     pub fn handle(&self) -> Option<&str> {
         self.saved.as_ref()?.handle.as_deref()
     }
+    /// Launch registration can lag the first terminal poll; launch excludes another agent at home.
+    pub fn observed_handle<'a>(
+        &'a self,
+        terminals: &'a [crate::orca::Terminal],
+    ) -> Option<&'a str> {
+        let saved = self.saved.as_ref()?;
+        saved.handle.as_deref().or_else(|| {
+            terminals
+                .iter()
+                .find(|t| in_home(t))
+                .map(|t| t.handle.as_str())
+        })
+    }
+
     pub fn start(&mut self, settings: &Settings, wake: crate::actions::Wake) -> Result<()> {
         ensure!(!self.busy(), "Lorekeeper is already tending the Ledger");
         let settings = settings.clone();
@@ -571,6 +585,37 @@ mod tests {
         super::super::write_json(&dir.path().join("session.json"), &s).unwrap();
         assert!(authenticate(dir.path(), Some(&s.run_id), Some("other")).is_err());
         authenticate(dir.path(), Some(&s.run_id), Some("terminal")).unwrap();
+    }
+
+    #[test]
+    fn lorekeeper_is_observed_before_launch_registration_and_reload_catches_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(dir.path());
+        let mut terminals = vec![crate::orca::Terminal {
+            handle: "new-agent".into(),
+            worktree_path: Some(format!("/repo/{HOME}")),
+            agent_identity: Some(crate::orca::AgentIdentity::Claude),
+            ..Default::default()
+        }];
+        assert_eq!(session.observed_handle(&terminals), None, "no launch");
+        let path = dir.path().join("lorekeeper/session.json");
+        super::super::write_json(&path, &saved()).unwrap();
+        session.reload();
+        assert_eq!(session.handle(), None);
+        assert_eq!(session.observed_handle(&terminals), Some("new-agent"));
+        terminals[0].worktree_path = Some("/repo/other".into());
+        assert_eq!(
+            session.observed_handle(&terminals),
+            None,
+            "unrelated terminal"
+        );
+        let registered = Saved {
+            handle: Some("registered".into()),
+            ..saved()
+        };
+        super::super::write_json(&path, &registered).unwrap();
+        session.reload();
+        assert_eq!(session.observed_handle(&terminals), Some("registered"));
     }
 
     #[test]

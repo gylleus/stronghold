@@ -2172,7 +2172,7 @@ fn uneven_workspaces_never_share_an_excavated_row() {
 }
 
 #[test]
-fn lorekeeper_reads_in_ink_robes_and_can_rest() {
+fn lorekeeper_keeps_ink_robes_and_idles_without_activity() {
     use crate::ui::dwarf::{Action, Garment, Role, Tool};
     let mut s = snapshot();
     let mut librarian = node("lorekeeper", NodeKind::Lorekeeper, None, NodeState::Working);
@@ -2183,7 +2183,7 @@ fn lorekeeper_reads_in_ink_robes_and_can_rest() {
     assert_eq!(reader.pose, Pose::Stand);
     assert_eq!(
         super::dwarf_action(reader, false, false, false),
-        Action::Read
+        Action::Still
     );
     let look = super::dwarf_look(reader);
     assert_eq!(
@@ -2200,9 +2200,191 @@ fn lorekeeper_reads_in_ink_robes_and_can_rest() {
     );
     s.nodes.last_mut().unwrap().parked_at_ms = Some(1);
     let parked = scene(&s);
-    assert_eq!(dwarf(&parked, "lorekeeper").pose, Pose::Sleep);
+    assert_eq!(dwarf(&parked, "lorekeeper").pose, Pose::Stand);
     assert_eq!(
         super::dwarf_action(dwarf(&parked, "lorekeeper"), false, false, false),
-        Action::Sleep
+        Action::Still
     );
+}
+
+#[test]
+fn lorekeeper_stays_in_ledger_without_moving_the_clan() {
+    for state in [
+        NodeState::Working,
+        NodeState::NeedsInput,
+        NodeState::Idle,
+        NodeState::Stalled,
+        NodeState::Done,
+        NodeState::Failed,
+    ] {
+        let base = snapshot();
+        let before = scene(&base);
+        let mut with = base.clone();
+        with.nodes
+            .push(node("lorekeeper", NodeKind::Lorekeeper, None, state));
+        let after = scene(&with);
+        let librarian = dwarf(&after, "lorekeeper");
+        assert!(
+            after.ledger.unwrap().contains_rect(Rect::from_center_size(
+                librarian.pos,
+                Vec2::splat(librarian.size)
+            )),
+            "{state:?}: librarian outside Ledger"
+        );
+        for other in &before.dwarves {
+            let same = after.dwarves.iter().find(|d| d.id == other.id).unwrap();
+            assert_eq!(
+                (same.pos, same.size, &same.spot),
+                (other.pos, other.size, &other.spot),
+                "{state:?}: moved {}",
+                other.id.as_str()
+            );
+        }
+    }
+}
+
+#[test]
+fn lorekeeper_activity_expires_and_waiting_is_idle() {
+    use crate::traffic::ledger::lorekeeper::{Activity, FRESH_MS, RecentActivity};
+    use crate::ui::dwarf::Action;
+    for (activity, expected) in [
+        (Activity::Reading, Action::Read),
+        (Activity::Writing, Action::Write),
+    ] {
+        let recent = Some(RecentActivity {
+            activity,
+            at_ms: 100,
+        });
+        let mut s = snapshot();
+        s.nodes.push(node(
+            "lorekeeper",
+            NodeKind::Lorekeeper,
+            None,
+            NodeState::Working,
+        ));
+        s.lorekeeper_activity = Some(RecentActivity { activity, at_ms: 0 });
+        let mut d = dwarf(&scene(&s), "lorekeeper").clone();
+        assert_eq!(super::dwarf_action(&d, false, false, false), expected);
+        for state in [
+            NodeState::Working,
+            NodeState::NeedsInput,
+            NodeState::Idle,
+            NodeState::Done,
+            NodeState::Stalled,
+            NodeState::Failed,
+        ] {
+            d.state = state;
+            d.pose = super::ledger::librarian_pose(state, recent, 101);
+            assert_eq!(
+                super::dwarf_action(&d, false, false, false),
+                if state == NodeState::Working {
+                    expected
+                } else {
+                    Action::Still
+                }
+            );
+        }
+        d.pose = super::ledger::librarian_pose(NodeState::Working, recent, 100 + FRESH_MS);
+        assert_eq!(super::dwarf_action(&d, false, false, false), Action::Still);
+    }
+}
+
+#[test]
+fn lorekeeper_appears_in_ledger_without_a_walk_or_resize_glide() {
+    let mut s = snapshot();
+    let mut farm = FarmView::new();
+    farm.advance(&scene(&s), 0.0);
+    s.nodes.push(node(
+        "lorekeeper",
+        NodeKind::Lorekeeper,
+        None,
+        NodeState::Working,
+    ));
+    for time in [0.1, 0.2, 0.5] {
+        let mut at = scene(&s);
+        if time > 0.1 {
+            let librarian = at
+                .dwarves
+                .iter_mut()
+                .find(|d| d.kind == NodeKind::Lorekeeper)
+                .unwrap();
+            librarian.pos.x += 5.0;
+        }
+        let placed = farm.advance(&at, time);
+        let index = at
+            .dwarves
+            .iter()
+            .position(|d| d.kind == NodeKind::Lorekeeper)
+            .unwrap();
+        assert_eq!(placed[index].pos, at.dwarves[index].pos);
+        assert_eq!(placed[index].heading, None);
+    }
+    let mut no_room = scene(&s);
+    no_room.ledger = None;
+    assert!(super::ledger::librarian(&no_room).is_none());
+}
+
+#[test]
+fn finished_lorekeeper_keeps_its_room_after_session_identity_is_gone() {
+    let mut s = snapshot();
+    let base = scene(&s);
+    let record: crate::finish::FinishedSession = serde_json::from_value(serde_json::json!({
+        "kind": "Lorekeeper", "node_id": "term:library", "handle": "library",
+        "label": "Lorekeeper", "outcome": "done", "summary": "Ledger checked", "at_ms": 0,
+    }))
+    .unwrap();
+    s.add_finished([&record]);
+    let node = s.node(&NodeId::terminal("library")).unwrap();
+    assert_eq!(node.kind, NodeKind::Lorekeeper);
+    assert!(!node.live);
+    let after = scene(&s);
+    let librarian = dwarf(&after, "term:library");
+    assert_eq!(librarian.spot, Spot::Ledger);
+    assert!(after.ledger.unwrap().contains(librarian.pos));
+    for other in &base.dwarves {
+        assert_eq!(dwarf(&after, other.id.as_str()).pos, other.pos);
+    }
+}
+
+#[test]
+fn lorekeeper_follows_the_visible_ledger_during_a_room_glide() {
+    let mut s = snapshot();
+    s.nodes.push(node(
+        "lorekeeper",
+        NodeKind::Lorekeeper,
+        None,
+        NodeState::Working,
+    ));
+    let mut before = scene(&s);
+    let mut farm = FarmView::new();
+    farm.set_reduce_motion(false);
+    farm.glide_rooms(&mut before, 0.0);
+    farm.advance(&before, 0.0);
+    let mut target = before.clone();
+    target.ledger = target.ledger.map(|r| r.translate(vec2(180.0, 40.0)));
+    let (pos, size) = super::ledger::librarian(&target).unwrap();
+    let reader = target
+        .dwarves
+        .iter_mut()
+        .find(|d| d.spot == Spot::Ledger)
+        .unwrap();
+    reader.pos = pos;
+    reader.size = size;
+    farm.glide_rooms(&mut target.clone(), 1.0);
+    let mut mid = target.clone();
+    farm.glide_rooms(&mut mid, 1.0 + super::GLIDE_S / 2.0);
+    assert_ne!(mid.ledger, target.ledger, "room is in transit");
+    let placed = farm.advance(&mid, 1.0 + super::GLIDE_S / 2.0);
+    let i = mid
+        .dwarves
+        .iter()
+        .position(|d| d.spot == Spot::Ledger)
+        .unwrap();
+    let expected = super::ledger::librarian(&mid).unwrap();
+    assert_eq!((placed[i].pos, mid.dwarves[i].size), expected);
+    assert!(mid.ledger.unwrap().contains_rect(Rect::from_center_size(
+        placed[i].pos,
+        Vec2::splat(mid.dwarves[i].size)
+    )));
+    assert_eq!(placed[i].heading, None);
 }
