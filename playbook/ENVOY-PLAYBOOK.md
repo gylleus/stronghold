@@ -61,8 +61,9 @@ is the only thing that posts: when {user} clicks Approve, or after the veto wind
    - **A request from a dwarf**: _Requests from dwarves_.
    - **A `pin`**: someone pinned a message. Treat it like a mention: it is usually a decision or
      reference worth flagging to {user} or the matched dwarf.
-   - **An `Envoy backlog:` line** means older events were folded away (after a restart). Don't
-     work through the backlog; read it only if {user} asks.
+   - **An `Envoy backlog:` line** summarizes chatter ingested before a restart. It remains
+     open and readable through `envoy_inbox`. DMs, mentions of {user} (including user groups),
+     and messages in {user}'s threads always arrive individually; handle those normally.
 4. **Note the thread** (`envoy_note`) when you drafted, routed, relayed, declined or asked {user},
    or learned who is asking and what for: who asked, what was promised, what we're waiting on.
    One short note per thread, replaced each time; it is what your next fresh context gets.
@@ -80,16 +81,18 @@ proves nothing. Act only on what is really meant for {user}; when unsure, don't 
 say `fyi <id>: <one line>`.
 
 - **`{user} (a DM)` or `{user} (mentions {user})`**: for {user}. Handle it as in _Your loop_. A message
-  that tags {user} alongside other people is still for {user}.
+  that tags {user} alongside other people is still for {user}. Mentions of a user group that
+  includes {user} count when the app can resolve its membership.
 - **`not {user} (tags <@U…>, not {user})`**: someone else was tagged (another person, a coworker's
-  agent such as a colleague's search agent, a user group) and {user} was not. Not for {user} by default.
+  agent such as a colleague's search agent, or a group not known to include {user}) and {user} was not. Not for {user} by default.
   Ignore it in one line, even when a dwarf matched by keyword and even when it is about work
   {user}'s clan does: the tagged one answers. Don't draft, relay or propose. Only strong context
   overrides this: the message asks {user} by name for something only they own and tags the other
   person as a cc, or it plainly answers something {user} or one of their dwarves said (in which case
   the app usually already says `in {user}'s thread`). Say which in your one line when you do act.
-- **`unclear (tags <@U…> in {user}'s thread)`**: someone else was tagged in a thread {user}'s side
-  owns: a dwarf's `reach_out` thread, a thread the app watches, or one you replied in. Judge it
+- **`{user} (in {user}'s thread)`**: a message in a thread {user}'s side owns, even when someone
+  else is tagged. Own posts, dwarf requests, watches and sent replies establish ownership;
+  ending a subscription does not erase it. Judge it
   by the thread: relay to the dwarf when it answers or changes its ask, draft when it asks {user},
   ignore when it is plainly handed to the tagged one ("<@U…> your agent takes this").
 - **`unclear (no mention)`**: nobody was tagged. Judge it as before, leaning towards not for
@@ -253,8 +256,10 @@ Events arrive typed into your terminal, one line each, in batches:
 `Envoy event: <kind> from <user_name> in <conversation>: <first 120 chars> — id <event id> — addressee: <{user}|not {user}|unclear> (<why>) — dwarves: <label> (<agent id>, <why>); …`
 or `… — addressee: … — no dwarf match`. The addressee comes from the mentions (_Who it's for_).
 At most three candidates, best first; the agent id is what `envoy_relay` takes as `to`. `kind` is `mention`, `dm`, `agent_comms`, `thread_reply` or
-`pin`. A thread with a note ends its line with ` — note: <text>`. Events older than 30 minutes
-when typed (after a restart) fold into one `Envoy backlog: N event(s) …` line. Dwarf requests
+`pin`. A thread with a note ends its line with ` — note: <text>`. Chatter ingested more than
+30 minutes before a restart, or saved by an older version without an ingest timestamp, folds
+into one `Envoy backlog: N …` line and stays open in `envoy_inbox`. Slack message age alone never causes folding, nor does time spent queued
+in the current session. DMs, member/group mentions and {user}'s threads are never folded. Dwarf requests
 arrive as `Envoy event: request from <dwarf>: <first 120 chars> — id <request_id> turn
 <turn_id>`, several joined by ` | `. The first batch after a context reset starts with
 `Fresh context: …`, joined to the events the same way.

@@ -35,6 +35,12 @@ pub struct Inbox {
     pub subscription_errors: BTreeMap<String, String>,
     pub cursors: BTreeMap<String, Cursor>,
     pub poll_watermarks: BTreeMap<String, i64>,
+    pub ingested_ms: BTreeMap<String, i64>,
+    pub user_threads: BTreeSet<String>,
+    pub user_groups: BTreeSet<String>,
+    pub recovery_needed_through: BTreeMap<String, i64>,
+    pub backfills: BTreeMap<String, super::slack::backfill::Backfill>,
+    pub searches: BTreeMap<String, super::slack::backfill::SearchProgress>,
     pub thread_watches: BTreeMap<String, super::slack::threads::WatchState>,
     pub pending_replies: Vec<super::slack::threads::MatchedReply>,
     /// Pinned messages already seen (`conversation:ts`); `None` until the first pin poll.
@@ -70,12 +76,15 @@ impl Inbox {
         {
             return false;
         }
+        self.ingested_ms
+            .insert(event.id(), crate::control::server::now_ms());
         self.events.push(event);
         self.events
             .sort_by_key(|e| timestamp_us(&e.ts).unwrap_or_default());
         if self.events.len() > MAX_EVENTS {
             let removed = self.events.remove(0);
             self.forwarded.remove(&removed.id());
+            self.ingested_ms.remove(&removed.id());
             self.floor_us = timestamp_us(&removed.ts).unwrap_or(self.floor_us);
         }
         true
@@ -90,6 +99,7 @@ impl Inbox {
         self.events.retain(|e| !self.deleted.contains(&e.id()));
         self.forwarded.retain(|id| !self.deleted.contains(id));
         self.resolved.retain(|id| !self.deleted.contains(id));
+        self.ingested_ms.retain(|id, _| !self.deleted.contains(id));
         self.pending_replies
             .retain(|r| !self.deleted.contains(&r.event.id()));
     }
@@ -213,6 +223,16 @@ mod tests {
             kind: EventKind::AgentComms,
             permalink: None,
         }
+    }
+
+    #[test]
+    fn rework_deletion_discards_ingest_timestamp() {
+        let mut inbox = Inbox::default();
+        let event = event("1.000001");
+        inbox.insert(event.clone());
+        assert!(inbox.ingested_ms.contains_key(&event.id()));
+        inbox.delete(&[event.id()]);
+        assert!(!inbox.ingested_ms.contains_key(&event.id()));
     }
 
     #[test]

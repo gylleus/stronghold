@@ -282,3 +282,14 @@ fn adoption_skips_envoy_labels_and_preview_only_reads_root_context() {
     assert_eq!(channel.io.subscriptions, 0);
     assert!(channel.inbox.thread_watches.is_empty());
 }
+
+#[test]
+fn removed_watches_keep_thread_ownership_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut channel = channel(dir.path());
+    channel.watches(vec![watch("request", "C123")]).unwrap();
+    channel.watches(vec![]).unwrap();
+    let inbox = Inbox::load(&channel.path).unwrap();
+    assert!(inbox.thread_watches.is_empty());
+    assert!(inbox.user_threads.contains("C123:1.000001"));
+}

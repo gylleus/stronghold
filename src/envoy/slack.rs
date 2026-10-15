@@ -16,12 +16,29 @@ use serde_json::Value;
 
 /// `gh` lookups per poll, so a burst of refs can't stall ingestion.
 const MAX_PR_LOOKUPS: usize = 4;
+const POLL_BUDGET: Duration = Duration::from_secs(60);
+
+thread_local! {
+    static CLI_DEADLINE: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+}
+
+fn cli_budget() -> Result<Duration, String> {
+    CLI_DEADLINE
+        .get()
+        .map_or(Ok(Duration::from_secs(25)), |at| {
+            at.checked_duration_since(Instant::now())
+                .filter(|left| !left.is_zero())
+                .map(|left| left.min(Duration::from_secs(25)))
+                .ok_or_else(|| "Poll deadline reached; remaining work deferred".into())
+        })
+}
 
 pub trait SlackSender: Send {
     fn send(&mut self, message: &OutboundMessage) -> Result<SendReceipt, String>;
 }
 
 pub trait SlackIo: SlackSender {
+    fn set_deadline(&mut self, _deadline: Option<Instant>) {}
     fn thread_subscription(
         &mut self,
         bridge: &Path,
@@ -69,6 +86,7 @@ fn binary(name: &str) -> Result<PathBuf, String> {
 }
 
 fn run(name: &str, args: &[String], bridge: Option<&Path>) -> Result<String, String> {
+    let timeout = cli_budget()?;
     let executable = binary(name)?;
     // Finder lacks shell exports; zsh reads the existing noninteractive environment.
     let mut command = Command::new("/bin/zsh");
@@ -95,9 +113,7 @@ fn run(name: &str, args: &[String], bridge: Option<&Path>) -> Result<String, Str
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if start.elapsed() < Duration::from_secs(25) => {
-                std::thread::sleep(Duration::from_millis(25))
-            }
+            Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(25)),
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -115,8 +131,17 @@ fn run(name: &str, args: &[String], bridge: Option<&Path>) -> Result<String, Str
 }
 
 impl SlackIo for SlackCli {
+    fn set_deadline(&mut self, deadline: Option<Instant>) {
+        CLI_DEADLINE.set(deadline);
+    }
     fn pr_head(&mut self, owner: &str, repo: &str, number: u64) -> Result<Option<String>, String> {
-        use crate::review::github::{GhCli, GhError};
+        use crate::review::github::{GH_TIMEOUT, GhCli, GhError};
+        if CLI_DEADLINE
+            .get()
+            .is_some_and(|at| at.saturating_duration_since(Instant::now()) < GH_TIMEOUT)
+        {
+            return Err("PR lookup deferred to keep poll deadline".into());
+        }
         match GhCli::default().head_branch(owner, repo, number) {
             Ok(branch) => Ok(Some(branch)),
             Err(GhError::Failed(_)) => Ok(None),
@@ -362,8 +387,15 @@ pub struct SlackChannel<I: SlackIo> {
     command_errors: BTreeMap<String, String>,
     read_errors: BTreeMap<String, String>,
     subscribed: Vec<String>,
-    next_poll_ms: i64,
-    next_subscribe_ms: i64,
+    next_jobs: BTreeMap<String, i64>,
+    next_job: usize,
+    last_group: Option<String>,
+    deadline: Option<Instant>,
+    last_tick_ms: Option<i64>,
+    api_backoff: BTreeMap<String, Instant>,
+    groups_unavailable: bool,
+    groups_error_logged: bool,
+    needs_save: bool,
 }
 
 impl<I: SlackIo> SlackChannel<I> {
@@ -394,8 +426,15 @@ impl<I: SlackIo> SlackChannel<I> {
             command_errors: BTreeMap::new(),
             read_errors: BTreeMap::new(),
             subscribed: Vec::new(),
-            next_poll_ms: 0,
-            next_subscribe_ms: 0,
+            next_jobs: BTreeMap::new(),
+            next_job: 0,
+            last_group: None,
+            deadline: None,
+            last_tick_ms: None,
+            api_backoff: BTreeMap::new(),
+            groups_unavailable: false,
+            groups_error_logged: false,
+            needs_save: false,
         }
     }
 
@@ -403,7 +442,7 @@ impl<I: SlackIo> SlackChannel<I> {
     /// resolved id replaces the configured one for drops, searches and the addressee check;
     /// `Ok(None)` means Slack gave none and the configured id stands.
     pub fn resolve_user_id(&mut self) -> Result<Option<String>, String> {
-        let value = self.io.api("auth.test", &[])?;
+        let value = self.api("auth.test", &[])?;
         let Some(id) = value["user_id"].as_str().map(str::trim) else {
             return Ok(None);
         };
@@ -411,6 +450,11 @@ impl<I: SlackIo> SlackChannel<I> {
             return Err(format!("auth.test gave an invalid user id {id:?}"));
         }
         let id = id.to_ascii_uppercase();
+        if self.settings.user_id != id {
+            self.inbox.user_groups.clear();
+            self.next_jobs.remove("groups");
+            self.needs_save = true;
+        }
         self.settings.user_id = id.clone();
         Ok(Some(id))
     }
@@ -422,15 +466,30 @@ impl<I: SlackIo> SlackChannel<I> {
             .retain(|c, _| settings.channels.contains(c));
         self.read_errors
             .retain(|c, _| settings.channels.contains(c));
+        if self.settings.user_id != settings.user_id {
+            self.inbox.user_groups.clear();
+            self.needs_save = true;
+        }
         self.settings = settings;
-        self.next_poll_ms = 0;
-        self.next_subscribe_ms = 0;
+        self.next_jobs.clear();
+        self.groups_unavailable = false;
+        self.groups_error_logged = false;
+    }
+
+    fn remember_own_thread(&mut self, e: &InboundEvent) {
+        if e.user == self.settings.user_id {
+            let root = e.thread_ts.as_deref().unwrap_or(&e.ts);
+            self.inbox
+                .user_threads
+                .insert(format!("{}:{root}", e.conversation));
+        }
     }
 
     fn ingest(&mut self, e: InboundEvent, batch: &mut PollBatch) -> bool {
         if self.inbox.is_deleted(&e.id()) {
             return true;
         }
+        self.remember_own_thread(&e);
         if e.user != self.settings.user_id && !self.capture_reply(&e) {
             return false;
         }
@@ -444,7 +503,7 @@ impl<I: SlackIo> SlackChannel<I> {
         true
     }
 
-    fn tail(&mut self, channel: &str, batch: &mut PollBatch) -> Result<(), String> {
+    fn tail(&mut self, channel: &str, batch: &mut PollBatch) -> Result<bool, String> {
         validate_conversation(channel)?;
         let path = self
             .bridge
@@ -452,7 +511,7 @@ impl<I: SlackIo> SlackChannel<I> {
             .join(format!("{channel}.jsonl"));
         let mut file = match File::open(path) {
             Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
             Err(_) => return Err("Cannot read bridge channel feed".into()),
         };
         let meta = file.metadata().map_err(|e| e.to_string())?;
@@ -470,7 +529,7 @@ impl<I: SlackIo> SlackChannel<I> {
             .read_to_end(&mut bytes)
             .map_err(|e| e.to_string())?;
         let Some(end) = bytes.iter().rposition(|b| *b == b'\n') else {
-            return Ok(());
+            return Ok(cursor.offset == meta.len());
         };
         let mut consumed = 0;
         for line in bytes[..=end].split_inclusive(|b| *b == b'\n') {
@@ -507,79 +566,159 @@ impl<I: SlackIo> SlackChannel<I> {
             consumed += line.len() as u64;
         }
         cursor.offset += consumed;
+        let caught_up = cursor.offset == meta.len();
         self.inbox.cursors.insert(channel.into(), cursor);
-        Ok(())
+        Ok(caught_up)
     }
 
+    fn api(&mut self, method: &str, params: &[(&str, String)]) -> Result<Value, String> {
+        self.check_deadline()?;
+        if self
+            .api_backoff
+            .get(method)
+            .is_some_and(|at| *at > Instant::now())
+        {
+            return Err(format!("{method}: rate limited; retry deferred"));
+        }
+        let result = self.io.api(method, params);
+        if result
+            .as_ref()
+            .is_err_and(|error| error.contains("ratelimited"))
+        {
+            self.api_backoff
+                .insert(method.into(), Instant::now() + Duration::from_secs(60));
+        }
+        result
+    }
+
+    fn check_deadline(&self) -> Result<(), String> {
+        if self.deadline.is_some_and(|at| Instant::now() >= at) {
+            Err("Poll deadline reached; remaining work deferred".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn groups(&mut self) -> Result<(), String> {
+        if self.groups_unavailable {
+            return Ok(());
+        }
+        let result = self.api("usergroups.list", &[("include_users", "true".into())]);
+        match result {
+            Ok(value) => {
+                let groups = value["usergroups"]
+                    .as_array()
+                    .ok_or("Slack usergroups missing usergroups")?;
+                self.inbox.user_groups = groups
+                    .iter()
+                    .filter(|group| {
+                        group["users"]
+                            .as_array()
+                            .is_some_and(|users| users.iter().any(|u| u == &self.settings.user_id))
+                    })
+                    .filter_map(|group| group["id"].as_str().map(str::to_owned))
+                    .collect();
+                Ok(())
+            }
+            Err(error) => {
+                if !self.groups_error_logged {
+                    log::warn!("envoy: user groups unavailable: {error}");
+                    self.groups_error_logged = true;
+                }
+                if error.contains("missing_scope") || error.contains("not_allowed_token_type") {
+                    self.groups_unavailable = true;
+                }
+                Err(error)
+            }
+        }
+    }
+
+    #[cfg(test)]
     fn search(
         &mut self,
         kind: EventKind,
         now_ms: i64,
         batch: &mut PollBatch,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
+        self.search_tag(kind, None, now_ms, batch)
+    }
+
+    fn search_tag(
+        &mut self,
+        kind: EventKind,
+        group: Option<&str>,
+        now_ms: i64,
+        batch: &mut PollBatch,
+    ) -> Result<bool, String> {
         if self.settings.user_id.is_empty() {
             return Err(crate::user::fill(
                 "No Slack member id for {user} yet (auth.test or settings)",
             ));
         }
-        let key = format!("{}:{}", kind.name(), self.settings.user_id);
+        let key = match group {
+            Some(group) => format!("group:{group}"),
+            None => format!("{}:{}", kind.name(), self.settings.user_id),
+        };
         let start = self.inbox.first_enabled_ms.unwrap_or(now_ms);
-        let since = self
-            .inbox
-            .poll_watermarks
-            .get(&key)
-            .copied()
-            .unwrap_or(start)
-            .saturating_sub(600_000)
-            .max(start);
-        let date = jiff::Timestamp::from_millisecond(since - 86_400_000)
+        let mut progress =
+            self.inbox
+                .searches
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| backfill::SearchProgress {
+                    since_ms: self
+                        .inbox
+                        .poll_watermarks
+                        .get(&key)
+                        .copied()
+                        .unwrap_or(start)
+                        .saturating_sub(600_000)
+                        .max(start),
+                    until_ms: now_ms,
+                    page: 1,
+                });
+        self.inbox.searches.insert(key.clone(), progress.clone());
+        let date = jiff::Timestamp::from_millisecond(progress.since_ms - 86_400_000)
             .map_err(|e| e.to_string())?
             .to_zoned(jiff::tz::TimeZone::UTC)
             .date();
-        let query = match kind {
-            EventKind::Mention => format!("<@{}> after:{date}", self.settings.user_id),
+        let query = match (kind, group) {
+            (_, Some(group)) => format!("<!subteam^{group}> after:{date}"),
+            (EventKind::Mention, _) => format!("<@{}> after:{date}", self.settings.user_id),
             _ => format!("to:{} is:dm after:{date}", self.settings.user_id),
         };
-        for page in 1..=5 {
-            let value = self.io.api(
-                "search.messages",
-                &[
-                    ("query", query.clone()),
-                    ("sort", "timestamp".into()),
-                    ("sort_dir", "desc".into()),
-                    ("count", "100".into()),
-                    ("page", page.to_string()),
-                ],
-            )?;
-            let events = parse_search(&value, kind, &self.settings.user_id)?;
-            let old = value["messages"]["matches"].as_array().is_some_and(|ms| {
-                ms.iter().any(|v| {
-                    v["ts"]
-                        .as_str()
-                        .and_then(timestamp_us)
-                        .is_some_and(|t| t / 1000 < since)
-                })
-            });
-            for e in events {
-                if timestamp_us(&e.ts).unwrap_or_default() / 1000 >= since && !self.ingest(e, batch)
-                {
-                    return Err("Reply handoff full; ingestion will retry".into());
-                }
-            }
-            let pages = value["messages"]["paging"]["pages"]
-                .as_u64()
-                .or_else(|| value["messages"]["pagination"]["page_count"].as_u64())
-                .ok_or("Slack search is missing pagination")?;
-            if page >= pages || old {
-                self.inbox.poll_watermarks.insert(key, now_ms);
-                return Ok(());
+        let value = self.api(
+            "search.messages",
+            &[
+                ("query", query),
+                ("sort", "timestamp".into()),
+                ("sort_dir", "asc".into()),
+                ("count", "100".into()),
+                ("page", progress.page.to_string()),
+            ],
+        )?;
+        let pages = value["messages"]["paging"]["pages"]
+            .as_u64()
+            .or_else(|| value["messages"]["pagination"]["page_count"].as_u64())
+            .ok_or("Slack search is missing pagination")?;
+        for event in parse_search(&value, kind, &self.settings.user_id)? {
+            if timestamp_us(&event.ts).is_some_and(|ts| ts / 1000 >= progress.since_ms)
+                && !self.ingest(event, batch)
+            {
+                return Err("Reply handoff full; search page retained for retry".into());
             }
         }
-        self.inbox.poll_watermarks.insert(key, now_ms);
-        Err(format!(
-            "Slack {} search reached 5 pages; older messages skipped",
-            kind.name()
-        ))
+        if progress.page >= pages {
+            self.inbox
+                .poll_watermarks
+                .insert(key.clone(), progress.until_ms);
+            self.inbox.searches.remove(&key);
+            Ok(false)
+        } else {
+            progress.page += 1;
+            self.inbox.searches.insert(key, progress);
+            Ok(true)
+        }
     }
 
     /// Caches the head branches of PRs new events name, a few per poll, so dwarves match by branch.
@@ -589,11 +728,15 @@ impl<I: SlackIo> SlackChannel<I> {
         }
         let refs: BTreeSet<String> = events
             .iter()
+            .chain(self.inbox.events())
             .flat_map(|e| super::matching::refs(&e.text))
             .filter(|r| !r.starts_with('#') && r.contains('#'))
             .filter(|r| !self.inbox.pr_heads.contains_key(r))
             .collect();
         for r in refs.into_iter().take(MAX_PR_LOOKUPS) {
+            if self.check_deadline().is_err() {
+                break;
+            }
             let (repo, number) = r.split_once('#').expect("repo#N");
             let Ok(number) = number.parse() else { continue };
             match self.io.pr_head(&self.settings.github_owner, repo, number) {
@@ -609,7 +752,7 @@ impl<I: SlackIo> SlackChannel<I> {
     fn pins(&mut self, batch: &mut PollBatch) -> Result<(), String> {
         let mut found = Vec::new();
         for page in 1..=3 {
-            let value = self.io.api(
+            let value = self.api(
                 "search.messages",
                 &[
                     ("query", "has:pin".into()),
@@ -642,50 +785,14 @@ impl<I: SlackIo> SlackChannel<I> {
         Ok(())
     }
 
-    fn history(&mut self, channel: &str, now_ms: i64, batch: &mut PollBatch) -> Result<(), String> {
-        let key = format!("history:{channel}");
-        let start = self.inbox.first_enabled_ms.unwrap_or(now_ms);
-        let since = self
-            .inbox
-            .poll_watermarks
-            .get(&key)
-            .copied()
-            .unwrap_or(start)
-            .saturating_sub(600_000)
-            .max(start);
-        let mut cursor = String::new();
-        for _ in 0..5 {
-            let v = self.io.api(
-                "conversations.history",
-                &[
-                    ("channel", channel.into()),
-                    ("oldest", format!("{}", since.max(0) / 1000)),
-                    ("limit", "100".into()),
-                    ("cursor", cursor.clone()),
-                ],
-            )?;
-            let messages = v["messages"]
-                .as_array()
-                .ok_or("Slack history missing messages")?;
-            for m in messages {
-                self.ingest(event(m, channel, EventKind::AgentComms)?, batch);
-            }
-            cursor = v["response_metadata"]["next_cursor"]
-                .as_str()
-                .unwrap_or_default()
-                .into();
-            if cursor.is_empty() {
-                if v["has_more"] == true {
-                    return Err("Slack history omitted its next cursor".into());
-                }
-                self.inbox.poll_watermarks.insert(key, now_ms);
-                return Ok(());
-            }
-        }
-        self.inbox.poll_watermarks.insert(key, now_ms);
-        Err(format!(
-            "Slack history for {channel} reached 5 pages; older messages skipped"
-        ))
+    #[cfg(test)]
+    fn history(
+        &mut self,
+        channel: &str,
+        now_ms: i64,
+        batch: &mut PollBatch,
+    ) -> Result<bool, String> {
+        self.backfill(channel, now_ms, true, batch)
     }
 
     pub fn delete_events(&mut self, ids: &[String]) -> Result<(), String> {
@@ -713,7 +820,7 @@ impl<I: SlackIo> SlackChannel<I> {
         let mut cursor = String::new();
         let mut result = BTreeMap::new();
         for _ in 0..100 {
-            let v = self.io.api(
+            let v = self.api(
                 "conversations.replies",
                 &[
                     ("channel", event.conversation.clone()),
@@ -744,67 +851,234 @@ impl<I: SlackIo> SlackChannel<I> {
     }
 }
 
-impl<I: SlackIo> Channel for SlackChannel<I> {
-    fn poll(&mut self, now_ms: i64) -> Result<PollBatch, String> {
+#[derive(Clone)]
+enum PollJob {
+    Search(EventKind),
+    GroupSearch,
+    Pins,
+    Groups,
+    Subscribe(String),
+    Backfill(String, bool),
+    Watch(String),
+}
+
+impl<I: SlackIo> SlackChannel<I> {
+    fn poll_bounded(&mut self, now_ms: i64, budget: Duration) -> Result<PollBatch, String> {
+        let deadline = Instant::now() + budget;
+        self.deadline = Some(deadline);
+        self.io.set_deadline(Some(deadline));
+        let result = self.poll_inner(now_ms);
+        self.deadline = None;
+        self.io.set_deadline(None);
+        result
+    }
+
+    fn poll_inner(&mut self, now_ms: i64) -> Result<PollBatch, String> {
         let old = self.inbox.clone();
         self.inbox.first_enabled_ms.get_or_insert(now_ms);
         let mut batch = PollBatch::default();
-
+        let previous = self.status;
+        let previous_tick = self.last_tick_ms;
+        let observation_gap = self
+            .last_tick_ms
+            .is_some_and(|at| now_ms.saturating_sub(at) > 5 * 60_000);
+        self.last_tick_ms = Some(now_ms);
         self.status = heartbeat(&self.bridge, now_ms);
         let channels = self.settings.channels.clone();
-        if now_ms >= self.next_subscribe_ms {
-            self.next_subscribe_ms = now_ms + 120_000;
-            for channel in &channels {
-                if !self.subscribed.contains(channel) {
-                    match self.io.subscribe(&self.bridge, channel) {
-                        Ok(()) => {
-                            self.subscribed.push(channel.clone());
-                            self.command_errors.remove(channel);
-                        }
-                        Err(e) => {
-                            self.command_errors.insert(channel.clone(), e);
-                        }
-                    }
-                }
-            }
-        }
+        let mut caught_up = BTreeSet::new();
         for channel in &channels {
             match self.tail(channel, &mut batch) {
-                Ok(()) => {
+                Ok(complete) => {
                     self.read_errors.remove(channel);
+                    if complete {
+                        caught_up.insert(channel.clone());
+                    }
                 }
                 Err(error) => {
                     self.read_errors.insert(channel.clone(), error);
                 }
             }
         }
+        let watched: BTreeSet<_> = self
+            .inbox
+            .thread_watches
+            .values()
+            .filter(|s| !channels.contains(&s.watch.thread.conversation))
+            .map(|s| {
+                (
+                    s.watch.thread.conversation.clone(),
+                    s.watch.thread.ts.clone(),
+                )
+            })
+            .collect();
+        for (conversation, ts) in watched {
+            if let Err(error) =
+                self.tail_thread(&super::requests::Thread { conversation, ts }, &mut batch)
+            {
+                batch.notices.push(error);
+            }
+        }
+        let feed_status = self.status;
         if !self.errors.is_empty()
             || !self.command_errors.is_empty()
             || !self.read_errors.is_empty()
         {
             self.status = BridgeStatus::Stale;
         }
-        if now_ms >= self.next_poll_ms {
-            self.next_poll_ms = now_ms + (self.settings.poll_secs.clamp(10, 86_400) as i64 * 1000);
-            self.poll_errors.clear();
-            for kind in [EventKind::Mention, EventKind::Dm] {
-                if let Err(e) = self.search(kind, now_ms, &mut batch) {
-                    self.poll_errors.insert(kind.name().into(), e);
-                }
-            }
-            if let Err(e) = self.pins(&mut batch) {
-                self.poll_errors.insert("pin".into(), e);
-            }
-            if self.status != BridgeStatus::Ok {
-                for channel in &channels {
-                    if let Err(e) = self.history(channel, now_ms, &mut batch) {
-                        self.poll_errors.insert(channel.clone(), e);
-                    }
+        if self.status != BridgeStatus::Ok || previous != BridgeStatus::Ok || observation_gap {
+            for channel in &channels {
+                if self
+                    .inbox
+                    .recovery_needed_through
+                    .insert(channel.clone(), now_ms)
+                    .is_none()
+                    || (previous != BridgeStatus::Ok && self.status == BridgeStatus::Ok)
+                {
+                    self.next_jobs.remove(&format!("history:{channel}"));
+                    self.next_jobs.remove(&format!("recent:{channel}"));
                 }
             }
         }
-        if let Err(error) = self.poll_threads(now_ms, &mut batch) {
-            batch.notices.push(error);
+        let mut jobs = vec![
+            ("mention".into(), PollJob::Search(EventKind::Mention)),
+            ("dm".into(), PollJob::Search(EventKind::Dm)),
+            ("pin".into(), PollJob::Pins),
+        ];
+        if !self.inbox.user_groups.is_empty() {
+            jobs.push(("group_search".into(), PollJob::GroupSearch));
+        }
+        for id in self.inbox.thread_watches.keys() {
+            jobs.push((format!("watch:{id}"), PollJob::Watch(id.clone())));
+        }
+        for channel in &channels {
+            jobs.push((
+                format!("subscribe:{channel}"),
+                PollJob::Subscribe(channel.clone()),
+            ));
+            jobs.push((
+                format!("recent:{channel}"),
+                PollJob::Backfill(channel.clone(), false),
+            ));
+            jobs.push((
+                format!("history:{channel}"),
+                PollJob::Backfill(channel.clone(), true),
+            ));
+        }
+        jobs.push(("groups".into(), PollJob::Groups));
+        self.poll_errors
+            .retain(|key, _| jobs.iter().any(|(job, _)| job == key));
+        self.next_jobs
+            .retain(|key, _| jobs.iter().any(|(job, _)| job == key));
+        let interval = self.settings.poll_secs.clamp(10, 86_400) as i64 * 1000;
+        for _ in 0..jobs.len() {
+            if self.check_deadline().is_err() {
+                break;
+            }
+            let index = self.next_job % jobs.len();
+            self.next_job = (index + 1) % jobs.len();
+            let (key, job) = &jobs[index];
+            if self.next_jobs.get(key).is_some_and(|at| now_ms < *at) {
+                continue;
+            }
+            let mut delay = interval;
+            let result = match job {
+                PollJob::Search(kind) => self.search_tag(*kind, None, now_ms, &mut batch),
+                PollJob::GroupSearch => {
+                    // Leave enough time for a full CLI call; member and DM searches go first.
+                    if self.deadline.is_some_and(|at| {
+                        at.saturating_duration_since(Instant::now()) < Duration::from_secs(25)
+                    }) || ["mention", "dm"]
+                        .iter()
+                        .any(|key| self.next_jobs.get(*key).is_none_or(|at| now_ms >= *at))
+                    {
+                        continue;
+                    }
+                    let Some(group) = self
+                        .inbox
+                        .user_groups
+                        .iter()
+                        .find(|group| self.last_group.as_ref().is_none_or(|last| *group > last))
+                        .or_else(|| self.inbox.user_groups.first())
+                        .cloned()
+                    else {
+                        continue;
+                    };
+                    self.last_group = Some(group.clone());
+                    // One page total per interval; each group retains its own unfinished page.
+                    self.search_tag(EventKind::Mention, Some(&group), now_ms, &mut batch)
+                        .map(|_| false)
+                }
+                PollJob::Pins => self.pins(&mut batch).map(|()| false),
+                PollJob::Groups => {
+                    delay = 3_600_000;
+                    self.groups().map(|()| false)
+                }
+                PollJob::Subscribe(channel) => {
+                    delay = 120_000;
+                    if self.subscribed.contains(channel) && !self.errors.contains_key(channel) {
+                        Ok(false)
+                    } else {
+                        match self.io.subscribe(&self.bridge, channel) {
+                            Ok(()) => {
+                                self.subscribed.push(channel.clone());
+                                self.command_errors.remove(channel);
+                                Ok(false)
+                            }
+                            Err(error) => {
+                                self.command_errors.insert(channel.clone(), error.clone());
+                                Err(error)
+                            }
+                        }
+                    }
+                }
+                PollJob::Backfill(channel, deep) => {
+                    if self.inbox.recovery_needed_through.contains_key(channel) {
+                        self.backfill(channel, now_ms, *deep, &mut batch)
+                    } else {
+                        if caught_up.contains(channel) {
+                            self.inbox.poll_watermarks.insert(key.clone(), now_ms);
+                        }
+                        self.inbox.backfills.remove(key);
+                        Ok(false)
+                    }
+                }
+                PollJob::Watch(id) => self
+                    .poll_thread(id, now_ms, &mut batch)
+                    .map(|()| !self.inbox.thread_watches[id].caught_up),
+            };
+            match result {
+                Ok(more) => {
+                    self.poll_errors.remove(key);
+                    if more {
+                        delay = 2_000;
+                    }
+                }
+                Err(error) => {
+                    if self.check_deadline().is_err() {
+                        delay = 2_000;
+                    }
+                    if !matches!(job, PollJob::Groups) {
+                        let error = match job {
+                            PollJob::Watch(id) => format!("{id}: {error}"),
+                            _ => error,
+                        };
+                        self.poll_errors.insert(key.clone(), error);
+                    }
+                }
+            }
+            self.next_jobs.insert(key.clone(), now_ms + delay);
+        }
+        self.status = feed_status;
+        if !self.errors.is_empty()
+            || !self.command_errors.is_empty()
+            || !self.read_errors.is_empty()
+        {
+            self.status = BridgeStatus::Stale;
+            for channel in &channels {
+                self.inbox
+                    .recovery_needed_through
+                    .insert(channel.clone(), now_ms);
+            }
         }
         self.resolve_prs(&batch.events);
         for (channel, error) in self
@@ -817,23 +1091,40 @@ impl<I: SlackIo> Channel for SlackChannel<I> {
         }
         batch.notices.extend(self.poll_errors.values().cloned());
         self.inbox.subscription_errors = self.errors.clone();
-        if self.inbox != old
-            && let Err(e) = self.inbox.save(&self.path)
+        if (self.inbox != old || self.needs_save)
+            && let Err(error) = self.inbox.save(&self.path)
         {
             self.inbox = old;
-            self.next_poll_ms = 0;
-            return Err(format!("Cannot save Envoy inbox: {e}"));
+            self.status = previous;
+            self.last_tick_ms = previous_tick;
+            self.next_jobs.clear();
+            return Err(format!("Cannot save Envoy inbox: {error}"));
         }
+        self.needs_save = false;
         batch.events.retain(|e| self.inbox.get(&e.id()).is_some());
         Ok(batch)
     }
+}
+
+impl<I: SlackIo> Channel for SlackChannel<I> {
+    fn poll(&mut self, now_ms: i64) -> Result<PollBatch, String> {
+        self.poll_bounded(now_ms, POLL_BUDGET)
+    }
     fn send(&mut self, approved: &OutboundMessage) -> Result<SendReceipt, String> {
-        self.io.send(approved)
+        let receipt = self.io.send(approved)?;
+        let root = approved.thread_ts.as_deref().unwrap_or(&receipt.ts);
+        self.inbox
+            .user_threads
+            .insert(format!("{}:{root}", receipt.conversation));
+        self.needs_save = true;
+        Ok(receipt)
     }
     fn health(&self) -> BridgeStatus {
         self.status
     }
 }
+
+pub mod backfill;
 
 pub mod threads;
 

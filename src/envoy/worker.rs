@@ -79,6 +79,11 @@ pub enum Update {
     },
     /// The user's member id as `auth.test` reports it, resolved on each configure.
     UserId(String),
+    /// Failed polls still prove that the worker is alive.
+    PollError {
+        error: String,
+        polled_at_ms: i64,
+    },
     Error(String),
 }
 
@@ -243,11 +248,12 @@ impl Worker {
                             }
                         }
                         Err(e) => {
-                            if last_error.as_ref() == Some(&e) {
+                            let Some(update) =
+                                poll_error_update(e, &mut last_error, &mut published_at_ms, now_ms)
+                            else {
                                 continue;
-                            }
-                            last_error = Some(e.clone());
-                            Update::Error(e)
+                            };
+                            update
                         }
                     };
                     if results.send(update).is_err() {
@@ -306,6 +312,23 @@ pub const HEARTBEAT_MS: i64 = 60_000;
 /// Whether an unchanged poll result must be published anyway.
 pub fn heartbeat_due(published_at_ms: Option<i64>, now_ms: i64) -> bool {
     published_at_ms.is_none_or(|at| now_ms.saturating_sub(at) >= HEARTBEAT_MS)
+}
+
+fn poll_error_update(
+    error: String,
+    last_error: &mut Option<String>,
+    published_at_ms: &mut Option<i64>,
+    now_ms: i64,
+) -> Option<Update> {
+    if last_error.as_ref() == Some(&error) && !heartbeat_due(*published_at_ms, now_ms) {
+        return None;
+    }
+    *last_error = Some(error.clone());
+    *published_at_ms = Some(now_ms);
+    Some(Update::PollError {
+        error,
+        polled_at_ms: now_ms,
+    })
 }
 
 /// Thread messages `envoy_event` returns: the root and the latest ones.
@@ -414,6 +437,31 @@ mod trim_tests {
         assert!(heartbeat_due(None, 1_000));
         assert!(!heartbeat_due(Some(1_000), 1_000 + HEARTBEAT_MS - 1));
         assert!(heartbeat_due(Some(1_000), 1_000 + HEARTBEAT_MS));
+    }
+
+    #[test]
+    fn repeated_poll_errors_still_publish_liveness() {
+        let mut error = None;
+        let mut published = None;
+        assert!(matches!(
+            poll_error_update("save failed".into(), &mut error, &mut published, 1000),
+            Some(Update::PollError { .. })
+        ));
+        assert!(
+            poll_error_update("save failed".into(), &mut error, &mut published, 1001).is_none()
+        );
+        assert!(
+            matches!(poll_error_update("save failed".into(), &mut error, &mut published, 1000 + HEARTBEAT_MS), Some(Update::PollError { polled_at_ms, .. }) if polled_at_ms == 1000 + HEARTBEAT_MS)
+        );
+        assert!(
+            poll_error_update(
+                "different error".into(),
+                &mut error,
+                &mut published,
+                1001 + HEARTBEAT_MS
+            )
+            .is_some()
+        );
     }
 
     #[test]
