@@ -1,7 +1,8 @@
-//! Persistent horizontal workspace bands below the shared gallery. Each band owns the
-//! full width beside the ladder and enough rows for its dwarves. Spare slots and spare
-//! height let rooms grow without moving their neighbours; empty rooms retain their grace.
-//! Resizing or exhausting that capacity fits the bands again at the largest usable scale.
+//! Persistent packing of group tunnels into twelve-cell rows. A group keeps its cells
+//! while its dwarves fit; spare slots, wrapped row height and the empty-room grace avoid
+//! shuffling on ordinary updates. Repacking uses first-fit decreasing width with stable
+//! ties. Every segment reserves a ladder and a stone wall, and every level has an access
+//! passage above its labels. Wrapped work rows remain inside the group's rectangle.
 
 use eframe::egui::Vec2;
 use serde::{Deserialize, Serialize};
@@ -11,7 +12,11 @@ use super::layout::{
 };
 
 /// Dwarf slots a room is dug for beyond its dwarves, when the view has the room.
-pub const SPARE_SLOTS: usize = 2;
+pub const SPARE_SLOTS: usize = 1;
+/// Fixed packing cells across the work area.
+pub const COLUMNS: usize = 12;
+/// An access passage and rock above every level after the first.
+pub const ACCESS_GAP: f32 = 1.6;
 /// How long a room stands empty before it is filled in.
 pub const GRACE_MS: i64 = 120_000;
 /// Biggest points per texel: a near-empty farm draws no giant dwarves.
@@ -29,6 +34,8 @@ pub struct Room {
     pub key: TunnelKey,
     pub level: usize,
     pub col: usize,
+    #[serde(default)]
+    pub span: usize,
     /// Rows of dwarves it is dug for.
     pub rows: usize,
     /// Since when it has had no dwarves (ms since the epoch).
@@ -41,10 +48,6 @@ pub struct Grid {
     /// Screen points per sprite texel.
     pub px: f32,
     pub levels: usize,
-    /// Width of each column in points; they add up to the view's width.
-    pub widths: Vec<f32>,
-    /// Rooms stacked in each column.
-    pub depths: Vec<usize>,
     /// Reserved height of each workspace band, excluding its label.
     pub heights: Vec<f32>,
 }
@@ -91,8 +94,8 @@ pub enum Change {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RoomPlan {
-    /// Old column plans are refitted on load so they cannot reconnect workspace rows.
-    #[serde(rename = "workspace_bands")]
+    /// Earlier full-width and column plans must be refitted with ladder reservations.
+    #[serde(rename = "packed_tunnels")]
     fitted: Option<Grid>,
     pub rooms: Vec<Room>,
     /// Dwarves the surface band is sized for: it grows with them and shrinks on a rearrange.
@@ -109,9 +112,7 @@ pub struct RoomPlan {
 pub struct Ground {
     pub a: f32,
     pub px: f32,
-    /// Left edge of each column, from the view's left.
-    lefts: Vec<f32>,
-    widths: Vec<f32>,
+    cell_w: f32,
     tops: Vec<f32>,
     heights: Vec<f32>,
 }
@@ -125,43 +126,31 @@ impl Ground {
             .iter()
             .scan(below_top, |top, height| {
                 let at = *top;
-                *top += height + LABEL_GAP * a;
+                *top += height + (LABEL_GAP + ACCESS_GAP) * a;
                 Some(at)
             })
             .collect();
-        let available = (size.x - LADDER_GAP * a).max(a);
-        let total = grid.widths.iter().sum::<f32>().max(1.0);
-        let widths: Vec<f32> = grid.widths.iter().map(|w| w * available / total).collect();
-        let lefts = widths
-            .iter()
-            .scan(LADDER_GAP * a, |x, w| {
-                let left = *x;
-                *x += w;
-                Some(left)
-            })
-            .collect();
+        let cell_w = (size.x - LADDER_GAP * a).max(a) / COLUMNS as f32;
         Self {
             a,
             px: grid.px,
-            lefts,
-            widths,
+            cell_w,
             tops,
             heights: grid.heights.clone(),
         }
     }
 
-    /// Left edge of a room column, clear of the shared ladder.
+    /// Each packed segment reserves its own ladder on the left and stone at its edges.
     pub fn chamber_left(&self, col: usize) -> f32 {
-        self.lefts.get(col).copied().unwrap_or_default() + 0.3 * self.a
+        LADDER_GAP * self.a + col as f32 * self.cell_w + (LADDER_GAP + 0.3) * self.a
     }
 
-    pub fn chamber_w(&self, _level: usize, col: usize) -> f32 {
-        let width = self.widths.get(col).copied().unwrap_or_default();
-        (width - 0.6 * self.a).max(SLOT * self.a)
+    pub fn chamber_w(&self, span: usize) -> f32 {
+        (span as f32 * self.cell_w - (LADDER_GAP + 0.6) * self.a).max(3.0 * self.a)
     }
 
-    pub fn per_row(&self, level: usize, col: usize) -> usize {
-        chamber_per_row(self.chamber_w(level, col) - self.a, self.a)
+    pub fn per_row(&self, span: usize) -> usize {
+        chamber_per_row(self.chamber_w(span) - self.a, self.a)
     }
 
     /// The most rows a level's band has the height for.
@@ -198,42 +187,81 @@ fn target_rows(footprints: &[usize], per_row: usize, max_rows: usize) -> usize {
         .unwrap_or_else(|| rows_for(footprints, 0, per_row))
 }
 
-/// Full-width bands, each sized for its own packed rows. Spare vertical room is
-/// shared evenly, allowing a busy workspace to grow without moving another one.
-fn fit(size: Vec2, crowd: Crowd, rooms: &[&[usize]], px: f32, spare: usize) -> Grid {
+#[derive(Clone, Copy)]
+struct Place {
+    level: usize,
+    col: usize,
+    span: usize,
+}
+
+/// First-fit decreasing width. Ties use the stable demand order, never node order.
+/// The resting area retains its own final band and beds.
+fn fit(
+    size: Vec2,
+    crowd: Crowd,
+    rooms: &[&[usize]],
+    resting: Option<usize>,
+    px: f32,
+    spare: usize,
+) -> (Grid, Vec<Place>) {
     let a = CELL * px;
-    let below_top = band(size, a, crowd).gallery_top(a) + (1.2 + LABEL_GAP) * a;
-    let per_row = chamber_per_row(size.x - (LADDER_GAP + 1.6) * a, a);
-    let mut heights: Vec<f32> = rooms
+    let cell_w = (size.x - LADDER_GAP * a).max(a) / COLUMNS as f32;
+    let mut places: Vec<Place> = rooms
         .iter()
-        .map(|f| rows_height(rows_for(f, spare, per_row), a))
+        .map(|f| {
+            let slots = (f.iter().sum::<usize>() + spare).max(1);
+            let width = (LADDER_GAP + 0.6 + 3.0 + (slots - 1) as f32 * SLOT) * a;
+            let span = ((width / cell_w).ceil() as usize).clamp(3, COLUMNS);
+            Place {
+                level: 0,
+                col: 0,
+                span,
+            }
+        })
         .collect();
-    if heights.is_empty() {
-        heights.push(rows_height(1, a));
+    let mut order: Vec<usize> = (0..rooms.len()).collect();
+    order.sort_by_key(|&i| (Some(i) == resting, std::cmp::Reverse(places[i].span), i));
+    let mut used: Vec<usize> = Vec::new();
+    for i in order {
+        let p = &mut places[i];
+        if Some(i) == resting {
+            p.span = COLUMNS;
+        }
+        let level = if Some(i) == resting {
+            None
+        } else {
+            used.iter().position(|n| n + p.span <= COLUMNS)
+        }
+        .unwrap_or_else(|| {
+            used.push(0);
+            used.len() - 1
+        });
+        p.level = level;
+        p.col = used[level];
+        used[level] += p.span;
     }
-    let levels = heights.len();
-    let needed = heights.iter().sum::<f32>();
-    let available = size.y - 0.3 * a - below_top - (levels - 1) as f32 * LABEL_GAP * a;
-    let extra = ((available - needed) / levels as f32).max(0.0);
-    for height in &mut heights {
-        *height += extra;
-    }
-    Grid {
+    let levels = used.len().max(1);
+    let mut grid = Grid {
         px,
         levels,
-        widths: vec![size.x],
-        depths: vec![rooms.len()],
-        heights,
+        heights: vec![rows_height(1, a); levels],
+    };
+    let ground = Ground::new(size, &grid, crowd);
+    for (f, p) in rooms.iter().zip(&places) {
+        let height = rows_height(rows_for(f, spare, ground.per_row(p.span)), a);
+        grid.heights[p.level] = grid.heights[p.level].max(height);
     }
+    (grid, places)
 }
 
 fn fits(size: Vec2, crowd: Crowd, grid: &Grid) -> bool {
     let a = CELL * grid.px;
     let below_top = band(size, a, crowd).gallery_top(a) + (1.2 + LABEL_GAP) * a;
-    let bottom =
-        below_top + grid.heights.iter().sum::<f32>() + (grid.levels - 1) as f32 * LABEL_GAP * a;
+    let bottom = below_top
+        + grid.heights.iter().sum::<f32>()
+        + (grid.levels - 1) as f32 * (LABEL_GAP + ACCESS_GAP) * a;
     bottom <= size.y - 0.3 * a + 0.01
-        && size.x >= (LADDER_GAP + SLOT + 1.6) * a
+        && size.x >= (2.0 * LADDER_GAP + 3.6) * a
         && (!crowd.envoy
             || grid.px <= (size.x / (18.0 * CELL) / PX_STEP).floor().max(1.0) * PX_STEP)
 }
@@ -287,13 +315,11 @@ impl RoomPlan {
         };
         let new_room = demand.rooms.iter().any(|(k, _)| self.room(k).is_none());
         let resized = self.fit.size != [size.x, size.y] || self.fit.envoy != demand.envoy;
-        let consistent = grid.widths.len() == 1
-            && grid.heights.len() == grid.levels
+        let consistent = grid.heights.len() == grid.levels
             && self
                 .rooms
                 .iter()
-                .enumerate()
-                .all(|(i, r)| r.col == 0 && r.level == i);
+                .all(|r| r.level < grid.levels && r.span > 0 && r.col + r.span <= COLUMNS);
         if filled_in || new_room || resized || !consistent {
             return self.rearrange(demand, size);
         }
@@ -319,7 +345,7 @@ impl RoomPlan {
         for room in &mut self.rooms {
             let max_rows = ground.max_rows(room.level);
             let footprints = demand.footprints(&room.key).unwrap_or_default();
-            let per_row = ground.per_row(room.level, room.col);
+            let per_row = ground.per_row(room.span);
             let need = rows_for(footprints, 0, per_row);
             if need <= room.rows {
                 continue;
@@ -356,25 +382,29 @@ impl RoomPlan {
         let tries = |spares: &'static [usize]| {
             scales().flat_map(move |px| spares.iter().map(move |&spare| (px, spare)))
         };
-        let grid = tries(&[2, 1])
+        let resting = keys
+            .iter()
+            .position(|(key, _, _)| *key == TunnelKey::RestingArea);
+        let (grid, places) = tries(&[SPARE_SLOTS])
             .chain(tries(&[0]))
-            .map(|(px, spare)| fit(size, crowd, &footprints, px, spare))
-            .find(|grid| fits(size, crowd, grid))
+            .map(|(px, spare)| fit(size, crowd, &footprints, resting, px, spare))
+            .find(|(grid, _)| fits(size, crowd, grid))
             // Beyond the view's capacity, keep ownership and non-overlap even if the
             // lowest bands extend offscreen at the minimum scale.
-            .unwrap_or_else(|| fit(size, crowd, &footprints, MIN_PX, 0));
+            .unwrap_or_else(|| fit(size, crowd, &footprints, resting, MIN_PX, 0));
         let ground = Ground::new(size, &grid, crowd);
         self.rooms = keys
             .into_iter()
             .enumerate()
             .map(|(i, (key, footprints, empty_since_ms))| {
-                let (level, col) = (i, 0);
+                let Place { level, col, span } = places[i];
                 let max_rows = ground.max_rows(level);
                 Room {
                     key,
                     level,
                     col,
-                    rows: target_rows(footprints, ground.per_row(level, col), max_rows),
+                    span,
+                    rows: target_rows(footprints, ground.per_row(span), max_rows),
                     empty_since_ms,
                 }
             })
