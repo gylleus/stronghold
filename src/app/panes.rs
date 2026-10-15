@@ -249,9 +249,12 @@ impl StrongholdApp {
                     self.envoy_core.open_request = true;
                 }
                 if let Some(id) = &response.clicked {
-                    let additive = ui.input(|i| ui::clan_view::is_additive(i.modifiers));
+                    let modifiers = ui.input(|i| i.modifiers);
+                    let additive = ui::clan_view::is_additive(modifiers);
                     self.clan.click_node(id, additive);
                     self.selected = self.clan.selected();
+                    self.request_clicked_input(id, modifiers);
+                    ui.ctx().request_repaint();
                 } else if response.clicked_empty
                     && !ui.input(|i| ui::clan_view::is_additive(i.modifiers))
                 {

@@ -380,6 +380,74 @@ mod tests {
     use crate::model::NodeId;
 
     #[test]
+    fn clicked_input_drives_dictation_and_lightning_without_consuming_shortcuts() {
+        use crate::app::input_focus::Request;
+        let dwarf = NodeId("term:worker".into());
+        for (node, input) in [
+            (dwarf.clone(), crate::ui::terminal::input_id("worker")),
+            (NodeId::king(), crate::ui::chat::input_id()),
+        ] {
+            let ctx = egui::Context::default();
+            let mut draft = String::new();
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                ui.add(egui::TextEdit::singleline(&mut draft).id(input));
+                Request::from_click(&node, egui::Modifiers::NONE, Some(input))
+                    .unwrap()
+                    .apply(ui.ctx(), Some(&node), Some(input));
+            });
+            output.textures_delta.clear();
+            let focused = ctx.memory(|m| m.focused());
+            let route = destination(
+                focused,
+                focused,
+                ctx.text_edit_focused(),
+                Some((&dwarf, "worker")),
+            );
+            assert_eq!(route.node(), Some(node.clone()));
+            assert_eq!(
+                recording_target(
+                    Phase::Recording { latched: false },
+                    false,
+                    route.node().as_ref()
+                ),
+                Some(node)
+            );
+            let mut events = vec![egui::Event::Key {
+                key: egui::Key::E,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }];
+            assert_eq!(
+                ui_dictation::take_keys(&mut events, egui::Modifiers::COMMAND, KeyState::default()),
+                vec![DictationKey::Press { repeat: false }]
+            );
+            assert!(events.is_empty());
+            assert_eq!(
+                crate::ui::keys::command_for_event(
+                    &egui::Event::Text("j".into()),
+                    ctx.text_edit_focused()
+                ),
+                None
+            );
+            assert_eq!(
+                crate::ui::keys::command_for_event(
+                    &egui::Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    ctx.text_edit_focused()
+                ),
+                Some(crate::ui::keys::KeyCommand::Escape)
+            );
+        }
+    }
+
+    #[test]
     fn stream_and_transcript_share_focused_terminal_chat_and_fallback_routes() {
         let dwarf = NodeId("term:worker".into());
         let terminal = Some((&dwarf, "worker"));
