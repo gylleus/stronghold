@@ -145,7 +145,7 @@ impl eframe::App for Demo {
             }
             ui.label(format!("Workspace clicks: {}", self.clicks));
         });
-        self.panel.hammer(&ctx);
+        self.panel.hammer(&ctx, &Default::default());
         let Some(path) = &self.shot else { return };
         if !self.shooting && self.since.elapsed() > Duration::from_millis(2500) {
             self.shooting = true;

@@ -46,3 +46,6 @@ pub use app::StrongholdApp;
 
 /// Window and application title.
 pub const APP_NAME: &str = "Stronghold";
+
+pub mod lorekeeper;
+pub mod schedule;

@@ -244,16 +244,25 @@ impl Sprites {
     pub fn masonry(&self, painter: &Painter, rect: Rect) {
         self.prop(painter, Prop::Masonry, rect, 1.0);
     }
-    pub fn shoring(&self, painter: &Painter, shaft: Rect, px: f32) {
-        let mut y = shaft.top() + 6.0 * px;
-        while y + 10.0 * px < shaft.bottom() {
-            self.prop(
-                painter,
-                Prop::Shoring,
-                Rect::from_min_size(pos2(shaft.left(), y), vec2(shaft.width(), 10.0 * px)),
-                1.0,
+    /// Timber rails and close rungs make vertical links read as climbable ladders.
+    pub fn ladder(&self, painter: &Painter, shaft: Rect, px: f32) {
+        let x = shaft.center().x;
+        for side in [-1.0, 1.0] {
+            let rail = Rect::from_min_max(
+                pos2(x + side * 4.0 * px - px, shaft.top()),
+                pos2(x + side * 4.0 * px + px, shaft.bottom()),
             );
-            y += 24.0 * px;
+            painter.rect_filled(rail.expand(px), 0.0, INK);
+            painter.rect_filled(rail, 0.0, WOOD_DARK);
+        }
+        let mut y = shaft.top() + 3.0 * px;
+        while y < shaft.bottom() {
+            painter.rect_filled(
+                Rect::from_min_size(pos2(x - 4.0 * px, y), vec2(8.0 * px, 2.0 * px)),
+                0.0,
+                STONE_LIGHT,
+            );
+            y += 5.0 * px;
         }
     }
     pub fn gallery(&self, painter: &Painter, rect: Rect, px: f32) {
@@ -605,13 +614,9 @@ fn noise(x: usize, y: usize, salt: u32) -> u32 {
 
 /// Sloping strata and irregular fractured planes; no rectangular noise patches.
 pub fn rock_tile(worked: bool) -> ColorImage {
-    let base = if worked {
-        super::excavation::WALL
-    } else {
-        rgb(0x6b6a61)
-    };
-    let dark = if worked { rgb(0x44453e) } else { rgb(0x5f6058) };
-    let light = if worked { rgb(0x585a50) } else { rgb(0x77766a) };
+    let base = if worked { rgb(0x383b39) } else { rgb(0x6b6a61) };
+    let dark = if worked { rgb(0x303330) } else { rgb(0x5f6058) };
+    let light = if worked { rgb(0x484b43) } else { rgb(0x77766a) };
     let mut image = ColorImage::filled([TILE, TILE], base);
     for y in 0..TILE {
         for x in 0..TILE {

@@ -190,7 +190,7 @@ fn main() -> eframe::Result {
     let (mut drafts, inbox) = fixtures(outbox);
     let gateway = args.iter().any(|a| a == "--gateway");
     if gateway {
-        let link=stronghold::envoy::drafts::RequestLink{id:"envoy-request-1".into(),turn_id:1,original_ask:"Please review abc012def at 2026-10-06T12:34:56Z.\nCount: 42\n```rust\nlet x = 17;\n```\n".into(),requester:"Build dwarf".into(),why:"Unblock the fixture release review".into(),agent:true};
+        let link=stronghold::envoy::drafts::RequestLink{id:"envoy-request-1".into(),turn_id:1,original_ask:"Please review abc012def at 2026-10-06T12:34:56Z.\nCount: 42\n```rust\nlet x = 17;\n```\n".into(),requester:"Build dwarf".into(),why:"Unblock the fixture release review".into(),agent:true,karl_asked:None};
         let mut draft = Draft::outgoing(
             "C123".into(),
             None,
@@ -200,8 +200,18 @@ fn main() -> eframe::Result {
             stronghold::control::server::now_ms(),
         );
         draft.id = "envoy-draft-1".into();
-        draft.automatic = true;
-        draft.auto_at_ms = Some(stronghold::control::server::now_ms() + 120_000);
+        if args.iter().any(|a| a == "--on-behalf") {
+            draft.request.as_mut().unwrap().karl_asked =
+                Some("Send these details via the Envoy".into());
+            if outbox {
+                draft.status = DraftStatus::DryRunSent;
+                draft.approved_at = Some(stronghold::control::server::now_ms());
+                draft.approved_by = Some(stronghold::user::name());
+            }
+        } else {
+            draft.automatic = true;
+            draft.auto_at_ms = Some(stronghold::control::server::now_ms() + 120_000);
+        }
         drafts = vec![draft];
     }
     eframe::run_native(

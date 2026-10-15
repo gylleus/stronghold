@@ -12,6 +12,10 @@ pub enum Action {
     Wait,
     /// Working something out: head tilting, scratching under the hat, a "?" popping.
     Study,
+    /// Reading a book held at chest height.
+    Read,
+    /// Writing with a quill, the book supported in the other hand.
+    Write,
     /// Hands raised over a scrying basin; only active work pulses the runes.
     Scry,
     /// Staff thrust up in his fist, the other arm flung back, the crystal blazing and runes
@@ -22,6 +26,8 @@ pub enum Action {
     /// Hammering at chest height (editing, building).
     Build,
     Walk,
+    /// Alternating hands and feet on a ladder, with the tool stowed.
+    Climb,
     /// Braced against a minecart rim, tool stowed; only used during travel.
     Ride,
     /// Walking with a gold nugget held overhead.
@@ -35,15 +41,18 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 13] = [
+    pub const ALL: [Action; 16] = [
         Action::Still,
         Action::Wait,
         Action::Study,
+        Action::Read,
+        Action::Write,
         Action::Scry,
         Action::Cast,
         Action::Mine,
         Action::Build,
         Action::Walk,
+        Action::Climb,
         Action::Ride,
         Action::Carry,
         Action::Hold,
@@ -56,11 +65,14 @@ impl Action {
         matches!(
             self,
             Action::Study
+                | Action::Read
+                | Action::Write
                 | Action::Scry
                 | Action::Cast
                 | Action::Mine
                 | Action::Build
                 | Action::Walk
+                | Action::Climb
                 | Action::Ride
                 | Action::Carry
         )
@@ -80,6 +92,8 @@ pub enum Eyes {
 pub struct Pose {
     /// Front arm, radians forward from hanging straight down.
     pub arm: f32,
+    /// Quill in the front hand, book in the supporting hand.
+    pub writing: bool,
     /// Back arm, radians forward.
     pub back_arm: f32,
     /// The tool turned in the fist, radians forward from lying along the arm.
@@ -103,6 +117,8 @@ pub struct Pose {
     pub nugget: bool,
     /// His tool put away (lying down).
     pub stowed: bool,
+    /// Both hands grip a separately drawn prop; omit the free back arm.
+    pub two_handed: bool,
     /// Seconds since the tool last struck, for sparks.
     pub since_strike: Option<f32>,
     /// A "?" over the head, 0..1 grown.
@@ -133,6 +149,20 @@ pub fn pose(action: Action, t: f64) -> Pose {
     };
     match action {
         Action::Still => rest,
+        Action::Read => Pose {
+            arm: 1.2 + 0.06 * (t as f32 * 2.0).sin(),
+            grip: -1.2,
+            head: 0.16 + 0.08 * (t as f32 * 1.5).sin(),
+            ..rest
+        },
+        Action::Write => Pose {
+            arm: 1.1 + 0.14 * (t as f32 * 9.0).sin(),
+            back_arm: 1.1,
+            grip: -0.8,
+            head: 0.2,
+            writing: true,
+            ..rest
+        },
         Action::Wait => Pose {
             // Both fists on the tool, its head on the floor in front; chin up, glaring.
             arm: 0.6,
@@ -257,6 +287,16 @@ pub fn pose(action: Action, t: f64) -> Pose {
                 ..rest
             }
         }
+        Action::Climb => {
+            let s = (t as f32 * TAU / 0.7).sin();
+            Pose {
+                arm: -1.8 + 0.45 * s,
+                back_arm: -1.8 - 0.45 * s,
+                stride: 4.0 * s,
+                stowed: true,
+                ..rest
+            }
+        }
         Action::Ride => Pose {
             arm: 0.95,
             back_arm: 0.85,
@@ -301,6 +341,34 @@ pub fn pose(action: Action, t: f64) -> Pose {
             brows: 0.6,
             ..rest
         },
+    }
+}
+
+/// A demolition stroke: quick lift, accelerating blow, a firm contact hold, then recovery.
+/// `contact_arm` aims the sledge at the top of the particular heap.
+pub fn demolition(phase: f32, contact_arm: f32) -> Pose {
+    let raised = 3.5;
+    let arm = if phase < 0.32 {
+        lerp(2.1, raised, ease_out(phase / 0.32))
+    } else if phase < 0.44 {
+        lerp(raised, contact_arm, ease_in((phase - 0.32) / 0.12))
+    } else if phase < 0.56 {
+        contact_arm
+    } else {
+        lerp(contact_arm, 2.1, ease_in_out((phase - 0.56) / 0.44))
+    };
+    Pose {
+        arm,
+        back_arm: arm,
+        head: if (0.44..0.56).contains(&phase) {
+            0.12
+        } else {
+            -0.04
+        },
+        brows: -1.0,
+        stowed: true,
+        two_handed: true,
+        ..Pose::default()
     }
 }
 
@@ -369,6 +437,17 @@ mod tests {
                 .count();
             assert_eq!(strikes, 1, "{action:?}");
         }
+    }
+
+    #[test]
+    fn demolition_holds_contact_then_recovers_without_a_jump() {
+        let contact = 1.5;
+        assert_eq!(demolition(0.32, contact).arm, 3.5);
+        for phase in [0.44, 0.48, 0.55, 0.56] {
+            assert!((demolition(phase, contact).arm - contact).abs() < 0.001);
+        }
+        assert!((demolition(0.99999, contact).arm - demolition(0.0, contact).arm).abs() < 0.001);
+        assert!(demolition(0.43, contact).arm > contact);
     }
 
     #[test]

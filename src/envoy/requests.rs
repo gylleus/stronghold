@@ -117,6 +117,8 @@ pub enum Status {
 pub struct Turn {
     pub id: u64,
     pub ask: String,
+    #[serde(default)]
+    pub karl_asked: Option<String>,
     pub why: String,
     pub urgency: String,
     pub expect_reply: bool,
@@ -257,6 +259,8 @@ impl Request {
 pub struct ReachOut {
     pub to: String,
     pub ask: String,
+    #[serde(default)]
+    pub karl_asked: Option<String>,
     pub why: String,
     pub thread: Option<String>,
     pub request_id: Option<String>,
@@ -456,6 +460,13 @@ impl Requests {
         now: i64,
     ) -> Result<Accepted, String> {
         refuse_user(&args.to, user_id)?;
+        if args
+            .karl_asked
+            .as_ref()
+            .is_some_and(|quote| quote.trim().is_empty() || quote.chars().count() > 500)
+        {
+            return Err("karl_asked must contain 1 to 500 characters".into());
+        }
         for (value, max) in [(&args.to, 1000), (&args.ask, 35_000), (&args.why, 4000)] {
             if value.trim().is_empty() || value.len() > max {
                 return Err("Request text is empty or too long".into());
@@ -513,7 +524,10 @@ impl Requests {
                     .turns
                     .iter()
                     .rev()
-                    .find(|t| t.ask == args.ask)
+                    .find(|t| {
+                        t.ask == args.ask
+                            && (args.karl_asked.is_none() || t.karl_asked == args.karl_asked)
+                    })
                     .filter(|t| t.status != Status::Declined)
             {
                 return Ok(Accepted {
@@ -584,6 +598,7 @@ impl Requests {
         request.turns.push(Turn {
             id: turn_id,
             ask: args.ask,
+            karl_asked: args.karl_asked,
             why: args.why,
             urgency: args.urgency,
             expect_reply: args.expect_reply,

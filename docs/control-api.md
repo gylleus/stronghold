@@ -255,7 +255,11 @@ report's `level` is the worst of them, with `off` counting as `ok`. `fix` is a o
 Returns the notification inbox, newest first: what agents sent with `notify` and what
 Stronghold raised itself. `node` is the node each alert is about, if that node is still in the
 clan; `count` is how many identical notifications were collapsed into it. `status` carries
-the unread count and the newest unread ones under `notifications`.
+the unread count and the newest unread ones under `notifications`. Review-source alerts include
+`pr` with live GitHub evidence (`state`, `fetched_at_ms`, and `error` among the review fields).
+They remain historical notifications, not a pending-review list. URLs take precedence; title
+references such as `repo#123` resolve only when known queue/inbox URLs identify one owner.
+Unresolved or failed lookups have `state: null`, never a cached open state.
 
 ```json
 {"v":1,"method":"alerts"}
@@ -276,12 +280,20 @@ templates (`stronghold playbook attendant-brief`, MCP `attendant_brief`/`kickoff
 The PRs waiting for the user's review, newest mark first (see [Review queue](#review-queue)).
 Each entry has the PR (`url`, `repo` as `owner/repo`, `number`, `title`), the agent that
 marked it (`agent: {id, label, live}` when its terminal is a node, else `agent_handle`), the
-mark (`source`: `tool` \| `cli` \| `bus`, `summary`, `marked_ms`) and GitHub's state as last
-read: `state` (`open` \| `draft` \| `merged` \| `closed`, `null` before the first read), `ci`,
+mark (`source`: `tool` \| `cli` \| `bus`, `summary`, `marked_ms`) and GitHub's state fetched for
+this request: `state` (`open` \| `draft` \| `merged` \| `closed`, `null` when verification fails), `ci`,
 `head_sha`, `ankra_verdict` with `ankra_on_head` (`false`: Ankra reviewed an older commit),
 `marker` (`ready` \| `not_ready`, the description's first line) with `marker_on_head`,
 `review_decision`, `error` (this PR could not be read) and `updated_since_review`.
-`github.available` is `false` when `gh` is missing or logged out.
+`github.available` is `false` if any queue entry could not be verified. Each entry includes
+`fetched_at_ms`; failed reads clear the old state and check results. Merged, closed and draft
+PRs are excluded immediately, without the UI's grace period.
+
+`status` (MCP `clan_status`) embeds a compact `review_queue` with URL, title, state, CI, head,
+Ankra/marker on head, fetch time and errors. These reads use the same GitHub reader as the UI
+poller, on the control connection thread. Results are reused only within one request. A time
+budget bounds the report; remaining lookups are explicitly unverified. The MCP fallback when
+the app is down still labels its saved queue as historical.
 
 ```json
 {"v":1,"method":"review_queue"}

@@ -115,13 +115,14 @@ impl AppEnvoy {
                 .into(),
             why: turn.why.clone(),
             agent,
+            karl_asked: turn.karl_asked.clone(),
         };
         let text = if agent {
             link.verbatim()
         } else {
             required(args, "draft_text")?.into()
         };
-        let draft = Draft::outgoing(
+        let mut draft = Draft::outgoing(
             conversation.into(),
             thread_ts,
             text,
@@ -129,6 +130,10 @@ impl AppEnvoy {
             link,
             now_ms(),
         );
+        draft.manual_approval = match args.get("manual_approval") {
+            None => false,
+            Some(value) => value.as_bool().ok_or("manual_approval must be a boolean")?,
+        };
         let draft = self.queue()?.create(draft)?;
         self.schedule_draft(&draft.id)?;
         self.reconcile_requests()?;
@@ -494,8 +499,18 @@ impl AppEnvoy {
                         .and_then(|t| self.notes.as_ref()?.for_thread(&t.conversation, &t.ts))
                         .map(|n| format!(" — note: {}", n.text))
                         .unwrap_or_default();
+                    let instruction = t
+                        .karl_asked
+                        .as_ref()
+                        .map(|quote| {
+                            format!(
+                                " on {}'s instruction (unverified): {quote:?}",
+                                crate::user::name()
+                            )
+                        })
+                        .unwrap_or_default();
                     format!(
-                        "Envoy event: request from {}: {} — id {} turn {}{note}",
+                        "Envoy event: request from {}{instruction}: {} — id {} turn {}{note}",
                         r.requester.as_ref().map_or("unknown", |r| r.label.as_str()),
                         t.ask.chars().take(120).collect::<String>(),
                         r.id,
