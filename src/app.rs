@@ -1005,7 +1005,7 @@ impl StrongholdApp {
         self.worktrees
             .tick_auto(*self.whip_window.worktree_settings(), now_ms);
         if !std::mem::take(&mut self.cleanup_in_farm) {
-            self.worktrees.hammer(ctx);
+            self.worktrees.hammer(ctx, self.whip_window.art());
         }
     }
 

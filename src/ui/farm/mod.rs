@@ -725,7 +725,7 @@ impl FarmView {
             &heaps,
             heap_hovered.as_ref().map(|t| t.site.id.as_str()),
             palette,
-            now_s,
+            &self.art,
         );
         beams::paint(&painter, &scene, &placed, self.beams.tick(now_s), now_s);
         self.throws.paint(&painter, &mut figures, &scene, now_s);

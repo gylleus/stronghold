@@ -425,7 +425,7 @@ impl RubbleView {
         rubble: &Rubble,
         hovered: Option<&str>,
         palette: Palette,
-        _now_s: f64,
+        art: &super::art::ArtSettings,
     ) {
         let still = self.still;
         for heap in &rubble.heaps {
@@ -444,7 +444,7 @@ impl RubbleView {
             }
         }
         if let Some(frame) = &self.worker.frame {
-            super::hammer::paint(painter, frame, |rect, turn, alpha| {
+            self.worker.paint(painter, art, |rect, turn, alpha| {
                 sprites.prop_turned(painter, Prop::CleanupHammer, rect, turn, alpha);
             });
             if !still && let Some(phase) = frame.phase {
@@ -458,7 +458,7 @@ impl RubbleView {
             if let Some(job) = &self.hammer {
                 super::label(
                     painter,
-                    frame.foot - vec2(0.0, 46.0 * scene.px),
+                    frame.foot - vec2(0.0, frame.height + 4.0 * scene.px),
                     Align2::CENTER_BOTTOM,
                     &format!("Clearing worktrees {}/{}", job.done, job.total),
                     FontId::proportional((5.5 * scene.px).clamp(11.0, 14.0)),

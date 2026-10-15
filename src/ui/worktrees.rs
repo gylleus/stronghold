@@ -727,7 +727,7 @@ impl WorktreePanel {
 
     /// The demolition dwarf at the bottom of the window while worktrees are removed, when
     /// the farm (where it breaks their heaps) is not on screen.
-    pub fn hammer(&mut self, ctx: &egui::Context) {
+    pub fn hammer(&mut self, ctx: &egui::Context, art: &super::farm::art::ArtSettings) {
         let progress = self.progress();
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
@@ -746,16 +746,17 @@ impl WorktreePanel {
         let Some(frame) = &self.demolisher.frame else {
             return;
         };
-        hammer::paint(&painter, frame, |rect, (angle, pivot), alpha| {
-            let mut mesh = egui::Mesh::with_texture(self.hammer.id());
-            mesh.add_rect_with_uv(
-                rect,
-                egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                Color32::WHITE.gamma_multiply(alpha),
-            );
-            mesh.rotate(egui::emath::Rot2::from_angle(angle), pivot);
-            painter.add(mesh);
-        });
+        self.demolisher
+            .paint(&painter, art, |rect, (angle, pivot), alpha| {
+                let mut mesh = egui::Mesh::with_texture(self.hammer.id());
+                mesh.add_rect_with_uv(
+                    rect,
+                    egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    Color32::WHITE.gamma_multiply(alpha),
+                );
+                mesh.rotate(egui::emath::Rot2::from_angle(angle), pivot);
+                painter.add(mesh);
+            });
         if !reduced && let Some(life) = frame.phase.and_then(hammer::impact_life) {
             draw_chips(&painter, frame.target.impact, life);
         }

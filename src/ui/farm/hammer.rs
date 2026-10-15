@@ -103,6 +103,8 @@ pub const CONTACT: f32 = 0.44;
 pub const IMPACT_SPAN: f32 = 0.34;
 const TRAVEL_S: f64 = 0.24;
 const LEAVE_S: f64 = 0.28;
+const DWARF_HEIGHT: f32 = 22.0;
+const SLEDGE_SCALE: f32 = 0.6;
 
 pub fn phase(now_s: f64, still: bool) -> f32 {
     if still {
@@ -135,6 +137,7 @@ pub struct Demolisher {
     foot: Pos2,
     leaving: bool,
     pub frame: Option<Frame>,
+    art: std::cell::RefCell<super::art::DwarfArt>,
 }
 
 #[derive(Clone)]
@@ -148,8 +151,8 @@ pub struct Frame {
 }
 
 fn stance(target: &Target) -> (Pos2, f32) {
-    let k = 42.0 * target.px / 100.0;
-    let reach = 17.5 * k + 30.0 * target.px * 0.9;
+    let k = DWARF_HEIGHT * target.px / 100.0;
+    let reach = 17.5 * k + 30.0 * target.px * SLEDGE_SCALE;
     let arm = ((target.impact.y - target.ground + 43.0 * k) / reach)
         .clamp(-0.9, 0.9)
         .acos();
@@ -214,7 +217,7 @@ impl Demolisher {
         };
         self.frame = Some(Frame {
             foot: self.foot,
-            height: 42.0 * target.px,
+            height: DWARF_HEIGHT * target.px,
             pose,
             phase,
             alpha: if self.leaving {
@@ -227,48 +230,139 @@ impl Demolisher {
     }
 }
 
-/// The sledge stays attached to the fist, with both hands painted over its handle.
-pub fn paint(
-    painter: &eframe::egui::Painter,
-    frame: &Frame,
-    prop: impl FnOnce(Rect, (f32, Pos2), f32),
-) {
-    use crate::ui::dwarf::{self, Beard, Garment, Hat, Look, Tool};
-    let look = Look {
-        girth: 1.35,
-        beard: Beard::Bushy,
-        hat: Hat::Bandana,
-        garment: Garment::Apron,
-        tool: Tool::None,
-        ..Look::from_seed(47)
-    };
-    let (grip, hands) = dwarf::held_prop(frame.foot, frame.height, &look, &frame.pose);
-    let mut painter = painter.clone();
-    painter.multiply_opacity(frame.alpha);
-    painter.extend(
-        dwarf::draw(
+impl Demolisher {
+    /// The sledge stays attached to the fist, between the pixel body and hands.
+    pub fn paint(
+        &self,
+        painter: &eframe::egui::Painter,
+        art: &super::art::ArtSettings,
+        prop: impl FnOnce(Rect, (f32, Pos2), f32),
+    ) {
+        use super::art::{DwarfLayer, PosedFigure};
+        use crate::ui::dwarf::{self, Beard, Garment, Hat, Look, Tool};
+        let Some(frame) = &self.frame else { return };
+        let look = Look {
+            girth: 1.2,
+            beard: Beard::Bushy,
+            hat: Hat::Bandana,
+            garment: Garment::Apron,
+            tool: Tool::None,
+            ..Look::from_seed(47)
+        };
+        let figure = PosedFigure {
+            key: "demolition/body",
+            look: &look,
+            pose: &frame.pose,
+            foot: frame.foot,
+            height: frame.height,
+            facing_right: true,
+            alpha: frame.alpha,
+            layer: DwarfLayer::Body,
+        };
+        let mut renderer = self.art.borrow_mut();
+        renderer.begin_frame();
+        renderer.paint_posed(painter, art, &figure, frame.target.px);
+        let (grip, _) = dwarf::held_prop(
             frame.foot,
             frame.height,
             &look,
             &frame.pose,
-            true,
             &dwarf::cutout::Finish::INK,
-        )
-        .shapes,
-    );
-    let scale = frame.target.px * 0.9;
-    let size = vec2(26.0, 40.0) * scale;
-    let pivot = grip.origin;
-    let angle = grip.x.y.atan2(grip.x.x);
-    let rect = Rect::from_min_size(pivot - vec2(size.x / 2.0, size.y - 4.0 * scale), size);
-    prop(rect, (angle, pivot), frame.alpha);
-    painter.extend(hands);
+        );
+        let scale = frame.target.px * SLEDGE_SCALE;
+        let size = vec2(26.0, 40.0) * scale;
+        let pivot = grip.origin;
+        let angle = grip.x.y.atan2(grip.x.x);
+        let rect = Rect::from_min_size(pivot - vec2(size.x / 2.0, size.y - 4.0 * scale), size);
+        prop(rect, (angle, pivot), frame.alpha);
+        renderer.paint_posed(
+            painter,
+            art,
+            &PosedFigure {
+                key: "demolition/hands",
+                layer: DwarfLayer::Hands,
+                ..figure
+            },
+            frame.target.px,
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use eframe::egui::pos2;
+
+    #[test]
+    fn demolition_body_and_hands_are_pixel_textures_at_hold_scale() {
+        let ctx = eframe::egui::Context::default();
+        let mut worker = Demolisher::default();
+        worker.update(
+            Some(Target {
+                id: "rock".into(),
+                impact: pos2(150.0, 100.0),
+                ground: 110.0,
+                px: 2.0,
+            }),
+            0.0,
+            true,
+            false,
+        );
+        let frame = worker.frame.as_ref().unwrap();
+        use super::super::art::{ArtSettings, Pixels};
+        let mut previous = std::collections::HashMap::new();
+        for (art, width) in [
+            (ArtSettings::default(), 33),
+            (
+                ArtSettings {
+                    outline: Outline::Bold,
+                    ..Default::default()
+                },
+                33,
+            ),
+            (
+                ArtSettings {
+                    palette: "apollo".into(),
+                    ..Default::default()
+                },
+                33,
+            ),
+            (
+                ArtSettings {
+                    pixels: Pixels::Height(32),
+                    ..Default::default()
+                },
+                48,
+            ),
+        ] {
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                worker.paint(ui.painter(), &art, |_, _, _| {});
+            });
+            let textures: Vec<_> = std::mem::take(&mut output.textures_delta.set)
+                .into_iter()
+                .filter(|(id, _)| *id != eframe::egui::TextureId::default())
+                .flat_map(|(id, deltas)| deltas.into_iter().map(move |delta| (id, delta)))
+                .collect();
+            output.textures_delta.clear();
+            assert_eq!(
+                textures.len(),
+                2,
+                "body and hands must both refresh for {art:?}"
+            );
+            for (id, delta) in &textures {
+                assert_eq!(delta.options, eframe::egui::TextureOptions::NEAREST);
+                let eframe::egui::ImageData::Color(image) = &delta.image;
+                assert_eq!(image.size[0], width);
+                assert!(image.pixels.iter().all(|p| p.a() == 0 || p.a() == 255));
+                assert!(image.pixels.iter().any(|p| p.a() == 255));
+                if let Some(before) = previous.insert(*id, image.clone()) {
+                    assert_ne!(image, &before, "settings must change the actual pixels");
+                }
+            }
+        }
+        assert!(frame.height / frame.target.px <= 24.0);
+    }
+
     #[test]
     fn sprite_is_hard_alpha_and_outline_changes_it() {
         let fine = render([26, 40], Outline::Fine);
@@ -289,8 +383,14 @@ mod tests {
                 let (foot, arm) = stance(&target);
                 let pose = crate::ui::dwarf::demolition(CONTACT, arm);
                 let look = crate::ui::dwarf::Look::from_seed(47);
-                let (grip, _) = crate::ui::dwarf::held_prop(foot, 42.0 * px, &look, &pose);
-                let tip = grip.origin + grip.y.normalized() * (-30.0 * px * 0.9);
+                let (grip, _) = crate::ui::dwarf::held_prop(
+                    foot,
+                    DWARF_HEIGHT * px,
+                    &look,
+                    &pose,
+                    &crate::ui::dwarf::cutout::Finish::INK,
+                );
+                let tip = grip.origin + grip.y.normalized() * (-30.0 * px * SLEDGE_SCALE);
                 assert!(tip.distance(target.impact) < 0.001);
                 assert_eq!(foot.y, target.ground);
             }
