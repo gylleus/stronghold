@@ -114,6 +114,7 @@ impl StrongholdApp {
         let mut forced = req.forced.clone();
         forced.extend(problems);
         let record = FinishedSession {
+            kind: Some(node.kind),
             node_id: node.id.to_string(),
             handle: node.terminal_handle.clone(),
             label: node.label.clone(),

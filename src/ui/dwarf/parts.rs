@@ -339,6 +339,16 @@ pub(super) fn back_arm(look: &Look) -> Piece {
     p
 }
 
+pub(super) fn writing_book() -> Piece {
+    let mut p = Piece::default();
+    tool(&mut p, Tool::Book, false);
+    let grip = Xf::translate(pos2(-10.0, -25.5) - HAND).then(Xf::rotate_about(HAND, 1.1));
+    for poly in &mut p.polys {
+        poly.points = place(std::mem::take(&mut poly.points), grip);
+    }
+    p
+}
+
 /// The far hand grips the same large prop as the front hand.
 pub(super) fn support_arm(look: &Look, hand: Pos2) -> Piece {
     let mut p = Piece::default();
@@ -356,7 +366,22 @@ pub(super) fn arm(look: &Look, pose: &Pose) -> Piece {
     // The tool goes under the fist, so it is cut first.
     if !pose.nugget && !pose.stowed && look.role != Role::RunePriest {
         let start = p.polys.len();
-        tool(&mut p, look.tool, look.role == Role::Apprentice);
+        if pose.writing && look.role == Role::Librarian {
+            let tip = HAND + vec2(-4.0, 7.0);
+            let top = HAND + vec2(8.0, -24.0);
+            p.cut(capsule(tip, top, 1.0), INK);
+            p.cut(
+                vec![
+                    top + vec2(-4.0, 1.0),
+                    top + vec2(2.0, -8.0),
+                    top + vec2(6.0, -2.0),
+                    HAND + vec2(2.0, -4.0),
+                ],
+                PARCHMENT,
+            );
+        } else {
+            tool(&mut p, look.tool, look.role == Role::Apprentice);
+        }
         let grip = Xf::rotate_about(HAND, -pose.grip);
         for poly in &mut p.polys[start..] {
             poly.points = place(std::mem::take(&mut poly.points), grip);

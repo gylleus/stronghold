@@ -8,7 +8,8 @@
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
 //! terminals in the resting area; `--dwarves N` keeps only the first N agents.
 //! `--workspace-counts 1,3,9` previews uneven workspace groups; `--size 600x800` resizes the view.
-//! `--lorekeeper` adds the librarian reading in a terminal chamber.
+//! `--lorekeeper` adds the librarian; `--lorekeeper-activity reading|writing|idle`
+//! selects its activity.
 //! `--taskmasters` shows coordinators in every state, plus a parked coordinator and attendant.
 //! The surface carries a heap per worktree: the
 //! agents' own and a few with nobody in them, or `--heaps N` of them; `--hammer` runs the worktree
@@ -94,6 +95,7 @@ fn main() -> eframe::Result {
             _ => panic!("--outline fine, regular or bold"),
         },
     };
+    let librarian_activity = value("--lorekeeper-activity");
     let dwarves = args
         .iter()
         .position(|a| a == "--dwarves")
@@ -136,6 +138,23 @@ fn main() -> eframe::Result {
                     "stronghold",
                 );
                 librarian.agent = Some(AgentIdentity::Claude);
+                if librarian_activity.as_deref() == Some("idle") {
+                    librarian.state = NodeState::Idle;
+                }
+                use stronghold::traffic::ledger::lorekeeper::{Activity, RecentActivity};
+                let activity = match librarian_activity.as_deref() {
+                    None | Some("reading") => Some(Activity::Reading),
+                    Some("writing") => Some(Activity::Writing),
+                    Some("idle") => None,
+                    _ => panic!("--lorekeeper-activity reading|writing|idle"),
+                };
+                snapshot.lorekeeper_activity = activity.map(|activity| RecentActivity {
+                    activity,
+                    at_ms: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as i64,
+                });
                 snapshot.nodes.push(librarian);
             }
             if args.iter().any(|a| a == "--taskmasters") {

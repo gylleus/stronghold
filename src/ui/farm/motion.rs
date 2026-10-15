@@ -36,6 +36,7 @@ pub fn route(from: Pos2, to: Pos2, from_spot: &Spot, to_spot: &Spot, scene: &Sce
                 Spot::Landing(_) => scene.entrance_x(),
                 Spot::King => scene.throne_hall.center().x,
                 Spot::Storage(_) => scene.storage.center().x,
+                Spot::Ledger => scene.ledger.map_or(at.x, |r| r.center().x),
                 Spot::Comms => scene.comms.map_or(at.x, |r| r.shaft.center().x),
                 Spot::Mouth(..) | Spot::Chamber(..) | Spot::Trail(..) => at.x,
             }

@@ -45,6 +45,8 @@ pub struct ClaudeData {
     pub turns: BTreeMap<String, Turn>,
     /// Wall-clock time of the scan, in ms since the Unix epoch.
     pub at_ms: i64,
+    /// Recent tool activity and the terminal it belongs to.
+    pub lorekeeper_activity: Option<(String, crate::traffic::ledger::lorekeeper::RecentActivity)>,
 }
 
 impl ClaudeData {
@@ -94,6 +96,7 @@ enum Command {
     Terminals(Vec<Terminal>),
     WatchTranscript(Option<PathBuf>),
     WatchForwards(BTreeSet<String>),
+    WatchLorekeeper(Option<(String, crate::lorekeeper::Mode)>),
     Shutdown,
 }
 
@@ -156,6 +159,10 @@ impl ClaudeWorker {
         let _ = self.commands.send(Command::WatchForwards(handles));
     }
 
+    pub fn watch_lorekeeper(&self, target: Option<(String, crate::lorekeeper::Mode)>) {
+        let _ = self.commands.send(Command::WatchLorekeeper(target));
+    }
+
     /// The newest pending scan, discarding older ones.
     pub fn latest(&self) -> Option<ClaudeData> {
         self.data.try_iter().last()
@@ -213,6 +220,7 @@ pub fn collect(
         codex: BTreeMap::new(),
         forwards: BTreeMap::new(),
         at_ms: now_ms,
+        lorekeeper_activity: None,
     }
 }
 
@@ -284,6 +292,7 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
                 data.forwards = forwards.refresh(&forward_transcripts(&data, &forward_handles));
                 let mut sends = send_watch.refresh(&sender_transcripts(&data), now_ms);
                 sends.extend(ledger_watch.refresh(&ledger_transcripts(&data), now_ms));
+                data.lorekeeper_activity = ledger_watch.lorekeeper_activity(now_ms);
                 (data, sends)
             }));
             match result {
@@ -355,6 +364,7 @@ fn run_loop(config: ClaudeWorkerConfig, outputs: &Outputs, commands: &Receiver<C
                         next_refresh = Instant::now();
                     }
                 }
+                Command::WatchLorekeeper(target) => ledger_watch.watch_lorekeeper(target),
                 Command::Shutdown => return,
             }
         }

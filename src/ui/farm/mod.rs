@@ -371,6 +371,14 @@ impl FrameShape {
         scene.storage = self.storage;
         scene.comms = self.comms;
         scene.ledger = self.ledger;
+        if let Some((pos, size)) = ledger::librarian(scene) {
+            for dwarf in &mut scene.dwarves {
+                if dwarf.spot == Spot::Ledger {
+                    dwarf.pos = pos;
+                    dwarf.size = size;
+                }
+            }
+        }
     }
 }
 
@@ -1065,7 +1073,11 @@ impl FarmView {
                     walk: None,
                     body: None,
                 });
-            if born {
+            if dwarf.spot == Spot::Ledger {
+                track.spot = dwarf.spot.clone();
+                track.at = motion::to_unit(dwarf.pos, scene.rect);
+                track.walk = None;
+            } else if born {
                 let from = scene.throne_hall.center() + vec2(0.0, 0.3 * scene.cell());
                 let path = route(from, dwarf.pos, &Spot::King, &dwarf.spot, scene);
                 track.walk = Some(Walk::new(&path, scene.rect, now_s));
@@ -1079,7 +1091,7 @@ impl FarmView {
                 let path = route(from, dwarf.pos, &track.spot, &dwarf.spot, scene);
                 track.walk = Some(Walk::new(&path, scene.rect, now_s));
                 track.spot = dwarf.spot.clone();
-            } else if steady && track.walk.is_none() {
+            } else if steady && track.walk.is_none() && dwarf.spot != Spot::Ledger {
                 let from = motion::from_unit(track.at, scene.rect);
                 if (from - dwarf.pos).length() > 0.5
                     && !*still.get_or_insert_with(|| {
@@ -1579,12 +1591,21 @@ fn dwarf_action(dwarf: &layout::Dwarf, walking: bool, carrying: bool, king_busy:
             Action::Still
         };
     }
+    if dwarf.spot == Spot::Ledger {
+        return match dwarf.pose {
+            Pose::Read => Action::Read,
+            Pose::Write => Action::Write,
+            _ => Action::Still,
+        };
+    }
     match dwarf.pose {
         _ if walking && carrying => Action::Carry,
         _ if walking => Action::Walk,
         _ if carrying => Action::Hold,
         _ if dwarf.state == NodeState::Stalled => Action::Wait,
-        Pose::Stand if dwarf.kind == crate::model::NodeKind::Lorekeeper => Action::Read,
+        Pose::Read => Action::Read,
+        Pose::Write => Action::Write,
+        Pose::Stand if dwarf.kind == crate::model::NodeKind::Lorekeeper => Action::Still,
         Pose::Dig => Action::Mine,
         Pose::Build => Action::Build,
         Pose::Wait => Action::Wait,

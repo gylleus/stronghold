@@ -874,6 +874,7 @@ fn live_coordinators() {
 
 fn finished(node_id: &str, at_ms: i64) -> crate::finish::FinishedSession {
     crate::finish::FinishedSession {
+        kind: None,
         node_id: node_id.into(),
         handle: node_id.strip_prefix("term:").map(str::to_string),
         label: "dwarf".into(),

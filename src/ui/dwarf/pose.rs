@@ -14,6 +14,8 @@ pub enum Action {
     Study,
     /// Reading a book held at chest height.
     Read,
+    /// Writing with a quill, the book supported in the other hand.
+    Write,
     /// Hands raised over a scrying basin; only active work pulses the runes.
     Scry,
     /// Staff thrust up in his fist, the other arm flung back, the crystal blazing and runes
@@ -39,11 +41,12 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 15] = [
+    pub const ALL: [Action; 16] = [
         Action::Still,
         Action::Wait,
         Action::Study,
         Action::Read,
+        Action::Write,
         Action::Scry,
         Action::Cast,
         Action::Mine,
@@ -62,6 +65,8 @@ impl Action {
         matches!(
             self,
             Action::Study
+                | Action::Read
+                | Action::Write
                 | Action::Scry
                 | Action::Cast
                 | Action::Mine
@@ -87,6 +92,8 @@ pub enum Eyes {
 pub struct Pose {
     /// Front arm, radians forward from hanging straight down.
     pub arm: f32,
+    /// Quill in the front hand, book in the supporting hand.
+    pub writing: bool,
     /// Back arm, radians forward.
     pub back_arm: f32,
     /// The tool turned in the fist, radians forward from lying along the arm.
@@ -143,9 +150,17 @@ pub fn pose(action: Action, t: f64) -> Pose {
     match action {
         Action::Still => rest,
         Action::Read => Pose {
-            arm: 1.2,
+            arm: 1.2 + 0.06 * (t as f32 * 2.0).sin(),
             grip: -1.2,
-            head: 0.16,
+            head: 0.16 + 0.08 * (t as f32 * 1.5).sin(),
+            ..rest
+        },
+        Action::Write => Pose {
+            arm: 1.1 + 0.14 * (t as f32 * 9.0).sin(),
+            back_arm: 1.1,
+            grip: -0.8,
+            head: 0.2,
+            writing: true,
             ..rest
         },
         Action::Wait => Pose {

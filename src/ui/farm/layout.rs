@@ -57,6 +57,8 @@ pub enum TunnelKey {
 /// place while the view resizes does not.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Spot {
+    /// The librarian beside the Ledger lectern.
+    Ledger,
     King,
     Comms,
     /// On the surface waiting for the user, the nth in line.
@@ -74,6 +76,7 @@ pub enum Spot {
 /// The area a spot is in; dwarves walk along the gallery between areas and straight within one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Area {
+    Ledger,
     King,
     Comms,
     Landing,
@@ -85,6 +88,7 @@ pub enum Area {
 impl Spot {
     pub fn area(&self) -> Area {
         match self {
+            Spot::Ledger => Area::Ledger,
             Spot::King => Area::King,
             Spot::Comms => Area::Comms,
             Spot::Landing(_) => Area::Landing,
@@ -98,6 +102,10 @@ impl Spot {
 /// What a dwarf is doing, which picks its animation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pose {
+    /// Recent librarian lookup or read.
+    Read,
+    /// Recent librarian edit or live report.
+    Write,
     /// Standing at its post (a coordinator at work).
     Stand,
     /// Digging at the chamber's face (working: reading, searching, thinking).
@@ -612,6 +620,58 @@ pub fn layout(input: &FarmInput, rect: Rect) -> Scene {
 /// Lays the farm out in `rect`, keeping the rooms where `plan` has them and bringing it up
 /// to the clan (see [`super::rooms`]).
 pub fn layout_in(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
+    let librarians: Vec<&Node> = input
+        .snapshot
+        .nodes
+        .iter()
+        .filter(|n| {
+            n.kind == NodeKind::Lorekeeper && !input.hidden.contains(&n.id) && !is_history(n)
+        })
+        .collect();
+    if librarians.is_empty() {
+        return layout_rooms(input, rect, plan);
+    }
+    // The librarian must not consume a tunnel slot or change any other room's demand.
+    let mut hidden = input.hidden.clone();
+    hidden.extend(librarians.iter().map(|n| n.id.clone()));
+    let mut library_plan = plan.clone();
+    let mut scene = layout_rooms(
+        &FarmInput {
+            hidden: &hidden,
+            ..*input
+        },
+        rect,
+        &mut library_plan,
+    );
+    let Some((pos, size)) = super::ledger::librarian(&scene) else {
+        return layout_rooms(input, rect, plan);
+    };
+    *plan = library_plan;
+    for node in librarians {
+        let mut placed = dwarf(
+            node,
+            Spot::Ledger,
+            pos,
+            size,
+            Home::Chamber,
+            false,
+            input.now_ms,
+        );
+        placed.pose = super::ledger::librarian_pose(
+            node.state,
+            input.snapshot.lorekeeper_activity,
+            input.now_ms,
+        );
+        placed.facing_right = false;
+        if placed.mark == Some(Mark::Sleep) {
+            placed.mark = None;
+        }
+        scene.dwarves.push(placed);
+    }
+    scene
+}
+
+fn layout_rooms(input: &FarmInput, rect: Rect, plan: &mut RoomPlan) -> Scene {
     let snapshot = input.snapshot;
     let present: Vec<&Node> = snapshot
         .nodes

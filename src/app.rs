@@ -1085,6 +1085,15 @@ impl eframe::App for StrongholdApp {
                 data.workers.len(),
                 data.errors.len()
             );
+            self.lorekeeper.session.poll();
+            self.lorekeeper.session.reload();
+            self.claude.watch_lorekeeper(
+                self.lorekeeper
+                    .session
+                    .observed_handle(&data.terminals)
+                    .zip(self.lorekeeper.session.saved.as_ref())
+                    .map(|(handle, saved)| (handle.to_owned(), saved.mode)),
+            );
             self.claude.send_terminals(data.terminals.clone());
             self.claude.watch_forwards(data.declared_coordinators());
             let mut data = data;
@@ -1159,7 +1168,14 @@ impl eframe::App for StrongholdApp {
                 now,
             );
             snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_status());
-            snapshot.mark_lorekeeper(self.lorekeeper.session.handle());
+            let librarian = self.lorekeeper.session.observed_handle(&data.terminals);
+            snapshot.mark_lorekeeper(librarian);
+            snapshot.lorekeeper_activity = self
+                .claude_data
+                .as_ref()
+                .and_then(|c| c.lorekeeper_activity.as_ref())
+                .filter(|(handle, _)| Some(handle.as_str()) == librarian)
+                .map(|(_, activity)| *activity);
             self.asks.prune(data, self.claude_data.as_ref());
             snapshot.mark_waiting(&self.asks.waiting(data, self.claude_data.as_ref()));
             self.finished.prune(now, crate::model::RELEASED_FADE_MS);
