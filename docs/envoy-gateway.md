@@ -188,3 +188,21 @@ return `note`.
 `cargo test` uses fake Slack senders, temporary bridge/data directories and fake terminal
 actions. `cargo run --example envoy_panel -- --gateway --shot /tmp/envoy-gateway.png`
 renders a synthetic native panel (add `--binding` to show a recipient proposal) without starting any app services or live Envoy session.
+
+## Draft feedback round trip
+
+Every pending draft has a private instruction/answer box. Submitting saves `feedback`,
+increments `revision`, cancels any automatic send, and holds approval until the Envoy revises.
+The app waits for an idle Envoy with an empty composer and types a JSON-escaped
+`Envoy draft feedback` notification. Pending feedback survives restart; idle notifications
+retry after a minute until consumed. No Slack post is involved.
+
+The Envoy reads `envoy_drafts`, then calls `envoy_revise` with `id`, the current `revision`,
+`text`, `rationale`, and optionally `question`. It updates the same pending draft, archives
+the previous text/rationale/question/feedback in `history`, and requires fresh manual approval.
+Stale revisions and changes to handled drafts are refused. Questions can also be set on
+`envoy_draft`; they prevent automatic sending and appear beside the feedback box.
+Previous versions remain available in a collapsed history, including after approval/decline.
+
+The Envoy role rules live in `playbook/ENVOY-PLAYBOOK.md`; restart the Envoy after installing
+a build with new tools so its restricted tool list and cached system prompt are refreshed.

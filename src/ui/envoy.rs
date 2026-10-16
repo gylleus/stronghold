@@ -15,6 +15,11 @@ pub enum DraftAction {
         id: String,
         text: String,
     },
+    Feedback {
+        id: String,
+        revision: u64,
+        text: String,
+    },
     Reject(String),
     DismissEvent(String),
     DismissRequest(String),
@@ -57,6 +62,8 @@ enum Tab {
 #[derive(Default)]
 pub struct DraftsPanel {
     edits: HashMap<String, String>,
+    revisions: HashMap<String, u64>,
+    feedback: HashMap<String, String>,
     errors: HashMap<String, String>,
     last_action_at: Option<f64>,
     tab: Option<Tab>,
@@ -131,6 +138,11 @@ impl DraftsPanel {
         self.edits.insert(id.into(), text.into());
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_feedback(&mut self, id: &str, text: &str) {
+        self.feedback.insert(id.into(), text.into());
+    }
+
     pub fn open(&mut self, drafts: &[Draft]) {
         self.tab = Some(
             if self
@@ -155,6 +167,7 @@ impl DraftsPanel {
             Ok(()) => {
                 self.errors.remove(id);
                 self.edits.remove(id);
+                self.feedback.remove(id);
             }
             Err(error) => {
                 if self.recorded_task.as_deref() == Some(id) {
@@ -463,13 +476,20 @@ impl DraftsPanel {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
+        if self
+            .revisions
+            .insert(draft.id.clone(), draft.revision)
+            .is_some_and(|r| r != draft.revision)
+        {
+            self.edits.remove(&draft.id);
+        }
         let text = self
             .edits
             .entry(draft.id.clone())
             .or_insert_with(|| draft.text.clone());
         let edit = |ui: &mut Ui, text: &mut String| {
             ui.add_enabled(
-                !draft.request.as_ref().is_some_and(|r| r.agent),
+                draft.feedback.is_none() && !draft.request.as_ref().is_some_and(|r| r.agent),
                 egui::TextEdit::multiline(text)
                     .desired_width(f32::INFINITY)
                     .desired_rows(4),
@@ -516,7 +536,10 @@ impl DraftsPanel {
             };
             // Keyboard activation must never authorize an outbound message.
             let response = ui
-                .add_enabled(ready, egui::Button::new(approve))
+                .add_enabled(
+                    ready && draft.feedback.is_none(),
+                    egui::Button::new(approve),
+                )
                 .on_hover_text(if draft.kind == DraftKind::TaskProposal {
                     "Ask the King to start a dwarf for this task"
                 } else {
@@ -561,6 +584,41 @@ impl DraftsPanel {
                 action = Some(DraftAction::DeleteDraft(draft.id.clone()));
             }
         });
+        if let Some(question) = &draft.question {
+            ui.strong("The Envoy asks");
+            ui.label(question);
+        }
+        if let Some(feedback) = &draft.feedback {
+            ui.strong("Waiting for the Envoy to revise");
+            ui.label(format!("Your instruction: {feedback}"));
+            ui.small("Saved; delivered when the Envoy is running and ready.");
+        } else {
+            let feedback = self.feedback.entry(draft.id.clone()).or_default();
+            let response = ui.add(
+                egui::TextEdit::multiline(feedback)
+                    .id_salt(("feedback", &draft.id))
+                    .hint_text("Give an instruction or answer the Envoy’s question…")
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(2),
+            );
+            if response.changed() && draft.auto_at_ms.is_some() {
+                action = Some(DraftAction::Pause(draft.id.clone()));
+            }
+            if ui
+                .add_enabled(
+                    ready && !feedback.trim().is_empty(),
+                    egui::Button::new("Send feedback"),
+                )
+                .clicked()
+            {
+                action = Some(DraftAction::Feedback {
+                    id: draft.id.clone(),
+                    revision: draft.revision,
+                    text: feedback.clone(),
+                });
+            }
+        }
+        revision_history(ui, draft);
         action
     }
 }
@@ -628,6 +686,28 @@ fn request_actions(
     action
 }
 
+fn revision_history(ui: &mut Ui, draft: &Draft) {
+    if !draft.history.is_empty() {
+        ui.collapsing(
+            format!("Previous versions ({})", draft.history.len()),
+            |ui| {
+                for (i, previous) in draft.history.iter().enumerate().rev() {
+                    ui.strong(format!("Version {}", i + 1));
+                    ui.label(&previous.text);
+                    ui.label(format!("Why: {}", previous.rationale));
+                    if let Some(question) = &previous.question {
+                        ui.label(format!("The Envoy asked: {question}"));
+                    }
+                    if let Some(feedback) = &previous.feedback {
+                        ui.label(format!("Your instruction: {feedback}"));
+                    }
+                    ui.separator();
+                }
+            },
+        );
+    }
+}
+
 fn decided_card(ui: &mut Ui, draft: &Draft, inbox: &Inbox) {
     ui.strong(format!("{} · {}", status_label(draft.status), draft.id));
     if let Some(link) = &draft.request {
@@ -637,6 +717,10 @@ fn decided_card(ui: &mut Ui, draft: &Draft, inbox: &Inbox) {
     approval(ui, draft);
     destination(ui, draft, inbox);
     ui.label(&draft.text);
+    revision_history(ui, draft);
+    if let Some(feedback) = &draft.feedback {
+        ui.label(format!("Your instruction: {feedback}"));
+    }
     if draft.kind == DraftKind::TaskProposal && draft.status == DraftStatus::DryRunSent {
         ui.label("Task recorded in dry run; not sent to the King.");
     }
@@ -1178,6 +1262,63 @@ mod tests {
         fn visible(&mut self, label: &str) -> bool {
             text_center(&self.frame(vec![]).0, label).is_some()
         }
+    }
+
+    #[test]
+    fn typed_feedback_answers_inline_and_new_version_replaces_cached_editor() {
+        let mut draft = reply();
+        draft.question = Some("Should we ask for a link?".into());
+        let mut h = Harness::new(vec![draft]);
+        assert!(h.visible("Should we ask for a link?"));
+        assert_eq!(
+            h.click("Send feedback"),
+            None,
+            "empty instruction is disabled"
+        );
+        h.click("Give an instruction or answer the Envoy’s question…");
+        h.frame(vec![egui::Event::Text("Ask them for a link".into())]);
+        let action = h.click("Send feedback");
+        assert_eq!(
+            action,
+            Some(DraftAction::Feedback {
+                id: h.drafts[0].id.clone(),
+                revision: 0,
+                text: "Ask them for a link".into()
+            })
+        );
+        let original = h.drafts[0].text.clone();
+        h.drafts[0].feedback = Some("Ask them for a link".into());
+        h.drafts[0].revision = 1;
+        assert!(h.visible("Waiting for the Envoy to revise"));
+        assert_eq!(h.click("Send"), None);
+        let question = h.drafts[0].question.clone();
+        let feedback = h.drafts[0].feedback.clone();
+        h.drafts[0]
+            .history
+            .push(crate::envoy::drafts::DraftRevision {
+                text: original.clone(),
+                rationale: "why".into(),
+                question,
+                feedback,
+                revised_ms: 2,
+            });
+        h.drafts[0].feedback = None;
+        h.drafts[0].question = None;
+        h.drafts[0].text = "Could you send a link?".into();
+        h.drafts[0].revision = 2;
+        assert!(h.visible("Could you send a link?"));
+        assert!(!h.visible("Should we ask for a link?"));
+        assert!(!h.visible(&original));
+        h.click("Previous versions (1)");
+        assert!(h.visible(&original));
+        assert!(h.visible("Your instruction: Ask them for a link"));
+        assert_eq!(
+            h.click("Send"),
+            Some(DraftAction::Approve {
+                id: h.drafts[0].id.clone(),
+                text: "Could you send a link?".into()
+            })
+        );
     }
 
     #[test]

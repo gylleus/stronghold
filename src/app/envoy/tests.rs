@@ -1996,3 +1996,155 @@ fn rework_legacy_backlog_folds_chatter_but_preserves_protected_events() {
     assert!(text.contains(&format!("— id {}", mention.id())));
     assert!(text.contains(&format!("— id {}", group.id())));
 }
+
+#[test]
+fn feedback_round_trip_panel_terminal_mcp_revision_and_fresh_approval() {
+    use crate::review::mark::Origin;
+    use crate::ui::envoy::{DraftAction, DraftsPanel};
+    use crate::ui::test_util::click_label;
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let event = match crate::envoy::slack::parse_bridge_line(
+        include_bytes!("../../../tests/fixtures/envoy/channel.jsonl")
+            .split(|b| *b == b'\n')
+            .next()
+            .unwrap(),
+    )
+    .unwrap()
+    {
+        crate::envoy::slack::BridgeLine::Event(e) => e,
+        _ => panic!("fixture event"),
+    };
+    core.inbox.insert(event.clone());
+    core.settings.policies = vec![crate::envoy::settings::Policy {
+        destination: event.conversation.clone(),
+        mode: crate::envoy::settings::ApprovalMode::Auto { veto_secs: 0 },
+    }];
+    fn call(core: &mut AppEnvoy, method: &str, args: Value, handle: &str) -> Value {
+        let mut server = crate::mcp::McpServer::new(CoreControl(core)).with_review_env(
+            crate::mcp::review::ReviewEnv {
+                origin: Origin {
+                    terminal_handle: Some(handle.into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        server.handle(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":method,"arguments":args}})).unwrap()["result"].clone()
+    }
+    let created = call(
+        &mut core,
+        "envoy_draft",
+        json!({
+            "in_reply_to":{"conversation":event.conversation,"ts":event.ts},
+            "text":"I suggest the checked build.", "rationale":"Needs a decision",
+            "question":"Should we ask for a link first?"
+        }),
+        "envoy",
+    );
+    assert_ne!(created["isError"], true, "{created}");
+    let id = core.drafts()[0].id.clone();
+    core.auto_approve(i64::MAX).unwrap();
+    assert_eq!(core.drafts()[0].status, DraftStatus::Pending);
+    assert!(core.drafts()[0].auto_at_ms.is_none());
+    let mut panel = DraftsPanel::default();
+    panel.set_feedback(&id, "Ask them for a link\nand don't mention the build.");
+    let action = click_label("Send feedback", |ui| {
+        panel.show(ui, core.drafts(), core.inbox(), true, None)
+    })
+    .unwrap();
+    assert!(matches!(action, DraftAction::Feedback { .. }));
+    let (_, result) = core.panel_action(action, false, |_| panic!("must not reach King"));
+    result.unwrap();
+    panel.result(&id, Ok(()));
+    assert!(core.envoy_approve(&id, None, false, |_| true).is_err());
+    assert!(core.queue().unwrap().edit(&id, "stale edit", 2).is_err());
+    // A restart between feedback submission and delivery must retain the work.
+    core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let (action, draft, revision) = core.next_feedback(100).unwrap();
+    let Action::Send { handle, input } = &action else {
+        panic!("terminal action")
+    };
+    assert_eq!(handle, "envoy");
+    let line = input.text.as_ref().unwrap();
+    assert!(line.contains("envoy_revise"));
+    assert!(line.contains("Ask them for a link\\nand"));
+    assert!(!line.contains('\n'));
+    assert!(input.enter);
+    core.feedback_forwarding = Some((900, draft, revision));
+    assert!(core.next_feedback(100).is_none());
+    core.feedback_done(
+        &ActionResult {
+            id: 900,
+            note: None,
+            action: action.clone(),
+            outcome: Err("offline".into()),
+        },
+        100,
+    );
+    assert!(core.next_feedback(101).is_none());
+    let (action, draft, revision) = core.next_feedback(60_100).unwrap();
+    core.feedback_forwarding = Some((901, draft, revision));
+    core.feedback_done(
+        &ActionResult {
+            id: 901,
+            note: None,
+            action,
+            outcome: Ok(()),
+        },
+        60_100,
+    );
+    assert!(core.next_feedback(60_101).is_none());
+    assert!(
+        core.next_feedback(120_100).is_some(),
+        "unconsumed feedback is retried at idle"
+    );
+    let read = call(&mut core, "envoy_drafts", json!({}), "envoy");
+    assert_ne!(read["isError"], true, "{read}");
+    let args = json!({"id":id,"revision":revision,"text":"Could you send us a link?","rationale":"Followed the inline instruction"});
+    assert_eq!(
+        call(&mut core, "envoy_revise", args.clone(), "outsider")["isError"],
+        true
+    );
+    let revised = call(&mut core, "envoy_revise", args.clone(), "envoy");
+    assert_ne!(revised["isError"], true, "{revised}");
+    assert_eq!(
+        call(&mut core, "envoy_revise", args, "envoy")["isError"],
+        true,
+        "stale retries cannot duplicate revisions"
+    );
+    core.auto_approve(i64::MAX).unwrap();
+    let latest = &core.drafts()[0];
+    assert_eq!(latest.status, DraftStatus::Pending);
+    assert_eq!(latest.history[0].text, "I suggest the checked build.");
+    assert_eq!(
+        latest.history[0].feedback.as_deref(),
+        Some("Ask them for a link\nand don't mention the build.")
+    );
+    assert_eq!(
+        latest.history[0].question.as_deref(),
+        Some("Should we ask for a link first?")
+    );
+    assert!(latest.feedback.is_none() && latest.question.is_none());
+    assert!(core.next_feedback(i64::MAX).is_none());
+    let mut panel = DraftsPanel::default();
+    let approve = click_label("Send", |ui| {
+        panel.show(ui, core.drafts(), core.inbox(), true, None)
+    })
+    .unwrap();
+    assert_eq!(
+        approve,
+        DraftAction::Approve {
+            id: id.clone(),
+            text: "Could you send us a link?".into()
+        }
+    );
+    core.panel_action(approve, false, |_| panic!("reply must not reach King"))
+        .1
+        .unwrap();
+    let core = AppEnvoy::load(dir.path().into());
+    assert_eq!(core.drafts()[0].status, DraftStatus::DryRunSent);
+    assert_eq!(core.drafts()[0].history.len(), 1);
+}

@@ -58,9 +58,15 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "envoy_draft",
-            "Queue an answer under {user}'s destination approval policy. Set manual_approval for a recommended decision {user} hasn't made; it cannot auto-send. Rationale stays private.",
-            json!({"in_reply_to":{"type":"object","properties":{"conversation":string,"ts":string},"required":["conversation","ts"]},"thread_ts":string,"text":string,"rationale":string,"manual_approval":{"type":"boolean"}}),
+            "Queue an answer under {user}'s destination approval policy. Set manual_approval for a recommended decision {user} hasn't made; it cannot auto-send. Rationale stays private. Set question to ask {user} inline; questions cannot auto-send.",
+            json!({"in_reply_to":{"type":"object","properties":{"conversation":string,"ts":string},"required":["conversation","ts"]},"thread_ts":string,"text":string,"rationale":string,"manual_approval":{"type":"boolean"},"question":string}),
             vec!["in_reply_to", "text", "rationale"],
+        ),
+        (
+            "envoy_revise",
+            "Revise an existing pending draft after reading its feedback. Pass its current revision. History is retained and the result requires fresh manual approval. Omit question when answered, or set it to ask a follow-up inline. Never create a separate draft for feedback.",
+            json!({"id":string,"revision":{"type":"integer","minimum":0},"text":string,"rationale":string,"question":string}),
+            vec!["id", "revision", "text", "rationale"],
         ),
         (
             "envoy_drafts",

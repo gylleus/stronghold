@@ -12,7 +12,7 @@ use crate::envoy::addressee::{self, Verdict};
 use crate::envoy::channel::{EventKind, InboundEvent};
 use crate::envoy::context::{CLEAR_COMMAND, ContextBudget, ResetReason, handoff_preamble};
 use crate::envoy::control::EnvoyCommand;
-use crate::envoy::drafts::{Draft, DraftKind, DraftQueue, DraftStatus, ReplyTo};
+use crate::envoy::drafts::{Draft, DraftKind, DraftQueue, DraftStatus, DraftUpdate, ReplyTo};
 use crate::envoy::inbox::{Inbox, timestamp_us};
 use crate::envoy::matching::{self, Dwarf};
 use crate::envoy::notes::ThreadNotes;
@@ -26,6 +26,7 @@ use crate::orca::TerminalInput;
 use crate::traffic::{AgentMessage, MessageKind};
 
 mod cleanup;
+mod feedback;
 mod gateway;
 use crate::envoy::requests::{Requester, Requests};
 use gateway::GatewayAction;
@@ -69,6 +70,8 @@ pub struct AppEnvoy {
     pending: VecDeque<InboundEvent>,
     backlog: HashSet<String>,
     forwarding: Option<(ActionId, Vec<InboundEvent>)>,
+    feedback_forwarding: Option<(ActionId, String, u64)>,
+    feedback_retry: HashMap<(String, u64), i64>,
     relay_actions: HashMap<ActionId, AgentMessage>,
     outgoing: HashMap<String, String>,
     traffic_handle: Option<String>,
@@ -191,6 +194,8 @@ impl AppEnvoy {
             relay_path,
             pending: VecDeque::new(),
             forwarding: None,
+            feedback_forwarding: None,
+            feedback_retry: HashMap::new(),
             relay_actions: HashMap::new(),
             outgoing: HashMap::new(),
             traffic_handle: None,
@@ -385,7 +390,7 @@ impl AppEnvoy {
 
     /// Why the context must not be cleared right now, or `None`.
     pub(super) fn in_flight(&self) -> Option<&'static str> {
-        if self.forwarding.is_some() {
+        if self.forwarding.is_some() || self.feedback_forwarding.is_some() {
             Some("batch in flight")
         } else if !self.gateway_actions.is_empty() {
             Some("gateway send in flight")
@@ -668,6 +673,22 @@ impl AppEnvoy {
                     json!({"drafts":self.drafts().iter().filter(|d| status.map_or_else(|| self.cleanup.draft_open(d), |s| s==d.status)).collect::<Vec<_>>()}),
                 )
             }
+            "envoy_revise" => {
+                let revision = args["revision"]
+                    .as_u64()
+                    .ok_or("revision must be an integer")?;
+                let draft = self.queue()?.revise(
+                    required(args, "id")?,
+                    revision,
+                    DraftUpdate {
+                        text: required(args, "text")?,
+                        rationale: required(args, "rationale")?,
+                        question: optional(args, "question")?,
+                    },
+                    now_ms(),
+                )?;
+                Ok(json!({"draft": draft}))
+            }
             "envoy_draft" | "envoy_propose_task" => {
                 let draft = if method == "envoy_draft" {
                     let target: ReplyTo = serde_json::from_value(args["in_reply_to"].clone())
@@ -703,6 +724,8 @@ impl AppEnvoy {
                         now_ms(),
                     )
                 };
+                let mut draft = draft;
+                draft.question = optional(args, "question")?.map(str::to_owned);
                 let draft = self.queue()?.create(draft)?;
                 self.schedule_draft(&draft.id)?;
                 Ok(json!({"draft":self.queue()?.get(&draft.id)}))
@@ -1234,6 +1257,13 @@ impl AppEnvoy {
                 })();
                 (id, result)
             }
+            crate::ui::envoy::DraftAction::Feedback { id, revision, text } => {
+                let result = self
+                    .queue()
+                    .and_then(|q| q.feedback(&id, revision, &text, now_ms()))
+                    .map(|()| false);
+                (id, result)
+            }
             crate::ui::envoy::DraftAction::Approve { id, text } => {
                 let result = self
                     .envoy_edit(&id, &text)
@@ -1444,7 +1474,7 @@ impl StrongholdApp {
         if let Ok(value) = &result
             && matches!(
                 command.method.as_str(),
-                "envoy_draft" | "envoy_propose_task"
+                "envoy_draft" | "envoy_propose_task" | "envoy_revise"
             )
         {
             self.raise(cleanup::draft_notice(&value["draft"]));
@@ -1555,11 +1585,18 @@ impl StrongholdApp {
             Some(_) if !self.envoy_core.gateway_actions.is_empty() => {
                 Some("gateway send in flight")
             }
-            Some(_) if self.envoy_core.forwarding.is_some() => Some("batch in flight"),
+            Some(_)
+                if self.envoy_core.forwarding.is_some()
+                    || self.envoy_core.feedback_forwarding.is_some() =>
+            {
+                Some("batch in flight")
+            }
             Some(_) if self.envoy_core.resetting.is_some() => Some("context reset in flight"),
             Some(handle) => self.target_blocked(handle),
         };
-        if self.envoy_core.pending.is_empty() || blocked.is_some() {
+        if (self.envoy_core.pending.is_empty() && !self.envoy_core.feedback_due(now_ms()))
+            || blocked.is_some()
+        {
             if !self.envoy_core.pending.is_empty() && blocked != self.envoy_core.blocked {
                 log::info!(
                     "envoy: {} event(s) waiting: {}",
@@ -1572,6 +1609,11 @@ impl StrongholdApp {
         }
         self.envoy_core.blocked = None;
         if self.envoy_reset() {
+            return;
+        }
+        if let Some((action, draft, revision)) = self.envoy_core.next_feedback(now_ms()) {
+            let id = self.actions.submit(action);
+            self.envoy_core.feedback_forwarding = Some((id, draft, revision));
             return;
         }
         let dwarves = self.envoy_dwarves();
@@ -1682,6 +1724,7 @@ impl StrongholdApp {
             .gateway_done(result, |message| traffic.send(message));
         self.envoy_core
             .forward_done(result, now_ms(), |message| traffic.send(message));
+        self.envoy_core.feedback_done(result, now_ms());
         self.envoy_core.reset_done(result, now_ms());
     }
 }

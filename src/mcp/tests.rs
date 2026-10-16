@@ -468,6 +468,7 @@ fn tools_list_has_every_tool_with_schemas_and_annotations() {
         "envoy_inbox",
         "envoy_event",
         "envoy_draft",
+        "envoy_revise",
         "envoy_drafts",
         "envoy_relay",
         "envoy_propose_task",
