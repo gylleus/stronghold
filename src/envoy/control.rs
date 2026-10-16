@@ -15,6 +15,7 @@ pub const METHODS: &[&str] = &[
     "envoy_event",
     "envoy_draft",
     "envoy_drafts",
+    "envoy_revise",
     "envoy_relay",
     "envoy_propose_task",
     "envoy_note",

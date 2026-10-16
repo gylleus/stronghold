@@ -74,6 +74,21 @@ impl RequestLink {
     }
 }
 
+pub struct DraftUpdate<'a> {
+    pub text: &'a str,
+    pub rationale: &'a str,
+    pub question: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DraftRevision {
+    pub text: String,
+    pub rationale: String,
+    pub question: Option<String>,
+    pub feedback: Option<String>,
+    pub revised_ms: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Draft {
     pub id: String,
@@ -106,6 +121,14 @@ pub struct Draft {
     pub approved_at: Option<i64>,
     #[serde(default)]
     pub approved_by: Option<String>,
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub question: Option<String>,
+    #[serde(default)]
+    pub feedback: Option<String>,
+    #[serde(default)]
+    pub history: Vec<DraftRevision>,
 }
 
 impl Draft {
@@ -154,6 +177,10 @@ impl Draft {
             manual_approval: false,
             approved_at: None,
             approved_by: None,
+            revision: 0,
+            question: None,
+            feedback: None,
+            history: Vec::new(),
         }
     }
 
@@ -186,6 +213,10 @@ impl Draft {
             manual_approval: false,
             approved_at: None,
             approved_by: None,
+            revision: 0,
+            question: None,
+            feedback: None,
+            history: Vec::new(),
         }
     }
 
@@ -213,7 +244,9 @@ impl Draft {
     }
 
     pub fn allows_auto(&self) -> bool {
-        !self.manual_approval
+        self.question.is_none()
+            && self.feedback.is_none()
+            && !self.manual_approval
             && self.kind != DraftKind::TaskProposal
             && self.request.as_ref().is_none_or(|r| {
                 r.karl_asked.is_none()
@@ -290,6 +323,13 @@ impl Draft {
         if let Some(conversation) = &self.conversation {
             super::slack::validate_conversation(conversation)?;
         }
+        if self
+            .question
+            .as_ref()
+            .is_some_and(|q| q.trim().is_empty() || q.len() > 10_000)
+        {
+            return Err("Question must contain 1–10000 bytes".into());
+        }
         if self.text.trim().is_empty() {
             return Err("Draft text is empty".into());
         }
@@ -299,6 +339,8 @@ impl Draft {
         for s in [
             Some(self.text.as_str()),
             Some(self.rationale.as_str()),
+            self.question.as_deref(),
+            self.feedback.as_deref(),
             self.repo.as_deref(),
             self.slack_link.as_deref(),
         ]
@@ -428,14 +470,84 @@ impl DraftQueue {
         Ok(draft)
     }
 
+    /// Feedback is durable work; it never authorizes sending the current draft.
+    pub fn feedback(
+        &mut self,
+        id: &str,
+        revision: u64,
+        text: &str,
+        now: i64,
+    ) -> Result<(), String> {
+        if text.trim().is_empty() || text.len() > 10_000 {
+            return Err("Feedback must contain 1–10000 bytes".into());
+        }
+        secrets::scan(text)?;
+        let old = self.saved.clone();
+        let d = self.pending_mut(id)?;
+        if d.revision != revision || d.feedback.is_some() {
+            return Err("Draft changed; review the latest version first".into());
+        }
+        d.feedback = Some(text.into());
+        d.revision += 1;
+        d.updated_ms = now;
+        d.manual_approval = true;
+        d.auto_at_ms = None;
+        d.automatic = false;
+        self.commit(old)
+    }
+
+    pub fn revise(
+        &mut self,
+        id: &str,
+        revision: u64,
+        update: DraftUpdate<'_>,
+        now: i64,
+    ) -> Result<Draft, String> {
+        let DraftUpdate {
+            text,
+            rationale,
+            question,
+        } = update;
+        let old = self.saved.clone();
+        let d = self.pending_mut(id)?;
+        if d.revision != revision {
+            return Err("Draft changed; read envoy_drafts before revising".into());
+        }
+        let mut revised = d.clone();
+        revised.history.push(DraftRevision {
+            text: d.text.clone(),
+            rationale: d.rationale.clone(),
+            question: d.question.clone(),
+            feedback: d.feedback.clone(),
+            revised_ms: now,
+        });
+        revised.text = text.into();
+        revised.rationale = rationale.into();
+        revised.question = question.map(str::to_owned);
+        revised.feedback = None;
+        revised.revision += 1;
+        revised.updated_ms = now;
+        revised.manual_approval = true;
+        revised.auto_at_ms = None;
+        revised.automatic = false;
+        revised.validate()?;
+        *d = revised.clone();
+        self.commit(old)?;
+        Ok(revised)
+    }
+
     pub fn edit(&mut self, id: &str, text: &str, now: i64) -> Result<(), String> {
         let old = self.saved.clone();
         let d = self.pending_mut(id)?;
+        if d.feedback.is_some() {
+            return Err("Waiting for the Envoy to revise this draft".into());
+        }
         let mut edited = d.clone();
         edited.text = text.into();
         edited.validate()?;
         *d = edited;
         d.updated_ms = now;
+        d.revision += 1;
         d.auto_at_ms = None;
         d.automatic = false;
         self.commit(old)
@@ -458,6 +570,9 @@ impl DraftQueue {
     ) -> Result<Draft, String> {
         let old = self.saved.clone();
         let d = self.pending_mut(id)?;
+        if d.feedback.is_some() {
+            return Err("Waiting for the Envoy to revise this draft".into());
+        }
         let mut approved = d.clone();
         if let Some(text) = edited_text {
             approved.text = text.into();
@@ -704,6 +819,166 @@ mod tests {
             1,
         )
     }
+    #[test]
+    fn feedback_and_revisions_are_atomic_validated_and_never_auto_sent() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut queue = DraftQueue::load(dir.path().join(DRAFTS_FILE)).unwrap();
+        let d = queue.create(reply()).unwrap();
+        queue.schedule(&d.id, Some(20)).unwrap();
+        let before = queue.drafts().to_vec();
+        for text in ["  ", "ghp_123456789012345678901234567890"] {
+            assert!(queue.feedback(&d.id, 0, text, 2).is_err());
+            assert_eq!(queue.drafts(), before);
+        }
+        assert!(queue.feedback(&d.id, 99, "Ask for a link", 2).is_err());
+        queue.feedback(&d.id, 0, "Ask for a link", 2).unwrap();
+        assert!(queue.schedule(&d.id, Some(3)).is_err());
+        assert!(queue.begin_approval(&d.id, None, true, 3).is_err());
+        assert!(queue.feedback(&d.id, 1, "Overwrite", 3).is_err());
+        let pending = queue.drafts().to_vec();
+        for (text, question) in [
+            ("", None),
+            ("A secret ghp_123456789012345678901234567890", None),
+            ("Okay", Some(" ")),
+        ] {
+            assert!(
+                queue
+                    .revise(
+                        &d.id,
+                        1,
+                        DraftUpdate {
+                            text,
+                            rationale: "why",
+                            question
+                        },
+                        3
+                    )
+                    .is_err()
+            );
+            assert_eq!(queue.drafts(), pending);
+        }
+        let saved_path = queue.path.clone();
+        queue.path = dir.path().into(); // A directory cannot be replaced by the saved file.
+        assert!(
+            queue
+                .revise(
+                    &d.id,
+                    1,
+                    DraftUpdate {
+                        text: "Link please?",
+                        rationale: "Requested",
+                        question: None
+                    },
+                    3
+                )
+                .is_err()
+        );
+        assert_eq!(
+            queue.drafts(),
+            pending,
+            "save failure must retain feedback and old text"
+        );
+        queue.path = saved_path;
+        let revised = queue
+            .revise(
+                &d.id,
+                1,
+                DraftUpdate {
+                    text: "Link please?",
+                    rationale: "Requested",
+                    question: None,
+                },
+                3,
+            )
+            .unwrap();
+        assert!(revised.manual_approval && !revised.allows_auto());
+        assert_eq!(
+            revised.history[0].feedback.as_deref(),
+            Some("Ask for a link")
+        );
+        queue.reject(&d.id, 4).unwrap();
+        assert!(queue.feedback(&d.id, 2, "Too late", 5).is_err());
+        assert!(
+            queue
+                .revise(
+                    &d.id,
+                    2,
+                    DraftUpdate {
+                        text: "Too late",
+                        rationale: "why",
+                        question: None
+                    },
+                    5
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn old_drafts_load_and_agent_requests_stay_verbatim_through_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(DRAFTS_FILE);
+        let mut legacy = serde_json::to_value(reply()).unwrap();
+        for field in ["revision", "question", "feedback", "history"] {
+            legacy.as_object_mut().unwrap().remove(field);
+        }
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({"next_id":1,"drafts":[legacy]})).unwrap(),
+        )
+        .unwrap();
+        let mut queue = DraftQueue::load(&path).unwrap();
+        assert_eq!(queue.drafts()[0].revision, 0);
+        assert!(queue.drafts()[0].history.is_empty());
+        let link = RequestLink {
+            id: "r1".into(),
+            turn_id: 1,
+            original_ask: "Exact ask".into(),
+            karl_asked: None,
+            requester: "Dwarf".into(),
+            why: "Needed".into(),
+            agent: true,
+        };
+        let d = queue
+            .create(Draft::outgoing(
+                "C123".into(),
+                None,
+                link.verbatim(),
+                "why".into(),
+                link,
+                1,
+            ))
+            .unwrap();
+        queue.feedback(&d.id, 0, "Rewrite it", 2).unwrap();
+        assert!(
+            queue
+                .revise(
+                    &d.id,
+                    1,
+                    DraftUpdate {
+                        text: "Changed ask",
+                        rationale: "why",
+                        question: None
+                    },
+                    3
+                )
+                .is_err()
+        );
+        queue
+            .revise(
+                &d.id,
+                1,
+                DraftUpdate {
+                    text: &d.text,
+                    rationale: "Must preserve the ask",
+                    question: Some("Decline and request a new ask?"),
+                },
+                3,
+            )
+            .unwrap();
+        assert_eq!(queue.get(&d.id).unwrap().text, d.text);
+    }
+
     #[test]
     fn manual_decisions_stay_manual_after_edit_and_restart() {
         let dir = tempfile::tempdir().unwrap();

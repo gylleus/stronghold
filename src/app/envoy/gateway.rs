@@ -725,6 +725,7 @@ impl StrongholdApp {
         }
         if let Some(handle) = self.envoy_core.handle.clone()
             && self.envoy_core.forwarding.is_none()
+            && self.envoy_core.feedback_forwarding.is_none()
             && self.envoy_core.gateway_actions.is_empty()
             && self.envoy_core.resetting.is_none()
             && self.envoy_target_ready(&handle)
