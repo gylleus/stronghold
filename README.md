@@ -1,6 +1,6 @@
 # Stronghold
 
-Stronghold is Karl's macOS desktop dashboard for his agent clan in the Orca agent IDE.
+Stronghold is a macOS desktop dashboard for agent clans running in the Orca agent IDE.
 It turns agent sessions into dwarves in a live pixel-art hold, so you can see who is
 working, idle, waiting for input, stalled or done without checking every terminal.
 The King chat helps coordinate the clan, the whip nudges stalled agents, and the
@@ -9,7 +9,8 @@ follow—and easier to help when someone gets stuck.
 
 ![A demo clan at work in Stronghold's pixel-art hold](docs/images/stronghold-demo.gif)
 
-*Eight seconds of synthetic demo agents, using Resurrect 64 and native “Hold pixels”.*
+*A demo clan: the Envoy receives and replies, the King reads worker states, and
+two dwarves await review. Resurrect 64 palette, native “Hold pixels”.*
 [Watch or download the MP4](docs/images/stronghold-demo.mp4) ·
 [Still image](docs/images/stronghold-demo.png)
 
