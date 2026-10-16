@@ -2,7 +2,7 @@
 
 `stronghold-demo.gif` is the inline README animation; `stronghold-demo.mp4` is
 its downloadable H.264 version, and `stronghold-demo.png` is the still fallback.
-All show a synthetic hold using the production renderer from revision `00af228`.
+All show a synthetic hold using the production renderer from revision `a2d09d2`.
 
 Captured on 2026-10-16 with **Resurrect 64** (by Kerrie Lake,
 [bundled palette](../../assets/palettes/resurrect-64.json)), **Hold pixels**
@@ -12,8 +12,11 @@ Captured on 2026-10-16 with **Resurrect 64** (by Kerrie Lake,
 
 The capture used a temporary copy of [`examples/farm.rs`](../../examples/farm.rs)
 outside the repository, linked to the unchanged Stronghold library. It retained
-15 demo agents across three runs, three surface heaps and a 1280×800 viewport:
-`--pixels farm --palette resurrect-64 --dwarves 15 --heaps 3 --size 1280x800`.
+15 demo agents across three runs and a 1280×800 viewport:
+`--pixels farm --palette resurrect-64 --dwarves 15 --size 1280x800`.
+Two unoccupied synthetic worktrees, `old-prototype` and `old-experiment`, provide
+the surface heaps. A synthetic `CleanupJob` sends the demolition dwarf to the
+first heap near the end; no real worktree cleanup runs.
 
 Two additional synthetic standalone agents, `review-ui` (“Polish the UI”) and
 `review-docs` (“Update docs”), have `NodeKind::Terminal`, `NodeState::Done` and
@@ -35,15 +38,25 @@ or private ticket details appear in the frame.
 
 | Time | Production animation triggered by the harness |
 | --- | --- |
-| 0.8 s | An incoming Slack-to-Envoy relay: `FarmView::message`, receipt cue and `envoy_activity(false, …)`. |
-| 3.0 s | The Envoy's outgoing reply effect: `envoy_activity(true, …)`. |
-| 5.2 s | The King starts thinking and gathers a status report with `Pulse::StatusReport`. |
-| 6.0 s | `BeamKind::Read` beams connect the King to every worker, showing the state reads. |
-| 8.5 s | The King finishes thinking. |
+| 0.3–1.2 s | The User portal sends a voice command to `run0-w2` through `set_voice_target`, then an instruction envelope arrives. |
+| 1.4 s | That dwarf changes to needs-input and travels to the input area. The other dwarves keep their slots. |
+| 1.9 s | An incoming Slack-to-Envoy relay, receipt cue and arrival effect. |
+| 2.7 s | A worker sends a status message to its coordinator. |
+| 3.3 s | The Envoy replies with an outgoing envelope and send effect. |
+| 4.0 s | The travelling dwarf returns to working in its room, completing its only round trip. |
+| 4.4 s | A worker files knowledge in the Ledger. |
+| 5.2 s | The Ledger sends knowledge to another worker. |
+| 6.0 s | The King starts thinking and gathers a status report. |
+| 6.8 s | Read beams connect the King to every worker. |
+| 7.7–9.3 s | The worktree cleanup dwarf arrives, works on a surface heap and leaves. |
+| 8.6 s | Two workers exchange a message. |
+| 9.4 s | The King finishes thinking. |
 
-These use the same receipt, send, status and read effects as the app. The base
-demo also switches a worker between working and needing input every three
-seconds. The treasury's two review agents remain visible throughout.
+The base demo's repeating state toggle is disabled. Only `run0-w2` changes state,
+once to needs-input and once back to working. Apart from that round trip and
+the brief cleanup appearance, the dwarves stay at their posts; messages and
+normal mining poses provide the activity. The two review agents remain in the
+treasury throughout. All effects use the unchanged production renderer.
 
 ## Capture and encoding
 
