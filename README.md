@@ -9,8 +9,9 @@ follow—and easier to help when someone gets stuck.
 
 ![A demo clan at work in Stronghold's pixel-art hold](docs/images/stronghold-demo.gif)
 
-*A demo clan: the Envoy receives and replies, the King reads worker states, and
-two dwarves await review. Resurrect 64 palette, native “Hold pixels”.*
+*A demo clan: a portal voice command, agent and Ledger messages, Envoy replies,
+King status reads and worktree cleanup. Two dwarves await review.
+Resurrect 64 palette, native “Hold pixels”.*
 [Watch or download the MP4](docs/images/stronghold-demo.mp4) ·
 [Still image](docs/images/stronghold-demo.png)
 
