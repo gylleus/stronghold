@@ -8,6 +8,7 @@ pub mod art;
 mod beams;
 mod comms;
 pub mod death;
+mod envoy_effects;
 mod excavation;
 pub(crate) mod hammer;
 pub mod layout;
@@ -219,6 +220,7 @@ pub struct FarmView {
     mail: crate::ui::envelope::Flights,
     /// Tool calls beaming from their callers; see [`beams`].
     beams: crate::ui::beam::Beams,
+    envoy_effects: envoy_effects::Effects,
     voice: voice::Voice,
     /// Dwarves that just changed state; see [`pops`].
     pops: crate::ui::state_pop::Pops,
@@ -532,6 +534,11 @@ impl FarmView {
         self.voice.update(target, now_s);
     }
 
+    /// Brief local feedback for an arrival or a confirmed outgoing message.
+    pub fn envoy_activity(&mut self, sent: bool, now_s: f64) {
+        self.envoy_effects.trigger(sent, now_s);
+    }
+
     /// Shows a tool call's beam, asked for at `now_s` (egui time); `still` for Reduce motion.
     pub fn beam(&mut self, beam: crate::traffic::beam::Beam, now_s: f64, still: bool) {
         self.beams.push(beam, now_s, still);
@@ -738,6 +745,8 @@ impl FarmView {
             &self.art,
         );
         beams::paint(&painter, &scene, &placed, self.beams.tick(now_s), now_s);
+        self.envoy_effects
+            .paint(&painter, sprites, &scene, &placed, now_s, still);
         self.throws.paint(&painter, &mut figures, &scene, now_s);
         self.voice.paint(
             &painter,
@@ -782,6 +791,7 @@ impl FarmView {
             || self.throws.animating()
             || !self.mail.is_empty()
             || !self.beams.is_empty()
+            || self.envoy_effects.animating(now_s)
             || self.voice.animating(still)
             || !self.pops.is_empty()
             || !self.room_glides.is_empty()

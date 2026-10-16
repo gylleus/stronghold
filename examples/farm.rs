@@ -3,6 +3,8 @@
 //!
 //! `cargo run --example farm [--light] [--hammer] [--heaps N] [--shot out.png]`.
 //! `--receipt-at-ms 31` freezes a receipt mid-shake; `--reduced-motion` shows its flash.
+//! E sends from the Envoy, D shows a new draft/arrival pulse.
+//! `--envoy-send --shot out.png` captures the outgoing beam and local flash.
 //! `--outline fine|regular|bold` chooses ink width.
 //! `--scrying` shows the working rune priest; `--stopped` darkens the rune stone.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
@@ -263,6 +265,7 @@ fn main() -> eframe::Result {
                 shot,
                 voice_shots: args.iter().any(|a| a == "--voice-shots"),
                 king_throw: args.iter().any(|a| a == "--king-throw"),
+                envoy_send: args.iter().any(|a| a == "--envoy-send"),
                 captures: Vec::new(),
                 receipt_at_ms,
                 received: None,
@@ -287,6 +290,7 @@ struct Demo {
     farm: FarmView,
     shot: Option<String>,
     king_throw: bool,
+    envoy_send: bool,
     voice_shots: bool,
     /// Encode after capturing all frames so PNG compression cannot skip short effects.
     captures: Vec<(std::sync::Arc<egui::ColorImage>, &'static str)>,
@@ -456,6 +460,9 @@ impl Demo {
             let message = AgentMessage::new(from, to, kind);
             if let Some(flight) = message.resolve(&self.snapshot) {
                 self.farm.message(flight, now_s, self.reduced_motion);
+                if from == "envoy" {
+                    self.farm.envoy_activity(true, now_s);
+                }
             }
         }
     }
@@ -509,6 +516,9 @@ impl eframe::App for Demo {
         false
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if self.envoy_send && self.stage == 0 && self.started.elapsed() >= Duration::from_secs(1) {
+            self.farm.envoy_activity(true, ui.input(|i| i.time) - 0.08);
+        }
         if self.voice_shots {
             let target = match self.stage {
                 2 | 3 => Some(id("run2-coord")),
@@ -565,6 +575,12 @@ impl eframe::App for Demo {
             }
             if ui.input(|i| i.key_pressed(egui::Key::K)) {
                 self.throw_tool(ui.input(|i| i.time));
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::E)) {
+                self.farm.envoy_activity(true, ui.input(|i| i.time));
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::D)) {
+                self.farm.envoy_activity(false, ui.input(|i| i.time));
             }
             if ui.input(|i| i.key_pressed(egui::Key::R)) {
                 self.received = Some(Instant::now());

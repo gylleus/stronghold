@@ -10,6 +10,7 @@ mod control;
 mod dictation;
 pub mod envoy;
 mod envoy_session;
+mod envoy_visuals;
 mod health;
 mod input_focus;
 mod lifecycle;
@@ -124,6 +125,7 @@ pub struct StrongholdApp {
     overlays_changed: bool,
     /// Messages between agents, for the farm to draw.
     traffic: crate::traffic::Traffic,
+    envoy_items: envoy_visuals::Items,
     /// Agents' state changes, for the farm to pop.
     state_changes: crate::ui::state_pop::Transitions,
     /// Every notification's dispatcher, the saved inbox, toasts and node badges.
@@ -247,6 +249,7 @@ impl StrongholdApp {
             finish_closes: Vec::new(),
             overlays_changed: true,
             traffic: Default::default(),
+            envoy_items: envoy_visuals::Items::new(now_ms()),
             state_changes: Default::default(),
             notifications: notifications::AppNotifications::load(),
             search: ui::search::SearchPalette::default(),
@@ -1229,6 +1232,7 @@ impl eframe::App for StrongholdApp {
         self.poll_control(ctx);
         self.poll_review();
         self.poll_envoy();
+        self.poll_envoy_visuals(ctx);
         self.poll_lorekeeper(ctx);
         self.poll_health();
         self.overlays_changed |= envoy_before != self.envoy_status();

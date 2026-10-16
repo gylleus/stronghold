@@ -167,6 +167,27 @@ fn read(painter: &Painter, t: f32, [a, b]: [Pos2; 2], color: Color32, width: f32
     }
 }
 
+/// The same warm line and travelling light as a read, flowing out from the sender.
+pub fn paint_outgoing(
+    painter: &Painter,
+    t: f32,
+    reduced_motion: bool,
+    from: End,
+    to: End,
+    size: f32,
+    color: Color32,
+) {
+    let Some([a, b]) = rim_to_rim(from, to) else {
+        return;
+    };
+    let width = (size * 0.06).max(1.0);
+    if reduced_motion {
+        still(painter, BeamKind::Read, t, [a, b], to, color, width);
+    } else {
+        read(painter, t, [b, a], color, width);
+    }
+}
+
 /// A laser shot from the caller, held, then a burst at the target as it fades.
 fn kill(painter: &Painter, t: f32, [a, b]: [Pos2; 2], to: End, color: Color32, width: f32) {
     const SHOT: f32 = 0.15;
@@ -307,6 +328,43 @@ mod tests {
     use super::*;
     use crate::model::NodeId;
     use crate::traffic::Endpoint;
+
+    #[test]
+    fn outgoing_light_travels_up_and_reduced_motion_has_no_travelling_dot() {
+        let draw = |t, reduced| {
+            let mut output = eframe::egui::Context::default().run_ui(Default::default(), |ui| {
+                paint_outgoing(
+                    ui.painter(),
+                    t,
+                    reduced,
+                    (Pos2::new(100.0, 200.0), 10.0),
+                    (Pos2::new(100.0, 20.0), 0.0),
+                    20.0,
+                    Color32::GOLD,
+                );
+            });
+            output.textures_delta.clear();
+            output
+        };
+        let dot = |output: eframe::egui::FullOutput| {
+            output.shapes.into_iter().find_map(|s| match s.shape {
+                Shape::Circle(c) => Some(c.center),
+                _ => None,
+            })
+        };
+        let early = dot(draw(0.15, false)).unwrap();
+        let late = dot(draw(0.5, false)).unwrap();
+        assert_eq!(early.x, late.x);
+        assert!(early.y > late.y && late.y >= 20.0 && early.y <= 190.0);
+        assert!(dot(draw(0.15, true)).is_none());
+        assert!(dot(draw(0.5, true)).is_none());
+        assert!(
+            draw(0.5, true)
+                .shapes
+                .iter()
+                .any(|s| matches!(s.shape, Shape::LineSegment { .. }))
+        );
+    }
 
     fn beam(kind: BeamKind, targets: &[&str]) -> Beam {
         Beam {
