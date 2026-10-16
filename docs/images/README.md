@@ -2,7 +2,7 @@
 
 `stronghold-demo.gif` is the inline README animation; `stronghold-demo.mp4` is
 its downloadable H.264 version, and `stronghold-demo.png` is the still fallback.
-All show a synthetic hold using the production renderer from revision `a2d09d2`.
+All show a synthetic hold using the production renderer from revision `96d1d45`.
 
 Captured on 2026-10-16 with **Resurrect 64** (by Kerrie Lake,
 [bundled palette](../../assets/palettes/resurrect-64.json)), **Hold pixels**
@@ -34,23 +34,30 @@ services and sends no real messages. All task labels and Ledger entries are
 synthetic. No customer data, merchant names, credentials, real terminal content
 or private ticket details appear in the frame.
 
-## Ten-second sequence
+## Slow sequence with settling pauses
+
+Playback lasts 52.8 seconds. Each featured action finishes before the next
+begins, with roughly one to two seconds of quiet between them. The only
+intentional overlap is the King's thinking pose during his status checks.
+The 44-second capture is played 20% longer, slowing all movement as well as
+spacing the events. Times below refer to the final GIF and MP4.
 
 | Time | Production animation triggered by the harness |
 | --- | --- |
-| 0.3–1.2 s | The User portal sends a voice command to `run0-w2` through `set_voice_target`, then an instruction envelope arrives. |
-| 1.4 s | That dwarf changes to needs-input and travels to the input area. The other dwarves keep their slots. |
-| 1.9 s | An incoming Slack-to-Envoy relay, receipt cue and arrival effect. |
-| 2.7 s | A worker sends a status message to its coordinator. |
-| 3.3 s | The Envoy replies with an outgoing envelope and send effect. |
-| 4.0 s | The travelling dwarf returns to working in its room, completing its only round trip. |
-| 4.4 s | A worker files knowledge in the Ledger. |
-| 5.2 s | The Ledger sends knowledge to another worker. |
-| 6.0 s | The King starts thinking and gathers a status report. |
-| 6.8 s | Read beams connect the King to every worker. |
-| 7.7–9.3 s | The worktree cleanup dwarf arrives, works on a surface heap and leaves. |
-| 8.6 s | Two workers exchange a message. |
-| 9.4 s | The King finishes thinking. |
+| 0–1.8 s | Quiet opening: the clan is already settled. |
+| 1.8–3.2 s | The User portal sends a voice command to `run0-w2`; releasing it sends an instruction envelope. |
+| 7.2 s | That dwarf travels to the input area. The others keep their slots. |
+| 12.0 s | After reaching the input area and pausing, the dwarf returns to its room. |
+| 16.8 s | After the return trip settles, an incoming Slack message reaches the Envoy. |
+| 21.0 s | The Envoy replies. |
+| 25.2 s | One worker sends a status message to another. |
+| 29.4 s | A worker files knowledge in the Ledger. |
+| 33.6 s | The Ledger sends knowledge to another worker. |
+| 37.8 s | The King starts thinking and gathers a status report. |
+| 42.0 s | Once the report ripple settles, read beams connect the King to every worker. |
+| 43.9 s | The King finishes thinking. |
+| 46.2–48.6 s | The cleanup dwarf arrives and works on a surface heap, then leaves. |
+| 49–52.8 s | Quiet closing pause before the loop restarts. |
 
 The base demo's repeating state toggle is disabled. Only `run0-w2` changes state,
 once to needs-input and once back to working. Apart from that round trip and
@@ -61,10 +68,11 @@ treasury throughout. All effects use the unchanged production renderer.
 ## Capture and encoding
 
 Only the demo window was captured through macOS ScreenCaptureKit, with the
-cursor and shadows excluded. The recording samples 150 frames at 15 fps,
+cursor and shadows excluded. The recording samples 528 frames at 12 fps,
 crops the 32-point title bar, and keeps the 1280×800 content at its native
 logical resolution without rescaling. The GIF uses a generated 64-colour
 palette, no dithering and an infinite loop. The MP4 uses H.264, YUV 4:2:0,
-CRF 18, fast-start metadata and no audio. Both play for ten seconds.
+CRF 18, fast-start metadata and no audio. Both play those frames at 10 fps
+for 52.8 seconds, keeping the same pixels and giving each motion more time.
 The PNG is the first frame. Encoding used FFmpeg; the capture helpers and
 source frames stayed outside the repository. Only docs and media are committed.
