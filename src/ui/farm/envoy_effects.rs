@@ -1,6 +1,8 @@
-//! A short local flash for arrivals/drafts/sends and the hold's shared beam, sent upward.
+//! A brief camera wobble for arrivals/drafts/sends and the hold's shared beam, sent upward.
 
-use eframe::egui::{Painter, pos2};
+use std::f32::consts::TAU;
+
+use eframe::egui::{Painter, emath::TSTransform, pos2, vec2};
 
 use super::{Placed, layout::Scene, sprites::Sprites, world::GOLD};
 use crate::{model::NodeKind, ui::beam};
@@ -44,6 +46,17 @@ impl Effects {
             || Self::progress(self.send_s, now_s, beam::LIFE_S).is_some()
     }
 
+    /// Add the wobble in screen points, after zoom, without changing the saved camera.
+    /// The same transform paints the hold and maps the pointer back for hit testing.
+    pub fn transform(&self, mut camera: TSTransform, now_s: f64, still: bool) -> TSTransform {
+        if !still && let Some(t) = Self::progress(self.punch_s, now_s, PUNCH_S) {
+            let decay = (1.0 - t).powi(2);
+            camera.translation +=
+                vec2(4.0 * (TAU * 2.0 * t).sin(), 1.5 * (TAU * 3.0 * t).sin()) * decay;
+        }
+        camera
+    }
+
     pub fn paint(
         &self,
         painter: &Painter,
@@ -61,9 +74,8 @@ impl Effects {
         else {
             return;
         };
-        if let Some(t) = Self::progress(self.punch_s, now_s, PUNCH_S) {
-            // A fixed, small halo leaves the camera and click targets steady, including
-            // with Reduce Motion. Use the same gold glow as the receiver's receipt cue.
+        if still && let Some(t) = Self::progress(self.punch_s, now_s, PUNCH_S) {
+            // Reduce Motion substitutes the receiver's gold glow for camera movement.
             sprites.glow(
                 painter,
                 at.pos,
@@ -91,6 +103,31 @@ impl Effects {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wobble_is_brief_bounded_and_zoom_independent_with_no_reduced_motion_shift() {
+        let mut effects = Effects::default();
+        effects.trigger(false, 1.0);
+        for zoom in [1.0, 2.0, 8.0] {
+            let camera = TSTransform::new(vec2(-200.0, 80.0), zoom);
+            for now in [0.0, 1.0, 1.0 + PUNCH_S, 2.0] {
+                assert_eq!(effects.transform(camera, now, false), camera);
+            }
+            let early = effects.transform(camera, 1.024, false).translation - camera.translation;
+            let later = effects.transform(camera, 1.084, false).translation - camera.translation;
+            assert!(early.x > 3.0 && later.x < -1.0);
+            for ms in 0..240 {
+                let now = 1.0 + ms as f64 / 1000.0;
+                let transform = effects.transform(camera, now, false);
+                let offset = transform.translation - camera.translation;
+                assert!(offset.x.abs() <= 4.0 && offset.y.abs() <= 1.5);
+                assert_eq!(transform.scaling, zoom);
+                assert_eq!(effects.transform(camera, now, true), camera);
+                let point = pos2(123.0, 456.0);
+                assert!((transform.inverse() * (transform * point) - point).length() < 0.001);
+            }
+        }
+    }
 
     #[test]
     fn batches_do_not_restart_or_queue_effects_and_sends_survive_arrival_bursts() {

@@ -193,6 +193,41 @@ impl Harness {
 /// The test window; matches the layout tests' rect so their scene is the farm's.
 const FULL: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1280.0, 800.0));
 
+#[test]
+fn envoy_arrival_moves_the_whole_hold_and_leaves_the_saved_camera_unchanged() {
+    use crate::model::{NodeKind, NodeState};
+    use crate::ui::test_util::text_center;
+
+    let mut h = Harness::new();
+    h.snapshot.nodes.push(super::layout_tests::node(
+        "envoy",
+        NodeKind::Envoy,
+        None,
+        NodeState::Idle,
+    ));
+    h.clan.sync(&h.snapshot);
+    h.farm.set_reduce_motion(false);
+    h.settle();
+    let camera = h.farm.camera;
+    let labels = ["ENVOY", "Treasury · Ready for review"];
+    let before = labels.map(|label| text_center(h.output.as_ref().unwrap(), label).unwrap());
+    h.farm.envoy_activity(false, h.time);
+    h.frame(vec![]);
+    let moved = labels.map(|label| text_center(h.output.as_ref().unwrap(), label).unwrap());
+    let delta = moved[0] - before[0];
+    assert!(delta.x > 2.0);
+    assert!((moved[1] - before[1] - delta).length() < 0.001);
+    assert_eq!(h.farm.camera, camera);
+    h.farm.set_reduce_motion(true);
+    h.frame(vec![]);
+    for (label, original) in labels.into_iter().zip(before) {
+        assert!(close(
+            text_center(h.output.as_ref().unwrap(), label).unwrap(),
+            original
+        ));
+    }
+}
+
 fn wheel(unit: egui::MouseWheelUnit, delta: egui::Vec2) -> egui::Event {
     egui::Event::MouseWheel {
         unit,
