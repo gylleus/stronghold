@@ -3,8 +3,9 @@
 //!
 //! `cargo run --example farm [--light] [--hammer] [--heaps N] [--shot out.png]`.
 //! `--receipt-at-ms 31` freezes a receipt mid-shake; `--reduced-motion` shows its flash.
-//! E sends from the Envoy, D shows a new draft/arrival pulse.
-//! `--envoy-send --shot out.png` captures the outgoing beam and local flash.
+//! E sends from the Envoy, D wobbles the hold for a new draft/arrival.
+//! `--envoy-punch-at-ms 24` freezes that wobble for a reproducible native capture.
+//! `--envoy-send --shot out.png` captures the outgoing beam and camera wobble.
 //! `--outline fine|regular|bold` chooses ink width.
 //! `--scrying` shows the working rune priest; `--stopped` darkens the rune stone.
 //! `--bridge-down` and `--approval` show the Envoy receiver health; `--parked` parks three
@@ -138,6 +139,8 @@ fn main() -> eframe::Result {
         .iter()
         .position(|a| a == "--dwarves")
         .map(|i| args[i + 1].parse::<usize>().expect("a number of dwarves"));
+    let envoy_punch_at_s = value("--envoy-punch-at-ms")
+        .map(|ms| ms.parse::<f64>().expect("punch age in milliseconds") / 1000.0);
     let focus_run = value("--focus-run");
     let workspace_counts = value("--workspace-counts");
     let window = value("--size").map_or(WINDOW, |size| {
@@ -254,6 +257,9 @@ fn main() -> eframe::Result {
                     farm.set_reduce_motion(reduced_motion);
                     farm.set_king_focused(true);
                     farm.set_envoy_health(health);
+                    if envoy_punch_at_s.is_some() {
+                        farm.envoy_activity(false, 0.0);
+                    }
                     if health == stronghold::envoy::EnvoyHealth::AwaitingApproval {
                         farm.set_envoy_pending(2);
                     }
@@ -266,6 +272,7 @@ fn main() -> eframe::Result {
                 voice_shots: args.iter().any(|a| a == "--voice-shots"),
                 king_throw: args.iter().any(|a| a == "--king-throw"),
                 envoy_send: args.iter().any(|a| a == "--envoy-send"),
+                envoy_punch_at_s,
                 captures: Vec::new(),
                 receipt_at_ms,
                 received: None,
@@ -291,6 +298,7 @@ struct Demo {
     shot: Option<String>,
     king_throw: bool,
     envoy_send: bool,
+    envoy_punch_at_s: Option<f64>,
     voice_shots: bool,
     /// Encode after capturing all frames so PNG compression cannot skip short effects.
     captures: Vec<(std::sync::Arc<egui::ColorImage>, &'static str)>,
@@ -516,6 +524,10 @@ impl eframe::App for Demo {
         false
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if let Some(time) = self.envoy_punch_at_s {
+            // Freeze egui animation time; screenshot scheduling still uses wall time.
+            ui.ctx().input_mut(|i| i.time = time);
+        }
         if self.envoy_send && self.stage == 0 && self.started.elapsed() >= Duration::from_secs(1) {
             self.farm.envoy_activity(true, ui.input(|i| i.time) - 0.08);
         }

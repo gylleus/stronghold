@@ -639,7 +639,11 @@ impl FarmView {
         let palette = Palette::new(daylight);
         let selection = clan.selection();
 
-        let pointer = response.hover_pos().map(|p| self.camera.to_farm(rect, p));
+        let mut camera_transform = self.camera.transform(rect);
+        if scene.comms.is_some() {
+            camera_transform = self.envoy_effects.transform(camera_transform, now_s, still);
+        }
+        let pointer = response.hover_pos().map(|p| camera_transform.inverse() * p);
         let tray_hovered = pointer.is_some_and(|p| tray_hit(&scene, p));
         let hovered = pointer
             .filter(|_| !tray_hovered)
@@ -776,7 +780,7 @@ impl FarmView {
             ui.ctx(),
             painter.layer_id(),
             first_shape,
-            self.camera.transform(rect),
+            camera_transform,
             painter.clip_rect(),
         );
         if response.double_clicked() && hovered.is_none() && !tray_hovered && !ledger_hovered {
@@ -843,7 +847,7 @@ impl FarmView {
         if response.secondary_clicked() {
             self.context_node = hovered.clone();
         }
-        let boxed = self.box_select(ui, &response, &scene, &placed);
+        let boxed = self.box_select(ui, &response, &scene, &placed, camera_transform);
         let menu = match &self.context_node {
             Some(id) => clan.node_menu(&response, id),
             None => Default::default(),
@@ -875,12 +879,13 @@ impl FarmView {
         response: &egui::Response,
         scene: &Scene,
         placed: &[Placed],
+        transform: egui::emath::TSTransform,
     ) -> Option<(Vec<NodeId>, bool)> {
         let pointer = ui.input(|i| i.pointer.latest_pos());
         if response.drag_started_by(egui::PointerButton::Primary) {
             let origin = ui.input(|i| i.pointer.press_origin()).or(pointer);
             self.box_origin = origin.filter(|o| {
-                let p = self.camera.to_farm(scene.rect, *o);
+                let p = transform.inverse() * *o;
                 !tray_hit(scene, p) && hit(scene, placed, p).is_none()
             });
         }
@@ -893,8 +898,8 @@ impl FarmView {
             self.box_origin = None;
             let additive = ui.input(|i| crate::ui::clan_view::is_additive(i.modifiers));
             let farm = Rect::from_two_pos(
-                self.camera.to_farm(scene.rect, rect.min),
-                self.camera.to_farm(scene.rect, rect.max),
+                transform.inverse() * rect.min,
+                transform.inverse() * rect.max,
             );
             return Some((boxed_dwarves(scene, placed, farm), additive));
         }
