@@ -101,7 +101,7 @@ network access. You can use the dashboard without granting microphone access.
 
 The bundle script signs ad hoc by default; it does not notarize the app. If macOS
 blocks a build you trust, review the warning in System Settings → Privacy &
-Security and use the offered **Open Anyway** action. Do not disable Gatekeeper.
+Security and use the offered **Open Anyway** action; see [Apple’s instructions](https://support.apple.com/en-us/102445).
 Ad-hoc signatures change with rebuilds, so macOS may request microphone access
 again after reinstalling. For a stable local signing identity, create a
 code-signing certificate in Keychain Access, then use its exact name:
