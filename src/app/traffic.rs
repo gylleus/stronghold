@@ -35,6 +35,13 @@ impl StrongholdApp {
         let Some(snapshot) = &self.snapshot else {
             return;
         };
+        if messages
+            .iter()
+            .any(|m| super::envoy_visuals::sent_by_envoy(m, snapshot))
+        {
+            self.farm.envoy_activity(true, ctx.input(|i| i.time));
+            ctx.request_repaint();
+        }
         let flights: Vec<_> = messages
             .iter()
             .filter_map(|m| {
