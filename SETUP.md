@@ -62,9 +62,11 @@ Other verified recipes:
 | `cargo run` | Runs a development build without installing an app bundle. |
 
 A development launch uses your normal Stronghold data by default. Set
-`STRONGHOLD_DATA_DIR` and `STRONGHOLD_AGENTS_DIR` to scratch directories when
-experimenting with a separate instance. A separate data directory does **not**
-isolate the live Orca runtime; use the synthetic demo for visual experiments.
+`STRONGHOLD_DATA_DIR` and `STRONGHOLD_AGENTS_DIR` to scratch directories, and
+`STRONGHOLD_SETTINGS` to a scratch settings file, when experimenting with a
+separate instance. The settings path needs its own explicit override. A separate
+data directory does **not** isolate the live Orca runtime; use the synthetic demo
+for visual experiments.
 
 ## First launch
 
@@ -253,7 +255,7 @@ Prefer the app's Settings UI; missing JSON fields use defaults.
 | Variable | Default / purpose |
 | --- | --- |
 | `STRONGHOLD_DATA_DIR` | `~/Library/Application Support/Stronghold`; app state, separate from shared clan files. |
-| `STRONGHOLD_SETTINGS` | `<data dir>/settings.json`; override the settings file. |
+| `STRONGHOLD_SETTINGS` | `~/Library/Application Support/Stronghold/settings.json`; override explicitly for a separate instance. |
 | `STRONGHOLD_AGENTS_DIR` | `~/Documents/agents`; shared notes, Ledger and archives. |
 | `STRONGHOLD_PLAYBOOK_DIR` | Overrides playbook lookup as described above. |
 | `STRONGHOLD_CONTROL_SOCKET` | `<data dir>/control.sock`; use the same absolute path in the app and MCP client. |
