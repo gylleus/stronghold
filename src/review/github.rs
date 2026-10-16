@@ -481,7 +481,7 @@ pub fn classify_failure(stderr: &str) -> GhError {
     }
 }
 
-fn run_with_timeout(
+pub(crate) fn run_with_timeout(
     binary: &str,
     args: &[&str],
     timeout: Duration,

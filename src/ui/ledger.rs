@@ -1,4 +1,4 @@
-//! A read-only Ledger pane. One worker handles searches, file reads and opening the editor.
+//! A read-only Ledger modal. One worker handles searches, file reads and opening the editor.
 
 use std::path::PathBuf;
 
@@ -73,9 +73,24 @@ fn perform(root: &std::path::Path, job: Job) -> anyhow::Result<Reply> {
     }
 }
 
+/// Existing Lorekeeper controls, supplied by the app without coupling the reader to its session.
 #[derive(Default)]
-pub struct LedgerPane {
+pub struct Maintenance<'a> {
+    pub tending: bool,
+    pub launch_error: Option<&'a str>,
+    pub report: Option<&'a crate::lorekeeper::report::SavedReport>,
+}
+
+#[derive(Default)]
+pub struct LedgerModal {
     pub open_requested: bool,
+    open: bool,
+    focus_query: bool,
+    previous_focus: Option<egui::Id>,
+    cursor: usize,
+    scroll_to_cursor: bool,
+    search_at: Option<f64>,
+    pub tend_requested: bool,
     query: String,
     mode: Mode,
     worker: Option<Worker>,
@@ -90,7 +105,120 @@ pub struct LedgerPane {
     searched: Option<String>,
 }
 
-impl LedgerPane {
+impl LedgerModal {
+    pub fn is_open(&self) -> bool {
+        self.open || self.open_requested
+    }
+
+    /// All entry points request this overlay; the dock and selection are untouched.
+    pub fn show_modal(
+        &mut self,
+        ctx: &egui::Context,
+        shelf: &Shelf,
+        now_ms: i64,
+        maintenance: Maintenance<'_>,
+    ) {
+        if std::mem::take(&mut self.open_requested) {
+            if !self.open {
+                self.previous_focus = ctx.memory(|m| m.focused());
+            }
+            self.open = true;
+            self.focus_query = true;
+        }
+        if !self.open {
+            return;
+        }
+        let size =
+            (ctx.content_rect().size() - egui::vec2(48.0, 48.0)).min(egui::vec2(1000.0, 760.0));
+        let modal = egui::Modal::new(egui::Id::new("ledger-modal")).show(ctx, |ui| {
+            ui.set_width(size.x.max(240.0));
+            ui.set_height(size.y.max(200.0));
+            ui.horizontal(|ui| {
+                ui.heading("Ledger");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Close  Esc").clicked() {
+                        ui.close();
+                    }
+                    ui.weak("↑↓ move · Enter open");
+                });
+            });
+            self.show(ui, shelf, now_ms, &maintenance);
+        });
+        if modal.should_close() {
+            self.open = false;
+            ctx.memory_mut(|m| {
+                m.surrender_focus(egui::Id::new("ledger-query"));
+                if let Some(id) = self.previous_focus.take() {
+                    m.request_focus(id);
+                }
+            });
+        }
+    }
+
+    fn maintenance(&mut self, ui: &mut Ui, now_ms: i64, state: &Maintenance<'_>) {
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(!state.tending, egui::Button::new("Tend the Ledger"))
+                .clicked()
+            {
+                self.tend_requested = true;
+            }
+            if state.tending {
+                ui.label("Tending…");
+            } else if let Some(error) = state.launch_error {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            } else if let Some(saved) = state.report {
+                let mode = if saved.report.dry_run {
+                    " (dry run)"
+                } else {
+                    ""
+                };
+                let ago = crate::quota::format_duration(now_ms.saturating_sub(saved.at_ms).max(0));
+                ui.label(format!(
+                    "Last tended {ago} ago{mode}: {}",
+                    saved.report.counts()
+                ));
+            } else {
+                ui.weak("Not tended yet");
+            }
+        });
+        if let Some(saved) = state.report {
+            ui.collapsing("Last report details", |ui| {
+                ui.label(format!("Snapshot: {}", saved.snapshot.display()));
+                let mut items = saved
+                    .report
+                    .items
+                    .iter()
+                    .filter(|i| i.action != crate::lorekeeper::report::Action::Keep)
+                    .collect::<Vec<_>>();
+                items.sort_by_key(|i| i.action != crate::lorekeeper::report::Action::Flag);
+                egui::ScrollArea::vertical()
+                    .id_salt("lorekeeper_report")
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        for item in items {
+                            ui.label(format!(
+                                "{} · {}: {}",
+                                item.action.name(),
+                                item.path,
+                                item.reason
+                            ));
+                            if let Some(target) = &item.target {
+                                ui.weak(format!("→ {target}"));
+                            }
+                        }
+                    });
+            });
+        }
+        ui.separator();
+    }
+
+    fn open_entry(&mut self, entry: Entry) {
+        self.selected = Some(entry.clone());
+        self.markdown = None;
+        self.send(Job::Read(entry));
+    }
+
     fn send(&mut self, job: Job) {
         self.generation += 1;
         self.busy = true;
@@ -112,6 +240,8 @@ impl LedgerPane {
         self.busy = false;
         match result {
             Ok(Reply::Results(results)) => {
+                self.cursor = 0;
+                self.scroll_to_cursor = true;
                 self.hits = results.hits;
                 self.fallback = results.fallback;
             }
@@ -122,6 +252,8 @@ impl LedgerPane {
     }
 
     fn run_search(&mut self, shelf: &Shelf) {
+        self.search_at = None;
+        self.cursor = 0;
         self.selected = None;
         self.markdown = None;
         self.hits.clear();
@@ -136,7 +268,7 @@ impl LedgerPane {
         }
     }
 
-    pub fn show(&mut self, ui: &mut Ui, shelf: &Shelf, now_ms: i64) {
+    fn show(&mut self, ui: &mut Ui, shelf: &Shelf, now_ms: i64, maintenance: &Maintenance<'_>) {
         if self.worker.is_none() {
             let Some(root) = crate::ledger::default_dir() else {
                 ui.label("Ledger folder is unavailable");
@@ -153,19 +285,52 @@ impl LedgerPane {
         while let Some(reply) = self.worker.as_ref().and_then(|w| w.rx.try_recv().ok()) {
             self.accept(reply);
         }
+        let (up, down, enter) = ui.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+            )
+        });
+        if up {
+            self.cursor = self.cursor.saturating_sub(1);
+        }
+        if down && self.cursor + 1 < self.hits.len() {
+            self.cursor += 1;
+        }
         let mut submit = false;
         ui.horizontal(|ui| {
             let edit = ui.add(
                 egui::TextEdit::singleline(&mut self.query)
-                    .hint_text("Search the Ledger…")
+                    .id(egui::Id::new("ledger-query"))
+                    .hint_text("Search titles and bodies…")
                     .desired_width((ui.available_width() - 75.0).max(60.0)),
             );
-            submit = (edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                || ui.button("Search").clicked();
-            if edit.changed() && self.query.trim().is_empty() {
-                submit = true;
+            if std::mem::take(&mut self.focus_query) {
+                edit.request_focus();
             }
+            if edit.changed() {
+                self.search_at = Some(ui.input(|i| i.time) + 0.25);
+            }
+            submit = ui.button("Search").clicked();
         });
+        if enter {
+            if self.search_at.is_some() || self.error.is_some() {
+                submit = true;
+            } else if !self.busy
+                && let Some(hit) = self.hits.get(self.cursor)
+            {
+                self.open_entry(hit.entry.clone());
+            }
+        }
+        if let Some(at) = self.search_at {
+            if ui.input(|i| i.time) >= at {
+                submit = true;
+            } else {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(250));
+            }
+        }
         ui.horizontal_wrapped(|ui| {
             ui.label("Search by:");
             for (mode, label) in [
@@ -181,9 +346,12 @@ impl LedgerPane {
         if self.mode == Mode::Auto {
             ui.weak("Meaning for questions · text for IDs such as ABC-123 or myr-bas");
         }
-        if submit || (self.query.trim().is_empty() && self.shelf.as_ref() != Some(shelf)) {
+        if submit || (self.query.trim().is_empty() && self.shelf.is_none()) {
             self.run_search(shelf);
         }
+        ui.collapsing("Ledger maintenance", |ui| {
+            self.maintenance(ui, now_ms, maintenance);
+        });
         if let Some(error) = &self.fallback {
             ui.colored_label(
                 ui.visuals().warn_fg_color,
@@ -213,6 +381,7 @@ impl LedgerPane {
             }
         }
         let mut pick = None;
+        let scroll_to_cursor = std::mem::take(&mut self.scroll_to_cursor) || up || down;
         let height = if self.selected.is_some() {
             ui.available_height() * 0.35
         } else {
@@ -226,10 +395,14 @@ impl LedgerPane {
                 if self.hits.is_empty() && !self.busy && self.error.is_none() {
                     ui.weak("No entries found.");
                 }
-                for hit in &self.hits {
+                for (index, hit) in self.hits.iter().enumerate() {
                     let entry = &hit.entry;
-                    let selected = self.selected.as_ref().is_some_and(|s| s.path == entry.path);
-                    if ui.selectable_label(selected, &entry.title).clicked() {
+                    let row = ui.selectable_label(index == self.cursor, &entry.title);
+                    if index == self.cursor && scroll_to_cursor {
+                        row.scroll_to_me(None);
+                    }
+                    if row.clicked() {
+                        self.cursor = index;
                         pick = Some(entry.clone());
                     }
                     let age = if entry.modified_ms == 0 {
@@ -241,22 +414,21 @@ impl LedgerPane {
                         )
                     };
                     ui.weak(format!(
-                        "{} · {} · {age}",
+                        "{} · {} · {} · {age}",
                         if entry.folder.is_empty() {
                             "Ledger"
                         } else {
                             &entry.folder
                         },
-                        entry.kind.as_deref().unwrap_or("entry")
+                        entry.kind.as_deref().unwrap_or("entry"),
+                        entry_date(entry.modified_ms)
                     ));
                     ui.label(&hit.snippet);
                     ui.separator();
                 }
             });
         if let Some(entry) = pick {
-            self.selected = Some(entry.clone());
-            self.markdown = None;
-            self.send(Job::Read(entry));
+            self.open_entry(entry);
         }
         if let Some(entry) = self.selected.clone() {
             ui.separator();
@@ -281,13 +453,193 @@ impl LedgerPane {
     }
 }
 
+fn entry_date(modified_ms: i64) -> String {
+    if modified_ms == 0 {
+        return "date unknown".into();
+    }
+    jiff::Timestamp::from_millisecond(modified_ms)
+        .map(|t| {
+            t.to_zoned(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d")
+                .to_string()
+        })
+        .unwrap_or_else(|_| "date unknown".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn hit(name: &str) -> Hit {
+        Hit {
+            entry: Entry {
+                path: format!("stronghold/{name}.md").into(),
+                title: name.into(),
+                folder: "stronghold".into(),
+                kind: Some("finding".into()),
+                modified_ms: 1_792_022_400_000,
+            },
+            snippet: "A fixture entry".into(),
+        }
+    }
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn frame(
+        ctx: &egui::Context,
+        pane: &mut LedgerModal,
+        events: Vec<egui::Event>,
+        time: f64,
+    ) -> Vec<(String, egui::Pos2)> {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 900.0),
+                )),
+                events,
+                time: Some(time),
+                ..Default::default()
+            },
+            |ui| {
+                pane.show_modal(
+                    ui.ctx(),
+                    &Shelf::default(),
+                    1_792_022_400_000,
+                    Maintenance::default(),
+                );
+                // Background navigation must not receive the modal's Enter/arrows/Escape.
+                assert!(crate::ui::keys::take_commands(ui.ctx()).is_empty());
+            },
+        );
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape {
+                    let label = text.galley.text();
+                    if label.starts_with("Entry ") && shape.clip_rect.contains(text.pos) {
+                        return Some((label.to_owned(), text.pos));
+                    }
+                }
+                None
+            })
+            .collect()
+    }
+
+    #[test]
+    fn modal_focus_keyboard_and_session_state() {
+        let ctx = egui::Context::default();
+        let (tx, jobs) = unbounded();
+        let (_replies, rx) = unbounded();
+        let mut pane = LedgerModal {
+            open_requested: true,
+            worker: Some(Worker { tx, rx }),
+            shelf: Some(Shelf::default()),
+            hits: vec![hit("One"), hit("Two")],
+            ..Default::default()
+        };
+        frame(&ctx, &mut pane, vec![], 0.0);
+        frame(&ctx, &mut pane, vec![], 0.1);
+        assert_eq!(
+            ctx.memory(|m| m.focused()),
+            Some(egui::Id::new("ledger-query"))
+        );
+        frame(&ctx, &mut pane, vec![key(egui::Key::ArrowDown)], 0.2);
+        assert_eq!(pane.cursor, 1);
+        frame(&ctx, &mut pane, vec![key(egui::Key::Enter)], 0.3);
+        assert!(matches!(jobs.try_recv().unwrap().1, Job::Read(entry) if entry.title == "Two"));
+        pane.accept((pane.generation, Ok(Reply::Read("# Two\nBody".into()))));
+        frame(&ctx, &mut pane, vec![key(egui::Key::Escape)], 0.4);
+        assert!(!pane.is_open());
+        for n in 5..15 {
+            frame(&ctx, &mut pane, vec![], n as f64 / 10.0);
+        }
+        pane.open_requested = true;
+        frame(&ctx, &mut pane, vec![], 1.5);
+        assert_eq!(pane.cursor, 1);
+        assert_eq!(pane.selected.as_ref().unwrap().title, "Two");
+        assert_eq!(pane.markdown.as_deref(), Some("# Two\nBody"));
+        assert!(
+            jobs.is_empty(),
+            "reopening must not reset the search or entry"
+        );
+        frame(&ctx, &mut pane, vec![key(egui::Key::ArrowUp)], 1.6);
+        assert_eq!(pane.cursor, 0);
+        frame(
+            &ctx,
+            &mut pane,
+            vec![egui::Event::Text("needle".into())],
+            1.7,
+        );
+        frame(&ctx, &mut pane, vec![key(egui::Key::Enter)], 1.8);
+        assert!(
+            matches!(jobs.try_recv().unwrap().1, Job::Search(query, Mode::Text) if query == "needle")
+        );
+        assert!(pane.selected.is_none());
+        frame(&ctx, &mut pane, vec![key(egui::Key::Escape)], 1.9);
+        pane.open_requested = true;
+        frame(&ctx, &mut pane, vec![], 2.0);
+        assert_eq!(pane.query, "needle");
+    }
+
+    #[test]
+    fn closing_and_reopening_keeps_the_results_scroll_position() {
+        let ctx = egui::Context::default();
+        let (tx, _jobs) = unbounded();
+        let (_replies, rx) = unbounded();
+        let mut pane = LedgerModal {
+            open_requested: true,
+            worker: Some(Worker { tx, rx }),
+            shelf: Some(Shelf::default()),
+            hits: (0..30).map(|n| hit(&format!("Entry {n:02}"))).collect(),
+            ..Default::default()
+        };
+        frame(&ctx, &mut pane, vec![], 0.0);
+        let initial = frame(&ctx, &mut pane, vec![], 0.1);
+        assert_eq!(initial[0].0, "Entry 00");
+        frame(
+            &ctx,
+            &mut pane,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(500.0, 350.0)),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    phase: egui::TouchPhase::Move,
+                    delta: egui::vec2(0.0, -500.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            0.2,
+        );
+        for n in 3..20 {
+            frame(&ctx, &mut pane, vec![], n as f64 / 10.0);
+        }
+        let scrolled = frame(&ctx, &mut pane, vec![], 2.0);
+        assert!(!scrolled.is_empty());
+        assert_ne!(scrolled[0].0, "Entry 00");
+        frame(&ctx, &mut pane, vec![key(egui::Key::Escape)], 2.1);
+        for n in 22..30 {
+            frame(&ctx, &mut pane, vec![], n as f64 / 10.0);
+        }
+        pane.open_requested = true;
+        frame(&ctx, &mut pane, vec![], 3.0);
+        let reopened = frame(&ctx, &mut pane, vec![], 3.1);
+        assert_eq!(reopened, scrolled);
+    }
+
     #[test]
     fn an_old_search_cannot_replace_the_current_query() {
-        let mut pane = LedgerPane {
+        let mut pane = LedgerModal {
             generation: 2,
             busy: true,
             ..Default::default()
@@ -297,5 +649,35 @@ mod tests {
         assert!(pane.error.is_none());
         pane.accept((2, Ok(Reply::Results(Results::default()))));
         assert!(!pane.busy);
+    }
+}
+
+#[cfg(test)]
+mod lorekeeper_tests {
+    use super::*;
+    use crate::ui::test_util::click_label;
+
+    #[test]
+    fn tend_button_raises_one_request_and_is_disabled_during_a_run() {
+        let (tx, _jobs) = unbounded();
+        let (_results, rx) = unbounded();
+        let mut pane = LedgerModal {
+            worker: Some(Worker { tx, rx }),
+            ..Default::default()
+        };
+        for busy in [false, true] {
+            pane.tend_requested = false;
+            click_label("Tend the Ledger", |ui| {
+                pane.maintenance(
+                    ui,
+                    0,
+                    &Maintenance {
+                        tending: busy,
+                        ..Default::default()
+                    },
+                )
+            });
+            assert_eq!(pane.tend_requested, !busy);
+        }
     }
 }

@@ -280,7 +280,7 @@ fn fixture_to_mcp_to_panel_approval_dry_live_and_secret_block() {
             "I checked the build; it is ready."
         };
         panel.set_edit(&id, edited);
-        let action = crate::ui::test_util::click_label("Approve", |ui| {
+        let action = crate::ui::test_util::click_label("Send", |ui| {
             panel.show(
                 ui,
                 core.drafts(),
@@ -688,6 +688,7 @@ fn batches_name_candidate_dwarves_and_fold_the_backlog() {
     reply.text = "yes, push the merge commit yourself".into();
     let mut chatter = receipt_event("1791299960.000001");
     chatter.text = "lunch?".into();
+    core.backlog.insert(old.id());
     let events = vec![old, root, reply, chatter];
     let mut inbox = Inbox::default();
     for event in &events {
@@ -712,7 +713,7 @@ fn batches_name_candidate_dwarves_and_fold_the_backlog() {
         .map(str::to_owned)
         .collect();
     assert_eq!(lines.len(), 4);
-    assert!(lines[0].starts_with("Envoy backlog: 1 event(s) older than 30 min"));
+    assert!(lines[0].starts_with("Envoy backlog: 1 old or undated event(s) from before restart"));
     assert!(lines[1].ends_with("dwarves: Recs rollout (term:term_dwarf, api#694)"));
     assert!(
         lines[2].contains("push the merge commit")
@@ -1534,13 +1535,13 @@ fn batches_say_who_each_event_is_for() {
     );
     assert!(
         lines[2].contains(
-            "— addressee: unclear (tags <@U000COWORK1> in Karl's thread) — dwarves: Recs rollout (term:term_dwarf, its thread)"
+            "— addressee: Karl (in Karl's thread) — dwarves: Recs rollout (term:term_dwarf, its thread)"
         ),
         "{}",
         lines[2]
     );
     assert!(
-        lines[3].contains("— addressee: unclear (tags @search-bot in Karl's thread) —"),
+        lines[3].contains("— addressee: Karl (in Karl's thread) —"),
         "a thread the Envoy replied in is Karl's: {}",
         lines[3]
     );
@@ -1774,4 +1775,376 @@ fn envoy_asks_karl_then_delivers_a_new_event_before_the_answer() {
         target_blocked(Some(&prompt), Some(&blocked), handle, false),
         Some("not idle")
     );
+}
+
+#[test]
+fn ingest_regression_late_messages_are_typed_in_full() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let event = receipt_event("1.000001");
+    let mut inbox = Inbox::default();
+    inbox.insert(event.clone());
+    core.merge_polled(inbox, vec![event]);
+    let (Action::Send { input, .. }, _) = core.next_forward(now_ms(), &[]).unwrap() else {
+        panic!("send");
+    };
+    assert!(input.text.unwrap().contains("Envoy event:"));
+}
+
+#[test]
+fn ingest_regression_own_threads_and_group_mentions_are_for_user() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.settings.user_id = "UKARL".into();
+    core.inbox = serde_json::from_value(json!({
+        "user_threads": ["C123:1.000001"], "user_groups": ["SENG"]
+    }))
+    .unwrap();
+    let mut event = receipt_event("2.000001");
+    event.conversation = "C123".into();
+    event.thread_ts = Some("1.000001".into());
+    event.text = "<@UOTHER> this answers your question".into();
+    assert_eq!(
+        core.addressee(&event, &[], &[]).addressee,
+        addressee::Addressee::User
+    );
+    event.thread_ts = None;
+    event.text = "<!subteam^SENG|@engineering> help".into();
+    assert_eq!(
+        core.addressee(&event, &[], &[]).addressee,
+        addressee::Addressee::User
+    );
+}
+
+#[test]
+fn ingest_regression_sleep_grants_one_poll_interval() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    core.last_polled_ms = Some(1_000);
+    assert!(core.stall_notices(1_000).is_empty());
+    let wake = 1_000 + 3_600_000;
+    assert!(core.stall_notices(wake).is_empty());
+    let interval = core.settings.poll_secs.clamp(10, 86_400) as i64 * 1000;
+    for at in (wake + 1000..=wake + interval).step_by(1000) {
+        let notices = core.stall_notices(at);
+        assert_eq!(notices.len(), usize::from(at == wake + interval));
+    }
+}
+
+#[test]
+fn ingest_regression_reply_store_failure_keeps_poll_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, _commands, updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    core.handle = Some("envoy".into());
+    core.requests = None;
+    let event = receipt_event("1.000001");
+    let mut inbox = Inbox::default();
+    inbox.insert(event.clone());
+    inbox
+        .pending_replies
+        .push(crate::envoy::slack::threads::MatchedReply {
+            request_id: "request".into(),
+            event: event.clone(),
+        });
+    updates
+        .send(Update::Polled {
+            inbox,
+            events: vec![event.clone()],
+            bridge: BridgeStatus::Ok,
+            notices: vec![],
+            polled_at_ms: now_ms(),
+        })
+        .unwrap();
+    core.poll_updates();
+    assert!(core.inbox.get(&event.id()).is_some());
+    assert_eq!(core.pending.len(), 1);
+    assert!(core.error.is_some());
+}
+
+#[test]
+fn ingest_regression_member_group_mentions_are_for_user() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.settings.user_id = "UKARL".into();
+    core.inbox = serde_json::from_value(json!({"user_groups": ["SENG"]})).unwrap();
+    let mut event = receipt_event("2.000001");
+    event.text = "<!subteam^SENG|@engineering> help".into();
+    assert_eq!(
+        core.addressee(&event, &[], &[]).addressee,
+        addressee::Addressee::User
+    );
+    event.text = "<!subteam^SOTHER> help".into();
+    assert_eq!(
+        core.addressee(&event, &[], &[]).addressee,
+        addressee::Addressee::Other
+    );
+}
+
+#[test]
+fn restart_folds_only_old_ingested_chatter_and_keeps_it_readable() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut inbox = Inbox::default();
+    let mut events = Vec::new();
+    for n in 1..=6 {
+        let mut event = receipt_event(&format!("{n}.000001"));
+        match n {
+            1 => event.kind = EventKind::Dm,
+            2 => event.text = "<@UKARL> help".into(),
+            3 => event.text = "<!subteam^SENG> help".into(),
+            4 => {
+                event.thread_ts = Some("0.000001".into());
+                event.text = "<@UOTHER> answer".into();
+            }
+            _ => {}
+        }
+        inbox.insert(event.clone());
+        if n != 6 {
+            inbox
+                .ingested_ms
+                .insert(event.id(), now_ms() - BACKLOG_AFTER_MS - 1000);
+        }
+        events.push(event);
+    }
+    inbox.user_groups.insert("SENG".into());
+    inbox.user_threads.insert("C123:0.000001".into());
+    inbox
+        .save(&dir.path().join(crate::envoy::inbox::INBOX_FILE))
+        .unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.settings.user_id = "UKARL".into();
+    core.handle = Some("envoy".into());
+    core.pending = core.inbox.unforwarded().into();
+    let (Action::Send { input, .. }, batch) = core
+        .next_forward(now_ms() + BACKLOG_AFTER_MS * 2, &[])
+        .unwrap()
+    else {
+        panic!("send");
+    };
+    let text = input.text.unwrap();
+    assert!(text.contains("Envoy backlog: 1 old or undated event(s)"));
+    for event in &events {
+        assert_eq!(
+            text.contains(&format!("— id {}", event.id())),
+            event.ts != "5.000001"
+        );
+    }
+    core.acknowledge(&batch);
+    assert!(core.inbox.is_open(&events[4].id()));
+    assert!(
+        core.inbox
+            .since(None, 100)
+            .iter()
+            .any(|e| e.id() == events[4].id())
+    );
+}
+
+#[test]
+fn poll_error_heartbeat_refreshes_liveness_without_hiding_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    let (worker, _commands, updates) = Worker::test_pair();
+    core.worker = Some(worker);
+    core.handle = Some("envoy".into());
+    core.last_polled_ms = Some(now_ms() - POLL_STALE_MS);
+    updates
+        .send(Update::PollError {
+            error: "cannot save inbox".into(),
+            polled_at_ms: now_ms(),
+        })
+        .unwrap();
+    core.poll_updates();
+    assert!(!core.poll_stale(now_ms()));
+    assert_eq!(core.error.as_deref(), Some("cannot save inbox"));
+}
+
+#[test]
+fn rework_legacy_backlog_folds_chatter_but_preserves_protected_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut inbox = Inbox::default();
+    let mut chatter = receipt_event("1.000001");
+    chatter.text = "legacy chatter".into();
+    let mut dm = receipt_event("2.000001");
+    dm.kind = EventKind::Dm;
+    inbox.insert(chatter.clone());
+    inbox.insert(dm.clone());
+    let mut mention = receipt_event("3.000001");
+    mention.text = "<@UKARL> please check".into();
+    let mut group = receipt_event("4.000001");
+    group.text = "<!subteam^SENG> please check".into();
+    inbox.user_groups.insert("SENG".into());
+    inbox.insert(mention.clone());
+    inbox.insert(group.clone());
+    inbox.ingested_ms.clear();
+    inbox
+        .save(&dir.path().join(crate::envoy::inbox::INBOX_FILE))
+        .unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    core.settings.user_id = "UKARL".into();
+    core.pending = core.inbox.unforwarded().into();
+    let (Action::Send { input, .. }, _) = core.next_forward(now_ms(), &[]).unwrap() else {
+        panic!("send");
+    };
+    let text = input.text.unwrap();
+    assert!(text.contains("Envoy backlog: 1 old or undated event(s)"));
+    assert!(!text.contains(&format!("— id {}", chatter.id())));
+    assert!(text.contains(&format!("— id {}", dm.id())));
+    assert!(text.contains(&format!("— id {}", mention.id())));
+    assert!(text.contains(&format!("— id {}", group.id())));
+}
+
+#[test]
+fn feedback_round_trip_panel_terminal_mcp_revision_and_fresh_approval() {
+    use crate::review::mark::Origin;
+    use crate::ui::envoy::{DraftAction, DraftsPanel};
+    use crate::ui::test_util::click_label;
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let event = match crate::envoy::slack::parse_bridge_line(
+        include_bytes!("../../../tests/fixtures/envoy/channel.jsonl")
+            .split(|b| *b == b'\n')
+            .next()
+            .unwrap(),
+    )
+    .unwrap()
+    {
+        crate::envoy::slack::BridgeLine::Event(e) => e,
+        _ => panic!("fixture event"),
+    };
+    core.inbox.insert(event.clone());
+    core.settings.policies = vec![crate::envoy::settings::Policy {
+        destination: event.conversation.clone(),
+        mode: crate::envoy::settings::ApprovalMode::Auto { veto_secs: 0 },
+    }];
+    fn call(core: &mut AppEnvoy, method: &str, args: Value, handle: &str) -> Value {
+        let mut server = crate::mcp::McpServer::new(CoreControl(core)).with_review_env(
+            crate::mcp::review::ReviewEnv {
+                origin: Origin {
+                    terminal_handle: Some(handle.into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        server.handle(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":method,"arguments":args}})).unwrap()["result"].clone()
+    }
+    let created = call(
+        &mut core,
+        "envoy_draft",
+        json!({
+            "in_reply_to":{"conversation":event.conversation,"ts":event.ts},
+            "text":"I suggest the checked build.", "rationale":"Needs a decision",
+            "question":"Should we ask for a link first?"
+        }),
+        "envoy",
+    );
+    assert_ne!(created["isError"], true, "{created}");
+    let id = core.drafts()[0].id.clone();
+    core.auto_approve(i64::MAX).unwrap();
+    assert_eq!(core.drafts()[0].status, DraftStatus::Pending);
+    assert!(core.drafts()[0].auto_at_ms.is_none());
+    let mut panel = DraftsPanel::default();
+    panel.set_feedback(&id, "Ask them for a link\nand don't mention the build.");
+    let action = click_label("Send feedback", |ui| {
+        panel.show(ui, core.drafts(), core.inbox(), true, None)
+    })
+    .unwrap();
+    assert!(matches!(action, DraftAction::Feedback { .. }));
+    let (_, result) = core.panel_action(action, false, |_| panic!("must not reach King"));
+    result.unwrap();
+    panel.result(&id, Ok(()));
+    assert!(core.envoy_approve(&id, None, false, |_| true).is_err());
+    assert!(core.queue().unwrap().edit(&id, "stale edit", 2).is_err());
+    // A restart between feedback submission and delivery must retain the work.
+    core = AppEnvoy::load(dir.path().into());
+    core.handle = Some("envoy".into());
+    let (action, draft, revision) = core.next_feedback(100).unwrap();
+    let Action::Send { handle, input } = &action else {
+        panic!("terminal action")
+    };
+    assert_eq!(handle, "envoy");
+    let line = input.text.as_ref().unwrap();
+    assert!(line.contains("envoy_revise"));
+    assert!(line.contains("Ask them for a link\\nand"));
+    assert!(!line.contains('\n'));
+    assert!(input.enter);
+    core.feedback_forwarding = Some((900, draft, revision));
+    assert!(core.next_feedback(100).is_none());
+    core.feedback_done(
+        &ActionResult {
+            id: 900,
+            note: None,
+            action: action.clone(),
+            outcome: Err("offline".into()),
+        },
+        100,
+    );
+    assert!(core.next_feedback(101).is_none());
+    let (action, draft, revision) = core.next_feedback(60_100).unwrap();
+    core.feedback_forwarding = Some((901, draft, revision));
+    core.feedback_done(
+        &ActionResult {
+            id: 901,
+            note: None,
+            action,
+            outcome: Ok(()),
+        },
+        60_100,
+    );
+    assert!(core.next_feedback(60_101).is_none());
+    assert!(
+        core.next_feedback(120_100).is_some(),
+        "unconsumed feedback is retried at idle"
+    );
+    let read = call(&mut core, "envoy_drafts", json!({}), "envoy");
+    assert_ne!(read["isError"], true, "{read}");
+    let args = json!({"id":id,"revision":revision,"text":"Could you send us a link?","rationale":"Followed the inline instruction"});
+    assert_eq!(
+        call(&mut core, "envoy_revise", args.clone(), "outsider")["isError"],
+        true
+    );
+    let revised = call(&mut core, "envoy_revise", args.clone(), "envoy");
+    assert_ne!(revised["isError"], true, "{revised}");
+    assert_eq!(
+        call(&mut core, "envoy_revise", args, "envoy")["isError"],
+        true,
+        "stale retries cannot duplicate revisions"
+    );
+    core.auto_approve(i64::MAX).unwrap();
+    let latest = &core.drafts()[0];
+    assert_eq!(latest.status, DraftStatus::Pending);
+    assert_eq!(latest.history[0].text, "I suggest the checked build.");
+    assert_eq!(
+        latest.history[0].feedback.as_deref(),
+        Some("Ask them for a link\nand don't mention the build.")
+    );
+    assert_eq!(
+        latest.history[0].question.as_deref(),
+        Some("Should we ask for a link first?")
+    );
+    assert!(latest.feedback.is_none() && latest.question.is_none());
+    assert!(core.next_feedback(i64::MAX).is_none());
+    let mut panel = DraftsPanel::default();
+    let approve = click_label("Send", |ui| {
+        panel.show(ui, core.drafts(), core.inbox(), true, None)
+    })
+    .unwrap();
+    assert_eq!(
+        approve,
+        DraftAction::Approve {
+            id: id.clone(),
+            text: "Could you send us a link?".into()
+        }
+    );
+    core.panel_action(approve, false, |_| panic!("reply must not reach King"))
+        .1
+        .unwrap();
+    let core = AppEnvoy::load(dir.path().into());
+    assert_eq!(core.drafts()[0].status, DraftStatus::DryRunSent);
+    assert_eq!(core.drafts()[0].history.len(), 1);
 }

@@ -117,6 +117,8 @@ pub enum Status {
 pub struct Turn {
     pub id: u64,
     pub ask: String,
+    #[serde(default)]
+    pub karl_asked: Option<String>,
     pub why: String,
     pub urgency: String,
     pub expect_reply: bool,
@@ -257,6 +259,8 @@ impl Request {
 pub struct ReachOut {
     pub to: String,
     pub ask: String,
+    #[serde(default)]
+    pub karl_asked: Option<String>,
     pub why: String,
     pub thread: Option<String>,
     pub request_id: Option<String>,
@@ -285,6 +289,20 @@ pub struct Accepted {
 struct Saved {
     next_id: u64,
     requests: Vec<Request>,
+    #[serde(default)]
+    deletions: Vec<Deletion>,
+    #[serde(default)]
+    // A reply watch must outlive the sent draft that established its cutoff.
+    deleted_draft_cutoffs: std::collections::BTreeMap<String, i64>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Deletion {
+    pub id: String,
+    pub requester: Option<Requester>,
+    pub delivery: Delivery,
+    pub thread: Option<Thread>,
+    pub drafts: Vec<String>,
 }
 
 pub struct Requests {
@@ -329,6 +347,87 @@ impl Requests {
             .find(|r| r.id == id)
             .ok_or("Request unavailable".into())
     }
+    pub fn deletions(&self) -> &[Deletion] {
+        &self.saved.deletions
+    }
+
+    pub fn delete(
+        &mut self,
+        id: &str,
+        drafts: Vec<String>,
+        thread: Option<Thread>,
+    ) -> Result<(), String> {
+        let request = self.get(id)?.clone();
+        let old = self.saved.clone();
+        let notify = request.turns.iter().any(|t| {
+            matches!(
+                t.status,
+                Status::Queued | Status::Drafted | Status::Approved | Status::Failed
+            )
+        });
+        self.saved.deletions.push(Deletion {
+            id: id.into(),
+            requester: request.bound_requester().cloned(),
+            thread,
+            drafts,
+            delivery: Delivery {
+                id: "deleted".into(),
+                text: format!(
+                    "Envoy: request {id} declined: {}",
+                    crate::user::fill("deleted by {user}")
+                ),
+                event: None,
+                delivered: !notify || request.bound_requester().is_none(),
+                dry_run: false,
+                inbox: false,
+            },
+        });
+        self.saved.requests.retain(|r| r.id != id);
+        self.saved.deleted_draft_cutoffs.remove(id);
+        self.commit(old)
+    }
+
+    pub fn change_deletions(&mut self, f: impl FnOnce(&mut Vec<Deletion>)) -> Result<(), String> {
+        let old = self.saved.clone();
+        f(&mut self.saved.deletions);
+        self.saved
+            .deletions
+            .retain(|d| !d.delivery.delivered || d.thread.is_some() || !d.drafts.is_empty());
+        self.commit(old)
+    }
+
+    pub fn retain_draft_receipt(&mut self, draft: &Draft) -> Result<(), String> {
+        let Some(link) = &draft.request else {
+            return Ok(());
+        };
+        let Some(receipt) = draft.receipt.as_ref().filter(|_| draft.confirmed_send) else {
+            return Ok(());
+        };
+        let Some(ts) = inbox::timestamp_us(&receipt.ts) else {
+            return Ok(());
+        };
+        self.get(&link.id)?;
+        let old = self.saved.clone();
+        let cutoff = self
+            .saved
+            .deleted_draft_cutoffs
+            .entry(link.id.clone())
+            .or_insert(ts);
+        *cutoff = (*cutoff).min(ts);
+        self.commit(old)
+    }
+
+    fn commit(&mut self, old: Saved) -> Result<(), String> {
+        if serde_json::to_vec(&old).unwrap() == serde_json::to_vec(&self.saved).unwrap() {
+            return Ok(());
+        }
+        if let Err(error) = self.save() {
+            self.saved = old;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub fn change<T>(
         &mut self,
         id: &str,
@@ -361,6 +460,13 @@ impl Requests {
         now: i64,
     ) -> Result<Accepted, String> {
         refuse_user(&args.to, user_id)?;
+        if args
+            .karl_asked
+            .as_ref()
+            .is_some_and(|quote| quote.trim().is_empty() || quote.chars().count() > 500)
+        {
+            return Err("karl_asked must contain 1 to 500 characters".into());
+        }
         for (value, max) in [(&args.to, 1000), (&args.ask, 35_000), (&args.why, 4000)] {
             if value.trim().is_empty() || value.len() > max {
                 return Err("Request text is empty or too long".into());
@@ -418,7 +524,10 @@ impl Requests {
                     .turns
                     .iter()
                     .rev()
-                    .find(|t| t.ask == args.ask)
+                    .find(|t| {
+                        t.ask == args.ask
+                            && (args.karl_asked.is_none() || t.karl_asked == args.karl_asked)
+                    })
                     .filter(|t| t.status != Status::Declined)
             {
                 return Ok(Accepted {
@@ -489,6 +598,7 @@ impl Requests {
         request.turns.push(Turn {
             id: turn_id,
             ask: args.ask,
+            karl_asked: args.karl_asked,
             why: args.why,
             urgency: args.urgency,
             expect_reply: args.expect_reply,
@@ -516,7 +626,7 @@ impl Requests {
     pub fn reconcile(&mut self, drafts: &[Draft]) -> Result<(), String> {
         let old = self.saved.clone();
         for request in &mut self.saved.requests {
-            request.reply_after_us = None;
+            request.reply_after_us = self.saved.deleted_draft_cutoffs.get(&request.id).copied();
         }
         for draft in drafts {
             let Some(link) = &draft.request else { continue };

@@ -128,6 +128,45 @@ fn king_has_a_regular_body_and_stands_on_the_throne_hall_floor() {
 }
 
 #[test]
+fn finished_dwarves_only_visit_the_treasury_for_review_work() {
+    for kind in [NodeKind::Worker, NodeKind::Coordinator, NodeKind::Terminal] {
+        for state in [NodeState::Done, NodeState::Idle] {
+            for pr in [false, true] {
+                let mut s = ClanSnapshot::default();
+                s.runs = vec![run("r1", 0, 0)];
+                let run = (kind != NodeKind::Terminal).then_some("r1");
+                let mut n = node("finished", kind, run, state);
+                n.terminal_handle = Some("open-terminal".into());
+                s.nodes.push(n);
+                let scene = scene_with(&s, &BTreeSet::new(), if pr { &["finished"] } else { &[] });
+                let dwarf = dwarf(&scene, "finished");
+                if pr && kind != NodeKind::Worker {
+                    assert!(matches!(dwarf.spot, Spot::Storage(_)));
+                    assert_eq!(dwarf.pose, Pose::Carry);
+                    assert_eq!(dwarf.mark, Some(Mark::PrReady));
+                    assert_eq!(scene.pr_ready, 1);
+                } else {
+                    let key = if kind == NodeKind::Terminal {
+                        TunnelKey::Repo("repo-finished".into())
+                    } else {
+                        TunnelKey::Run("r1".into())
+                    };
+                    let expected = if kind == NodeKind::Coordinator {
+                        Spot::Mouth(key, 0)
+                    } else {
+                        Spot::Chamber(key, 0)
+                    };
+                    assert_eq!(dwarf.spot, expected, "{kind:?} {state:?} pr={pr}");
+                    assert_eq!(dwarf.pose, Pose::Sleep);
+                    assert_eq!(dwarf.mark, Some(Mark::Sleep));
+                    assert_eq!(scene.pr_ready, 0);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn state_picks_the_place() {
     use Home::*;
     use NodeState::*;
@@ -145,17 +184,18 @@ fn state_picks_the_place() {
         };
         for pr in [false, true] {
             assert_eq!(home(kind, NeedsInput, pr), Landing, "{kind:?}");
-            assert_eq!(home(kind, Done, pr), Storage, "{kind:?}");
+            let resting = if pr && kind != NodeKind::Worker {
+                Storage
+            } else {
+                post
+            };
+            for state in [Done, Idle] {
+                assert_eq!(home(kind, state, pr), resting, "{kind:?} {state:?}");
+            }
             for state in [Working, Stalled, Failed] {
                 assert_eq!(home(kind, state, pr), post, "{kind:?} {state:?}");
             }
         }
-        assert_eq!(home(kind, Idle, false), post, "{kind:?}");
-        assert_eq!(
-            home(kind, Idle, true),
-            Storage,
-            "idle with a PR waits in storage"
-        );
     }
     for state in [Working, Idle, NeedsInput, Stalled, Done, Failed] {
         assert_eq!(home(NodeKind::King, state, false), King);
@@ -177,7 +217,7 @@ fn state_picks_pose_and_mark() {
     assert_eq!(worker(Idle), Pose::Sleep);
     assert_eq!(worker(Stalled), Pose::Sleep);
     assert_eq!(worker(NeedsInput), Pose::Wait);
-    assert_eq!(worker(Done), Pose::Carry);
+    assert_eq!(worker(Done), Pose::Sleep);
     assert_eq!(worker(Failed), Pose::Failed);
     let coord = pose(NodeKind::Coordinator, Working, Home::Mouth);
     assert_eq!(coord, Pose::Stand, "coordinators stand at the mouth");
@@ -189,7 +229,7 @@ fn state_picks_pose_and_mark() {
     );
     assert_eq!(mark(NeedsInput, false), Some(Mark::Alert));
     assert_eq!(mark(Failed, false), Some(Mark::Failed));
-    assert_eq!(mark(Done, false), None);
+    assert_eq!(mark(Done, false), Some(Mark::Sleep));
     assert_eq!(mark(Done, true), Some(Mark::PrReady));
     assert_eq!(mark(Idle, true), Some(Mark::PrReady));
     assert_eq!(mark(Working, false), None);
@@ -211,12 +251,11 @@ fn dwarves_go_where_their_state_says() {
     assert_eq!(coord.tag, None, "its tunnel's label names it");
     assert_eq!(dwarf(&scene, "working").tag.as_deref(), Some("working"));
     assert!(
-        (coord.pos.x - tunnel.shaft.center().x).abs() < 1.0,
-        "at the mouth"
+        tunnel.chamber.contains(coord.pos),
+        "inside the gallery mouth"
     );
-    assert!(coord.pos.y < tunnel.chamber.top(), "above the chamber");
 
-    for name in ["working", "idle", "stalled", "failed"] {
+    for name in ["working", "idle", "stalled", "done", "failed"] {
         let a = dwarf(&scene, name);
         assert!(matches!(a.spot, Spot::Chamber(..)), "{name}");
         assert_eq!(tunnel_of(&scene, name), t, "{name}");
@@ -238,9 +277,8 @@ fn dwarves_go_where_their_state_says() {
     assert!(scene.landing.contains(waiting.pos));
 
     let done = dwarf(&scene, "done");
-    assert_eq!(done.spot, Spot::Storage(0));
-    assert!(scene.storage.contains(done.pos));
-    assert_eq!(done.pose, Pose::Carry);
+    assert_eq!(done.pose, Pose::Sleep);
+    assert_eq!(done.mark, Some(Mark::Sleep));
 }
 
 #[test]
@@ -283,7 +321,13 @@ fn everyone_waiting_on_karl_shares_the_landing() {
 
 #[test]
 fn pr_ready_dwarves_mark_and_pile_in_storage() {
-    let scene = scene_with(&snapshot(), &BTreeSet::new(), &["done", "idle"]);
+    let mut s = snapshot();
+    for n in &mut s.nodes {
+        if matches!(n.id.as_str(), "done" | "idle") {
+            n.kind = NodeKind::Terminal;
+        }
+    }
+    let scene = scene_with(&s, &BTreeSet::new(), &["done", "idle"]);
     assert_eq!(dwarf(&scene, "done").mark, Some(Mark::PrReady));
     let idle = dwarf(&scene, "idle");
     assert_eq!(
@@ -324,6 +368,7 @@ fn one_tunnel_per_run_then_per_repo() {
             TunnelKey::Run("second".into()),
             TunnelKey::Run("first".into()),
             TunnelKey::Repo("alpha".into()),
+            TunnelKey::RestingArea,
         ],
         "runs in run-list order, then repos"
     );
@@ -333,8 +378,12 @@ fn one_tunnel_per_run_then_per_repo() {
         scene.tunnels[0].tasks, None,
         "no task counts, no progress bar"
     );
-    let xs: Vec<f32> = scene.tunnels.iter().map(|t| t.shaft.center().x).collect();
-    assert!(xs.windows(2).all(|w| w[0] < w[1]), "left to right: {xs:?}");
+    assert!(
+        scene
+            .tunnels
+            .windows(2)
+            .all(|pair| !pair[0].chamber.intersects(pair[1].chamber))
+    );
 }
 
 #[test]
@@ -427,6 +476,7 @@ fn a_finished_run_without_workers_has_no_tunnel() {
         [
             TunnelKey::Run("ongoing".into()),
             TunnelKey::Repo("alpha".into()),
+            TunnelKey::RestingArea,
         ],
         "a finished run's coordinator digs in its repo's tunnel; one with a worker keeps its own"
     );
@@ -436,7 +486,7 @@ fn a_finished_run_without_workers_has_no_tunnel() {
 }
 
 #[test]
-fn tunnels_deepen_with_progress() {
+fn task_progress_keeps_galleries_on_their_level() {
     let mut s = ClanSnapshot::default();
     s.runs = vec![run("early", 0, 4), run("late", 4, 4)];
     s.nodes.push(node(
@@ -466,8 +516,23 @@ fn tunnels_deepen_with_progress() {
     assert_eq!(late.progress, Some(1.0));
     assert_eq!(early.tasks, Some((0, 4)));
     assert_eq!(late.tasks, Some((4, 4)));
-    assert!(late.chamber.top() > early.chamber.top() + 50.0);
+    assert!(!late.chamber.intersects(early.chamber));
     assert!(late.chamber.bottom() <= rect.bottom());
+    let before = scene;
+    s.runs[0].task_counts.as_mut().unwrap().completed = 2;
+    let after = layout(
+        &FarmInput {
+            snapshot: &s,
+            hidden: &BTreeSet::new(),
+            pr_ready: &HashSet::new(),
+            building: &HashSet::new(),
+            now_ms: 0,
+        },
+        rect,
+    );
+    for (a, b) in before.tunnels.iter().zip(&after.tunnels) {
+        assert_eq!(a.chamber, b.chamber, "progress must not move its workspace");
+    }
 }
 
 #[test]
@@ -503,7 +568,7 @@ fn hidden_nodes_are_not_drawn() {
         scene
             .tunnels
             .iter()
-            .all(|t| matches!(t.key, TunnelKey::Run(_))),
+            .all(|t| matches!(t.key, TunnelKey::Run(_) | TunnelKey::RestingArea)),
         "the hidden terminal's tunnel goes too"
     );
 }
@@ -564,12 +629,14 @@ fn crowds_on_the_landing_and_in_storage_fit() {
         ));
         s.nodes.push(node(
             &format!("done{i}"),
-            NodeKind::Worker,
+            NodeKind::Terminal,
             Some("r"),
             NodeState::Done,
         ));
     }
-    let scene = assert_fits(&s);
+    let pr: Vec<String> = (0..14).map(|i| format!("done{i}")).collect();
+    let pr: Vec<&str> = pr.iter().map(String::as_str).collect();
+    let scene = assert_fits_with_pr(&s, &pr);
     for a in &scene.dwarves {
         let area = if a.state == NodeState::Done {
             scene.storage
@@ -588,7 +655,11 @@ fn crowds_on_the_landing_and_in_storage_fit() {
 
 /// Lays `s` out and checks every dwarf is drawn inside the view and none sit on each other.
 fn assert_fits(s: &ClanSnapshot) -> Scene {
-    let scene = scene(s);
+    assert_fits_with_pr(s, &[])
+}
+
+fn assert_fits_with_pr(s: &ClanSnapshot, pr: &[&str]) -> Scene {
+    let scene = scene_with(s, &BTreeSet::new(), pr);
     assert_eq!(scene.dwarves.len(), s.nodes.len());
     for a in &scene.dwarves {
         let cell = Rect::from_center_size(a.pos, Vec2::splat(a.size));
@@ -610,7 +681,7 @@ fn assert_fits(s: &ClanSnapshot) -> Scene {
 }
 
 #[test]
-fn cart_routes_use_the_chamber_shaft_and_entrance() {
+fn walking_routes_use_the_shared_ladder_and_entrance() {
     let scene = scene(&snapshot());
     let worker = dwarf(&scene, "working");
     let t = &scene.tunnels[tunnel_of(&scene, "working")];
@@ -621,18 +692,26 @@ fn cart_routes_use_the_chamber_shaft_and_entrance() {
     let path = route(worker.pos, to, &worker.spot, &Spot::Landing(0), &scene);
     assert_eq!(along(&path, 0.0).0, worker.pos);
     assert_eq!(along(&path, 1.0).0, to);
-    assert!(path.contains(&pos2(t.shaft.center().x, scene.gallery.center().y)));
+    assert!(path.contains(&pos2(
+        scene.work_ladder().center().x,
+        scene.gallery.center().y
+    )));
     assert!(path.contains(&pos2(scene.entrance_x(), scene.gallery.center().y)));
     for leg in path.windows(2) {
         assert!(
             leg[0].x == leg[1].x || leg[0].y == leg[1].y,
-            "axis-aligned rails and hoists"
+            "axis-aligned galleries and ladders"
         );
         let mid = leg[0].lerp(leg[1], 0.5);
         if mid.y > scene.gallery.bottom() && mid.y < t.chamber.top() {
             assert!(
-                t.shaft.contains(mid),
-                "cart must stay in the excavated shaft"
+                scene.work_ladder().contains(mid)
+                    || scene
+                        .tunnels
+                        .iter()
+                        .any(|t| scene.tunnel_ladder(t).contains(mid))
+                    || scene.access_galleries().iter().any(|r| r.contains(mid)),
+                "travel follows the local ladder and access passage"
             );
         }
     }
@@ -641,23 +720,30 @@ fn cart_routes_use_the_chamber_shaft_and_entrance() {
 }
 
 #[test]
-fn dwarves_ride_only_during_travel_and_arrive_in_their_work_pose() {
+fn dwarves_walk_and_climb_then_arrive_in_their_work_pose() {
     use crate::ui::dwarf::{Action, pose};
     let scene = scene(&snapshot());
     let worker = dwarf(&scene, "working");
     assert_eq!(
         super::dwarf_action(worker, true, false, false),
-        Action::Ride
+        Action::Walk
     );
-    assert_eq!(super::dwarf_action(worker, true, true, false), Action::Ride);
+    assert_eq!(
+        super::dwarf_action(worker, true, true, false),
+        Action::Carry
+    );
     assert_eq!(
         super::dwarf_action(worker, false, false, false),
         Action::Mine
     );
-    let seated = pose(Action::Ride, 0.4);
-    assert!(seated.stowed);
-    assert_eq!(seated.stride, 0.0, "feet stay inside the cart");
-    assert!(!seated.nugget, "cargo goes in the cart");
+    let climbing = pose(Action::Climb, 0.4);
+    assert!(climbing.stowed);
+    assert_ne!(climbing.stride, 0.0, "feet climb the rungs");
+    assert!(
+        climbing.arm < -1.0 && climbing.back_arm < -1.0,
+        "hands reach up"
+    );
+    assert!(!climbing.nugget);
 }
 
 #[test]
@@ -685,7 +771,10 @@ fn a_state_change_walks_the_dwarf_over() {
         placed[i]
     };
     let first = at(&mut farm, 10.0);
-    assert_eq!(first.pos, start, "sets off from where it was");
+    assert!(
+        first.pos.distance(start) < 0.001,
+        "sets off from where it was"
+    );
     assert!(first.heading.is_some());
     let mid = at(&mut farm, 10.4);
     assert!(mid.pos != start && mid.pos != target, "on its way");
@@ -798,9 +887,9 @@ fn hovering_the_ledger_chamber_lists_its_newest_entries() {
     );
 }
 
-/// A chamber click opens one Ledger pane and never clears the dwarf selection.
+/// A chamber click requests the Ledger modal without touching the dock or selection.
 #[test]
-fn clicking_the_ledger_chamber_opens_its_pane() {
+fn clicking_the_ledger_chamber_requests_its_modal() {
     use crate::ui::dock::{Pane, PaneLayout};
     use eframe::egui::{self, Event, PointerButton};
 
@@ -808,10 +897,14 @@ fn clicking_the_ledger_chamber_opens_its_pane() {
     let mut clan = crate::ui::clan_view::ClanView::new();
     clan.sync(&snapshot);
     let mut farm = FarmView::new();
-    let mut panes = PaneLayout::default();
+    let panes = PaneLayout::default();
+    let saved = panes.encode().unwrap();
+    let selected = snapshot.nodes[0].id.clone();
+    clan.set_selected(Some(&selected));
+    let mut ledger = crate::ui::ledger::LedgerModal::default();
     let ctx = egui::Context::default();
     let mut time = 0.0;
-    let mut frame = |events: Vec<Event>, panes: &mut PaneLayout| {
+    let mut frame = |events: Vec<Event>, ledger: &mut crate::ui::ledger::LedgerModal| {
         time += 1.0 / 60.0;
         let mut rect = Rect::NOTHING;
         let mut clicked = false;
@@ -829,7 +922,7 @@ fn clicking_the_ledger_chamber_opens_its_pane() {
                     assert!(!response.clicked_empty);
                     assert!(!response.open_envoy);
                     assert!(response.clicked.is_none());
-                    panes.open_ledger();
+                    ledger.open_requested = true;
                     clicked = true;
                 }
             },
@@ -837,7 +930,7 @@ fn clicking_the_ledger_chamber_opens_its_pane() {
         output.textures_delta.clear();
         (rect, clicked)
     };
-    let (rect, _) = frame(vec![], &mut panes);
+    let (rect, _) = frame(vec![], &mut ledger);
     assert!(!panes.contains(Pane::Ledger));
     let scene = layout(
         &FarmInput {
@@ -860,19 +953,14 @@ fn clicking_the_ledger_chamber_opens_its_pane() {
             pressed,
             modifiers: egui::Modifiers::NONE,
         };
-        frame(vec![Event::PointerMoved(target)], &mut panes);
-        frame(vec![button(true)], &mut panes);
-        assert!(frame(vec![button(false)], &mut panes).1);
-        assert!(panes.is_visible(Pane::Ledger));
+        frame(vec![Event::PointerMoved(target)], &mut ledger);
+        frame(vec![button(true)], &mut ledger);
+        assert!(frame(vec![button(false)], &mut ledger).1);
+        assert!(ledger.is_open());
     }
-    let saved = panes.encode().unwrap();
-    let restored = PaneLayout::decode(&saved).expect("valid layout with just one Ledger tab");
-    assert!(restored.is_visible(Pane::Ledger));
-    let path = panes.dock_mut().find_tab(&Pane::Ledger).unwrap();
-    panes.dock_mut().remove_tab(path);
+    assert_eq!(panes.encode().unwrap(), saved);
+    assert_eq!(clan.selected(), Some(selected));
     assert!(!panes.contains(Pane::Ledger));
-    panes.open_ledger();
-    assert!(panes.is_visible(Pane::Ledger));
 }
 
 /// Clicking a dwarf reports it, as clicking a node does in the clan; clicking soil reports
@@ -992,7 +1080,7 @@ fn dragging_a_box_selects_the_dwarves_in_it() {
     let (hits, additive) = boxed.expect("the box was released");
     assert!(!additive);
     let hits: BTreeSet<NodeId> = hits.into_iter().collect();
-    let expected: BTreeSet<NodeId> = ["working", "idle", "stalled", "failed"]
+    let expected: BTreeSet<NodeId> = ["working", "idle", "stalled", "done", "failed", "r1-coord"]
         .iter()
         .map(|n| id(n))
         .collect();
@@ -1358,7 +1446,7 @@ fn parked_dwarves_sleep_in_the_resting_area() {
             .iter()
             .position(|t| t.key == TunnelKey::RestingArea)
     };
-    assert_eq!(room(&scene(&s)), None, "no room while nobody is parked");
+    assert!(room(&scene(&s)).is_some(), "an empty room is kept ready");
     for i in 0..9 {
         let mut n = node(
             &format!("parked{i}"),
@@ -1428,13 +1516,130 @@ fn parked_dwarves_sleep_in_the_resting_area() {
 
 #[test]
 fn only_the_resting_area_has_beds() {
-    assert!(scene(&snapshot()).beds.is_empty());
+    let scene = scene(&snapshot());
+    let room = scene
+        .tunnels
+        .iter()
+        .find(|t| t.key == TunnelKey::RestingArea)
+        .unwrap();
+    assert_eq!(scene.beds.len(), 1, "a spare bed in the empty room");
+    assert!(scene.beds[0].sleeper.is_none());
+    assert!(room.chamber.contains_rect(scene.beds[0].rect));
 }
 
-/// Many runs in a tall view stack their chambers two to a column, which draws the dwarves
-/// bigger than one long row of narrow columns, and no shaft cuts through another chamber.
 #[test]
-fn many_tunnels_stack_chambers_to_draw_dwarves_bigger() {
+fn rest_room_wraps_beds_clear_of_furniture_and_preserves_selection_and_waking() {
+    for size in [vec2(1280.0, 800.0), vec2(600.0, 800.0), vec2(420.0, 600.0)] {
+        for count in [1, 3, 12, 48, 120] {
+            let mut s = snapshot();
+            for i in 0..count {
+                let kind = [
+                    NodeKind::Terminal,
+                    NodeKind::Coordinator,
+                    NodeKind::Attendant,
+                ][i % 3];
+                let state = [
+                    NodeState::Working,
+                    NodeState::NeedsInput,
+                    NodeState::Stalled,
+                ][i % 3];
+                let mut n = node(&format!("sleeper-{i}"), kind, None, state);
+                n.parked_at_ms = Some(1);
+                s.nodes.push(n);
+            }
+            let mut plan = super::rooms::RoomPlan::default();
+            let rect = Rect::from_min_size(Pos2::ZERO, size);
+            let make_scene = |snapshot: &ClanSnapshot, plan: &mut super::rooms::RoomPlan| {
+                layout_in(
+                    &FarmInput {
+                        snapshot,
+                        hidden: &BTreeSet::new(),
+                        pr_ready: &HashSet::new(),
+                        building: &HashSet::new(),
+                        now_ms: 0,
+                    },
+                    rect,
+                    plan,
+                )
+            };
+            let before = make_scene(&s, &mut plan);
+            let room = before
+                .tunnels
+                .iter()
+                .find(|t| t.key == TunnelKey::RestingArea)
+                .unwrap();
+            let furniture_right =
+                room.chamber.left() + super::resting::alcove(room.chamber.width(), before.cell());
+            let placed: Vec<_> = before
+                .dwarves
+                .iter()
+                .map(|d| super::Placed {
+                    pos: d.pos,
+                    heading: None,
+                })
+                .collect();
+            assert_eq!(s.parked_nodes().count(), count);
+            assert_eq!(
+                before.beds.iter().filter(|b| b.sleeper.is_some()).count(),
+                count
+            );
+            for (i, bed) in before.beds.iter().enumerate() {
+                assert!(
+                    room.chamber.contains_rect(bed.rect),
+                    "{size:?}, {count}: {bed:?}"
+                );
+                assert!(
+                    bed.rect.left() >= furniture_right,
+                    "furniture touches a bed"
+                );
+                assert!(
+                    before.beds[i + 1..]
+                        .iter()
+                        .all(|b| !b.rect.intersects(bed.rect))
+                );
+                if let Some(id) = &bed.sleeper {
+                    let dwarf = before.dwarf(id).unwrap();
+                    assert_eq!(dwarf.tag.as_deref(), Some(id.as_str()));
+                    assert_eq!(super::hit(&before, &placed, dwarf.pos), Some(id.clone()));
+                    assert!(matches!(
+                        super::dwarf_action(dwarf, false, false, false),
+                        super::Action::Sleep
+                    ));
+                }
+            }
+            // Overflow stays in the room even beyond the viewport; the camera can pan to it.
+            for other in before
+                .tunnels
+                .iter()
+                .filter(|t| t.key != TunnelKey::RestingArea)
+            {
+                assert!(!room.chamber.intersects(other.chamber));
+            }
+            let sleeper = s
+                .nodes
+                .iter_mut()
+                .find(|n| n.id == id("sleeper-0"))
+                .unwrap();
+            sleeper.parked_at_ms = None;
+            let after = make_scene(&s, &mut plan);
+            assert_eq!(s.parked_nodes().count(), count - 1);
+            assert!(!matches!(
+                after.dwarf(&id("sleeper-0")).unwrap().spot,
+                Spot::Chamber(TunnelKey::RestingArea, _)
+            ));
+            assert!(
+                after
+                    .beds
+                    .iter()
+                    .all(|b| b.sleeper.as_ref() != Some(&id("sleeper-0")))
+            );
+        }
+    }
+}
+
+/// Many runs in a tall view keep separate horizontal bands and a clear shared ladder.
+#[test]
+fn many_tunnels_keep_separate_bands_in_a_tall_view() {
     let mut s = ClanSnapshot::default();
     s.nodes
         .push(node("king", NodeKind::King, None, NodeState::Working));
@@ -1479,8 +1684,8 @@ fn many_tunnels_stack_chambers_to_draw_dwarves_bigger() {
                 "chambers {i} and {j} overlap"
             );
             assert!(
-                !t.shaft.intersects(u.chamber),
-                "shaft {i} crosses chamber {j}"
+                !scene.work_ladder().intersects(u.chamber),
+                "shared ladder crosses chamber {j}"
             );
         }
     }
@@ -1508,7 +1713,12 @@ fn envoy_stays_in_its_comms_room_without_a_work_tunnel() {
         assert_eq!(envoy.mark, None);
         assert!(scene.comms.unwrap().chamber.contains(envoy.pos));
         assert!(envoy.pos.x < scene.throne_hall.left());
-        assert!(scene.tunnels.is_empty());
+        assert!(
+            scene
+                .tunnels
+                .iter()
+                .all(|t| t.key == TunnelKey::RestingArea)
+        );
     }
 }
 
@@ -1566,7 +1776,7 @@ fn comms_room_fits_beside_entrance_at_small_and_large_clans() {
             assert!(!room.chamber.intersects(entrance));
             for tunnel in &scene.tunnels {
                 assert!(!room.chamber.intersects(tunnel.chamber));
-                assert!(!room.chamber.intersects(tunnel.shaft));
+                assert!(!room.chamber.intersects(scene.work_ladder()));
             }
             assert!(room.shaft.intersects(scene.gallery));
             assert!(room.shaft.intersects(room.chamber));
@@ -1693,18 +1903,6 @@ pub(super) fn typical_clan(n: usize) -> ClanSnapshot {
     s
 }
 
-/// Share of the ground under the gallery that rooms use: each chamber with the margin
-/// around it, from its label down.
-pub(super) fn fill(scene: &Scene) -> f32 {
-    let a = scene.cell();
-    let rooms: f32 = scene
-        .tunnels
-        .iter()
-        .map(|t| (t.chamber.width() + 0.6 * a) * (t.chamber.bottom() - t.label_top.y))
-        .sum();
-    rooms / (scene.rect.width() * (scene.rect.bottom() - scene.gallery.bottom()))
-}
-
 /// Share of the rect's height the farm reaches down to.
 pub(super) fn reach(scene: &Scene) -> f32 {
     let bottom = scene
@@ -1715,20 +1913,21 @@ pub(super) fn reach(scene: &Scene) -> f32 {
     (bottom - scene.rect.top()) / scene.rect.height()
 }
 
-/// At typical clan sizes the rooms use most of the ground under the gallery, with dwarves
-/// drawn bigger than a fixed grid drew them, and every dwarf in its chamber.
+/// Packing keeps typical clans and their empty rest room within the view. Unused cells
+/// remain rock instead of inflating the excavated area.
 #[test]
-fn the_farm_fills_the_view() {
-    // (view, dwarves, smallest dwarf cell in points, least fill)
+fn packed_groups_and_the_empty_rest_room_fit_the_view() {
+    // (view, dwarves, minimum readable dwarf cell in points)
     let cases = [
-        (vec2(1280.0, 800.0), 5, 56.0, 0.75),
-        (vec2(1280.0, 800.0), 15, 48.0, 0.75),
-        (vec2(1280.0, 800.0), 30, 40.0, 0.75),
-        (vec2(900.0, 650.0), 5, 48.0, 0.75),
-        (vec2(900.0, 650.0), 15, 32.0, 0.75),
-        (vec2(900.0, 650.0), 30, 24.0, 0.7),
+        (vec2(1280.0, 800.0), 5, 56.0),
+        // Finished workers now occupy chamber slots alongside the other miners.
+        (vec2(1280.0, 800.0), 15, 32.0),
+        (vec2(1280.0, 800.0), 30, 24.0),
+        (vec2(900.0, 650.0), 5, 40.0),
+        (vec2(900.0, 650.0), 15, 24.0),
+        (vec2(900.0, 650.0), 30, 16.0),
     ];
-    for (size, n, cell, least) in cases {
+    for (size, n, cell) in cases {
         let s = typical_clan(n);
         let rect = Rect::from_min_size(Pos2::ZERO, size);
         let input = FarmInput {
@@ -1739,12 +1938,10 @@ fn the_farm_fills_the_view() {
             now_ms: 0,
         };
         let scene = layout(&input, rect);
-        let fill = fill(&scene);
         assert!(
-            (least..=0.95).contains(&fill),
-            "{n} dwarves in {size:?}: fill {fill}"
+            reach(&scene) <= 1.0,
+            "{n} dwarves in {size:?} fit vertically"
         );
-        assert!(reach(&scene) > 0.85, "{n} dwarves in {size:?} reach down");
         assert!(
             scene.cell() >= cell,
             "{n} dwarves in {size:?}: {}",
@@ -1898,4 +2095,496 @@ fn king_close_holds_target_in_view_and_bonks_once_instead_of_falling() {
     frame(&mut farm, &snapshot, 0.90);
     assert!(!farm.throws.contains(&id("loose")));
     assert!(farm.falls.is_empty());
+}
+
+/// Every work row is horizontal, separated by rock, and connected by local ladders.
+/// Exercise wide and narrow panes with several runs, attendants and subagents.
+#[test]
+fn work_galleries_and_routes_use_connected_ladders_at_every_crowd_size() {
+    for (size, n) in [
+        (vec2(1280.0, 800.0), 30),
+        (vec2(900.0, 650.0), 30),
+        (vec2(800.0, 1400.0), 60),
+    ] {
+        let mut s = typical_clan(n);
+        let run = s.runs[0].id.clone();
+        for i in 0..6 {
+            s.nodes.push(node(
+                &format!("attendant-{i}"),
+                NodeKind::Attendant,
+                Some(&run),
+                NodeState::Working,
+            ));
+        }
+        for i in 0..3 {
+            let name = format!("apprentice-{i}");
+            s.nodes
+                .push(node(&name, NodeKind::Subagent, None, NodeState::Working));
+            s.edges.push(Edge {
+                from: id("attendant-0"),
+                to: id(&name),
+                kind: EdgeKind::Subagent,
+            });
+        }
+        let input = FarmInput {
+            snapshot: &s,
+            hidden: &BTreeSet::new(),
+            pr_ready: &HashSet::new(),
+            building: &HashSet::new(),
+            now_ms: 0,
+        };
+        let scene = layout(&input, Rect::from_min_size(Pos2::new(23.0, 47.0), size));
+        let ladder = scene.work_ladder();
+        let galleries = scene.work_galleries();
+        let ladders: Vec<_> = std::iter::once(ladder)
+            .chain(scene.tunnels.iter().map(|t| scene.tunnel_ladder(t)))
+            .collect();
+        let passages: Vec<_> = galleries
+            .iter()
+            .copied()
+            .chain(scene.access_galleries())
+            .chain([scene.gallery])
+            .collect();
+        for t in &scene.tunnels {
+            let local = scene.tunnel_ladder(t);
+            assert!(scene.rect.contains_rect(local));
+            assert!(passages.iter().any(|p| p.contains(local.center_top())));
+            for other in &scene.tunnels {
+                assert!(!local.intersects(other.chamber), "ladder has its own shaft");
+            }
+        }
+        assert!(scene.rect.contains_rect(ladder));
+        for row in &galleries {
+            assert!(scene.rect.contains_rect(*row), "{row:?}");
+            assert!(row.width() > row.height() * 3.0, "long horizontal gallery");
+            assert!(
+                ladders.iter().any(|ladder| row.intersects(*ladder)),
+                "every work row reaches a ladder"
+            );
+        }
+        for (i, row) in galleries.iter().enumerate() {
+            for other in &galleries[i + 1..] {
+                assert!(!row.intersects(*other), "rock separates work floors");
+            }
+        }
+        let workers: Vec<_> = scene
+            .dwarves
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d.spot,
+                    Spot::Chamber(..) | Spot::Mouth(..) | Spot::Trail(..)
+                )
+            })
+            .collect();
+        for (i, dwarf) in workers.iter().enumerate() {
+            let floor = galleries
+                .iter()
+                .find(|g| g.contains(dwarf.pos))
+                .expect("dwarf in a gallery");
+            assert!(
+                (dwarf.pos.y + dwarf.size / 2.0 - floor.bottom()).abs() < 0.01,
+                "feet on the floor"
+            );
+            for other in &workers[i + 1..] {
+                let bodies = Rect::from_center_size(dwarf.pos, Vec2::splat(dwarf.size))
+                    .intersect(Rect::from_center_size(other.pos, Vec2::splat(other.size)));
+                assert!(
+                    bodies.width() < 0.01 || bodies.height() < 0.01,
+                    "{} overlaps {}",
+                    dwarf.id,
+                    other.id
+                );
+                let path = route(dwarf.pos, other.pos, &dwarf.spot, &other.spot, &scene);
+                for leg in path.windows(2) {
+                    if leg[0].y != leg[1].y {
+                        assert_eq!(leg[0].x, leg[1].x);
+                        assert!(
+                            ladders
+                                .iter()
+                                .any(|ladder| ladder.contains(leg[0].lerp(leg[1], 0.5))),
+                            "climbing uses a ladder"
+                        );
+                    }
+                    for step in 0..=8 {
+                        let at = leg[0].lerp(leg[1], step as f32 / 8.0);
+                        assert!(
+                            ladders.iter().any(|l| l.contains(at))
+                                || passages.iter().any(|g| g.contains(at)),
+                            "journey leaves excavated ground: {at:?}"
+                        );
+                    }
+                }
+            }
+        }
+        // A second state change halfway up the ladder keeps the new route on its rungs.
+        let at = ladder.center();
+        let target = workers[0];
+        let interrupted = route(at, target.pos, &target.spot, &target.spot, &scene);
+        assert_eq!(interrupted[0], at);
+        assert_eq!(interrupted[1].x, ladder.center().x);
+        assert_eq!(*interrupted.last().unwrap(), target.pos);
+    }
+}
+
+/// Every excavated work row belongs to exactly one labelled workspace group,
+/// including overflow rows and the resting area.
+#[test]
+fn uneven_workspaces_never_share_an_excavated_row() {
+    let mut s = ClanSnapshot::default();
+    for (repo, count) in [("alpha", 1), ("beta", 3), ("gamma", 9)] {
+        for i in 0..count {
+            let mut n = node(
+                &format!("{repo}-{i}"),
+                NodeKind::Terminal,
+                None,
+                NodeState::Working,
+            );
+            n.worktree_path = Some(format!("/x/orca/workspaces/{repo}/main"));
+            s.nodes.push(n);
+        }
+    }
+    let mut sleeper = node("sleeper", NodeKind::Terminal, None, NodeState::Idle);
+    sleeper.parked_at_ms = Some(1);
+    s.nodes.push(sleeper);
+    for size in [vec2(1280.0, 800.0), vec2(900.0, 650.0), vec2(600.0, 800.0)] {
+        let scene = layout(
+            &FarmInput {
+                snapshot: &s,
+                hidden: &BTreeSet::new(),
+                pr_ready: &HashSet::new(),
+                building: &HashSet::new(),
+                now_ms: 0,
+            },
+            Rect::from_min_size(Pos2::ZERO, size),
+        );
+        for row in scene.work_galleries() {
+            let owners: Vec<_> = scene
+                .tunnels
+                .iter()
+                .filter(|t| t.chamber.intersects(row))
+                .collect();
+            assert_eq!(
+                owners.len(),
+                1,
+                "{size:?}: gallery {row:?} crosses {owners:?}"
+            );
+            let owner = owners[0];
+            assert!(row.left() <= owner.label_top.x && owner.label_top.x <= row.right());
+        }
+        for dwarf in &scene.dwarves {
+            let Spot::Chamber(key, _) = &dwarf.spot else {
+                continue;
+            };
+            let tunnel = scene.tunnels.iter().find(|t| &t.key == key).unwrap();
+            assert!(tunnel.chamber.contains(dwarf.pos));
+            assert!(
+                scene
+                    .work_galleries()
+                    .iter()
+                    .any(|row| row.contains(dwarf.pos))
+            );
+        }
+        let gamma = scene
+            .tunnels
+            .iter()
+            .find(|t| t.key == TunnelKey::Repo("gamma".into()))
+            .unwrap();
+        if size.x == 600.0 {
+            assert!(
+                scene
+                    .work_galleries()
+                    .iter()
+                    .filter(|row| gamma.chamber.intersects(**row))
+                    .count()
+                    > 1,
+                "the large workspace wraps within its own section"
+            );
+        }
+        assert_eq!(scene.beds.iter().filter(|b| b.sleeper.is_some()).count(), 1);
+    }
+}
+
+#[test]
+fn lorekeeper_keeps_ink_robes_and_idles_without_activity() {
+    use crate::ui::dwarf::{Action, Garment, Role, Tool};
+    let mut s = snapshot();
+    let mut librarian = node("lorekeeper", NodeKind::Lorekeeper, None, NodeState::Working);
+    librarian.agent = Some(crate::orca::AgentIdentity::Claude);
+    s.nodes.push(librarian);
+    let active = scene(&s);
+    let reader = dwarf(&active, "lorekeeper");
+    assert_eq!(reader.pose, Pose::Stand);
+    assert_eq!(
+        super::dwarf_action(reader, false, false, false),
+        Action::Still
+    );
+    let look = super::dwarf_look(reader);
+    assert_eq!(
+        (look.role, look.garment, look.tool),
+        (Role::Librarian, Garment::Robe, Tool::Book)
+    );
+    assert_eq!(
+        look.tunic,
+        crate::ui::dwarf::Look::for_role(Role::Librarian, 0).tunic
+    );
+    assert_eq!(
+        home(NodeKind::Lorekeeper, NodeState::NeedsInput, false),
+        Home::Landing
+    );
+    s.nodes.last_mut().unwrap().parked_at_ms = Some(1);
+    let parked = scene(&s);
+    assert_eq!(dwarf(&parked, "lorekeeper").pose, Pose::Stand);
+    assert_eq!(
+        super::dwarf_action(dwarf(&parked, "lorekeeper"), false, false, false),
+        Action::Still
+    );
+}
+
+#[test]
+fn lorekeeper_stays_in_ledger_without_moving_the_clan() {
+    for state in [
+        NodeState::Working,
+        NodeState::NeedsInput,
+        NodeState::Idle,
+        NodeState::Stalled,
+        NodeState::Done,
+        NodeState::Failed,
+    ] {
+        let base = snapshot();
+        let before = scene(&base);
+        let mut with = base.clone();
+        with.nodes
+            .push(node("lorekeeper", NodeKind::Lorekeeper, None, state));
+        let after = scene(&with);
+        let librarian = dwarf(&after, "lorekeeper");
+        assert!(
+            after.ledger.unwrap().contains_rect(Rect::from_center_size(
+                librarian.pos,
+                Vec2::splat(librarian.size)
+            )),
+            "{state:?}: librarian outside Ledger"
+        );
+        for other in &before.dwarves {
+            let same = after.dwarves.iter().find(|d| d.id == other.id).unwrap();
+            assert_eq!(
+                (same.pos, same.size, &same.spot),
+                (other.pos, other.size, &other.spot),
+                "{state:?}: moved {}",
+                other.id.as_str()
+            );
+        }
+    }
+}
+
+#[test]
+fn lorekeeper_activity_expires_and_waiting_is_idle() {
+    use crate::traffic::ledger::lorekeeper::{Activity, FRESH_MS, RecentActivity};
+    use crate::ui::dwarf::Action;
+    for (activity, expected) in [
+        (Activity::Reading, Action::Read),
+        (Activity::Writing, Action::Write),
+    ] {
+        let recent = Some(RecentActivity {
+            activity,
+            at_ms: 100,
+        });
+        let mut s = snapshot();
+        s.nodes.push(node(
+            "lorekeeper",
+            NodeKind::Lorekeeper,
+            None,
+            NodeState::Working,
+        ));
+        s.lorekeeper_activity = Some(RecentActivity { activity, at_ms: 0 });
+        let mut d = dwarf(&scene(&s), "lorekeeper").clone();
+        assert_eq!(super::dwarf_action(&d, false, false, false), expected);
+        for state in [
+            NodeState::Working,
+            NodeState::NeedsInput,
+            NodeState::Idle,
+            NodeState::Done,
+            NodeState::Stalled,
+            NodeState::Failed,
+        ] {
+            d.state = state;
+            d.pose = super::ledger::librarian_pose(state, recent, 101);
+            assert_eq!(
+                super::dwarf_action(&d, false, false, false),
+                if state == NodeState::Working {
+                    expected
+                } else {
+                    Action::Still
+                }
+            );
+        }
+        d.pose = super::ledger::librarian_pose(NodeState::Working, recent, 100 + FRESH_MS);
+        assert_eq!(super::dwarf_action(&d, false, false, false), Action::Still);
+    }
+}
+
+#[test]
+fn lorekeeper_appears_in_ledger_without_a_walk_or_resize_glide() {
+    let mut s = snapshot();
+    let mut farm = FarmView::new();
+    farm.advance(&scene(&s), 0.0);
+    s.nodes.push(node(
+        "lorekeeper",
+        NodeKind::Lorekeeper,
+        None,
+        NodeState::Working,
+    ));
+    for time in [0.1, 0.2, 0.5] {
+        let mut at = scene(&s);
+        if time > 0.1 {
+            let librarian = at
+                .dwarves
+                .iter_mut()
+                .find(|d| d.kind == NodeKind::Lorekeeper)
+                .unwrap();
+            librarian.pos.x += 5.0;
+        }
+        let placed = farm.advance(&at, time);
+        let index = at
+            .dwarves
+            .iter()
+            .position(|d| d.kind == NodeKind::Lorekeeper)
+            .unwrap();
+        assert_eq!(placed[index].pos, at.dwarves[index].pos);
+        assert_eq!(placed[index].heading, None);
+    }
+    let mut no_room = scene(&s);
+    no_room.ledger = None;
+    assert!(super::ledger::librarian(&no_room).is_none());
+}
+
+#[test]
+fn finished_lorekeeper_keeps_its_room_after_session_identity_is_gone() {
+    let mut s = snapshot();
+    let base = scene(&s);
+    let record: crate::finish::FinishedSession = serde_json::from_value(serde_json::json!({
+        "kind": "Lorekeeper", "node_id": "term:library", "handle": "library",
+        "label": "Lorekeeper", "outcome": "done", "summary": "Ledger checked", "at_ms": 0,
+    }))
+    .unwrap();
+    s.add_finished([&record]);
+    let node = s.node(&NodeId::terminal("library")).unwrap();
+    assert_eq!(node.kind, NodeKind::Lorekeeper);
+    assert!(!node.live);
+    let after = scene(&s);
+    let librarian = dwarf(&after, "term:library");
+    assert_eq!(librarian.spot, Spot::Ledger);
+    assert!(after.ledger.unwrap().contains(librarian.pos));
+    for other in &base.dwarves {
+        assert_eq!(dwarf(&after, other.id.as_str()).pos, other.pos);
+    }
+}
+
+#[test]
+fn lorekeeper_follows_the_visible_ledger_during_a_room_glide() {
+    let mut s = snapshot();
+    s.nodes.push(node(
+        "lorekeeper",
+        NodeKind::Lorekeeper,
+        None,
+        NodeState::Working,
+    ));
+    let mut before = scene(&s);
+    let mut farm = FarmView::new();
+    farm.set_reduce_motion(false);
+    farm.glide_rooms(&mut before, 0.0);
+    farm.advance(&before, 0.0);
+    let mut target = before.clone();
+    target.ledger = target.ledger.map(|r| r.translate(vec2(180.0, 40.0)));
+    let (pos, size) = super::ledger::librarian(&target).unwrap();
+    let reader = target
+        .dwarves
+        .iter_mut()
+        .find(|d| d.spot == Spot::Ledger)
+        .unwrap();
+    reader.pos = pos;
+    reader.size = size;
+    farm.glide_rooms(&mut target.clone(), 1.0);
+    let mut mid = target.clone();
+    farm.glide_rooms(&mut mid, 1.0 + super::GLIDE_S / 2.0);
+    assert_ne!(mid.ledger, target.ledger, "room is in transit");
+    let placed = farm.advance(&mid, 1.0 + super::GLIDE_S / 2.0);
+    let i = mid
+        .dwarves
+        .iter()
+        .position(|d| d.spot == Spot::Ledger)
+        .unwrap();
+    let expected = super::ledger::librarian(&mid).unwrap();
+    assert_eq!((placed[i].pos, mid.dwarves[i].size), expected);
+    assert!(mid.ledger.unwrap().contains_rect(Rect::from_center_size(
+        placed[i].pos,
+        Vec2::splat(mid.dwarves[i].size)
+    )));
+    assert_eq!(placed[i].heading, None);
+}
+
+#[test]
+fn side_by_side_groups_walk_around_walls_even_when_interrupted() {
+    let mut s = ClanSnapshot::default();
+    for i in 0..9 {
+        s.nodes.push(node(
+            &format!("group-{i}"),
+            NodeKind::Terminal,
+            None,
+            NodeState::Working,
+        ));
+    }
+    let scene = scene(&s);
+    let (from, to) = scene
+        .dwarves
+        .iter()
+        .find_map(|a| {
+            scene
+                .dwarves
+                .iter()
+                .find(|b| a.id != b.id && a.pos.y == b.pos.y)
+                .map(|b| (a, b))
+        })
+        .expect("several groups share a row");
+    let path = route(from.pos, to.pos, &from.spot, &to.spot, &scene);
+    assert!(
+        path.iter().any(|p| p.y < from.pos.y),
+        "must climb above the partition"
+    );
+    let ladders: Vec<_> = std::iter::once(scene.work_ladder())
+        .chain(scene.tunnels.iter().map(|t| scene.tunnel_ladder(t)))
+        .collect();
+    let passages: Vec<_> = scene
+        .work_galleries()
+        .into_iter()
+        .chain(scene.access_galleries())
+        .chain([scene.gallery])
+        .collect();
+    let walkable = |p| ladders.iter().chain(&passages).any(|r| r.contains(p));
+    let target = scene
+        .dwarves
+        .iter()
+        .find(|a| a.pos.y != from.pos.y)
+        .unwrap();
+    for leg in path.windows(2) {
+        let at = leg[0].lerp(leg[1], 0.5);
+        // The logical spot can still name the original room while walking elsewhere.
+        let changed = route(at, target.pos, &from.spot, &target.spot, &scene);
+        assert_eq!(changed[0], at);
+        assert_eq!(*changed.last().unwrap(), target.pos);
+        for segment in changed.windows(2) {
+            for step in 0..=16 {
+                let p = segment[0].lerp(segment[1], step as f32 / 16.0);
+                assert!(walkable(p), "interrupted route crosses rock at {p:?}");
+            }
+        }
+    }
+    assert!(!scene.work_walls().is_empty());
+    for wall in scene.work_walls() {
+        assert!(wall.width() >= scene.cell() * 0.5);
+        assert!(scene.work_galleries().iter().all(|r| {
+            let overlap = r.intersect(wall);
+            overlap.width() < 0.01 || overlap.height() < 0.01
+        }));
+    }
 }

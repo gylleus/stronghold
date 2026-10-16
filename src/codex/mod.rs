@@ -1,6 +1,7 @@
 //! Codex sessions: maps Codex terminals to rollout files under `~/.codex/sessions` and reads
 //! their token usage. Runs on the Claude worker thread; never on the UI thread.
 
+pub mod history;
 pub mod rollouts;
 pub mod usage;
 

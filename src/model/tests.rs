@@ -874,6 +874,7 @@ fn live_coordinators() {
 
 fn finished(node_id: &str, at_ms: i64) -> crate::finish::FinishedSession {
     crate::finish::FinishedSession {
+        kind: None,
         node_id: node_id.into(),
         handle: node_id.strip_prefix("term:").map(str::to_string),
         label: "dwarf".into(),
@@ -1066,4 +1067,80 @@ fn saved_queen_kind_loads_as_the_king() {
     let kind: NodeKind = serde_json::from_str("\"Queen\"").unwrap();
     assert_eq!(kind, NodeKind::King);
     assert_eq!(serde_json::to_string(&NodeKind::King).unwrap(), "\"King\"");
+}
+
+#[test]
+fn lorekeeper_identity_keeps_terminal_actions_and_king_edge() {
+    let data = scenario();
+    let mut snapshot = ClanSnapshot::build(&data, NOW);
+    snapshot.mark_lorekeeper(Some(LOOSE));
+    let librarian = snapshot.node(&term(LOOSE)).unwrap();
+    assert_eq!(librarian.kind, NodeKind::Lorekeeper);
+    assert_eq!(librarian.label, "Lorekeeper");
+    assert!(
+        snapshot
+            .edges
+            .iter()
+            .any(|e| e.from == NodeId::king() && e.to == librarian.id)
+    );
+    assert_eq!(crate::park::refusal(librarian), None);
+    let plan = crate::close::plan_close(librarian, &snapshot, &data.terminals, Default::default());
+    assert_eq!(
+        plan.steps,
+        vec![crate::close::CloseStep::CloseTerminal {
+            handle: LOOSE.into(),
+            tab: false
+        }]
+    );
+    assert!(
+        crate::close::bulk_candidates(&snapshot, &Default::default(), false)
+            .iter()
+            .any(|n| n.id == librarian.id)
+    );
+    snapshot.mark_waiting(&[(LOOSE.into(), "Which shelf?".into())].into());
+    assert_eq!(
+        snapshot.node(&term(LOOSE)).unwrap().state,
+        NodeState::NeedsInput
+    );
+
+    let mut fresh = ClanSnapshot::build(&data, NOW);
+    fresh.mark_lorekeeper(None);
+    fresh.mark_lorekeeper(Some("absent"));
+    assert!(!fresh.nodes.iter().any(|n| n.kind == NodeKind::Lorekeeper));
+    fresh
+        .nodes
+        .iter_mut()
+        .find(|n| n.id == term(LOOSE))
+        .unwrap()
+        .live = false;
+    fresh.mark_lorekeeper(Some(LOOSE));
+    assert_eq!(fresh.node(&term(LOOSE)).unwrap().kind, NodeKind::Terminal);
+}
+
+#[test]
+fn standalone_lorekeeper_is_not_whipped() {
+    let data = ClanData {
+        terminals: vec![crate::orca::Terminal {
+            handle: "lorekeeper".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    // Automatic whip only evaluates runs; the Lorekeeper is a standalone terminal.
+    let mut snapshot = ClanSnapshot::build(&data, NOW);
+    snapshot.mark_lorekeeper(Some("lorekeeper"));
+    let plans = crate::whip::plan_manual_whip(&[term("lorekeeper")], &data, &snapshot, NOW);
+    assert!(crate::whip::manual::nudges(&plans).is_empty());
+    let mut engine = crate::whip::WhipEngine::new();
+    let settings = crate::whip::WhipSettings {
+        enabled: true,
+        ..Default::default()
+    };
+    for now in [NOW, NOW + 24 * 60 * MINUTE] {
+        assert!(
+            engine
+                .tick(&data, &Default::default(), &settings, now)
+                .is_empty()
+        );
+    }
 }

@@ -110,6 +110,76 @@ fn fixtures(outbox: bool) -> (Vec<Draft>, Inbox) {
     (drafts, inbox)
 }
 
+fn request_fixtures(outbox: bool) -> Vec<stronghold::envoy::requests::Request> {
+    use stronghold::envoy::requests::{
+        BindingPreview, BindingProposal, Request, Requester, Status, Thread, Turn,
+    };
+    let requester = Requester::from_origin(stronghold::review::mark::Origin {
+        terminal_handle: Some("Build dwarf".into()),
+        ..Default::default()
+    })
+    .unwrap();
+    let base = Request {
+        id: "envoy-request-1".into(),
+        to: "Avery · release review".into(),
+        requester: Some(requester.clone()),
+        binding_approved: true,
+        binding_sequence: 0,
+        binding_proposal: None,
+        turns: vec![Turn {
+            id: 1,
+            ask: "Please review the fixture release.".into(),
+            karl_asked: None,
+            why: "Unblock the release".into(),
+            urgency: "normal".into(),
+            expect_reply: true,
+            created_ms: 0,
+            status: Status::Queued,
+            draft_id: None,
+            forwarded: false,
+            dry_run: false,
+            error: None,
+        }],
+        thread: Some(Thread {
+            conversation: "C123".into(),
+            ts: "1790000000.000001".into(),
+        }),
+        status: Status::Queued,
+        settled: outbox,
+        adopted_ms: None,
+        reply_after_us: None,
+        orphan_kept: false,
+        close_requested: false,
+        deliveries: Vec::new(),
+    };
+    let mut sent = base.clone();
+    sent.id = "envoy-request-2".into();
+    sent.status = Status::Sent;
+    sent.turns[0].status = Status::Sent;
+    let mut orphan = base.clone();
+    orphan.id = "envoy-request-3".into();
+    orphan.to = "Release coordination".into();
+    orphan.requester = None;
+    orphan.binding_approved = false;
+    orphan.adopted_ms = Some(0);
+    orphan.status = Status::Sent;
+    orphan.turns.clear();
+    let mut binding = orphan.clone();
+    binding.id = "envoy-request-4".into();
+    binding.binding_sequence = 1;
+    binding.binding_proposal = Some(BindingProposal {
+        id: 1,
+        requester,
+        reason: "The build dwarf owns the release review.".into(),
+        preview: BindingPreview {
+            thread: binding.thread.clone().unwrap(),
+            first_line: "Who is reviewing this release?".into(),
+            slack_link: "https://example.slack.com/archives/C123/p1790000000000001".into(),
+        },
+    });
+    vec![base, sent, binding, orphan]
+}
+
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let shot = args
@@ -121,7 +191,7 @@ fn main() -> eframe::Result {
     let (mut drafts, inbox) = fixtures(outbox);
     let gateway = args.iter().any(|a| a == "--gateway");
     if gateway {
-        let link=stronghold::envoy::drafts::RequestLink{id:"envoy-request-1".into(),turn_id:1,original_ask:"Please review abc012def at 2026-10-06T12:34:56Z.\nCount: 42\n```rust\nlet x = 17;\n```\n".into(),requester:"Build dwarf".into(),why:"Unblock the fixture release review".into(),agent:true};
+        let link=stronghold::envoy::drafts::RequestLink{id:"envoy-request-1".into(),turn_id:1,original_ask:"Please review abc012def at 2026-10-06T12:34:56Z.\nCount: 42\n```rust\nlet x = 17;\n```\n".into(),requester:"Build dwarf".into(),why:"Unblock the fixture release review".into(),agent:true,karl_asked:None};
         let mut draft = Draft::outgoing(
             "C123".into(),
             None,
@@ -131,20 +201,34 @@ fn main() -> eframe::Result {
             stronghold::control::server::now_ms(),
         );
         draft.id = "envoy-draft-1".into();
-        draft.automatic = true;
-        draft.auto_at_ms = Some(stronghold::control::server::now_ms() + 120_000);
+        if args.iter().any(|a| a == "--on-behalf") {
+            draft.request.as_mut().unwrap().karl_asked =
+                Some("Send these details via the Envoy".into());
+            if outbox {
+                draft.status = DraftStatus::DryRunSent;
+                draft.approved_at = Some(stronghold::control::server::now_ms());
+                draft.approved_by = Some(stronghold::user::name());
+            }
+        } else {
+            draft.automatic = true;
+            draft.auto_at_ms = Some(stronghold::control::server::now_ms() + 120_000);
+        }
         drafts = vec![draft];
     }
     eframe::run_native(
         "Envoy fixture",
         eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([780.0, 900.0]),
+            persist_window: false,
+            persistence_path: std::env::var_os("STRONGHOLD_DATA_DIR")
+                .map(|dir| std::path::PathBuf::from(dir).join("envoy-panel.ron")),
+            viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 1500.0]),
             ..Default::default()
         },
         Box::new(move |cc| {
             stronghold::ui::theme::install(&cc.egui_ctx);
             cc.egui_ctx.set_theme(egui::Theme::Dark);
             let mut panel = DraftsPanel::default();
+            panel.set_requests(&request_fixtures(outbox));
             if outbox {
                 panel.open(&[]);
             }
@@ -190,6 +274,9 @@ fn main() -> eframe::Result {
                     });
                 }
                 panel.set_requests(&[orphan]);
+            }
+            if args.iter().any(|a| a == "--confirm-clear") {
+                panel.confirm_clear(&drafts, &inbox);
             }
             Ok(Box::new(Demo {
                 panel,

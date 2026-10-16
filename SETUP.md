@@ -206,12 +206,26 @@ playbook fallback. Private organization facts belong in `ORG.md` and
 
 ## Optional services
 
-**Ledger.** Click its chamber to search and read shared Markdown notes. Semantic
-search uses the local basic-memory MCP service at `http://127.0.0.1:8643/mcp`,
+**Ledger.** Click its chamber (or choose **Open Ledger** in the command palette)
+to search and read shared Markdown notes in a modal over your current workspace.
+Text search is the default and searches titles and bodies as you type. Use
+↑/↓ to move through results, Enter to open and Esc to close. Your query,
+selection and scroll positions stay in the session when you close the modal.
+Meaning searches semantically; Auto chooses text for IDs and meaning otherwise.
+Semantic search uses the local basic-memory MCP service at `http://127.0.0.1:8643/mcp`,
 project `ledger`. If unavailable, Stronghold falls back to a case-insensitive
 search of local files under the agents directory's `ledger/`. The pane reads
 notes; it does not write or delete them. An empty query shows the five newest
 entries; search results are limited to 30. The service is installed separately.
+The separate Lorekeeper controls are under **Ledger maintenance**. See the
+[Ledger modal notes](docs/assets/tests/ledger-modal/README.md) and
+[Lorekeeper playbook](playbook/LOREKEEPER-PLAYBOOK.md).
+
+To check the live Ledger connection after installing that separate service:
+
+```bash
+cargo test real_ledger_search -- --ignored --nocapture
+```
 
 **Envoy.** This optional Slack liaison uses a Claude session in the `envoy-home`
 worktree, restricted clan tools, Slack CLI access and the separate
@@ -228,7 +242,7 @@ Keep dry run on while checking the setup. Saving **Dry run ON** takes effect
 immediately for subsequent approvals and relays; turning it off and other
 changes take effect on the next Start. Polling has a 30-second minimum. Codex
 Envoy starts are currently unavailable because its tools cannot yet be
-restricted in the same way. See [Envoy tools](docs/mcp.md) for the guarded
+restricted in the same way. See [Envoy tools](docs/envoy-gateway.md) for the guarded
 message and approval interface.
 
 ## Settings and paths

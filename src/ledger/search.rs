@@ -15,9 +15,9 @@ const LIMIT: usize = 30;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Mode {
-    #[default]
     Auto,
     Meaning,
+    #[default]
     Text,
 }
 
@@ -130,7 +130,7 @@ fn tool_result(result: Value) -> Result<Value> {
     serde_json::from_str(&text).context("Invalid Ledger search results")
 }
 
-fn remote(query: &str, mode: Mode, endpoint: &str) -> Result<Vec<Hit>> {
+fn remote_request(endpoint: &str, payload: Value) -> Result<Value> {
     let agent = ureq::Agent::config_builder()
         .proxy(None)
         .max_redirects(0)
@@ -171,10 +171,10 @@ fn remote(query: &str, mode: Mode, endpoint: &str) -> Result<Vec<Hit>> {
     };
     let outcome = (|| {
         post().send_json(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))?;
-        let mut reply = post().send_json(search_request(query, mode))?;
+        let mut reply = post().send_json(payload)?;
         let sse = is_sse(&reply);
         let result = response(BufReader::new(reply.body_mut().as_reader()), sse, 2)?;
-        parse_hits(&tool_result(result)?)
+        Ok(result)
     })();
     // Release the MCP session; this deletes no notes.
     if let Some(session) = &session {
@@ -188,6 +188,38 @@ fn remote(query: &str, mode: Mode, endpoint: &str) -> Result<Vec<Hit>> {
             .call();
     }
     outcome
+}
+
+fn remote(query: &str, mode: Mode, endpoint: &str) -> Result<Vec<Hit>> {
+    parse_hits(&tool_result(remote_request(
+        endpoint,
+        search_request(query, mode),
+    )?)?)
+}
+
+pub(crate) fn tool_names(endpoint: &str) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    let mut cursor = None;
+    for _ in 0..20 {
+        let params = cursor.map_or(json!({}), |cursor| json!({"cursor": cursor}));
+        let result = remote_request(endpoint, request(2, "tools/list", params))?;
+        for tool in result["tools"]
+            .as_array()
+            .context("Missing Ledger tool catalog")?
+        {
+            let name = tool["name"].as_str().context("Missing Ledger tool name")?;
+            ensure!(
+                name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'),
+                "Invalid Ledger tool name"
+            );
+            names.push(name.to_owned());
+        }
+        cursor = result["nextCursor"].as_str().map(str::to_owned);
+        if cursor.is_none() {
+            return Ok(names);
+        }
+    }
+    bail!("Ledger tool catalog has too many pages")
 }
 
 fn is_sse(response: &ureq::http::Response<ureq::Body>) -> bool {

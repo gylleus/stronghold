@@ -10,8 +10,11 @@ mod control;
 mod dictation;
 pub mod envoy;
 mod envoy_session;
+mod envoy_visuals;
 mod health;
+mod input_focus;
 mod lifecycle;
+mod lorekeeper;
 mod notifications;
 mod palette;
 mod panes;
@@ -59,6 +62,8 @@ pub struct StrongholdApp {
     farm: ui::farm::FarmView,
     /// Node selected in the clan, shared with the side panels.
     selected: Option<NodeId>,
+    /// A plain hold click waiting for its conversation input to be drawn.
+    hold_input_focus: Option<input_focus::Request>,
     /// The nodes selected so far, for back/forward.
     history: ui::history::SelectionHistory,
     /// The dock's pane arrangement: sidebar, farm, details and conversation.
@@ -120,6 +125,7 @@ pub struct StrongholdApp {
     overlays_changed: bool,
     /// Messages between agents, for the farm to draw.
     traffic: crate::traffic::Traffic,
+    envoy_items: envoy_visuals::Items,
     /// Agents' state changes, for the farm to pop.
     state_changes: crate::ui::state_pop::Transitions,
     /// Every notification's dispatcher, the saved inbox, toasts and node badges.
@@ -157,7 +163,8 @@ pub struct StrongholdApp {
     envoy_session: crate::envoy::session::Session,
     pub envoy_core: envoy::AppEnvoy,
     envoy_panel: ui::envoy::DraftsPanel,
-    ledger_panel: ui::ledger::LedgerPane,
+    ledger_panel: ui::ledger::LedgerModal,
+    lorekeeper: lorekeeper::AppLorekeeper,
     /// Health checks for silent misconfigurations, and the badge showing them.
     health: health::AppHealth,
 }
@@ -210,6 +217,7 @@ impl StrongholdApp {
             clan: ClanView::new(),
             farm: ui::farm::FarmView::new(),
             selected: None,
+            hold_input_focus: None,
             history: ui::history::SelectionHistory::default(),
             panes: ui::dock::PaneLayout::default(),
             bring_forward: None,
@@ -241,6 +249,7 @@ impl StrongholdApp {
             finish_closes: Vec::new(),
             overlays_changed: true,
             traffic: Default::default(),
+            envoy_items: envoy_visuals::Items::new(now_ms()),
             state_changes: Default::default(),
             notifications: notifications::AppNotifications::load(),
             search: ui::search::SearchPalette::default(),
@@ -262,7 +271,8 @@ impl StrongholdApp {
             review: review::AppReview::start(ctx),
             envoy_core: envoy::AppEnvoy::start(ctx),
             envoy_panel: ui::envoy::DraftsPanel::default(),
-            ledger_panel: ui::ledger::LedgerPane::default(),
+            ledger_panel: ui::ledger::LedgerModal::default(),
+            lorekeeper: lorekeeper::AppLorekeeper::new(&crate::claude::hook::data_dir()),
             health: health::AppHealth::start(ctx),
         };
         app.talk_startup();
@@ -336,14 +346,16 @@ impl StrongholdApp {
         Some((node, info))
     }
 
-    /// The session transcript of the selected subagent, or of the selected Claude agent.
+    /// The session transcript of the selected subagent, or of the selected Claude or Codex agent.
     fn conversation_path(&self) -> Option<std::path::PathBuf> {
         if let Some((_, info)) = self.selected_subagent() {
             return Some(info.transcript_path.clone());
         }
         let handle = self.selected_node()?.terminal_handle.as_deref()?;
-        let session = self.claude_data.as_ref()?.session_by_handle.get(handle)?;
-        Some(session.session()?.transcript_path.clone())
+        self.claude_data
+            .as_ref()?
+            .conversation_path(handle)
+            .map(std::path::Path::to_path_buf)
     }
 
     /// Points the worker at the selected conversation's transcript and applies what it read.
@@ -422,6 +434,7 @@ impl StrongholdApp {
         } else {
             self.terminal_contents(ui, now_ms);
         }
+        self.focus_clicked_input(ui.ctx());
     }
 
     /// The selected agent's screen and input box.
@@ -690,6 +703,7 @@ impl StrongholdApp {
                 None
             }
             KeyCommand::Escape => {
+                self.hold_input_focus = None;
                 if let Some(focused) = ctx.memory(|m| m.focused()) {
                     ctx.memory_mut(|m| m.surrender_focus(focused));
                 } else if self.help_open {
@@ -999,8 +1013,10 @@ impl StrongholdApp {
         if self.worktrees.tick(worktrees, now_ms) {
             self.poller.send(PollerCommand::RefreshNow);
         }
+        self.worktrees
+            .tick_auto(*self.whip_window.worktree_settings(), now_ms);
         if !std::mem::take(&mut self.cleanup_in_farm) {
-            self.worktrees.hammer(ctx);
+            self.worktrees.hammer(ctx, self.whip_window.art());
         }
     }
 
@@ -1080,6 +1096,15 @@ impl eframe::App for StrongholdApp {
                 data.workers.len(),
                 data.errors.len()
             );
+            self.lorekeeper.session.poll();
+            self.lorekeeper.session.reload();
+            self.claude.watch_lorekeeper(
+                self.lorekeeper
+                    .session
+                    .observed_handle(&data.terminals)
+                    .zip(self.lorekeeper.session.saved.as_ref())
+                    .map(|(handle, saved)| (handle.to_owned(), saved.mode)),
+            );
             self.claude.send_terminals(data.terminals.clone());
             self.claude.watch_forwards(data.declared_coordinators());
             let mut data = data;
@@ -1098,6 +1123,7 @@ impl eframe::App for StrongholdApp {
                 }
             }
             self.envoy_session.reconcile(&data);
+            self.lorekeeper.session.reconcile(&data);
             for message in self.traffic.inbox.update(&data.inbox, now_ms()) {
                 self.traffic.push(message);
             }
@@ -1153,6 +1179,14 @@ impl eframe::App for StrongholdApp {
                 now,
             );
             snapshot.mark_envoy(self.envoy_session.handle(), self.envoy_status());
+            let librarian = self.lorekeeper.session.observed_handle(&data.terminals);
+            snapshot.mark_lorekeeper(librarian);
+            snapshot.lorekeeper_activity = self
+                .claude_data
+                .as_ref()
+                .and_then(|c| c.lorekeeper_activity.as_ref())
+                .filter(|(handle, _)| Some(handle.as_str()) == librarian)
+                .map(|(_, activity)| *activity);
             self.asks.prune(data, self.claude_data.as_ref());
             snapshot.mark_waiting(&self.asks.waiting(data, self.claude_data.as_ref()));
             self.finished.prune(now, crate::model::RELEASED_FADE_MS);
@@ -1198,6 +1232,8 @@ impl eframe::App for StrongholdApp {
         self.poll_control(ctx);
         self.poll_review();
         self.poll_envoy();
+        self.poll_envoy_visuals(ctx);
+        self.poll_lorekeeper(ctx);
         self.poll_health();
         self.overlays_changed |= envoy_before != self.envoy_status();
         self.poll_whip_now();
@@ -1221,10 +1257,18 @@ impl eframe::App for StrongholdApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let now_ms = now_ms();
+        let ledger_open = self.ledger_panel.is_open();
+        if !ledger_open {
+            self.prepare_clicked_input(ui.ctx());
+        }
+        self.ledger_modal(ui.ctx(), now_ms);
         self.talk_ui(ui.ctx());
         self.dictation_frame(ui.ctx());
-        self.search_palette(ui.ctx());
-        self.keyboard(ui.ctx());
+        self.sync_voice_target(ui.ctx());
+        if !ledger_open {
+            self.search_palette(ui.ctx());
+            self.keyboard(ui.ctx());
+        }
         let top_bar = egui::Panel::top("top_bar")
             .frame(
                 egui::Frame::side_top_panel(ui.style())

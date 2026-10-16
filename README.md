@@ -40,8 +40,8 @@ connect to the running app through a local Unix socket. See the
 [MCP reference](docs/mcp.md) and [control API](docs/control-api.md).
 
 **The playbook gives the clan shared rules.** Markdown files in
-[`playbook/`](playbook/README.md) describe coordinator, worker, attendant and Envoy
-roles. Stronghold serves them directly from disk through MCP and the CLI, even
+[`playbook/`](playbook/README.md) describe coordinator, worker, attendant, Envoy
+and Lorekeeper roles. Stronghold serves them directly from disk through MCP and the CLI, even
 when the dashboard is closed.
 
 ## Quick start

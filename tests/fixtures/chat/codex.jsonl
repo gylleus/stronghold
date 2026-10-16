@@ -1,0 +1,11 @@
+{"timestamp": "2026-10-15T12:00:00Z", "type": "session_meta", "payload": {"id": "fixture", "cwd": "/fixture", "source": "cli"}}
+{"timestamp": "2026-10-15T12:00:00Z", "type": "turn_context", "payload": {"model": "gpt-6.1"}}
+{"timestamp": "2026-10-15T12:00:00Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Review the rendering changes."}]}}
+{"timestamp": "2026-10-15T12:00:00Z", "type": "event_msg", "payload": {"type": "user_message", "message": "Review the rendering changes."}}
+{"timestamp": "2026-10-15T12:00:00Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "## Review\n\n> Checking **Codex** messages and tool output.\n\n- Read the diff\n- Run *tests*"}]}}
+{"timestamp": "2026-10-15T12:00:00Z", "type": "response_item", "payload": {"type": "function_call", "call_id": "call-1", "name": "exec_command", "arguments": "{\"cmd\":\"cargo test\"}"}}
+{"timestamp": "2026-10-15T12:00:00Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call-1", "output": "Process exited with code 0\nOutput:\nAll tests passed."}}
+{"timestamp": "2026-10-15T12:00:00Z", "type": "response_item", "payload": {"type": "custom_tool_call", "call_id": "call-2", "name": "apply_patch", "input": "*** Begin Patch\n*** Update File: src/chat.rs\n@@\n-old\n+new\n*** End Patch"}}
+{"timestamp": "2026-10-15T12:00:00Z", "type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "call-2", "output": [{"type": "input_text", "text": "Success. Updated src/chat.rs"}]}}
+{"timestamp": "2026-10-15T12:00:00Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "**Done.** Both tool calls completed.\n\n| Check | Result |\n| --- | --- |\n| Messages | Passed |\n| Tool outputs | Passed |\n\nRun `just install` and reopen Stronghold."}]}}
+{"timestamp": "2026-10-15T12:00:00Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "**Done.** Both tool calls completed."}}

@@ -46,10 +46,17 @@ impl MatchedReply {
 impl<I: SlackIo> SlackChannel<I> {
     pub fn watches(&mut self, watches: Vec<Watch>) -> Result<(), String> {
         let old = self.inbox.clone();
+        self.inbox.user_threads.extend(
+            self.inbox
+                .thread_watches
+                .values()
+                .map(|s| s.watch.thread.key()),
+        );
         self.inbox
             .thread_watches
             .retain(|id, _| watches.iter().any(|w| &w.request_id == id));
         for watch in watches {
+            self.inbox.user_threads.insert(watch.thread.key());
             let state = self
                 .inbox
                 .thread_watches
@@ -123,35 +130,28 @@ impl<I: SlackIo> SlackChannel<I> {
         true
     }
 
-    pub(super) fn poll_threads(&mut self, now: i64, batch: &mut PollBatch) -> Result<(), String> {
-        let ids: Vec<_> = self.inbox.thread_watches.keys().cloned().collect();
-        for id in ids {
-            if let Err(error) = self.poll_thread(&id, now, batch) {
-                self.inbox.thread_watches.get_mut(&id).unwrap().next_poll_ms = now + 30_000;
-                batch.notices.push(format!("{id}: {error}"));
-            }
-        }
-        Ok(())
-    }
-    fn poll_thread(&mut self, id: &str, now: i64, batch: &mut PollBatch) -> Result<(), String> {
+    pub(super) fn poll_thread(
+        &mut self,
+        id: &str,
+        now: i64,
+        batch: &mut PollBatch,
+    ) -> Result<(), String> {
         let state = self.inbox.thread_watches[id].clone();
         let thread = &state.watch.thread;
-        if !self.settings.channels.contains(&thread.conversation) {
-            if !state.watch.borrowed
-                && !state.subscribed
-                && now >= state.next_poll_ms
-                && !self.settings.dry_run
+        if !self.settings.channels.contains(&thread.conversation)
+            && !state.watch.borrowed
+            && !state.subscribed
+            && now >= state.next_poll_ms
+            && !self.settings.dry_run
+        {
+            self.check_deadline()?;
+            match self
+                .io
+                .thread_subscription(&self.bridge, thread, Some(&format!("envoy:{id}")))
             {
-                match self.io.thread_subscription(
-                    &self.bridge,
-                    thread,
-                    Some(&format!("envoy:{id}")),
-                ) {
-                    Ok(()) => self.inbox.thread_watches.get_mut(id).unwrap().subscribed = true,
-                    Err(e) => batch.notices.push(e),
-                }
+                Ok(()) => self.inbox.thread_watches.get_mut(id).unwrap().subscribed = true,
+                Err(e) => batch.notices.push(e),
             }
-            self.tail_thread(thread, batch)?;
         }
         let state = self.inbox.thread_watches[id].clone();
         if now < state.next_poll_ms {
@@ -169,7 +169,7 @@ impl<I: SlackIo> SlackChannel<I> {
             if !state.api_cursor.is_empty() {
                 params.push(("cursor", state.api_cursor.clone()));
             }
-            let value = self.io.api("conversations.replies", &params)?;
+            let value = self.api("conversations.replies", &params)?;
             let messages = value["messages"]
                 .as_array()
                 .ok_or("Thread response is missing messages")?;
@@ -181,7 +181,7 @@ impl<I: SlackIo> SlackChannel<I> {
                         && e.user != self.settings.user_id
                         && !state.seen.contains(&e.id())
                     {
-                        let link = self.io.api(
+                        let link = self.api(
                             "chat.getPermalink",
                             &[
                                 ("channel", thread.conversation.clone()),
@@ -222,7 +222,11 @@ impl<I: SlackIo> SlackChannel<I> {
         Ok(())
     }
 
-    fn tail_thread(&mut self, thread: &Thread, batch: &mut PollBatch) -> Result<(), String> {
+    pub(super) fn tail_thread(
+        &mut self,
+        thread: &Thread,
+        batch: &mut PollBatch,
+    ) -> Result<(), String> {
         validate_conversation(&thread.conversation)?;
         validate_ts(&thread.ts)?;
         let path = self
@@ -305,7 +309,7 @@ impl<I: SlackIo> SlackChannel<I> {
     ) -> Result<crate::envoy::requests::BindingPreview, String> {
         validate_conversation(&thread.conversation)?;
         validate_ts(&thread.ts)?;
-        let result = self.io.api(
+        let result = self.api(
             "conversations.replies",
             &[
                 ("channel", thread.conversation.clone()),
@@ -326,7 +330,7 @@ impl<I: SlackIo> SlackChannel<I> {
             .chars()
             .take(500)
             .collect();
-        let link = self.io.api(
+        let link = self.api(
             "chat.getPermalink",
             &[
                 ("channel", thread.conversation.clone()),
@@ -363,14 +367,12 @@ impl<I: SlackIo> SlackChannel<I> {
         validate_conversation(conversation)?;
         let mut person = false;
         if conversation.starts_with('D') {
-            let value = self
-                .io
-                .api("conversations.info", &[("channel", conversation.into())])?;
+            let value = self.api("conversations.info", &[("channel", conversation.into())])?;
             let user = value["channel"]["user"]
                 .as_str()
                 .ok_or("DM recipient could not be verified")?;
             super::super::requests::refuse_user(user, &self.settings.user_id)?;
-            let info = self.io.api("users.info", &[("user", user.into())])?;
+            let info = self.api("users.info", &[("user", user.into())])?;
             person = info["user"]["is_bot"] == false
                 && info["user"]["is_app_user"] != true
                 && info["user"]["deleted"] != true;

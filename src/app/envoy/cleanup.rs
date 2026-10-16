@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 #[serde(default)]
 pub(super) struct Cleanup {
     pub events: BTreeSet<String>,
+    pub deleted_events: BTreeSet<String>,
     pub drafts: BTreeSet<String>,
     requests: BTreeMap<String, (usize, usize)>,
 }
@@ -48,6 +49,167 @@ impl AppEnvoy {
         }
     }
 
+    pub(super) fn delete_event(&mut self, id: &str) -> Result<(), String> {
+        let mut cleanup = self.cleanup.clone();
+        cleanup.deleted_events.insert(id.into());
+        cleanup.events.remove(id);
+        self.save_cleanup(cleanup)?;
+        self.inbox.delete(&[id.into()]);
+        self.resolve_handled();
+        self.flush_event_deletions()
+    }
+
+    pub(super) fn flush_event_deletions(&mut self) -> Result<(), String> {
+        if !self.event_deletion_pending && !self.cleanup.deleted_events.is_empty() {
+            self.worker()?.submit(Work::DeleteEvents(
+                self.cleanup.deleted_events.iter().cloned().collect(),
+            ))?;
+            self.event_deletion_pending = true;
+        }
+        Ok(())
+    }
+
+    pub(super) fn events_deleted(&mut self, ids: &[String]) -> Result<(), String> {
+        let mut cleanup = self.cleanup.clone();
+        cleanup.deleted_events.retain(|id| !ids.contains(id));
+        self.save_cleanup(cleanup)
+    }
+
+    pub(super) fn delete_draft(&mut self, id: &str) -> Result<(), String> {
+        let Some(draft) = self.queue()?.get(id).cloned() else {
+            return Ok(());
+        };
+        if let Some(link) = &draft.request
+            && self.requests_mut()?.get(&link.id).is_ok()
+        {
+            self.requests_mut()?.retain_draft_receipt(&draft)?;
+            if matches!(draft.status, DraftStatus::Pending | DraftStatus::Failed) {
+                self.queue()?.decline(
+                    id,
+                    &crate::user::fill("draft deleted by {user}"),
+                    now_ms(),
+                )?;
+                self.reconcile_requests()?;
+            }
+            self.requests_mut()?.change(&link.id, |r| {
+                if let Some(turn) = r.turns.iter_mut().find(|t| t.id == link.turn_id) {
+                    turn.draft_id = None;
+                    if draft.status == DraftStatus::Approved {
+                        turn.status = crate::envoy::requests::Status::Failed;
+                        turn.error = Some(
+                            "Draft deleted while sending; delivery may already have started".into(),
+                        );
+                        r.status = turn.status;
+                    }
+                }
+                Ok(())
+            })?;
+        }
+        if !matches!(
+            draft.status,
+            DraftStatus::Pending | DraftStatus::Approved | DraftStatus::Failed
+        ) && let Some(reply) = &draft.in_reply_to
+            && self
+                .inbox
+                .get(&format!("{}:{}", reply.conversation, reply.ts))
+                .is_some()
+        {
+            let mut cleanup = self.cleanup.clone();
+            cleanup
+                .events
+                .insert(format!("{}:{}", reply.conversation, reply.ts));
+            self.save_cleanup(cleanup)?;
+        }
+        self.queue()?.delete(id)?;
+        if draft.status == DraftStatus::Approved
+            && let Some(worker) = &self.worker
+        {
+            worker.cancel_send(id);
+        }
+        self.outgoing.remove(id);
+        let mut cleanup = self.cleanup.clone();
+        cleanup.drafts.remove(id);
+        self.save_cleanup(cleanup)?;
+        self.reconcile_requests()
+    }
+
+    pub(super) fn delete_request(&mut self, id: &str) -> Result<(), String> {
+        let Ok(request) = self.requests_mut()?.get(id).cloned() else {
+            return self.reconcile_requests();
+        };
+        let thread = request
+            .thread
+            .as_ref()
+            .filter(|thread| request.reply_cutoff().is_some() && !self.borrowed_thread(thread))
+            .cloned();
+        let drafts: Vec<_> = self
+            .drafts()
+            .iter()
+            .filter(|d| d.request.as_ref().is_some_and(|r| r.id == id))
+            .map(|d| d.id.clone())
+            .collect();
+        self.requests_mut()?.delete(id, drafts, thread)?;
+        self.reconcile_requests()
+    }
+
+    pub(super) fn finish_request_deletions(&mut self) -> Result<(), String> {
+        let deletions: Vec<_> = self
+            .requests
+            .as_ref()
+            .ok_or("Request store unavailable")?
+            .deletions()
+            .iter()
+            .filter(|d| {
+                !d.drafts.is_empty()
+                    || self.cleanup.requests.contains_key(&d.id)
+                    || (d.delivery.delivered && d.thread.is_none())
+            })
+            .cloned()
+            .collect();
+        let mut cleanup = self.cleanup.clone();
+        for deletion in &deletions {
+            cleanup.requests.remove(&deletion.id);
+            for id in &deletion.drafts {
+                let sending = self
+                    .queue()?
+                    .get(id)
+                    .is_some_and(|d| d.status == DraftStatus::Approved);
+                // Request deletion is already durable; draft cleanup can retry after cancellation.
+                if sending && let Some(worker) = &self.worker {
+                    worker.cancel_send(id);
+                }
+                self.queue()?.delete(id)?;
+                self.outgoing.remove(id);
+                cleanup.drafts.remove(id);
+            }
+        }
+        if !deletions.is_empty() {
+            self.save_cleanup(cleanup)?;
+            self.requests_mut()?.change_deletions(|records| {
+                for record in records {
+                    record.drafts.clear();
+                }
+            })?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn delete_items(
+        &mut self,
+        items: crate::ui::envoy::PanelItems,
+    ) -> Result<(), String> {
+        for id in items.requests {
+            self.delete_request(&id)?;
+        }
+        for id in items.drafts {
+            self.delete_draft(&id)?;
+        }
+        for id in items.events {
+            self.delete_event(&id)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn dismiss_event(&mut self, id: &str) -> Result<(), String> {
         if self.inbox.get(id).is_none() {
             return Err("Unknown inbox event".into());
@@ -60,7 +222,7 @@ impl AppEnvoy {
     pub(super) fn dismiss_draft(&mut self, id: &str) -> Result<(), String> {
         let draft = self.queue()?.get(id).ok_or("Unknown draft")?;
         if matches!(draft.status, DraftStatus::Pending | DraftStatus::Approved) {
-            return Err("Reject or finish the draft before dismissing it".into());
+            return Err("Decide whether to send the draft before hiding it".into());
         }
         let mut cleanup = self.cleanup.clone();
         cleanup.drafts.insert(id.into());
@@ -91,7 +253,7 @@ impl AppEnvoy {
                 )
             })
         {
-            return Err("Resolve pending decisions before dismissing".into());
+            return Err("Resolve pending decisions before hiding".into());
         }
         let version = (request.turns.len(), request.deliveries.len());
         let mut cleanup = self.cleanup.clone();
@@ -156,7 +318,7 @@ impl AppEnvoy {
                     self.drafts()
                         .iter()
                         .find(|d| d.id == id)
-                        .is_some_and(|d| d.status != DraftStatus::Pending)
+                        .is_none_or(|d| d.status != DraftStatus::Pending)
                 } else {
                     // Legacy alerts had no draft ID. Keep them until every draft they
                     // could refer to has been decided; newer drafts have their own alerts.
